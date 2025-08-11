@@ -41,7 +41,8 @@ Use `waitForReady` at app boot or in CI before running migrations/tests.
 const reserved = await db.reserve()
 try {
   await reserved.selectFrom('users').limit(1).execute()
-} finally {
+}
+finally {
   reserved.release()
 }
 ```
@@ -76,3 +77,133 @@ Network partitions or credential changes may occur after the ping. Always handle
 ### Can I reserve multiple connections?
 
 Yes, but prefer reserving only when necessary to avoid starving the pool.
+
+---
+
+## Pool Sizing and Tuning
+
+- Start small and increase based on throughput and DB limits
+- Consider CPU cores, workload concurrency, and DB max connections
+
+## Connection Timeouts and Cancellations
+
+```ts
+const q = db.selectFrom('heavy').where({ flag: true }).toSQL() as any
+const controller = new AbortController()
+const t = setTimeout(() => controller.abort(), 5000)
+try {
+  await q.execute({ signal: controller.signal })
+}
+finally {
+  clearTimeout(t)
+}
+```
+
+## Leak Detection
+
+- Track reserved connections and ensure `release()` in finally blocks
+- Wrap helpers to assert release in tests
+
+## Heartbeat Queries
+
+Run periodic lightweight queries to keep connections warm (if needed) and detect failures early.
+
+```ts
+setInterval(async () => {
+  try {
+    await db.ping()
+  }
+  catch {
+    // ignore
+  }
+}, 30_000)
+```
+
+## Graceful Shutdown in Servers
+
+```ts
+process.on('SIGTERM', async () => {
+  await db.close({ timeout: 10_000 })
+  process.exit(0)
+})
+```
+
+## K8s/Containers Healthchecks
+
+```yaml
+livenessProbe:
+  exec:
+    command:
+      - /bin/sh
+      - -lc
+      - query-builder ping
+  initialDelaySeconds: 10
+  periodSeconds: 15
+readinessProbe:
+  exec:
+    command:
+      - /bin/sh
+      - -lc
+      - query-builder wait-ready --attempts 10 --delay 200
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+## Error Classification
+
+- Distinguish network failures vs SQL errors; retry appropriately
+- Backoff when DB is under load
+
+## Observability
+
+- Emit metrics: pool size, idle, busy, wait time, ping latency
+
+## Troubleshooting
+
+- Frequent timeouts: increase pool size or optimize queries
+- Connection refused: check DB address/auth and network policies
+- Idle in transaction: ensure transactions are closed promptly
+
+## Recipes
+
+### Per-request reserved connection
+
+```ts
+async function handler(req: any) {
+  const conn = await db.reserve()
+  try {
+    const rows = await conn.selectFrom('users').limit(5).execute()
+    return rows
+  }
+  finally {
+    conn.release()
+  }
+}
+```
+
+### Pre-warm connections on boot
+
+```ts
+await db.waitForReady({ attempts: 20, delayMs: 250 })
+```
+
+### Bulk import with reserved connection
+
+```ts
+const conn = await db.reserve()
+try {
+  for (const batch of makeBatches(rows, 1000)) {
+    await conn.insertInto('items').values(batch).execute()
+  }
+}
+finally {
+  conn.release()
+}
+```
+
+## Checklist
+
+- [ ] Use waitForReady at startup/CI
+- [ ] Size pool according to workload and DB limits
+- [ ] Reserve connections for critical sections only
+- [ ] Implement graceful shutdown handlers
