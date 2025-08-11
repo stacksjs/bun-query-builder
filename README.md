@@ -8,39 +8,70 @@
 
 # bun-query-builder
 
-This is an opinionated TypeScript Starter kit to help kick-start development of your next Bun package.
+Fully-typed, model-driven Query Builder for Bun’s native `sql`.
+
+Define your data model once and get a type-safe query experience _(a la Kysely/Laravel)_, powered by Bun’s tagged templates for safety and performance.
 
 ## Features
 
-This Starter Kit comes pre-configured with the following:
+- **Typed from Models**: Infer tables/columns/PKs from your model files; `selectFrom('users')` and `where({ active: true })` are typed.
+- **Fluent Builder**: `select/insert/update/delete`, `where/andWhere/orWhere`, `join/leftJoin/rightJoin/crossJoin`, `groupBy/having`, `union/unionAll`.
+- **Relations**: `with(...)`, `withCount(...)`, `whereHas(...)`, `selectAllRelations()` with configurable aliasing.
+- **Utilities**: `distinct/distinctOn`, `orderByDesc/latest/oldest/inRandomOrder`, `whereColumn/whereRaw/groupByRaw/havingRaw`, JSON/date helpers.
+- **Pagination**: `paginate`, `simplePaginate`, `cursorPaginate`, plus `chunk/chunkById/eachById`.
+- **Transactions**: `transaction` with retries/backoff/isolation/onRetry/afterCommit; `savepoint`; distributed tx helpers.
+- **Configurable**: Dialect hints, timestamps, alias strategies, relation FK formats, JSON mode, random function, shared lock syntax.
+- **Bun API passthroughs**: `unsafe`, `file`, `simple`, pool `reserve/release`, `close`, `ping/waitForReady`.
+- **CLI**: Introspection, query printing, connectivity checks, file/unsafe execution, explain.
 
-- 🛠️ [Powerful Build Process](https://github.com/oven-sh/bun) - via Bun
-- 💪🏽 [Fully Typed APIs](https://www.typescriptlang.org/) - via TypeScript
-- 📚 [Documentation-ready](https://vitepress.dev/) - via VitePress
-- ⌘ [CLI & Binary](https://www.npmjs.com/package/bunx) - via Bun & CAC
-- 🧪 [Built With Testing In Mind](https://bun.sh/docs/cli/test) - pre-configured unit-testing powered by [Bun](https://bun.sh/docs/cli/test)
-- 🤖 [Renovate](https://renovatebot.com/) - optimized & automated PR dependency updates
-- 🎨 [ESLint](https://eslint.org/) - for code linting _(and formatting)_
-- 📦️ [pkg.pr.new](https://pkg.pr.new) - Continuous (Preview) Releases for your libraries
-- 🐙 [GitHub Actions](https://github.com/features/actions) - runs your CI _(fixes code style issues, tags releases & creates its changelogs, runs the test suite, etc.)_
+> Note: LISTEN/NOTIFY and COPY helpers are scaffolded and will be wired as Bun exposes native APIs.
 
 ## Get Started
 
-It's rather simple to get your package development started:
+Install and use in code:
 
-```bash
-# you may use this GitHub template or the following command:
-bunx degit stacksjs/ts-starter my-pkg
-cd my-pkg
+```ts
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from 'bun-query-builder'
 
-bun i # install all deps
-bun run build # builds the library for production-ready use
+// Load or define your model files (see docs for model shape)
+const models = {
+  User: { name: 'User', table: 'users', primaryKey: 'id', attributes: { id: { validation: { rule: {} } }, name: { validation: { rule: {} } }, active: { validation: { rule: {} } } } },
+} as const
 
-# after you have successfully committed, you may create a "release"
-bun run release # automates git commits, versioning, and changelog generations
+const schema = buildDatabaseSchema(models as any)
+const meta = buildSchemaMeta(models as any)
+const db = createQueryBuilder<typeof schema>({ schema, meta })
+
+// Fully-typed query
+const q = db
+  .selectFrom('users')
+  .where({ active: true })
+  .orderBy('created_at', 'desc')
+  .limit(10)
+
+const rows = await q.execute()
 ```
 
-_Check out the package.json scripts for more commands._
+### CLI
+
+```bash
+# Print inferred schema from model dir
+query-builder introspect ./app/Models --verbose
+
+# Print a sample SQL (text) for a table
+query-builder sql ./app/Models users --limit 5
+
+# Connectivity:
+query-builder ping
+query-builder wait-ready --attempts 30 --delay 250
+
+# Execute a file or unsafe string (be careful!)
+query-builder file ./migrations/seed.sql
+query-builder unsafe "SELECT * FROM users WHERE id = $1" --params "[1]"
+
+# Explain a query
+query-builder explain "SELECT * FROM users WHERE active = true"
+```
 
 ## Testing
 
