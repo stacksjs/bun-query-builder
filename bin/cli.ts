@@ -4,22 +4,15 @@ import { version } from '../package.json'
 const cli = new CAC('query-builder')
 
 interface CliOption {
-  from: string
   verbose: boolean
 }
 
 cli
-  .command('start', 'Start the Reverse Proxy Server')
-  .option('--from <from>', 'The URL to proxy from')
+  .command('xyz', 'Start the Reverse Proxy Server')
   .option('--verbose', 'Enable verbose logging')
-  .example('reverse-proxy start --from localhost:5173 --to my-project.localhost')
+  .example('query-builder xyz --verbose')
   .action(async (options?: CliOption) => {
-    if (!options?.from) {
-      console.error('Missing --from option')
-    }
-    else {
-      console.log('Options:', options)
-    }
+    console.log('Options:', options)
   })
 
 cli.command('version', 'Show the version of the CLI').action(() => {
