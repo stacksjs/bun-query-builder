@@ -109,6 +109,15 @@ export interface SelectQueryBuilder<
   pluck: (column: string) => Promise<any[]>
   exists: () => Promise<boolean>
   doesntExist: () => Promise<boolean>
+  cursorPaginate: (perPage: number, cursor?: string | number, column?: string, direction?: 'asc' | 'desc') => Promise<{ data: any[], meta: { perPage: number, nextCursor: string | number | null } }>
+  chunk: (size: number, handler: (rows: any[]) => Promise<void> | void) => Promise<void>
+  chunkById: (size: number, column?: string, handler?: (rows: any[]) => Promise<void> | void) => Promise<void>
+  eachById: (size: number, column?: string, handler?: (row: any) => Promise<void> | void) => Promise<void>
+  when: (condition: any, then: (qb: any) => any, otherwise?: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  tap: (fn: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  dump: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  dd: () => never
+  explain: () => Promise<any[]>
   paginate: (perPage: number, page?: number) => Promise<{ data: any[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
   simplePaginate: (perPage: number, page?: number) => Promise<{ data: any[], meta: { perPage: number, page: number, hasMore: boolean } }>
   toSQL: () => any
@@ -488,6 +497,73 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const data = await (bunSql`${built} LIMIT ${perPage + 1} OFFSET ${offset}` as any).execute()
         const hasMore = data.length > perPage
         return { data: hasMore ? data.slice(0, perPage) : data, meta: { perPage, page: p, hasMore } }
+      },
+      async cursorPaginate(perPage: number, cursor?: string | number, column = 'id', direction: 'asc' | 'desc' = 'asc') {
+        let q = built
+        if (cursor !== undefined && cursor !== null) {
+          q = direction === 'asc'
+            ? bunSql`${q} WHERE ${bunSql(String(column))} > ${cursor}`
+            : bunSql`${q} WHERE ${bunSql(String(column))} < ${cursor}`
+        }
+        q = bunSql`${q} ORDER BY ${bunSql(String(column))} ${direction === 'asc' ? bunSql`ASC` : bunSql`DESC`} LIMIT ${perPage + 1}`
+        const rows = await (q as any).execute()
+        const next = rows.length > perPage ? rows[perPage]?.[column] : null
+        return { data: rows.slice(0, perPage), meta: { perPage, nextCursor: next ?? null } }
+      },
+      async chunk(size: number, handler: (rows: any[]) => Promise<void> | void) {
+        let page = 1
+        while (true) {
+          const { data } = await (this as any).paginate(size, page)
+          if (data.length === 0)
+            break
+          await handler(data as any[])
+          if (data.length < size)
+            break
+          page += 1
+        }
+      },
+      async chunkById(size: number, column = 'id', handler?: (rows: any[]) => Promise<void> | void) {
+        let cursor: any
+        while (true) {
+          const { data, meta } = await (this as any).cursorPaginate(size, cursor, column, 'asc')
+          if (data.length === 0)
+            break
+          if (handler)
+            await handler(data as any[])
+          cursor = meta.nextCursor
+          if (!cursor)
+            break
+        }
+      },
+      async eachById(size: number, column = 'id', handler?: (row: any) => Promise<void> | void) {
+        await (this as any).chunkById(size, column, async (rows: any[]) => {
+          for (const r of rows) await handler?.(r as any)
+        })
+      },
+      when(condition: any, then: (qb: any) => any, otherwise?: (qb: any) => any) {
+        if (condition)
+          return then(this)
+        if (otherwise)
+          return otherwise(this)
+        return this as any
+      },
+      tap(fn: (qb: any) => any) {
+        fn(this)
+        return this as any
+      },
+      dump() {
+        // eslint-disable-next-line no-console
+        console.log(String(built))
+        return this as any
+      },
+      dd() {
+        // eslint-disable-next-line no-console
+        console.log(String(built))
+        throw new Error('Dump and Die')
+      },
+      async explain() {
+        const q = bunSql`EXPLAIN ${built}`
+        return await (q as any).execute()
       },
       lockForUpdate() {
         built = bunSql`${built} FOR UPDATE`
