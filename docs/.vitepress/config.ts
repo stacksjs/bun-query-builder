@@ -75,9 +75,9 @@ const sidebar = [
       { text: 'Pool & Readiness', link: '/advanced/pool' },
       { text: 'Debugging', link: '/advanced/debugging' },
       { text: 'Distributed Tx', link: '/advanced/distributed' },
+      { text: 'API Reference', link: '/advanced/api' },
     ],
   },
-  { text: 'API Reference', link: '/api' },
 ]
 const description = 'Fully-typed, model-driven Query Builder for Bun’s native sql.'
 const title = 'bun-query-builder | Fully-typed Query Builder for Bun'
