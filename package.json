@@ -1,8 +1,8 @@
 {
-  "name": "bun-ts-starter",
+  "name": "ts-query-builder",
   "type": "module",
-  "version": "0.4.0",
-  "description": "A simple TypeScript starter kit using Bun.",
+  "version": "0.0.0",
+  "description": "A simple yet performant query builder for TypeScript. Built with Bun.",
   "author": "Chris Breuer <chris@stacksjs.org>",
   "license": "MIT",
   "homepage": "https://github.com/stacksjs/ts-starter#readme",
@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/stacksjs/ts-starter/issues"
   },
-  "keywords": ["typescript", "starter", "kit", "bun", "package"],
+  "keywords": ["typescript", "query-builder", "bun", "package"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -26,25 +26,25 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "bin-name": "./dist/bin/cli.js"
+    "query-builder": "./dist/bin/cli.js"
   },
   "files": ["README.md", "dist"],
   "scripts": {
     "build": "bun --bun build.ts && bun run compile",
-    "compile": "bun build ./bin/cli.ts --compile --minify --outfile bin/bin-name",
+    "compile": "bun build ./bin/cli.ts --compile --minify --outfile bin/query-builder",
     "compile:all": "bun run compile:linux-x64 && bun run compile:linux-arm64 && bun run compile:windows-x64 && bun run compile:darwin-x64 && bun run compile:darwin-arm64",
-    "compile:linux-x64": "bun build ./bin/cli.ts --compile --minify --target=bun-linux-x64 --outfile bin/bin-name-linux-x64",
-    "compile:linux-arm64": "bun build ./bin/cli.ts --compile --minify --target=bun-linux-arm64 --outfile bin/bin-name-linux-arm64",
-    "compile:windows-x64": "bun build ./bin/cli.ts --compile --minify --target=bun-windows-x64 --outfile bin/bin-name-windows-x64.exe",
-    "compile:darwin-x64": "bun build ./bin/cli.ts --compile --minify --target=bun-darwin-x64 --outfile bin/bin-name-darwin-x64",
-    "compile:darwin-arm64": "bun build ./bin/cli.ts --compile --minify --target=bun-darwin-arm64 --outfile bin/bin-name-darwin-arm64",
+    "compile:linux-x64": "bun build ./bin/cli.ts --compile --minify --target=bun-linux-x64 --outfile bin/query-builder-linux-x64",
+    "compile:linux-arm64": "bun build ./bin/cli.ts --compile --minify --target=bun-linux-arm64 --outfile bin/query-builder-linux-arm64",
+    "compile:windows-x64": "bun build ./bin/cli.ts --compile --minify --target=bun-windows-x64 --outfile bin/query-builder-windows-x64.exe",
+    "compile:darwin-x64": "bun build ./bin/cli.ts --compile --minify --target=bun-darwin-x64 --outfile bin/query-builder-darwin-x64",
+    "compile:darwin-arm64": "bun build ./bin/cli.ts --compile --minify --target=bun-darwin-arm64 --outfile bin/query-builder-darwin-arm64",
     "zip": "bun run zip:all",
     "zip:all": "bun run zip:linux-x64 && bun run zip:linux-arm64 && bun run zip:windows-x64 && bun run zip:darwin-x64 && bun run zip:darwin-arm64",
-    "zip:linux-x64": "zip -j bin/bin-name-linux-x64.zip bin/bin-name-linux-x64",
-    "zip:linux-arm64": "zip -j bin/bin-name-linux-arm64.zip bin/bin-name-linux-arm64",
-    "zip:windows-x64": "zip -j bin/bin-name-windows-x64.zip bin/bin-name-windows-x64.exe",
-    "zip:darwin-x64": "zip -j bin/bin-name-darwin-x64.zip bin/bin-name-darwin-x64",
-    "zip:darwin-arm64": "zip -j bin/bin-name-darwin-arm64.zip bin/bin-name-darwin-arm64",
+    "zip:linux-x64": "zip -j bin/query-builder-linux-x64.zip bin/query-builder-linux-x64",
+    "zip:linux-arm64": "zip -j bin/query-builder-linux-arm64.zip bin/query-builder-linux-arm64",
+    "zip:windows-x64": "zip -j bin/query-builder-windows-x64.zip bin/query-builder-windows-x64.exe",
+    "zip:darwin-x64": "zip -j bin/query-builder-darwin-x64.zip bin/query-builder-darwin-x64",
+    "zip:darwin-arm64": "zip -j bin/query-builder-darwin-arm64.zip bin/query-builder-darwin-arm64",
     "lint": "bunx --bun eslint .",
     "lint:fix": "bunx --bun eslint . --fix",
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
@@ -59,15 +59,16 @@
   },
   "devDependencies": {
     "@stacksjs/docs": "^0.70.23",
-    "@stacksjs/eslint-config": "^4.10.2-beta.3",
-    "@types/bun": "^1.2.15",
-    "bumpp": "^10.1.1",
-    "bun-plugin-dtsx": "^0.21.12",
-    "bunfig": "^0.10.0",
-    "changelogen": "^0.6.1",
-    "lint-staged": "^16.1.0",
-    "simple-git-hooks": "^2.13.0",
-    "typescript": "^5.8.3"
+    "@stacksjs/eslint-config": "^4.14.0-beta.3",
+    "@types/bun": "^1.2.20",
+    "buddy-bot": "^0.7.8",
+    "bumpp": "^10.2.2",
+    "bun-plugin-dtsx": "0.9.5",
+    "bunfig": "^0.11.1",
+    "changelogen": "^0.6.2",
+    "lint-staged": "^16.1.5",
+    "simple-git-hooks": "^2.13.1",
+    "typescript": "^5.9.2"
   },
   "overrides": {
     "unconfig": "0.3.10"

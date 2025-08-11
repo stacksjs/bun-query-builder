@@ -43,10 +43,10 @@ jobs:
         uses: stacksjs/action-releaser@v1.1.0
         with:
           files: |
-            bin/bin-name-linux-x64
-            bin/bin-name-linux-arm64
-            bin/bin-name-windows-x64.exe
-            bin/bin-name-darwin-x64
-            bin/bin-name-darwin-arm64
+            bin/query-builder-linux-x64
+            bin/query-builder-linux-arm64
+            bin/query-builder-windows-x64.exe
+            bin/query-builder-darwin-x64
+            bin/query-builder-darwin-arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
