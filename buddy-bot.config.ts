@@ -3,7 +3,7 @@ import type { BuddyBotConfig } from 'buddy-bot'
 const config: BuddyBotConfig = {
   repository: {
     owner: 'stacksjs',
-    name: 'ts-query-builder',
+    name: 'bun-query-builder',
     provider: 'github',
     // token: process.env.BUDDY_BOT_TOKEN,
   },

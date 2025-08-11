@@ -1,5 +1,5 @@
 {
-  "name": "ts-query-builder",
+  "name": "bun-query-builder",
   "type": "module",
   "version": "0.0.0",
   "description": "A simple yet performant query builder for TypeScript. Built with Bun.",
