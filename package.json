@@ -26,7 +26,9 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "query-builder": "./dist/bin/cli.js"
+    "query-builder": "./dist/bin/cli.js",
+    "qbx": "./dist/bin/cli.js",
+    "qb": "./dist/bin/cli.js"
   },
   "files": ["README.md", "dist"],
   "scripts": {

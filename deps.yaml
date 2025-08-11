@@ -1,2 +1,5 @@
 dependencies:
-  bun.sh: ^1.2.20
+  bun: ^1.2.20
+  mysql: latest
+  postgres: latest
+  sqlite: latest

@@ -1,6 +1,7 @@
 import type { SchemaMeta } from './meta'
 import type { DatabaseSchema } from './schema'
 import { sql as bunSql } from 'bun'
+import { config } from './config'
 
 // Where condition helpers
 type Primitive = string | number | boolean | bigint | Date | null | undefined
@@ -118,6 +119,8 @@ export interface SelectQueryBuilder<
   dump: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   dd: () => never
   explain: () => Promise<any[]>
+  simple: () => any
+  toText?: () => string
   paginate: (perPage: number, page?: number) => Promise<{ data: any[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
   simplePaginate: (perPage: number, page?: number) => Promise<{ data: any[], meta: { perPage: number, page: number, hasMore: boolean } }>
   toSQL: () => any
@@ -162,7 +165,29 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
   selectFromSub: (sub: { toSQL: () => any }, alias: string) => SelectQueryBuilder<DB, keyof DB & string, any>
   sql: any
   raw: (strings: TemplateStringsArray, ...values: any[]) => any
-  transaction: <T>(fn: (tx: QueryBuilder<DB>) => Promise<T> | T) => Promise<T>
+  simple: (strings: TemplateStringsArray, ...values: any[]) => any
+  unsafe: (query: string, params?: any[]) => Promise<any>
+  file: (path: string, params?: any[]) => Promise<any>
+  reserve: () => Promise<(QueryBuilder<DB> & { release: () => void })>
+  close: (opts?: { timeout?: number }) => Promise<void>
+  // Pub/Sub (stubs until Bun exposes API)
+  listen: (channel: string, handler?: (payload: any) => void) => Promise<void>
+  unlisten: (channel?: string) => Promise<void>
+  notify: (channel: string, payload?: any) => Promise<void>
+  // COPY support (stubs until available)
+  copyTo: (queryOrTable: string, options?: Record<string, any>) => Promise<any>
+  copyFrom: (queryOrTable: string, source: AsyncIterable<any> | Iterable<any>, options?: Record<string, any>) => Promise<any>
+  // Pool readiness
+  ping: () => Promise<boolean>
+  waitForReady: (opts?: { attempts?: number, delayMs?: number }) => Promise<void>
+  transaction: <T>(fn: (tx: QueryBuilder<DB>) => Promise<T> | T, options?: TransactionOptions) => Promise<T>
+  savepoint: <T>(fn: (sp: QueryBuilder<DB>) => Promise<T> | T) => Promise<T>
+  beginDistributed: <T>(name: string, fn: (tx: QueryBuilder<DB>) => Promise<T> | T) => Promise<T>
+  commitDistributed: (name: string) => Promise<void>
+  rollbackDistributed: (name: string) => Promise<void>
+  configure: (opts: Partial<typeof config>) => QueryBuilder<DB>
+  setTransactionDefaults: (defaults: TransactionOptions) => void
+  transactional: <TArgs extends any[], R>(fn: (tx: QueryBuilder<DB>, ...args: TArgs) => Promise<R> | R, options?: TransactionOptions) => (...args: TArgs) => Promise<R>
   // aggregates
   count: <TTable extends keyof DB & string>(table: TTable, column?: keyof DB[TTable]['columns'] & string) => Promise<number>
   sum: <TTable extends keyof DB & string>(table: TTable, column: keyof DB[TTable]['columns'] & string) => Promise<number>
@@ -180,6 +205,7 @@ interface InternalState {
   sql: any
   meta?: SchemaMeta
   schema?: any
+  txDefaults?: TransactionOptions
 }
 
 function applyWhere(columns: Record<string, unknown>, q: any, expr?: WhereExpression<any>) {
@@ -224,6 +250,53 @@ function applyWhere(columns: Record<string, unknown>, q: any, expr?: WhereExpres
   return bunSql`${q} WHERE ${parts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc} AND ${p}`))}`
 }
 
+function isRetriableTxError(err: any): boolean {
+  const msg = String(err?.message || '').toLowerCase()
+  return (
+    msg.includes('deadlock')
+    || msg.includes('serialization failure')
+    || msg.includes('could not serialize access')
+  )
+}
+
+type TransactionIsolation = 'read committed' | 'repeatable read' | 'serializable'
+interface TxBackoff { baseMs?: number, maxMs?: number, factor?: number, jitter?: boolean }
+interface TxLoggerEvent { type: 'start' | 'retry' | 'commit' | 'rollback' | 'error', attempt: number, error?: any, durationMs?: number }
+export interface TransactionOptions {
+  retries?: number
+  isolation?: TransactionIsolation
+  onRetry?: (attempt: number, error: any) => void
+  afterCommit?: () => void
+  sqlStates?: string[]
+  backoff?: TxBackoff
+  logger?: (event: TxLoggerEvent) => void
+}
+
+function matchesSqlState(err: any, states?: string[]): boolean {
+  if (!states || states.length === 0)
+    return false
+  const code = (err && (err.code || err.sqlState || err.sqlstate)) as string | undefined
+  if (!code)
+    return false
+  return states.includes(code)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function computeBackoffMs(attempt: number, cfg?: TxBackoff): number {
+  const base = Math.max(1, cfg?.baseMs ?? 50)
+  const factor = Math.max(1, cfg?.factor ?? 2)
+  const max = Math.max(base, cfg?.maxMs ?? 2000)
+  let ms = Math.min(max, base * (factor ** Math.max(0, attempt - 1)))
+  if (cfg?.jitter) {
+    const jitter = Math.random() * ms * 0.2
+    ms = ms - jitter / 2
+  }
+  return Math.floor(ms)
+}
+
 export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Partial<InternalState>): QueryBuilder<DB> {
   const _sql = state?.sql ?? bunSql
   const meta = state?.meta
@@ -258,7 +331,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const parentTable = String(table)
         const parentPk = meta.primaryKeys[parentTable] ?? 'id'
 
-        const singularize = (name: string) => name.endsWith('s') ? name.slice(0, -1) : name
+        const singularize = (name: string) => {
+          if (config.relations.singularizeStrategy === 'none')
+            return name
+          return name.endsWith('s') ? name.slice(0, -1) : name
+        }
 
         for (const rel of relations) {
           const maybeModel = rel
@@ -347,7 +424,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       inRandomOrder() {
-        built = bunSql`${built} ORDER BY RANDOM()`
+        const rnd = config.sql.randomFunction === 'RAND()' ? bunSql`RAND()` : bunSql`RANDOM()`
+        built = bunSql`${built} ORDER BY ${rnd}`
         return this as any
       },
       reorder(column: string, direction: 'asc' | 'desc' = 'asc') {
@@ -355,12 +433,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       latest(column?: any) {
-        const col = column ?? 'created_at'
+        const col = column ?? config.timestamps.defaultOrderColumn
         built = bunSql`${built} ORDER BY ${bunSql(String(col))} DESC`
         return this as any
       },
       oldest(column?: any) {
-        const col = column ?? 'created_at'
+        const col = column ?? config.timestamps.defaultOrderColumn
         built = bunSql`${built} ORDER BY ${bunSql(String(col))} ASC`
         return this as any
       },
@@ -422,7 +500,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           parts.push(bunSql`${bunSql(parent)}.*`)
         for (const jt of joinedTables) {
           const cols = Object.keys((schema as any)[jt]?.columns ?? {})
-          for (const c of cols) parts.push(bunSql`${bunSql(`${jt}.${c}`)} AS ${bunSql(`${jt}_${c}`)}`)
+          for (const c of cols) {
+            const alias = config.aliasing.relationColumnAliasFormat === 'camelCase'
+              ? `${jt}_${c}`.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase())
+              : config.aliasing.relationColumnAliasFormat === 'table.dot.column'
+                ? `${jt}.${c}`
+                : `${jt}_${c}`
+            parts.push(bunSql`${bunSql(`${jt}.${c}`)} AS ${bunSql(alias)}`)
+          }
         }
         if (parts.length > 0) {
           built = bunSql`SELECT ${bunSql(parts as any)} FROM ${bunSql(parent)} ${bunSql``}`
@@ -565,12 +650,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const q = bunSql`EXPLAIN ${built}`
         return await (q as any).execute()
       },
+      simple() {
+        return (built as any).simple()
+      },
+      toText() {
+        if (!config.debug?.captureText)
+          return ''
+        return String(built)
+      },
       lockForUpdate() {
         built = bunSql`${built} FOR UPDATE`
         return this as any
       },
       sharedLock() {
-        built = bunSql`${built} FOR SHARE`
+        const syntax = config.sql.sharedLockSyntax === 'LOCK IN SHARE MODE' ? bunSql`LOCK IN SHARE MODE` : bunSql`FOR SHARE`
+        built = bunSql`${built} ${syntax}`
         return this as any
       },
       withCTE(name: string, sub: any) {
@@ -600,6 +694,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   }
 
   return {
+    // Create a builder with per-instance option overrides
+    configure(opts: Partial<typeof config>) {
+      // This keeps types simple; for now, users can set global config via import
+      Object.assign(config, opts)
+      return this as any
+    },
     select(table, ...columns) {
       return makeSelect<any>(table, columns as string[])
     },
@@ -722,11 +822,137 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     raw(strings: TemplateStringsArray, ...values: any[]) {
       return bunSql(strings, ...values)
     },
-    async transaction(fn) {
-      return await (bunSql as any).begin(async (tx: any) => {
-        const qb = createQueryBuilder<DB>({ sql: tx })
+    simple(strings: TemplateStringsArray, ...values: any[]) {
+      return (bunSql(strings, ...values) as any).simple()
+    },
+    unsafe(query: string, params?: any[]) {
+      return (bunSql as any).unsafe(query, params)
+    },
+    file(path: string, params?: any[]) {
+      return (bunSql as any).file(path, params)
+    },
+    async reserve() {
+      const reserved = await (bunSql as any).reserve()
+      const qb = createQueryBuilder<DB>({ sql: reserved, meta, schema }) as any
+      qb.release = () => reserved.release()
+      return qb
+    },
+    async close(opts?: { timeout?: number }) {
+      await (bunSql as any).close(opts)
+    },
+    async listen(channel: string, handler?: (payload: any) => void) {
+      // Placeholder until Bun exposes LISTEN/NOTIFY API. Use a polling fallback or raw SQL when available
+      // await (bunSql as any)`LISTEN ${bunSql(channel)}`
+      if (handler) {
+        // Users can wire their own NOTIFY handling with triggers/server side until native support lands
+      }
+    },
+    async unlisten(_channel?: string) {
+      // Placeholder for UNLISTEN channel/all
+    },
+    async notify(_channel: string, _payload?: any) {
+      // Placeholder; when Bun exposes, use NOTIFY channel, 'payload'
+      // await (bunSql as any)`NOTIFY ${bunSql(channel)}, ${bunSql(JSON.stringify(payload ?? null))}`
+    },
+    async copyTo(_queryOrTable: string, _options?: Record<string, any>) {
+      // Placeholder for future COPY support
+      throw new Error('COPY TO is not yet supported by Bun.sql; placeholder')
+    },
+    async copyFrom(_queryOrTable: string, _source: AsyncIterable<any> | Iterable<any>, _options?: Record<string, any>) {
+      // Placeholder for future COPY support
+      throw new Error('COPY FROM is not yet supported by Bun.sql; placeholder')
+    },
+    async ping() {
+      try {
+        const q = bunSql`SELECT 1`
+        await (q as any).execute()
+        return true
+      }
+      catch {
+        return false
+      }
+    },
+    async waitForReady(opts?: { attempts?: number, delayMs?: number }) {
+      const attempts = Math.max(1, opts?.attempts ?? 10)
+      const delay = Math.max(10, opts?.delayMs ?? 100)
+      for (let i = 0; i < attempts; i++) {
+        if (await (this as any).ping())
+          return
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+      throw new Error('Database not ready after waiting')
+    },
+    async transaction(fn, options) {
+      const defaults = state?.txDefaults
+      const opts: TransactionOptions = { ...defaults, ...options }
+      const runWith = async (attempt: number): Promise<any> => {
+        opts.logger?.({ type: 'start', attempt })
+        const start = Date.now()
+        return await (bunSql as any).begin(async (tx: any) => {
+          const qb = createQueryBuilder<DB>({ sql: tx, meta, schema })
+          if (opts?.isolation) {
+            const level = opts.isolation
+            const lvl = level === 'read committed' ? bunSql`READ COMMITTED` : level === 'repeatable read' ? bunSql`REPEATABLE READ` : bunSql`SERIALIZABLE`
+            await (tx as any)`${bunSql`SET TRANSACTION ISOLATION LEVEL`} ${lvl}`.execute()
+          }
+          const res = await fn(qb)
+          const durationMs = Date.now() - start
+          opts.logger?.({ type: 'commit', attempt, durationMs })
+          return res
+        })
+      }
+      const retries = Math.max(0, opts?.retries ?? 0)
+      let attempt = 0
+      // Retry on common serialization/deadlock errors
+      for (;;) {
+        try {
+          const out = await runWith(attempt + 1)
+          opts?.afterCommit?.()
+          return out
+        }
+        catch (err: any) {
+          const retriable = isRetriableTxError(err) || matchesSqlState(err, opts.sqlStates)
+          if (attempt < retries && retriable) {
+            attempt++
+            opts?.onRetry?.(attempt, err)
+            const delay = computeBackoffMs(attempt, opts.backoff)
+            if (delay > 0)
+              await sleep(delay)
+            continue
+          }
+          throw err
+        }
+      }
+    },
+    async savepoint(fn) {
+      const s: any = _sql
+      if (!s || typeof s.savepoint !== 'function')
+        throw new Error('savepoint() must be called inside a transaction')
+      return await s.savepoint(async (sp: any) => {
+        const qb = createQueryBuilder<DB>({ sql: sp, meta, schema })
         return await fn(qb)
       })
+    },
+    async beginDistributed(name, fn) {
+      const res = await (bunSql as any).beginDistributed(name, async (tx: any) => {
+        const qb = createQueryBuilder<DB>({ sql: tx, meta, schema })
+        return await fn(qb)
+      })
+      return res as any
+    },
+    async commitDistributed(name) {
+      await (bunSql as any).commitDistributed(name)
+    },
+    async rollbackDistributed(name) {
+      await (bunSql as any).rollbackDistributed(name)
+    },
+    setTransactionDefaults(defaults) {
+      state = { ...state, txDefaults: { ...state?.txDefaults, ...defaults } }
+    },
+    transactional(fn, options) {
+      return ((...args: unknown[]) => {
+        return (this as any).transaction((tx: any) => fn(tx, ...(args as any)), options)
+      }) as any
     },
     async insertOrIgnore(table, values) {
       const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} ON CONFLICT DO NOTHING`
