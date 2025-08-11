@@ -235,7 +235,7 @@ See the Pagination page for details. Highlights:
 await db.selectFrom('users').paginate(25, 1)
 await db.selectFrom('users').simplePaginate(25)
 await db.selectFrom('users').cursorPaginate(100, undefined, 'id', 'asc')
-await db.selectFrom('users').chunkById(1000, 'id', async batch => { /* ... */ })
+await db.selectFrom('users').chunkById(1000, 'id', async (batch) => { /* ... */ })
 ```
 
 ## CTEs and Recursive Queries

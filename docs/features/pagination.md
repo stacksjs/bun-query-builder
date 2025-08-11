@@ -87,7 +87,7 @@ Implementation details:
 Paginates using `paginate()` internally and invokes `handler(rows)` per page until exhausted.
 
 ```ts
-await db.selectFrom('users').chunk(1000, async rows => {
+await db.selectFrom('users').chunk(1000, async (rows) => {
   // process each page of 1000
 })
 ```
@@ -97,7 +97,7 @@ await db.selectFrom('users').chunk(1000, async rows => {
 Paginates using `cursorPaginate()` for memory-friendly processing.
 
 ```ts
-await db.selectFrom('users').chunkById(1000, 'id', async rows => {
+await db.selectFrom('users').chunkById(1000, 'id', async (rows) => {
   // process 1000 rows at a time
 })
 ```
@@ -107,7 +107,7 @@ await db.selectFrom('users').chunkById(1000, 'id', async rows => {
 Iterates row-by-row using `chunkById`.
 
 ```ts
-await db.selectFrom('users').eachById(500, 'id', async row => {
+await db.selectFrom('users').eachById(500, 'id', async (row) => {
   // process row
 })
 ```
@@ -133,7 +133,7 @@ do {
 } while (cursor)
 
 // background export
-await db.selectFrom('orders').chunkById(1000, 'id', async batch => {
+await db.selectFrom('orders').chunkById(1000, 'id', async (batch) => {
   // write batch to file
 })
 ```

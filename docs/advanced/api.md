@@ -8,13 +8,15 @@ This page summarizes method signatures and brief descriptions. See feature pages
 
 ```ts
 import {
+  buildDatabaseSchema,
+  buildSchemaMeta, // types/config
+  config,
   // builder
   createQueryBuilder,
+  defaultConfig,
   // schema
-  defineModel, defineModels,
-  buildDatabaseSchema, buildSchemaMeta,
-  // types/config
-  config, defaultConfig,
+  defineModel,
+  defineModels,
 } from 'bun-query-builder'
 ```
 

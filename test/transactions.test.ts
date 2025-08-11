@@ -24,4 +24,21 @@ describe('transactions API shape', () => {
     expect(typeof db.savepoint).toBe('function')
     expect(typeof db.beginDistributed).toBe('function')
   })
+
+  it('savepoint throws outside an active transaction', async () => {
+    const db = qb()
+    await expect(db.savepoint(async () => {})).rejects.toThrow('savepoint() must be called inside a transaction')
+  })
+
+  it('transactional returns a function without executing', () => {
+    const db = qb()
+    const wrapped = db.transactional(async () => 'ok')
+    expect(typeof wrapped).toBe('function')
+  })
+
+  it('setTransactionDefaults/configure are callable', () => {
+    const db = qb()
+    expect(() => db.setTransactionDefaults({ retries: 3 })).not.toThrow()
+    expect(() => db.configure({ debug: { captureText: false } } as any)).not.toThrow()
+  })
 })

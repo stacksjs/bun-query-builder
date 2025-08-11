@@ -9,4 +9,11 @@ describe('config defaults', () => {
     expect(config.pagination.defaultPerPage).toBeGreaterThan(0)
     expect(config.transactionDefaults.retries).toBeGreaterThanOrEqual(0)
   })
+
+  it('includes sql and feature toggles', () => {
+    expect(['RANDOM()', 'RAND()']).toContain(config.sql.randomFunction)
+    expect(['FOR SHARE', 'LOCK IN SHARE MODE']).toContain(config.sql.sharedLockSyntax)
+    expect(['operator', 'function']).toContain(config.sql.jsonContainsMode)
+    expect(typeof config.features.distinctOn).toBe('boolean')
+  })
 })

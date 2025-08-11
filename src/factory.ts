@@ -1,4 +1,4 @@
-import type { DatabaseSchema, InferTableName, ModelRecord } from './schema'
+import type { DatabaseSchema, ModelRecord } from './schema'
 
 export type BuildDatabaseSchema<MRecord extends ModelRecord> = DatabaseSchema<MRecord>
 
