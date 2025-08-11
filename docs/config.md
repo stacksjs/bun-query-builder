@@ -1,67 +1,48 @@
 # Configuration
 
-_This is just an example of the ts-starter docs._
-
-The Reverse Proxy can be configured using a `reverse-proxy.config.ts` _(or `reverse-proxy.config.js`)_ file and it will be automatically loaded when running the `reverse-proxy` command.
+All defaults can be overridden via `import { config } from 'bun-query-builder'`.
 
 ```ts
-// reverse-proxy.config.{ts,js}
-import type { ReverseProxyOptions } from '@stacksjs/rpx'
-import os from 'node:os'
-import path from 'node:path'
+import { config } from 'bun-query-builder'
 
-const config: ReverseProxyOptions = {
-  /**
-   * The from URL to proxy from.
-   * Default: localhost:5173
-   */
-  from: 'localhost:5173',
+config.dialect = 'postgres'
+config.sql.randomFunction = 'RANDOM()'
+config.sql.sharedLockSyntax = 'FOR SHARE'
+config.sql.jsonContainsMode = 'operator'
+config.aliasing.relationColumnAliasFormat = 'table_column'
+config.relations.singularizeStrategy = 'stripTrailingS'
+config.transactionDefaults.retries = 2
+```
 
-  /**
-   * The to URL to proxy to.
-   * Default: stacks.localhost
-   */
-  to: 'stacks.localhost',
+### Options
 
-  /**
-   * The HTTPS settings.
-   * Default: true
-   * If set to false, the proxy will use HTTP.
-   * If set to true, the proxy will use HTTPS.
-   * If set to an object, the proxy will use HTTPS with the provided settings.
-   */
-  https: {
-    domain: 'stacks.localhost',
-    hostCertCN: 'stacks.localhost',
-    caCertPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.ca.crt`),
-    certPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt`),
-    keyPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt.key`),
-    altNameIPs: ['127.0.0.1'],
-    altNameURIs: ['localhost'],
-    organizationName: 'stacksjs.org',
-    countryName: 'US',
-    stateName: 'California',
-    localityName: 'Playa Vista',
-    commonName: 'stacks.localhost',
-    validityDays: 180,
-    verbose: false,
-  },
-
-  /**
-   * The verbose setting.
-   * Default: false
-   * If set to true, the proxy will log more information.
-   */
-  verbose: false,
+```ts
+export interface QueryBuilderConfig {
+  verbose: boolean
+  dialect: 'postgres' | 'mysql' | 'sqlite'
+  timestamps: { createdAt: string, updatedAt: string, defaultOrderColumn: string }
+  pagination: { defaultPerPage: number, cursorColumn: string }
+  aliasing: { relationColumnAliasFormat: 'table_column' | 'table.dot.column' | 'camelCase' }
+  relations: { foreignKeyFormat: 'singularParent_id' | 'parentId', singularizeStrategy?: 'stripTrailingS' | 'none' }
+  transactionDefaults: { retries: number, isolation?: 'read committed' | 'repeatable read' | 'serializable', sqlStates: string[], backoff: { baseMs: number, factor: number, maxMs: number, jitter: boolean } }
+  sql: { randomFunction?: 'RANDOM()' | 'RAND()', sharedLockSyntax?: 'FOR SHARE' | 'LOCK IN SHARE MODE', jsonContainsMode?: 'operator' | 'function' }
+  features: { distinctOn: boolean }
+  debug?: { captureText: boolean }
 }
-
-export default config
 ```
 
-_Then run:_
+### Best Practices
 
-```bash
-./rpx start
+- Align `sql.randomFunction` and `sql.sharedLockSyntax` with your dialect.
+- Use `operator` JSON mode for PG (`@>`), `function` for MySQL (`JSON_CONTAINS`).
+- Enable `debug.captureText` only for local debugging.
+
+### Examples
+
+```ts
+// MySQL-style config
+config.dialect = 'mysql'
+config.sql.randomFunction = 'RAND()'
+config.sql.sharedLockSyntax = 'LOCK IN SHARE MODE'
+config.sql.jsonContainsMode = 'function'
 ```
-
-To learn more, head over to the [documentation](https://reverse-proxy.sh/).

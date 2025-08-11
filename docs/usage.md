@@ -1,89 +1,79 @@
-# Get Started
+# Usage
 
-There are two ways of using this reverse proxy: _as a library or as a CLI._
+There are two ways to use bun-query-builder: as a library and via the CLI.
 
 ## Library
 
-Given the npm package is installed:
-
 ```ts
-import type { TlsConfig } from '@stacksjs/rpx'
-import { startProxy } from '@stacksjs/rpx'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from 'bun-query-builder'
 
-export interface CleanupConfig {
-  hosts: boolean // clean up /etc/hosts, defaults to false
-  certs: boolean // clean up certificates, defaults to false
-}
+const models = {
+  User: {
+    name: 'User',
+    table: 'users',
+    primaryKey: 'id',
+    attributes: { id: { validation: { rule: {} } }, name: { validation: { rule: {} } }, active: { validation: { rule: {} } } },
+  },
+} as const
 
-export interface ReverseProxyConfig {
-  from: string // domain to proxy from, defaults to localhost:3000
-  to: string // domain to proxy to, defaults to stacks.localhost
-  cleanUrls?: boolean // removes the .html extension from URLs, defaults to false
-  https: boolean | TlsConfig // automatically uses https, defaults to true, also redirects http to https
-  cleanup?: boolean | CleanupConfig // automatically cleans up /etc/hosts, defaults to false
-  verbose: boolean // log verbose output, defaults to false
-}
+const schema = buildDatabaseSchema(models as any)
+const meta = buildSchemaMeta(models as any)
+const db = createQueryBuilder<typeof schema>({ schema, meta })
 
-const config: ReverseProxyOptions = {
-  from: 'localhost:3000',
-  to: 'my-docs.localhost',
-  cleanUrls: true,
-  https: true,
-  cleanup: false,
-}
+// SELECT * FROM users WHERE active = true LIMIT 10
+const users = await db.selectFrom('users').where({ active: true }).limit(10).execute()
 
-startProxy(config)
+// Insert
+await db.insertInto('users').values({ name: 'Alice' }).execute()
+
+// Update
+await db.updateTable('users').set({ name: 'Bob' }).where(['id', '=', 1]).execute()
+
+// Delete
+await db.deleteFrom('users').where({ id: 2 }).execute()
+
+// Transactions with retries
+await db.transaction(async (tx) => {
+  await tx.insertInto('users').values({ name: 'Zed' }).execute()
+}, { retries: 3, isolation: 'serializable' })
+
+// Relations
+const rows = await db
+  .selectFrom('users')
+  .with('Project')
+  .selectAllRelations()
+  .limit(10)
+  .execute()
 ```
 
-In case you are trying to start multiple proxies, you may use this configuration:
+### Best Practices
 
-```ts
-// reverse-proxy.config.{ts,js}
-import type { ReverseProxyOptions } from '@stacksjs/rpx'
-import os from 'node:os'
-import path from 'node:path'
-
-const config: ReverseProxyOptions = {
-  https: { // https: true -> also works with sensible defaults
-    caCertPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.ca.crt`),
-    certPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt`),
-    keyPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt.key`),
-  },
-
-  cleanup: {
-    hosts: true,
-    certs: false,
-  },
-
-  proxies: [
-    {
-      from: 'localhost:5173',
-      to: 'my-app.localhost',
-      cleanUrls: true,
-    },
-    {
-      from: 'localhost:5174',
-      to: 'my-api.local',
-    },
-  ],
-
-  verbose: true,
-}
-
-export default config
-```
+- Keep model attribute keys in snake_case to align with SQL defaults.
+- Prefer `where({})` for simple equality, and tuples for explicit operators.
+- Use `paginate/simplePaginate/cursorPaginate` instead of manual LIMIT/OFFSET when building UIs.
 
 ## CLI
 
 ```bash
-rpx --from localhost:3000 --to my-project.localhost
-rpx --from localhost:8080 --to my-project.test --keyPath ./key.pem --certPath ./cert.pem
-rpx --help
-rpx --version
+# Print inferred schema from model dir
+query-builder introspect ./app/Models --verbose
+
+# Print a sample SQL (text) for a table
+query-builder sql ./app/Models users --limit 5
+
+# Connectivity:
+query-builder ping
+query-builder wait-ready --attempts 30 --delay 250
+
+# Execute a file or unsafe string (be careful!)
+query-builder file ./migrations/seed.sql
+query-builder unsafe "SELECT * FROM users WHERE id = $1" --params "[1]"
+
+# Explain a query
+query-builder explain "SELECT * FROM users WHERE active = true"
 ```
 
-## Testing
+### Best Practices
 
-```bash
-bun test
-```
+- Keep CLI in CI to smoke-test DB readiness with `wait-ready`.
+- Prefer `file` for SQL scripts and `unsafe` only for trusted strings.

@@ -1,59 +1,19 @@
 # Install
 
-_This is just an example of the ts-starter docs._
-
-Installing `rpx` is easy. Simply pull it in via your package manager of choice, or download the binary directly.
-
-## Package Managers
-
-Choose your package manager of choice:
+Install via your package manager:
 
 ::: code-group
 
-```sh [npm]
-npm install --save-dev @stacksjs/rpx
-# npm i -d @stacksjs/rpx
-
-# or, install globally via
-npm i -g @stacksjs/rpx
-```
-
 ```sh [bun]
-bun install --dev @stacksjs/rpx
-# bun add --dev @stacksjs/rpx
-# bun i -d @stacksjs/rpx
-
-# or, install globally via
-bun add --global @stacksjs/rpx
-```
-
-```sh [pnpm]
-pnpm add --save-dev @stacksjs/rpx
-# pnpm i -d @stacksjs/rpx
-
-# or, install globally via
-pnpm add --global @stacksjs/rpx
-```
-
-```sh [yarn]
-yarn add --dev @stacksjs/rpx
-# yarn i -d @stacksjs/rpx
-
-# or, install globally via
-yarn global add @stacksjs/rpx
-```
-
-```sh [brew]
-brew install rpx # coming soon
-```
-
-```sh [pkgx]
-pkgx rpx # coming soon
+bun add bun-query-builder
 ```
 
 :::
 
-Read more about how to use it in the Usage section of the documentation.
+### Requirements
+
+- Bun 1.2.20+
+- A PostgreSQL database _(MySQL/SQLite planned per Bun roadmap)_
 
 ## Binaries
 
@@ -63,56 +23,60 @@ Choose the binary that matches your platform and architecture:
 
 ```sh [macOS (arm64)]
 # Download the binary
-curl -L https://github.com/stacksjs/rpx/releases/download/v0.9.1/rpx-darwin-arm64 -o rpx
+curl -L https://github.com/stacksjs/bun-query-builder/releases/download/v0.9.1/query-builder-darwin-arm64 -o query-builder
 
 # Make it executable
-chmod +x rpx
+chmod +x query-builder
 
 # Move it to your PATH
-mv rpx /usr/local/bin/rpx
+mv query-builder /usr/local/bin/query-builder
 ```
 
 ```sh [macOS (x64)]
 # Download the binary
-curl -L https://github.com/stacksjs/rpx/releases/download/v0.9.1/rpx-darwin-x64 -o rpx
+curl -L https://github.com/stacksjs/bun-query-builder/releases/download/v0.9.1/query-builder-darwin-x64 -o query-builder
 
 # Make it executable
-chmod +x rpx
+chmod +x query-builder
 
 # Move it to your PATH
-mv rpx /usr/local/bin/rpx
+mv query-builder /usr/local/bin/query-builder
 ```
 
 ```sh [Linux (arm64)]
 # Download the binary
-curl -L https://github.com/stacksjs/rpx/releases/download/v0.9.1/rpx-linux-arm64 -o rpx
+curl -L https://github.com/stacksjs/bun-query-builder/releases/download/v0.9.1/query-builder-linux-arm64 -o query-builder
 
 # Make it executable
-chmod +x rpx
+chmod +x query-builder
 
 # Move it to your PATH
-mv rpx /usr/local/bin/rpx
+mv query-builder /usr/local/bin/query-builder
 ```
 
 ```sh [Linux (x64)]
 # Download the binary
-curl -L https://github.com/stacksjs/rpx/releases/download/v0.9.1/rpx-linux-x64 -o rpx
+curl -L https://github.com/stacksjs/bun-query-builder/releases/download/v0.9.1/query-builder-linux-x64 -o query-builder
 
 # Make it executable
-chmod +x rpx
+chmod +x query-builder
 
 # Move it to your PATH
-mv rpx /usr/local/bin/rpx
+mv query-builder /usr/local/bin/query-builder
 ```
 
 ```sh [Windows (x64)]
 # Download the binary
-curl -L https://github.com/stacksjs/rpx/releases/download/v0.9.1/rpx-windows-x64.exe -o rpx.exe
+curl -L https://github.com/stacksjs/bun-query-builder/releases/download/v0.9.1/query-builder-windows-x64.exe -o query-builder.exe
 
 # Move it to your PATH (adjust the path as needed)
-move rpx.exe C:\Windows\System32\rpx.exe
+move query-builder.exe C:\Windows\System32\query-builder.exe
 ```
 
 ::: tip
-You can also find the `rpx` binaries in GitHub [releases](https://github.com/stacksjs/rpx/releases).
+You can also find the `query-builder` binaries in GitHub [releases](https://github.com/stacksjs/bun-query-builder/releases).
 :::
+
+### Next steps
+
+- Head over to Usage to define your models and build your first typed query.

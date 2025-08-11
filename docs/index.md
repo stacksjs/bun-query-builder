@@ -3,9 +3,9 @@
 layout: home
 
 hero:
-  name: "ts-starter"
-  text: "For a better local environment."
-  tagline: "Modern and smart reverse proxy."
+  name: "bun-query-builder"
+  text: "Typed Query Builder for Bun.sql"
+  tagline: "Model-driven, safe, and fast"
   image: /images/logo-white.png
   actions:
     - theme: brand
@@ -13,21 +13,21 @@ hero:
       link: /intro
     - theme: alt
       text: View on GitHub
-      link: https://github.com/stacksjs/rpx
+      link: https://github.com/stacksjs/bun-query-builder
 
 features:
-  - title: "Minimal Starter Kit"
-    icon: "🔀"
-    details: "Bootstrap your next TypeScript project."
-  - title: "Documentation"
-    icon: "📚"
-    details: "Easily document your idea/package/library."
+  - title: "Typed from Models"
+    icon: "🧩"
+    details: "Infer tables/columns/PKs from your models for a Kysely-like DX."
+  - title: "Fluent & Safe"
+    icon: "🛡"
+    details: "Bun’s tagged templates under the hood for injection-safe queries."
+  - title: "Powerful Transactions"
+    icon: "🔄"
+    details: "Retries, backoff, isolation levels, savepoints, distributed."
   - title: "CLI"
     icon: "🛠"
-    details: "Build your own CLI."
-  - title: "Binary"
-    icon: "🚀"
-    details: "Automatically builds a binary for your project out of your CLI."
+    details: "Introspect models, print queries, check readiness, run files."
 ---
 
 <Home />

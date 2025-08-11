@@ -1,8 +1,6 @@
 import type { HeadConfig } from 'vitepress'
-import { transformerTwoslash } from '@shikijs/vitepress-twoslash'
 import { withPwa } from '@vite-pwa/vitepress'
 import { defineConfig } from 'vitepress'
-
 import viteConfig from './vite.config'
 
 // https://vitepress.dev/reference/site-config
@@ -60,15 +58,34 @@ const sidebar = [
       { text: 'Config', link: '/config' },
     ],
   },
-  { text: 'Showcase', link: '/Showcase' },
+  {
+    text: 'Features',
+    items: [
+      { text: 'Query Builder', link: '/features/builder' },
+      { text: 'Relations', link: '/features/relations' },
+      { text: 'Transactions', link: '/features/transactions' },
+      { text: 'Pagination', link: '/features/pagination' },
+      { text: 'CLI', link: '/features/cli' },
+    ],
+  },
+  {
+    text: 'Advanced',
+    items: [
+      { text: 'Dialects & Config', link: '/advanced/dialects' },
+      { text: 'Pool & Readiness', link: '/advanced/pool' },
+      { text: 'Debugging', link: '/advanced/debugging' },
+      { text: 'Distributed Tx', link: '/advanced/distributed' },
+    ],
+  },
+  { text: 'API Reference', link: '/api' },
 ]
-const description = 'A TypeScript Starter Kit. For a better Development Experience.'
-const title = 'ts-starter | A TypeScript Starter Kit. For a better Development Experience.'
+const description = 'Fully-typed, model-driven Query Builder for Bun’s native sql.'
+const title = 'bun-query-builder | Fully-typed Query Builder for Bun'
 
 export default withPwa(
   defineConfig({
     lang: 'en-US',
-    title: 'ts-starter',
+    title: 'bun-query-builder',
     description,
     metaChunk: true,
     cleanUrls: true,
@@ -83,7 +100,7 @@ export default withPwa(
       ['meta', { name: 'author', content: 'Stacks.js, Inc.' }],
       ['meta', {
         name: 'tags',
-        content: 'ts-starter, stacksjs, reverse proxy, modern, lightweight, zero-config, local development',
+        content: 'bun, bun sql, query builder, typescript, stacksjs',
       }],
 
       ['meta', { property: 'og:type', content: 'website' }],
@@ -91,9 +108,9 @@ export default withPwa(
       ['meta', { property: 'og:title', content: title }],
       ['meta', { property: 'og:description', content: description }],
 
-      ['meta', { property: 'og:site_name', content: 'ts-starter' }],
+      ['meta', { property: 'og:site_name', content: 'bun-query-builder' }],
       ['meta', { property: 'og:image', content: './images/og-image.jpg' }],
-      ['meta', { property: 'og:url', content: 'https://reverse-proxy.sh/' }],
+      ['meta', { property: 'og:url', content: 'https://stacksjs.org/bun-query-builder' }],
       // ['script', { 'src': 'https://cdn.usefathom.com/script.js', 'data-site': '', 'data-spa': 'auto', 'defer': '' }],
       ...analyticsHead,
     ],
@@ -121,9 +138,7 @@ export default withPwa(
       },
 
       socialLinks: [
-        { icon: 'twitter', link: 'https://twitter.com/stacksjs' },
-        { icon: 'bluesky', link: 'https://bsky.app/profile/chrisbreuer.dev' },
-        { icon: 'github', link: 'https://github.com/stacksjs/ts-starter' },
+        { icon: 'github', link: 'https://github.com/stacksjs/bun-query-builder' },
         { icon: 'discord', link: 'https://discord.gg/stacksjs' },
       ],
 
@@ -146,10 +161,6 @@ export default withPwa(
         light: 'github-light',
         dark: 'github-dark',
       },
-
-      codeTransformers: [
-        transformerTwoslash(),
-      ],
     },
 
     vite: viteConfig,
