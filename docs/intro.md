@@ -1,4 +1,4 @@
-<p align="center"><img src="/images/logo.png" alt="bun-query-builder"></p>
+<p align="center"><img src="https://github.com/stacksjs/bun-query-builder/blob/main/.github/art/cover.jpg?raw=true" alt="Social Card of this repo"></p>
 
 # bun-query-builder
 

@@ -1,6 +1,6 @@
 # Query Builder
 
-The fluent API for building type-safe SQL using Bun’s tagged template literals.
+Build type-safe SQL with a fluent API backed by Bun’s tagged template literals. All table/column types are inferred from your model files.
 
 ## Basics
 
@@ -41,6 +41,38 @@ Also `join`, `innerJoin`, `rightJoin`, `crossJoin`, `joinSub`, `leftJoinSub`, `c
 - Prefer composable helpers over raw strings where possible
 - Use `selectAllRelations()` with `with()` to alias related columns safely
 - For large result sets, prefer `paginate/simplePaginate/cursorPaginate`
+
+## API Surface
+
+- Selection
+  - `selectFrom(table)` → start a SELECT `*`
+  - `select(table, ...columns)` → select specific columns; supports `"expr as alias"`
+- Filtering
+  - `where(object)` equality map; `where([col, op, value])`; `andWhere`, `orWhere`
+  - `whereNull`, `whereNotNull`, `whereBetween`, `whereNotBetween`, `whereDate`, `whereRaw`
+  - `whereColumn`, `orWhereColumn`, `whereNested`, `orWhereNested`
+- Ordering & limits
+  - `orderBy`, `orderByDesc`, `latest(column?)`, `oldest(column?)`, `inRandomOrder()`, `reorder()`
+  - `limit`, `offset`, `forPage(page, perPage)`
+- Joins
+  - `join`, `innerJoin`, `leftJoin`, `rightJoin`, `crossJoin`
+  - Subquery joins: `joinSub`, `leftJoinSub`, `crossJoinSub`
+- Grouping & unions
+  - `groupBy`, `groupByRaw`, `having`, `havingRaw`
+  - `union`, `unionAll`
+- Modifiers
+  - `distinct`, `distinctOn(...columns)` (Postgres)
+- Execution
+  - `toSQL()` → Bun query object; `execute()`, `values()`, `raw()`, `cancel()`
+  - `simple()` → run using Postgres “simple” protocol (multi-statement, no parameters)
+  - Optional `(q as any).toText?.()` if `config.debug.captureText = true`
+
+## Insert / Update / Delete
+
+- `insertInto(table).values(object|object[])`
+- `updateTable(table).set(object).where(...)`
+- `deleteFrom(table).where(...)`
+- All support `returning(...columns)` on PG
 
 ## Examples
 
