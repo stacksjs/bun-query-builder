@@ -1,2 +1,7 @@
+export * from './client'
 export * from './config'
+export * from './factory'
+export * from './loader'
+export * from './schema'
 export * from './types'
+export * from './meta'
