@@ -90,4 +90,13 @@ describe('CLI', () => {
     const out = runCli(['--help'])
     expect(out.stdout.toLowerCase()).toContain('query-builder')
   })
+
+  it('migrate prints SQL from models', () => {
+    const dir = makeTempModelsDir()
+    const out = runCli(['migrate', dir, '--dialect', 'postgres'])
+    expect(out.code).toBe(0)
+    expect(typeof out.stdout).toBe('string')
+    expect(out.stdout.length).toBeGreaterThan(0)
+    rmSync(dir, { recursive: true, force: true })
+  })
 })

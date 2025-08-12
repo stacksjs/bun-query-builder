@@ -1,6 +1,6 @@
 import { CAC } from 'cac'
 import { version } from '../package.json'
-import { buildDatabaseSchema, createQueryBuilder, loadModels } from '../src'
+import { buildDatabaseSchema, buildMigrationPlan, createQueryBuilder, generateSql, loadModels } from '../src'
 import { config } from '../src/config'
 
 const cli = new CAC('query-builder')
@@ -83,6 +83,17 @@ cli
     const params = opts.params ? JSON.parse(opts.params) : undefined
     const res = await qb.file(path, params)
     console.log(JSON.stringify(res))
+  })
+
+cli
+  .command('migrate <dir>', 'Generate SQL migrations from models')
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .example('query-builder migrate ./app/Models --dialect postgres')
+  .action(async (dir: string, opts: any) => {
+    const models = loadModels({ modelsDir: dir })
+    const plan = buildMigrationPlan(models, { dialect: opts.dialect })
+    const sql = generateSql(plan)
+    console.log(sql)
   })
 
 cli
