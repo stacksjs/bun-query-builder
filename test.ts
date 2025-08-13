@@ -123,6 +123,7 @@ const usersByEmail = usersByEmailQ.first()
 const usersRecentQ = db.selectFrom('users').whereCreatedAt(new Date('2024-01-01')).orderBy('created_at', 'desc')
 const usersRecentHover = usersRecentQ.rows
 // db.selectFrom('users').where
+
 // Note: Uncommenting the following lines would produce TypeScript errors as intended
 // db.select('users', 'does_not_exist')
 // db.updateTable('users').set({ nope: 123 })
