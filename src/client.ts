@@ -258,8 +258,8 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
     table: TTable,
     ...columns: (K | `${string} as ${string}`)[]
   ) => SelectQueryBuilder<DB, TTable, any>
-  selectFrom: <TTable extends keyof DB & string>(table: TTable) => SelectQueryBuilder<DB, TTable, DB[TTable]['columns']>
-  insertInto: <TTable extends keyof DB & string>(table: TTable) => InsertQueryBuilder<DB, TTable>
+  selectFrom: <TTable extends keyof DB & string>(table: TTable) => TypedSelectQueryBuilder<DB, TTable, DB[TTable]['columns'], TTable, `SELECT ${string} FROM ${TTable}`>
+  insertInto: <TTable extends keyof DB & string>(table: TTable) => TypedInsertQueryBuilder<DB, TTable>
   updateTable: <TTable extends keyof DB & string>(table: TTable) => UpdateQueryBuilder<DB, TTable>
   deleteFrom: <TTable extends keyof DB & string>(table: TTable) => DeleteQueryBuilder<DB, TTable>
   selectFromSub: (sub: { toSQL: () => any }, alias: string) => SelectQueryBuilder<DB, keyof DB & string, any>
@@ -299,6 +299,27 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
   insertGetId: <TTable extends keyof DB & string>(table: TTable, values: Partial<DB[TTable]['columns']>, idColumn?: keyof DB[TTable]['columns'] & string) => Promise<any>
   updateOrInsert: <TTable extends keyof DB & string>(table: TTable, match: Partial<DB[TTable]['columns']>, values: Partial<DB[TTable]['columns']>) => Promise<boolean>
   upsert: <TTable extends keyof DB & string>(table: TTable, rows: Partial<DB[TTable]['columns']>[], conflictColumns: (keyof DB[TTable]['columns'] & string)[], mergeColumns?: (keyof DB[TTable]['columns'] & string)[]) => Promise<any>
+}
+
+// Typed INSERT builder to expose a structured SQL literal in hovers
+export type TypedInsertQueryBuilder<
+  DB extends DatabaseSchema<any>,
+  TTable extends keyof DB & string,
+  TSql extends string = `INSERT INTO ${TTable}`,
+> = Omit<InsertQueryBuilder<DB, TTable>, 'toSQL' | 'values' | 'returning'> & {
+  toSQL: () => TSql
+  values: (
+    data: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[],
+  ) => TypedInsertQueryBuilder<DB, TTable, `${TSql} ${string}`>
+  returning: <K extends keyof DB[TTable]['columns'] & string>(
+    ...cols: K[]
+  ) => TypedSelectQueryBuilder<
+    DB,
+    TTable,
+    Pick<DB[TTable]['columns'], K>,
+    TTable,
+    `${TSql} RETURNING ${string}`
+  >
 }
 
 interface InternalState {
@@ -991,7 +1012,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     select(table, ...columns) {
       return makeSelect<any>(table, columns as string[])
     },
-    selectFrom(table) {
+    selectFrom<TTable extends keyof DB & string>(table: TTable) {
       return makeSelect<any>(table)
     },
     selectFromSub(sub, alias) {
@@ -1015,14 +1036,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         },
       } as any
     },
-    insertInto(table) {
+    insertInto<TTable extends keyof DB & string>(table: TTable) {
       let built = bunSql`INSERT INTO ${bunSql(String(table))}`
-      return {
-        values(data) {
+      const api: any = {
+        values(data: Partial<any> | Partial<any>[]) {
           built = bunSql`${built} ${bunSql(data as any)}`
-          return this
+          return api
         },
-        returning(...cols) {
+        returning(...cols: (keyof any & string)[]) {
           const q = bunSql`${built} RETURNING ${bunSql(cols as any)}`
           const obj: any = {
             where: () => obj,
@@ -1043,6 +1064,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return (built as any).execute()
         },
       }
+      return api as TypedInsertQueryBuilder<DB, TTable>
     },
     updateTable(table) {
       let built = bunSql`UPDATE ${bunSql(String(table))}`
