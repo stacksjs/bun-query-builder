@@ -5,13 +5,13 @@
   "description": "A simple yet performant query builder for TypeScript. Built with Bun.",
   "author": "Chris Breuer <chris@stacksjs.org>",
   "license": "MIT",
-  "homepage": "https://github.com/stacksjs/ts-starter#readme",
+  "homepage": "https://github.com/stacksjs/bun-query-builder#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/stacksjs/ts-starter.git"
+    "url": "git+https://github.com/stacksjs/bun-query-builder.git"
   },
   "bugs": {
-    "url": "https://github.com/stacksjs/ts-starter/issues"
+    "url": "https://github.com/stacksjs/bun-query-builder/issues"
   },
   "keywords": ["typescript", "query-builder", "bun", "package"],
   "exports": {
@@ -63,10 +63,10 @@
     "@stacksjs/docs": "^0.70.23",
     "@stacksjs/eslint-config": "^4.14.0-beta.3",
     "@types/bun": "^1.2.20",
-    "buddy-bot": "^0.7.8",
+    "buddy-bot": "^0.7.9",
     "bumpp": "^10.2.2",
     "bun-plugin-dtsx": "0.9.5",
-    "bunfig": "^0.11.1",
+    "bunfig": "^0.14.1",
     "changelogen": "^0.6.2",
     "lint-staged": "^16.1.5",
     "simple-git-hooks": "^2.13.1",
