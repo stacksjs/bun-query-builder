@@ -106,8 +106,8 @@ export interface SelectQueryBuilder<
   withCTE: (name: string, sub: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   withRecursive: (name: string, sub: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // results helpers
-  value: (column: string) => Promise<any>
-  pluck: (column: string) => Promise<any[]>
+  value: <K extends keyof TSelected & string>(column: K) => Promise<TSelected[K]>
+  pluck: <K extends keyof TSelected & string>(column: K) => Promise<TSelected[K][]>
   exists: () => Promise<boolean>
   doesntExist: () => Promise<boolean>
   cursorPaginate: (perPage: number, cursor?: string | number, column?: string, direction?: 'asc' | 'desc') => Promise<{ data: any[], meta: { perPage: number, nextCursor: string | number | null } }>
@@ -121,10 +121,10 @@ export interface SelectQueryBuilder<
   explain: () => Promise<any[]>
   simple: () => any
   toText?: () => string
-  paginate: (perPage: number, page?: number) => Promise<{ data: any[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
-  simplePaginate: (perPage: number, page?: number) => Promise<{ data: any[], meta: { perPage: number, page: number, hasMore: boolean } }>
+  paginate: (perPage: number, page?: number) => Promise<{ data: TSelected[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
+  simplePaginate: (perPage: number, page?: number) => Promise<{ data: TSelected[], meta: { perPage: number, page: number, hasMore: boolean } }>
   toSQL: () => any
-  execute: () => QueryResult
+  execute: () => Promise<TSelected[]>
   values: () => Promise<any[][]>
   raw: () => Promise<any[][]>
   cancel: () => void
@@ -134,7 +134,7 @@ export interface InsertQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
   values: (data: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[]) => InsertQueryBuilder<DB, TTable>
   returning: <K extends keyof DB[TTable]['columns'] & string>(...cols: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
   toSQL: () => any
-  execute: () => QueryResult
+  execute: () => Promise<number | DB[TTable]['columns'] | DB[TTable]['columns'][]>
 }
 
 export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
@@ -142,14 +142,14 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
   where: (expr: WhereExpression<DB[TTable]['columns']>) => UpdateQueryBuilder<DB, TTable>
   returning: <K extends keyof DB[TTable]['columns'] & string>(...cols: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
   toSQL: () => any
-  execute: () => QueryResult
+  execute: () => Promise<number>
 }
 
 export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
   where: (expr: WhereExpression<DB[TTable]['columns']>) => DeleteQueryBuilder<DB, TTable>
   returning: <K extends keyof DB[TTable]['columns'] & string>(...cols: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
   toSQL: () => any
-  execute: () => QueryResult
+  execute: () => Promise<number>
 }
 
 export interface QueryBuilder<DB extends DatabaseSchema<any>> {

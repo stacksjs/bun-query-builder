@@ -2,6 +2,8 @@
 
 export type ValidatorMessage = Record<string, string>
 
+// External validator rule type (compatible with ts-validation). We keep it broad
+// to avoid a hard dependency while still enabling type inference via rule shape.
 export type ValidationType = unknown
 
 export interface Attribute {
@@ -47,14 +49,8 @@ export interface ModelOptions extends Base {
   primaryKey?: string
   autoIncrement?: boolean
   indexes?: CompositeIndex[]
-  dashboard?: {
-    highlight?: boolean | number
-  }
-
   traits?: Record<string, unknown>
-
   attributes?: AttributesElements
-
   hasOne?: HasOne<ModelNames> | ModelNames[]
   hasMany?: HasMany<ModelNames> | ModelNames[]
   belongsTo?: BelongsTo<ModelNames> | ModelNames[]
@@ -63,15 +59,12 @@ export interface ModelOptions extends Base {
   morphOne?: MorphOne<ModelNames> | ModelNames
   morphMany?: MorphMany<ModelNames>[] | ModelNames[]
   morphTo?: MorphTo
-
   scopes?: {
     [key: string]: (value: any) => any
   }
-
   get?: {
     [key: string]: (value: any) => any
   }
-
   set?: {
     [key: string]: (value: any) => any
   }
@@ -79,7 +72,8 @@ export interface ModelOptions extends Base {
 
 export type ModelDefinition = Readonly<ModelOptions>
 
-export type ModelRecord = Record<string, ModelDefinition>
+// Keep ModelRecord flexible so we preserve literal attribute keys/types
+export type ModelRecord = Record<string, any>
 
 export function defineModel<const T extends ModelDefinition>(model: T): T {
   return model
@@ -89,10 +83,18 @@ export function defineModels<const T extends ModelRecord>(models: T): T {
   return models
 }
 
+type ExtractRuleInput<R> = R extends { validate: (value: infer T) => any }
+  ? T
+  : R extends { test: (value: infer T) => any }
+    ? T
+    : R extends { getRules: () => Array<{ test: (value: infer T) => any }> }
+      ? T
+      : unknown
+
 export type InferAttributes<M extends ModelDefinition> = M extends {
-  attributes: infer A extends AttributesElements
+  attributes: infer A extends Record<string, { validation: { rule: any } }>
 }
-  ? { [K in keyof A & string]: unknown }
+  ? { [K in keyof A & string]: ExtractRuleInput<A[K]['validation']['rule']> }
   : Record<string, unknown>
 
 export type InferPrimaryKey<M extends ModelDefinition> = M extends {
