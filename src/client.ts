@@ -24,15 +24,61 @@ type JoinColumn<DB extends DatabaseSchema<any>, TTables extends string> = TTable
   ? `${TTables}.${keyof DB[TTables]['columns'] & string}`
   : never
 
+// Convert snake_case to PascalCase at the type level (e.g. created_at -> CreatedAt)
+type SnakeToPascal<S extends string> = S extends `${infer H}_${infer T}`
+  ? `${Capitalize<H>}${SnakeToPascal<T>}`
+  : Capitalize<S>
+
+// Typed SQL builder (type-level only). We piggy-back on the runtime builder but
+// thread a phantom TSql string through method signatures so hovers can show the
+// composed SQL at compile-time for common operations.
+type TypedDynamicWhereMethods<
+  DB extends DatabaseSchema<any>,
+  TTable extends keyof DB & string,
+  TSelected,
+  TJoined extends string,
+  TSql extends string,
+> = {
+  [K in keyof DB[TTable]['columns'] & string as `where${SnakeToPascal<K>}`]: (
+    value: DB[TTable]['columns'][K],
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${K} = ?`>
+} & {
+  [K in keyof DB[TTable]['columns'] & string as `orWhere${SnakeToPascal<K>}`]: (
+    value: DB[TTable]['columns'][K],
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${K} = ?`>
+} & {
+  [K in keyof DB[TTable]['columns'] & string as `andWhere${SnakeToPascal<K>}`]: (
+    value: DB[TTable]['columns'][K],
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${K} = ?`>
+}
+
+export type TypedSelectQueryBuilder<
+  DB extends DatabaseSchema<any>,
+  TTable extends keyof DB & string,
+  TSelected,
+  TJoined extends string = TTable,
+  TSql extends string = string,
+> = SelectQueryBuilder<DB, TTable, TSelected, TJoined> &
+  TypedDynamicWhereMethods<DB, TTable, TSelected, TJoined, TSql> & {
+    toSQL: () => TSql
+    orderBy: <C extends keyof DB[TTable]['columns'] & string, D extends 'asc' | 'desc' = 'asc'>(
+      column: C,
+      direction?: D,
+    ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} ORDER BY ${C} ${D}`>
+    limit: <N extends number>(n: N) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} LIMIT ${N}`>
+  }
+
 type DynamicWhereMethods<
   DB extends DatabaseSchema<any>,
   TTable extends keyof DB & string,
   TSelected,
   TJoined extends string = TTable,
 > = {
-  [K in keyof DB[TTable]['columns'] & string as `where${Capitalize<K>}`]: (value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  [K in keyof DB[TTable]['columns'] & string as `where${SnakeToPascal<K>}`]: (value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
 } & {
-  [K in keyof DB[TTable]['columns'] & string as `orWhere${Capitalize<K>}`]: (value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  [K in keyof DB[TTable]['columns'] & string as `orWhere${SnakeToPascal<K>}`]: (value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+} & {
+  [K in keyof DB[TTable]['columns'] & string as `andWhere${SnakeToPascal<K>}`]: (value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
 }
 
 export interface BaseSelectQueryBuilder<
@@ -156,7 +202,7 @@ export interface BaseSelectQueryBuilder<
   toText?: () => string
   paginate: (perPage: number, page?: number) => Promise<{ data: TSelected[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
   simplePaginate: (perPage: number, page?: number) => Promise<{ data: TSelected[], meta: { perPage: number, page: number, hasMore: boolean } }>
-  toSQL: () => any
+  toSQL: () => string
   execute: () => Promise<TSelected[]>
   // Laravel-style retrieval helpers
   get: () => Promise<TSelected[]>
@@ -187,7 +233,7 @@ export type SelectQueryBuilder<
 export interface InsertQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
   values: (data: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[]) => InsertQueryBuilder<DB, TTable>
   returning: <K extends keyof DB[TTable]['columns'] & string>(...cols: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
-  toSQL: () => any
+  toSQL: () => string
   execute: () => Promise<number | DB[TTable]['columns'] | DB[TTable]['columns'][]>
 }
 
@@ -195,14 +241,14 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
   set: (values: Partial<DB[TTable]['columns']>) => UpdateQueryBuilder<DB, TTable>
   where: (expr: WhereExpression<DB[TTable]['columns']>) => UpdateQueryBuilder<DB, TTable>
   returning: <K extends keyof DB[TTable]['columns'] & string>(...cols: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
-  toSQL: () => any
+  toSQL: () => string
   execute: () => Promise<number>
 }
 
 export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
   where: (expr: WhereExpression<DB[TTable]['columns']>) => DeleteQueryBuilder<DB, TTable>
   returning: <K extends keyof DB[TTable]['columns'] & string>(...cols: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
-  toSQL: () => any
+  toSQL: () => string
   execute: () => Promise<number>
 }
 
@@ -365,15 +411,28 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
     const dynWhere: any = new Proxy({}, {
       get(_, prop: string) {
-        if (prop.startsWith('where') || prop.startsWith('orWhere')) {
+        if (prop.startsWith('where') || prop.startsWith('orWhere') || prop.startsWith('andWhere')) {
           const isOr = prop.startsWith('orWhere')
-          const col = prop.replace(/^or?where/i, '')
-          if (!col)
+          const isAnd = prop.startsWith('andWhere')
+          const raw = prop.replace(/^or?where/i, '')
+            .replace(/^andwhere/i, '')
+          if (!raw)
             return () => dynWhere as any
-          const column = col.charAt(0).toLowerCase() + col.slice(1)
+          const lowerFirst = raw.charAt(0).toLowerCase() + raw.slice(1)
+          const toSnake = (s: string) => s.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+          const snake = toSnake(raw)
+          const tbl = String(table)
+          const available: string[] = schema ? Object.keys(((schema as any)[tbl]?.columns) ?? {}) : []
+          const chosen = [snake, lowerFirst, lowerFirst.toLowerCase()].find(n => available.includes(n)) ?? snake
           return (value: any) => {
-            const expr = bunSql`${bunSql(String(column))} = ${value}`
-            built = isOr ? bunSql`${built} OR ${expr}` : bunSql`${built} WHERE ${expr}`
+            const expr = Array.isArray(value)
+              ? bunSql`${bunSql(String(chosen))} IN ${bunSql(value as any)}`
+              : bunSql`${bunSql(String(chosen))} = ${value}`
+            built = isOr
+              ? bunSql`${built} OR ${expr}`
+              : isAnd
+                ? bunSql`${built} AND ${expr}`
+                : bunSql`${built} WHERE ${expr}`
             return dynWhere as any
           }
         }
@@ -694,7 +753,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       toSQL() {
-        return built
+        return String(built)
       },
       async value(column: string) {
         const q = bunSql`${built} LIMIT 1`
@@ -944,7 +1003,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         orderBy: () => this,
         limit: () => this,
         offset: () => this,
-        toSQL: () => q,
+        toSQL: () => String(q),
         execute: () => (q as any).execute(),
         values: () => (q as any).values(),
         raw: () => (q as any).raw(),
@@ -972,13 +1031,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             orderBy: () => obj,
             limit: () => obj,
             offset: () => obj,
-            toSQL: () => q,
+            toSQL: () => String(q),
             execute: () => (q as any).execute(),
           }
           return obj
         },
         toSQL() {
-          return built
+          return String(built)
         },
         execute() {
           return (built as any).execute()
@@ -1005,13 +1064,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             orderBy: () => obj,
             limit: () => obj,
             offset: () => obj,
-            toSQL: () => q,
+            toSQL: () => String(q),
             execute: () => (q as any).execute(),
           }
           return obj
         },
         toSQL() {
-          return built
+          return String(built)
         },
         execute() {
           return (built as any).execute()
@@ -1034,13 +1093,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             orderBy: () => obj,
             limit: () => obj,
             offset: () => obj,
-            toSQL: () => q,
+            toSQL: () => String(q),
             execute: () => (q as any).execute(),
           }
           return obj
         },
         toSQL() {
-          return built
+          return String(built)
         },
         execute() {
           return (built as any).execute()

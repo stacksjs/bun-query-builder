@@ -108,6 +108,21 @@ async function typedRows() {
 }
 void typedRows
 
+// Dynamic whereX/orWhereX examples based on model attributes
+const usersByNameQ = db.selectFrom('users').whereName('Alice').limit(5)
+type UsersByName = SelectedOf<typeof usersByNameQ>
+const usersByNameHover = usersByNameQ.rows
+const usersByName = usersByNameQ.get()
+
+const usersByEmailQ = db.selectFrom('users').whereEmail('alice@example.com').orWhereEmail('bob@example.com')
+type UsersByEmail = SelectedOf<typeof usersByEmailQ>
+const usersByEmailHover = usersByEmailQ.rows
+const usersByEmail = usersByEmailQ.first()
+
+// Snake_case columns via camelCase method name
+const usersRecentQ = db.selectFrom('users').whereCreatedAt(new Date('2024-01-01')).orderBy('created_at', 'desc')
+const usersRecentHover = usersRecentQ.rows
+db.selectFrom('users').where
 // Note: Uncommenting the following lines would produce TypeScript errors as intended
 // db.select('users', 'does_not_exist')
 // db.updateTable('users').set({ nope: 123 })
