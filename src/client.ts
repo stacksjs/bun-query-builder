@@ -24,7 +24,18 @@ type JoinColumn<DB extends DatabaseSchema<any>, TTables extends string> = TTable
   ? `${TTables}.${keyof DB[TTables]['columns'] & string}`
   : never
 
-export interface SelectQueryBuilder<
+type DynamicWhereMethods<
+  DB extends DatabaseSchema<any>,
+  TTable extends keyof DB & string,
+  TSelected,
+  TJoined extends string = TTable,
+> = {
+  [K in keyof DB[TTable]['columns'] & string as `where${Capitalize<K>}`]: (value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+} & {
+  [K in keyof DB[TTable]['columns'] & string as `orWhere${Capitalize<K>}`]: (value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+}
+
+export interface BaseSelectQueryBuilder<
   DB extends DatabaseSchema<any>,
   TTable extends keyof DB & string,
   TSelected,
@@ -38,6 +49,19 @@ export interface SelectQueryBuilder<
   whereRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   whereColumn: (left: string, op: WhereOperator, right: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   orWhereColumn: (left: string, op: WhereOperator, right: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereNotIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereNotIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  // convenience like wrappers
+  whereLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereNotLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereNotLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  // where any/all/none on list of columns
+  whereAny: (columns: (keyof DB[TTable]['columns'] & string)[], op: WhereOperator, value: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereAll: (columns: (keyof DB[TTable]['columns'] & string)[], op: WhereOperator, value: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereNone: (columns: (keyof DB[TTable]['columns'] & string)[], op: WhereOperator, value: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   whereNested: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   orWhereNested: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // date/json helpers (basic variants)
@@ -88,6 +112,8 @@ export interface SelectQueryBuilder<
   groupByRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   having: (expr: WhereExpression<any>) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   havingRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  addSelect: (...columns: (keyof DB[TTable]['columns'] & string | string)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orderByRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   union: (other: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   unionAll: (other: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   forPage: (page: number, perPage: number) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -97,6 +123,10 @@ export interface SelectQueryBuilder<
   whereNotNull?: (column: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // whereBetween intentionally omitted here because it is declared above as required
   whereExists?: (subquery: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereJsonDoesntContain?: (column: string, json: unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereJsonContainsKey?: (path: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereJsonDoesntContainKey?: (path: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereJsonLength?: (path: string, opOrLen: WhereOperator | number, len?: number) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // relations
   with?: (...relations: string[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
   // locks
@@ -107,7 +137,10 @@ export interface SelectQueryBuilder<
   withRecursive: (name: string, sub: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // results helpers
   value: <K extends keyof TSelected & string>(column: K) => Promise<TSelected[K]>
-  pluck: <K extends keyof TSelected & string>(column: K) => Promise<TSelected[K][]>
+  pluck: {
+    <K extends keyof TSelected & string>(column: K): Promise<TSelected[K][]>
+    <K extends keyof TSelected & string, K2 extends keyof TSelected & string>(column: K, key: K2): Promise<Record<string, TSelected[K]>>
+  }
   exists: () => Promise<boolean>
   doesntExist: () => Promise<boolean>
   cursorPaginate: (perPage: number, cursor?: string | number, column?: string, direction?: 'asc' | 'desc') => Promise<{ data: any[], meta: { perPage: number, nextCursor: string | number | null } }>
@@ -125,10 +158,31 @@ export interface SelectQueryBuilder<
   simplePaginate: (perPage: number, page?: number) => Promise<{ data: TSelected[], meta: { perPage: number, page: number, hasMore: boolean } }>
   toSQL: () => any
   execute: () => Promise<TSelected[]>
+  // Laravel-style retrieval helpers
+  get: () => Promise<TSelected[]>
+  first: () => Promise<TSelected | undefined>
+  firstOrFail: () => Promise<TSelected>
+  find: (id: any) => Promise<TSelected | undefined>
+  findOrFail: (id: any) => Promise<TSelected>
+  findMany: (ids: any[]) => Promise<TSelected[]>
+  lazy: () => AsyncIterable<TSelected>
+  lazyById: () => AsyncIterable<TSelected>
+  pipe: <R>(fn: (qb: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => R) => R
+  count: () => Promise<number>
+  // Type-only convenience properties for IDE hovers; not implemented at runtime
+  readonly rows: TSelected[]
+  readonly row: TSelected
   values: () => Promise<any[][]>
   raw: () => Promise<any[][]>
   cancel: () => void
 }
+
+export type SelectQueryBuilder<
+  DB extends DatabaseSchema<any>,
+  TTable extends keyof DB & string,
+  TSelected,
+  TJoined extends string = TTable,
+> = BaseSelectQueryBuilder<DB, TTable, TSelected, TJoined> & DynamicWhereMethods<DB, TTable, TSelected, TJoined>
 
 export interface InsertQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
   values: (data: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[]) => InsertQueryBuilder<DB, TTable>
@@ -309,7 +363,25 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
     const joinedTables = new Set<string>()
 
-    return {
+    const dynWhere: any = new Proxy({}, {
+      get(_, prop: string) {
+        if (prop.startsWith('where') || prop.startsWith('orWhere')) {
+          const isOr = prop.startsWith('orWhere')
+          const col = prop.replace(/^or?where/i, '')
+          if (!col)
+            return () => dynWhere as any
+          const column = col.charAt(0).toLowerCase() + col.slice(1)
+          return (value: any) => {
+            const expr = bunSql`${bunSql(String(column))} = ${value}`
+            built = isOr ? bunSql`${built} OR ${expr}` : bunSql`${built} WHERE ${expr}`
+            return dynWhere as any
+          }
+        }
+        return undefined
+      },
+    })
+
+    const base = {
       distinct() {
         const rest = String(built).replace(/^SELECT\s+/i, '')
         built = bunSql`SELECT DISTINCT ${bunSql``}${bunSql(rest)}`
@@ -323,6 +395,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       selectRaw(fragment: any) {
         built = bunSql`${built} , ${fragment}`
+        return this as any
+      },
+      addSelect(...columns: string[]) {
+        if (!columns.length)
+          return this as any
+        // inject additional columns into SELECT list
+        const body = String(built).replace(/^SELECT\s+/i, '')
+        built = bunSql`SELECT ${bunSql(columns as any)} , ${bunSql(body)} `
         return this as any
       },
       with(...relations: string[]) {
@@ -354,7 +434,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
         return this as any
       },
-      where(expr) {
+      where(expr: any) {
         built = applyWhere(({} as any), built, expr)
         return this
       },
@@ -379,6 +459,50 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = bunSql`${built} WHERE ${bunSql(String(column))} @> ${bunSql(JSON.stringify(json))}`
         return this as any
       },
+      whereLike(column: string, pattern: string, caseSensitive = false) {
+        const expr = caseSensitive ? bunSql`${bunSql(String(column))} LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
+        built = bunSql`${built} WHERE ${expr}`
+        return this as any
+      },
+      orWhereLike(column: string, pattern: string, caseSensitive = false) {
+        const expr = caseSensitive ? bunSql`${bunSql(String(column))} LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
+        built = bunSql`${built} OR ${expr}`
+        return this as any
+      },
+      whereNotLike(column: string, pattern: string, caseSensitive = false) {
+        const expr = caseSensitive ? bunSql`${bunSql(String(column))} NOT LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
+        built = bunSql`${built} WHERE ${expr}`
+        return this as any
+      },
+      orWhereNotLike(column: string, pattern: string, caseSensitive = false) {
+        const expr = caseSensitive ? bunSql`${bunSql(String(column))} NOT LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
+        built = bunSql`${built} OR ${expr}`
+        return this as any
+      },
+      whereAny(cols: string[], op: WhereOperator, value: any) {
+        if (cols.length === 0)
+          return this as any
+        const parts = cols.map(c => bunSql`${bunSql(String(c))} ${op} ${value}`)
+        const expr = parts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc} OR ${p}`))
+        built = bunSql`${built} WHERE (${expr})`
+        return this as any
+      },
+      whereAll(cols: string[], op: WhereOperator, value: any) {
+        if (cols.length === 0)
+          return this as any
+        const parts = cols.map(c => bunSql`${bunSql(String(c))} ${op} ${value}`)
+        const expr = parts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc} AND ${p}`))
+        built = bunSql`${built} WHERE (${expr})`
+        return this as any
+      },
+      whereNone(cols: string[], op: WhereOperator, value: any) {
+        if (cols.length === 0)
+          return this as any
+        const parts = cols.map(c => bunSql`${bunSql(String(c))} ${op} ${value}`)
+        const expr = parts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc} OR ${p}`))
+        built = bunSql`${built} WHERE NOT (${expr})`
+        return this as any
+      },
       whereNotBetween(column: string, start: any, end: any) {
         built = bunSql`${built} WHERE ${bunSql(String(column))} NOT BETWEEN ${start} AND ${end}`
         return this as any
@@ -399,6 +523,26 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = bunSql`${built} OR ${bunSql(left)} ${op} ${bunSql(right)}`
         return this as any
       },
+      whereIn(column: string, values: any[] | { toSQL: () => any }) {
+        const v = Array.isArray(values) ? bunSql(values as any) : bunSql`(${(values as any).toSQL()})`
+        built = bunSql`${built} WHERE ${bunSql(String(column))} IN ${v}`
+        return this as any
+      },
+      orWhereIn(column: string, values: any[] | { toSQL: () => any }) {
+        const v = Array.isArray(values) ? bunSql(values as any) : bunSql`(${(values as any).toSQL()})`
+        built = bunSql`${built} OR ${bunSql(String(column))} IN ${v}`
+        return this as any
+      },
+      whereNotIn(column: string, values: any[] | { toSQL: () => any }) {
+        const v = Array.isArray(values) ? bunSql(values as any) : bunSql`(${(values as any).toSQL()})`
+        built = bunSql`${built} WHERE ${bunSql(String(column))} NOT IN ${v}`
+        return this as any
+      },
+      orWhereNotIn(column: string, values: any[] | { toSQL: () => any }) {
+        const v = Array.isArray(values) ? bunSql(values as any) : bunSql`(${(values as any).toSQL()})`
+        built = bunSql`${built} OR ${bunSql(String(column))} NOT IN ${v}`
+        return this as any
+      },
       whereNested(fragment: any) {
         built = bunSql`${built} WHERE (${fragment.toSQL ? fragment.toSQL() : fragment})`
         return this as any
@@ -407,19 +551,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = bunSql`${built} OR (${fragment.toSQL ? fragment.toSQL() : fragment})`
         return this as any
       },
-      andWhere(expr) {
+      andWhere(expr: any) {
         built = bunSql`${built} AND ${applyWhere(({} as any), bunSql``, expr)}`
         return this
       },
-      orWhere(expr) {
+      orWhere(expr: any) {
         built = bunSql`${built} OR ${applyWhere(({} as any), bunSql``, expr)}`
         return this
       },
-      orderBy(column, direction = 'asc') {
+      orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
         built = bunSql`${built} ORDER BY ${bunSql(String(column))} ${direction === 'asc' ? bunSql`ASC` : bunSql`DESC`}`
         return this
       },
-      orderByDesc(column) {
+      orderByDesc(column: string) {
         built = bunSql`${built} ORDER BY ${bunSql(String(column))} DESC`
         return this as any
       },
@@ -442,15 +586,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = bunSql`${built} ORDER BY ${bunSql(String(col))} ASC`
         return this as any
       },
-      limit(n) {
+      limit(n: number) {
         built = bunSql`${built} LIMIT ${n}`
         return this
       },
-      offset(n) {
+      offset(n: number) {
         built = bunSql`${built} OFFSET ${n}`
         return this
       },
-      join(table2, onLeft, operator, onRight) {
+      join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         built = bunSql`${built} JOIN ${bunSql(String(table2))} ON ${bunSql(String(onLeft))} ${operator} ${bunSql(String(onRight))}`
         joinedTables.add(String(table2))
         return this as any
@@ -460,12 +604,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         joinedTables.add(alias)
         return this as any
       },
-      innerJoin(table2, onLeft, operator, onRight) {
+      innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         built = bunSql`${built} INNER JOIN ${bunSql(String(table2))} ON ${bunSql(String(onLeft))} ${operator} ${bunSql(String(onRight))}`
         joinedTables.add(String(table2))
         return this as any
       },
-      leftJoin(table2, onLeft, operator, onRight) {
+      leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         built = bunSql`${built} LEFT JOIN ${bunSql(String(table2))} ON ${bunSql(String(onLeft))} ${operator} ${bunSql(String(onRight))}`
         joinedTables.add(String(table2))
         return this as any
@@ -475,12 +619,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         joinedTables.add(alias)
         return this as any
       },
-      rightJoin(table2, onLeft, operator, onRight) {
+      rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         built = bunSql`${built} RIGHT JOIN ${bunSql(String(table2))} ON ${bunSql(String(onLeft))} ${operator} ${bunSql(String(onRight))}`
         joinedTables.add(String(table2))
         return this as any
       },
-      crossJoin(table2) {
+      crossJoin(table2: string) {
         built = bunSql`${built} CROSS JOIN ${bunSql(String(table2))}`
         joinedTables.add(String(table2))
         return this as any
@@ -514,7 +658,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
         return this as any
       },
-      groupBy(...cols) {
+      groupBy(...cols: string[]) {
         if (cols.length > 0)
           built = bunSql`${built} GROUP BY ${bunSql(cols as any)}`
         return this as any
@@ -523,7 +667,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = bunSql`${built} GROUP BY ${fragment}`
         return this as any
       },
-      having(expr) {
+      having(expr: any) {
         built = bunSql`${built} HAVING ${applyWhere(({} as any), bunSql``, expr)}`
         return this as any
       },
@@ -531,15 +675,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = bunSql`${built} HAVING ${fragment}`
         return this as any
       },
-      union(other) {
+      orderByRaw(fragment: any) {
+        built = bunSql`${built} ORDER BY ${fragment}`
+        return this as any
+      },
+      union(other: { toSQL: () => any }) {
         built = bunSql`${built} UNION ${other.toSQL()}`
         return this as any
       },
-      unionAll(other) {
+      unionAll(other: { toSQL: () => any }) {
         built = bunSql`${built} UNION ALL ${other.toSQL()}`
         return this as any
       },
-      forPage(page, perPage) {
+      forPage(page: number, perPage: number) {
         const p = Math.max(1, Math.floor(page))
         const pp = Math.max(1, Math.floor(perPage))
         built = bunSql`${built} LIMIT ${pp} OFFSET ${(p - 1) * pp}`
@@ -553,8 +701,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const [row] = await (q as any).execute()
         return row?.[column]
       },
-      async pluck(column: string) {
+      async pluck(column: any, key?: any) {
         const rows = await (built as any).execute()
+        if (key) {
+          const out: Record<string, any> = {}
+          for (const r of rows) out[String(r?.[key])] = r?.[column]
+          return out
+        }
         return rows.map((r: any) => r?.[column])
       },
       async exists() {
@@ -658,6 +811,75 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return ''
         return String(built)
       },
+      async get() {
+        return await (built as any).execute()
+      },
+      async first() {
+        const [row] = await (bunSql`${built} LIMIT 1` as any).execute()
+        return row as any
+      },
+      async firstOrFail() {
+        const row = await (this as any).first()
+        if (!row)
+          throw new Error('Record not found')
+        return row as any
+      },
+      async find(id: any) {
+        const pk = meta?.primaryKeys[String(table)] ?? 'id'
+        const [row] = await (bunSql`${built} WHERE ${bunSql(pk)} = ${id} LIMIT 1` as any).execute()
+        return row as any
+      },
+      async findOrFail(id: any) {
+        const row = await (this as any).find(id)
+        if (!row)
+          throw new Error('Record not found')
+        return row as any
+      },
+      async findMany(ids: any[]) {
+        const pk = meta?.primaryKeys[String(table)] ?? 'id'
+        const rows = await (bunSql`${built} WHERE ${bunSql(String(pk))} IN ${bunSql(ids as any)}` as any).execute()
+        return rows as any
+      },
+      async* lazy() {
+        let cursor: any
+        const pk = meta?.primaryKeys[String(table)] ?? 'id'
+        while (true) {
+          const q = cursor == null
+            ? bunSql`${built} ORDER BY ${bunSql(String(pk))} ASC LIMIT 100`
+            : bunSql`${built} WHERE ${bunSql(String(pk))} > ${cursor} ORDER BY ${bunSql(String(pk))} ASC LIMIT 100`
+          const rows: any[] = await (q as any).execute()
+          if (rows.length === 0)
+            break
+          for (const r of rows) yield r as any
+          cursor = rows[rows.length - 1]?.[pk as any]
+          if (cursor == null)
+            break
+        }
+      },
+      async* lazyById() {
+        const pk = meta?.primaryKeys[String(table)] ?? 'id'
+        let cursor: any
+        while (true) {
+          const q = cursor == null
+            ? bunSql`${built} ORDER BY ${bunSql(String(pk))} ASC LIMIT 100`
+            : bunSql`${built} WHERE ${bunSql(String(pk))} > ${cursor} ORDER BY ${bunSql(String(pk))} ASC LIMIT 100`
+          const rows: any[] = await (q as any).execute()
+          if (rows.length === 0)
+            break
+          for (const r of rows) yield r as any
+          cursor = rows[rows.length - 1]?.[pk as any]
+          if (cursor == null)
+            break
+        }
+      },
+      pipe(fn: any) {
+        return fn(this as any)
+      },
+      async count() {
+        const q = bunSql`SELECT COUNT(*) as c FROM (${built}) as sub`
+        const [row] = await (q as any).execute()
+        return Number(row?.c ?? 0)
+      },
       lockForUpdate() {
         built = bunSql`${built} FOR UPDATE`
         return this as any
@@ -684,13 +906,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       raw() {
         return (built as any).raw()
       },
+      get rows() {
+        return undefined as any
+      },
+      get row() {
+        return undefined as any
+      },
       cancel() {
         try {
           ;(built as any).cancel()
         }
         catch {}
       },
-    }
+    } as unknown as BaseSelectQueryBuilder<DB, TTable, any, TTable>
+    return Object.assign(dynWhere, base) as SelectQueryBuilder<DB, TTable, any, TTable>
   }
 
   return {

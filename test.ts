@@ -36,7 +36,7 @@ const newUser: Partial<Users> = {
   name: 'Alice',
   role: 'admin',
 }
-db.insertInto('users').values(newUser).toSQL()
+const sql1 = db.insertInto('users').values(newUser).toSQL()
 // Update with typed where
 db.updateTable('users').set({ role: 'member' }).where({ id: 1 }).toSQL()
 
