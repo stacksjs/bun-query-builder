@@ -402,7 +402,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   const meta = state?.meta
   const schema = state?.schema
 
-  function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): SelectQueryBuilder<DB, TTable, any> {
+  function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`> {
     let built = (columns && columns.length > 0)
       ? bunSql`SELECT ${bunSql(columns as any)} FROM ${bunSql(String(table))}`
       : bunSql`SELECT * FROM ${bunSql(String(table))}`
@@ -440,7 +440,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
     })
 
-    const base = {
+    const base: BaseSelectQueryBuilder<DB, TTable, any, TTable> = {
       distinct() {
         const rest = String(built).replace(/^SELECT\s+/i, '')
         built = bunSql`SELECT DISTINCT ${bunSql``}${bunSql(rest)}`
@@ -978,7 +978,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         catch {}
       },
     } as unknown as BaseSelectQueryBuilder<DB, TTable, any, TTable>
-    return Object.assign(dynWhere, base) as SelectQueryBuilder<DB, TTable, any, TTable>
+    return Object.assign(dynWhere, base) as TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`>
   }
 
   return {
