@@ -2,22 +2,6 @@
 
 Robust transaction helpers built on Bun’s `sql.begin`, with retries, isolation levels, savepoints, distributed transactions, and configurable backoff.
 
-## Table of Contents
-
-- Overview
-- Basic Usage
-- Isolation Levels
-- Retries and Backoff
-- Savepoints
-- Distributed Transactions
-- Transaction-scoped Builder
-- Transaction Defaults
-- Transaction Decorator
-- Error Handling and Logging
-- Best Practices
-- Recipes
-- FAQ
-
 ## Overview
 
 The builder wraps Bun’s transaction primitives and adds:

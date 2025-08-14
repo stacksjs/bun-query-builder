@@ -4,22 +4,6 @@ Work with related data via `with`, `withCount`, `whereHas`, `orWhereHas`, and `s
 
 Relations leverage lightweight conventions and metadata from `buildSchemaMeta` to infer join keys without decorators or elaborate relationship definitions.
 
-## Table of Contents
-
-- Overview
-- Conventions and Configuration
-- with(): Eager Loading via LEFT JOIN
-- selectAllRelations(): Aliased Related Columns
-- withCount(): Counting Related Records
-- whereHas()/orWhereHas(): Filtering by Related Existence
-- Picking Columns vs Selecting All
-- Multiple Relations and Join Order
-- Performance Considerations
-- Advanced Patterns
-- Best Practices
-- Recipes
-- FAQ
-
 ## Overview
 
 - Eager load relations with `with('ModelOrTable')`

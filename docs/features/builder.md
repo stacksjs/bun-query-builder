@@ -4,33 +4,6 @@ Build type-safe SQL with a fluent API backed by Bun's tagged template literals. 
 
 This comprehensive guide covers concepts, API, recipes, performance tips, best practices, and common pitfalls when using the query builder.
 
-## Table of Contents
-
-- Overview
-- Getting Started
-- Selecting Data
-- Filtering and Condition Building
-- Joining Tables (including Subquery Joins)
-- Grouping, Aggregates, and Having
-- Ordering, Limiting, Paging
-- Modifiers: Distinct and Distinct On
-- Raw Expressions and When to Use Them
-- Relations Shortcuts and Auto-Aliasing
-- Common DML (Insert/Update/Delete) with Returning
-- Pagination and Chunking
-- CTEs and Recursive Queries
-- Locks and Concurrency Controls
-- Flow Utilities: when, tap, dump, dd, explain
-- Timeouts, Cancellation, and Hooks
-- Execution, toSQL, simple, values, raw
-- Debugging and toText
-- Security and SQL Injection Safety
-- Type-safety Guide
-- Performance Tips
-- Error Handling
-- Recipes
-- FAQ
-
 ## Overview
 
 The query builder emits Bun `sql` queries. `toSQL()` returns a Bun query object with methods: `execute()`, `values()`, `raw()`, `cancel()`. This preserves Bun’s performance and safety while providing a Laravel/Kysely-like fluent API.

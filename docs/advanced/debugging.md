@@ -2,16 +2,6 @@
 
 Techniques for inspecting queries, printing SQL, and understanding performance characteristics.
 
-## Table of Contents
-
-- Overview
-- Enabling toText
-- Dump, DD, and Explain
-- Logging Queries
-- Snapshot Testing
-- Common Pitfalls
-- Best Practices
-
 ## Overview
 
 By default, the builder returns Bun query objects rather than strings. This preserves parameterization and performance. For debugging and tests, enable `toText` to access a string representation.

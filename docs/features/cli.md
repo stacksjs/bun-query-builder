@@ -2,23 +2,6 @@
 
 Utilities for introspecting models, previewing queries, executing SQL/scripts, and checking database readiness.
 
-## Table of Contents
-
-- Overview
-- Installation
-- Commands
-  - introspect
-  - sql
-  - ping
-  - wait-ready
-  - file
-  - unsafe
-  - explain
-- Examples
-- Best Practices
-- Exit Codes
-- Troubleshooting
-
 ## Overview
 
 The CLI ships with the package (binary and npm script compatible). It leverages the same `createQueryBuilder` API under the hood and reads your configuration the same way as the library.

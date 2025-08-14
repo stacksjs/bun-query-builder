@@ -2,19 +2,6 @@
 
 High-level helpers for paging and processing large result sets efficiently. Choose between offset-based pagination, simple “has more” pagination, and cursor-based pagination depending on your use case. For background processing, use `chunk`, `chunkById`, and `eachById`.
 
-## Table of Contents
-
-- Overview of Pagination Strategies
-- paginate(): Classic Offset Pagination
-- simplePaginate(): Lightweight “Has More” Pagination
-- cursorPaginate(): Stable Cursor Pagination
-- Chunking: chunk, chunkById, eachById
-- Choosing a Strategy
-- Examples
-- Edge Cases
-- Best Practices
-- FAQ
-
 ## Overview of Pagination Strategies
 
 - paginate: Accurate total count, good for UIs with page numbers. Heavier due to COUNT(*) subquery.
