@@ -31,12 +31,64 @@ The builder wraps Bun’s transaction primitives and adds:
 ## Basic Usage
 
 ```ts
+// Simple transaction with automatic rollback on error
 await db.transaction(async (tx) => {
-  await tx.insertInto('users').values({ name: 'Zed' }).execute()
+  const user = await tx.insertInto('users').values({
+    name: 'Chris',
+    email: 'chris@example.com',
+    role: 'admin'
+  }).returning('id').execute()
+
+  await tx.insertInto('user_profiles').values({
+    user_id: user[0].id,
+    bio: 'Software engineer and team lead',
+    location: 'San Francisco'
+  }).execute()
 })
+
+// Multi-step business logic in a transaction
+async function transferProjectOwnership(projectId: number, fromUserId: number, toUserId: number) {
+  return await db.transaction(async (tx) => {
+    // Verify current ownership
+    const project = await tx
+      .selectFrom('projects')
+      .where({ id: projectId, owner_id: fromUserId })
+      .first()
+
+    if (!project) {
+      throw new Error('Project not found or not owned by user')
+    }
+
+    // Transfer ownership
+    await tx
+      .updateTable('projects')
+      .set({
+        owner_id: toUserId,
+        transferred_at: new Date(),
+        transferred_by: fromUserId
+      })
+      .where({ id: projectId })
+      .execute()
+
+    // Log the transfer
+    await tx.insertInto('audit_logs').values({
+      action: 'project_transferred',
+      project_id: projectId,
+      from_user_id: fromUserId,
+      to_user_id: toUserId,
+      created_at: new Date()
+    }).execute()
+
+    return project
+  })
+}
 ```
 
-All operations within the callback run on the same transaction `tx`.
+**Key Benefits:**
+- All operations within the callback run on the same transaction `tx`
+- Automatic rollback if any operation throws an error
+- Type-safe operations with full query builder API
+- Configurable retry behavior for transient failures
 
 ## Isolation Levels
 
@@ -143,10 +195,196 @@ await db.transaction(async (tx) => { /* ... */ }, {
 
 ## Best Practices
 
-- Keep transactions short to reduce contention
-- Prefer higher isolation only when needed; it’s more expensive
-- Use retries for workloads prone to deadlocks/serialization failures
-- Avoid user interaction inside transactions
+### Transaction Design
+
+- **Keep Transactions Short**: Minimize the time between BEGIN and COMMIT to reduce lock contention
+- **Atomic Operations**: Group related operations that must succeed or fail together
+- **Avoid User Interaction**: Never wait for user input inside a transaction
+- **Database Operations Only**: Keep business logic outside transactions when possible
+
+```ts
+// Good: Short, focused transaction
+async function createTeamMember(userData: any) {
+  // Validate data BEFORE transaction
+  if (!userData.email || !userData.team_id) {
+    throw new Error('Invalid user data')
+  }
+
+  return await db.transaction(async (tx) => {
+    const user = await tx.create('users', userData)
+    await tx.create('team_memberships', {
+      user_id: user.id,
+      team_id: userData.team_id,
+      role: 'member'
+    })
+    return user
+  })
+}
+
+// Avoid: Long-running operations in transaction
+async function badExample() {
+  await db.transaction(async (tx) => {
+    const user = await tx.create('users', { name: 'Chris' })
+
+    // BAD: External API call inside transaction
+    await sendWelcomeEmail(user.email) // This might timeout!
+
+    // BAD: User interaction
+    const confirmed = await promptUser('Continue?') // Don't do this!
+
+    if (confirmed) {
+      await tx.create('profiles', { user_id: user.id })
+    }
+  })
+}
+```
+
+### Isolation and Performance
+
+- **Choose Appropriate Isolation**: Use the lowest isolation level that maintains data integrity
+- **Read Committed**: Default; good for most applications
+- **Repeatable Read**: Use when you need consistent reads within the transaction
+- **Serializable**: Only when strict consistency is required; highest overhead
+
+```ts
+// Financial transactions need serializable isolation
+async function transferFunds(fromAccount: number, toAccount: number, amount: number) {
+  return await db.transaction(async (tx) => {
+    const fromBalance = await tx
+      .selectFrom('accounts')
+      .where({ id: fromAccount })
+      .select('balance')
+      .first()
+
+    if (fromBalance.balance < amount) {
+      throw new Error('Insufficient funds')
+    }
+
+    await tx.updateTable('accounts')
+      .set({ balance: db.sql`balance - ${amount}` })
+      .where({ id: fromAccount })
+      .execute()
+
+    await tx.updateTable('accounts')
+      .set({ balance: db.sql`balance + ${amount}` })
+      .where({ id: toAccount })
+      .execute()
+  }, { isolation: 'serializable', retries: 3 })
+}
+
+// Regular business operations can use default isolation
+async function updateUserProfile(userId: number, profileData: any) {
+  return await db.transaction(async (tx) => {
+    await tx.updateTable('users')
+      .set({ updated_at: new Date() })
+      .where({ id: userId })
+      .execute()
+
+    await tx.updateOrCreate('profiles', { user_id: userId }, profileData)
+  }) // Uses default 'read committed'
+}
+```
+
+### Error Handling and Retries
+
+- **Configure Retries**: Set appropriate retry counts for transient failures
+- **Exponential Backoff**: Use jitter to avoid thundering herd problems
+- **Specific Error Handling**: Handle business logic errors vs database errors differently
+- **Logging**: Log retry attempts and transaction metrics
+
+```ts
+// Configure retries for high-contention operations
+async function highContentionOperation(data: any) {
+  return await db.transaction(async (tx) => {
+    // Operations that might conflict with other transactions
+    await tx.updateTable('counters')
+      .set({ value: db.sql`value + 1` })
+      .where({ name: 'page_views' })
+      .execute()
+  }, {
+    retries: 5,
+    backoff: { baseMs: 100, factor: 2, maxMs: 2000, jitter: true },
+    onRetry: (attempt, error) => {
+      console.warn(`Transaction retry ${attempt}:`, error.message)
+    }
+  })
+}
+
+// Separate business logic errors from retryable database errors
+async function processOrder(orderData: any) {
+  try {
+    return await db.transaction(async (tx) => {
+      // Business validation INSIDE transaction for data consistency
+      const inventory = await tx
+        .selectFrom('products')
+        .where({ id: orderData.product_id })
+        .select('stock_quantity')
+        .first()
+
+      if (inventory.stock_quantity < orderData.quantity) {
+        // Business logic error - don't retry
+        throw new BusinessError('Insufficient stock')
+      }
+
+      // Update inventory
+      await tx.updateTable('products')
+        .set({ stock_quantity: db.sql`stock_quantity - ${orderData.quantity}` })
+        .where({ id: orderData.product_id })
+        .execute()
+
+      // Create order
+      return await tx.create('orders', orderData)
+    }, { retries: 3 })
+  }
+  catch (error) {
+    if (error instanceof BusinessError) {
+      // Don't retry business logic errors
+      throw error
+    }
+    // Database errors will be retried automatically
+    throw error
+  }
+}
+
+class BusinessError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BusinessError'
+  }
+}
+```
+
+### Resource Management
+
+- **Connection Pooling**: Configure appropriate pool sizes for your transaction load
+- **Timeout Configuration**: Set reasonable timeouts for long-running transactions
+- **Memory Usage**: Be mindful of result set sizes in transactions
+- **Deadlock Prevention**: Order table access consistently to prevent deadlocks
+
+```ts
+// Configure transaction defaults globally
+db.setTransactionDefaults({
+  retries: 2,
+  isolation: 'read committed',
+  backoff: { baseMs: 50, factor: 2, maxMs: 1000, jitter: true }
+})
+
+// Consistent table access order to prevent deadlocks
+async function updateUserAndTeam(userId: number, teamId: number, updates: any) {
+  return await db.transaction(async (tx) => {
+    // Always access tables in the same order (users before teams)
+    await tx.updateTable('users')
+      .set(updates.user)
+      .where({ id: userId })
+      .execute()
+
+    await tx.updateTable('teams')
+      .set(updates.team)
+      .where({ id: teamId })
+      .execute()
+  })
+}
+```
 
 ## Recipes
 

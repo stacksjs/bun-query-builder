@@ -49,16 +49,30 @@ Example alias formats for `projects.name`:
 
 ## with(): Eager Loading via LEFT JOIN
 
-`with(...relations: string[])` performs LEFT JOINs for each specified relation.
+`with(...relations: string[])` performs LEFT JOINs for each specified relation, allowing you to fetch related data in a single query.
 
 ```ts
-// eager load projects for users
-const qb = db
+// Eager load projects for users
+const usersWithProjects = await db
   .selectFrom('users')
   .with('Project')
+  .where({ 'users.active': true })
   .orderBy('users.id')
+  .execute()
 
-const rows = await qb.execute()
+// Load multiple relations at once
+const usersWithProjectsAndProfiles = await db
+  .selectFrom('users')
+  .with('Project', 'Profile')
+  .where({ 'users.role': 'member' })
+  .execute()
+
+// Chris's data with all related information
+const chrisFullProfile = await db
+  .selectFrom('users')
+  .with('Project', 'Profile', 'Team')
+  .where({ 'users.name': 'Chris' })
+  .first()
 ```
 
 Under the hood, we generate:
@@ -88,7 +102,6 @@ await db
   .execute()
 ```
 
-
 Join order follows the order you pass to `with()`.
 
 ### Custom tables vs models
@@ -115,45 +128,108 @@ Use this for convenience in admin dashboards or quick joins. For API responses, 
 
 ## withCount(): Counting Related Records
 
-Add a column containing a count of related rows.
+Add a column containing a count of related rows without loading the actual related data.
 
 ```ts
-const rows = await db
+// Get users with their project counts
+const usersWithCounts = await db
   .selectFrom('users')
+  .select('users', 'id', 'name', 'email')
   .withCount('Project', 'projects_count')
   .execute()
 
-// rows[0].projects_count → number
+// Access the count: usersWithCounts[0].projects_count → number
+
+// Chris's project statistics
+const chrisStats = await db
+  .selectFrom('users')
+  .where({ name: 'Chris' })
+  .withCount('Project', 'total_projects')
+  .withCount('Project', 'active_projects', ['status', '=', 'active'])
+  .withCount('Project', 'completed_projects', ['status', '=', 'completed'])
+  .first()
 ```
 
-You can pass a filter as a `where` tuple to scope the count:
+You can pass filters to scope the count to specific conditions:
 
 ```ts
-await db
+// Team leads with their active project counts
+const teamLeads = await db
   .selectFrom('users')
+  .where({ role: 'team_lead' })
   .withCount('Project', 'active_projects', ['status', '=', 'active'])
+  .withCount('Project', 'overdue_projects', ['due_date', '<', new Date()])
+  .orderBy('active_projects', 'desc')
   .execute()
+
+// Avery's content creation metrics
+const averyMetrics = await db
+  .selectFrom('users')
+  .where({ name: 'Avery' })
+  .withCount('Post', 'published_posts', ['published', '=', true])
+  .withCount('Post', 'draft_posts', ['published', '=', false])
+  .withCount('Comment', 'total_comments')
+  .first()
 ```
 
 ## whereHas()/orWhereHas(): Filtering by Related Existence
 
-Filter parent rows based on conditions on a related table.
+Filter parent rows based on conditions on a related table without actually joining the related data.
 
 ```ts
-// users that have at least one active project
-await db
+// Find users that have at least one active project
+const activeProjectOwners = await db
   .selectFrom('users')
   .whereHas('Project', ['status', '=', 'active'])
   .execute()
 
-// OR condition across relations
-await db
+// Find users with either public projects OR published posts
+const contentCreators = await db
   .selectFrom('users')
-  .orWhereHas('Project', ['visibility', '=', 'public'])
+  .whereHas('Project', ['visibility', '=', 'public'])
+  .orWhereHas('Post', ['published', '=', true])
+  .execute()
+
+// Chris's colleagues who have ongoing work
+const busyColleagues = await db
+  .selectFrom('users')
+  .where({ team: 'Chris\s Team' })
+  .whereHas('Project', ['status', 'in', ['active', 'in_progress']])
+  .whereHas('Task', ['completed', '=', false])
+  .execute()
+
+// Advanced filtering with multiple conditions
+const qualifiedContributors = await db
+  .selectFrom('users')
+  .whereHas('Project', qb => qb
+    .where(['status', '=', 'completed'])
+    .andWhere(['created_at', '>', new Date('2024-01-01')]))
+  .whereHas('Review', ['rating', '>=', 4])
   .execute()
 ```
 
-`whereHas` translates to an `EXISTS (subquery)` filter with an implicit join through FK conventions.
+**How it works**: `whereHas` translates to an `EXISTS (subquery)` filter with an implicit join through FK conventions, allowing efficient filtering without loading related data.
+
+### Complex whereHas Examples
+
+```ts
+// Buddy's project managers (users who manage projects Buddy works on)
+const buddyManagers = await db
+  .selectFrom('users')
+  .where({ role: 'manager' })
+  .whereHas('Project', qb => qb
+    .join('project_members', 'project_members.project_id', '=', 'projects.id')
+    .join('users as members', 'members.id', '=', 'project_members.user_id')
+    .where(['members.name', '=', 'Buddy']))
+  .execute()
+
+// Avery's team members who have recent activity
+const averyActiveTeam = await db
+  .selectFrom('users')
+  .whereHas('Team', ['lead_id', '=', (await db.selectFrom('users').where({ name: 'Avery' }).first())?.id])
+  .whereHas('Activity', ['created_at', '>', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)])
+  .execute()
+```
 
 ## Picking Columns vs Selecting All
 
@@ -227,11 +303,140 @@ await db
 
 ## Best Practices
 
-- Keep FK naming consistent across tables
-- Configure aliasing to a format that fits your consuming layer
-- Use `withCount` over `selectAllRelations` for count-only needs
-- Combine `whereHas` with selective joins for precise filtering
-- Index foreign keys and join columns
+### Relationship Design
+
+- **Consistent FK Naming**: Follow a consistent foreign key naming convention (e.g., `user_id`, `project_id`)
+- **Index Foreign Keys**: Always create indexes on foreign key columns for optimal join performance
+- **Model Definitions**: Define relationships in your model files to leverage automatic join key inference
+- **Naming Conventions**: Configure `config.relations.foreignKeyFormat` to match your database schema
+
+```ts
+// Good: Consistent FK naming
+const userProjects = await db
+  .selectFrom('users')
+  .with('Project') // Auto-infers projects.user_id = users.id
+  .execute()
+
+// Configure for your schema
+config.relations = {
+  foreignKeyFormat: 'singularParent_id', // user_id, project_id
+  singularizeStrategy: 'stripTrailingS' // users → user
+}
+```
+
+### Performance Optimization
+
+- **Selective Loading**: Use `withCount()` when you only need counts, not actual related data
+- **Explicit Column Selection**: Prefer explicit column selection over `selectAllRelations()` in production
+- **Batch Loading**: Load relations for multiple records in a single query rather than N+1 queries
+- **Index Strategy**: Ensure foreign keys and filtered columns have appropriate database indexes
+
+```ts
+// Good: Efficient count-only query
+const userStats = await db
+  .selectFrom('users')
+  .select('users', 'id', 'name')
+  .withCount('Project', 'project_count')
+  .withCount('Post', 'post_count')
+  .execute()
+
+// Good: Explicit column selection for performance
+const teamData = await db
+  .selectFrom('users')
+  .with('Project')
+  .select('users', 'id', 'name', 'role')
+  .selectRaw(db.sql`projects.id as project_id, projects.name as project_name`)
+  .where({ 'users.team': 'Engineering' })
+  .execute()
+```
+
+### Query Strategy
+
+- **whereHas vs with**: Use `whereHas()` for filtering, `with()` for data loading
+- **Aliasing Configuration**: Set `config.aliasing.relationColumnAliasFormat` to match your frontend needs
+- **Pagination with Relations**: Be mindful of result multiplication when paginating joined data
+- **Transaction Boundaries**: Use transactions when creating related records that must be consistent
+
+```ts
+// Good: Use whereHas for filtering without loading data
+const activeUsers = await db
+  .selectFrom('users')
+  .whereHas('Project', ['status', '=', 'active'])
+  .select('users', 'id', 'name', 'email')
+  .execute()
+
+// Good: Use with for loading related data
+const usersWithProjects = await db
+  .selectFrom('users')
+  .with('Project')
+  .where({ 'users.active': true })
+  .limit(10)
+  .execute()
+```
+
+### Data Integrity
+
+- **Cascade Considerations**: Plan cascade behavior for deletions and updates
+- **Soft Deletes**: Handle soft deletes consistently across related tables
+- **Validation**: Validate foreign key references before creating relationships
+- **Audit Trails**: Track relationship changes for important business entities
+
+```ts
+// Good: Create related records in a transaction
+async function createUserWithProfile(userData: any, profileData: any) {
+  return await db.transaction(async (tx) => {
+    const user = await tx.create('users', userData)
+    const profile = await tx.create('profiles', {
+      ...profileData,
+      user_id: user.id
+    })
+    return { user, profile }
+  })
+}
+
+// Good: Handle soft deletes in relations
+const activeUsersWithActiveProjects = await db
+  .selectFrom('users')
+  .with('Project')
+  .whereNull('users.deleted_at')
+  .where({ 'projects.deleted_at': null, 'users.active': true })
+  .execute()
+```
+
+### Aliasing and Naming
+
+- **Frontend Integration**: Choose aliasing format that matches your API response structure
+- **Consistency**: Use the same aliasing strategy across your application
+- **Documentation**: Document your aliasing conventions for team consistency
+- **Type Safety**: Leverage TypeScript interfaces that match your aliasing format
+
+```ts
+// Configure aliasing for your needs
+config.aliasing = {
+  relationColumnAliasFormat: 'camelCase' // projectName, userId
+  // or 'table_column' for project_name, user_id
+  // or 'table.dot.column' for project.name, user.id
+}
+
+// Access aliased columns based on your config
+const results = await db
+  .selectFrom('users')
+  .with('Project')
+  .selectAllRelations()
+  .execute()
+
+// With camelCase: results[0].projectName
+// With table_column: results[0].project_name
+// With table.dot.column: results[0]['project.name']
+```
+
+### Common Pitfalls to Avoid
+
+- **N+1 Queries**: Always prefer eager loading relations over separate queries per record
+- **Missing Indexes**: Don't forget to index foreign key columns
+- **Result Multiplication**: Be aware that LEFT JOINs can multiply result rows
+- **Memory Usage**: Avoid loading large relations for many records without pagination
+- **Type Mismatches**: Ensure foreign key types match between related tables
 
 ## Recipes
 
