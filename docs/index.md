@@ -5,7 +5,7 @@ layout: home
 hero:
   name: "bun-query-builder"
   text: "Typed Query Builder for Bun.sql"
-  tagline: "Model-driven, safe, and fast"
+  tagline: "Model-driven, safe, and blazingly fast database queries"
   image: /images/logo-white.png
   actions:
     - theme: brand
@@ -16,18 +16,22 @@ hero:
       link: https://github.com/stacksjs/bun-query-builder
 
 features:
-  - title: "Typed from Models"
-    icon: "🧩"
-    details: "Infer tables/columns/PKs from your models for a Kysely-like DX."
-  - title: "Fluent & Safe"
-    icon: "🛡"
-    details: "Bun’s tagged templates under the hood for injection-safe queries."
-  - title: "Powerful Transactions"
-    icon: "🔄"
-    details: "Retries, backoff, isolation levels, savepoints, distributed."
-  - title: "CLI"
-    icon: "🛠"
-    details: "Introspect models, print queries, check readiness, run files."
+  - title: "🧩 Typed from Models"
+    details: "Infer tables, columns, and primary keys from your data models for a Kysely-like developer experience with full TypeScript safety."
+  - title: "🛡️ Injection-Safe Queries"
+    details: "Built on Bun's tagged SQL templates for automatic parameterization and protection against SQL injection attacks."
+  - title: "🔄 Advanced Transactions"
+    details: "Robust transaction support with automatic retries, exponential backoff, configurable isolation levels, savepoints, and distributed transactions."
+  - title: "🚀 High Performance"
+    details: "Optimized for Bun's native performance with connection pooling, cursor pagination, and efficient batch processing."
+  - title: "🔗 Rich Relations"
+    details: "Intuitive relationship handling with eager loading, relation counting, and existence filtering for complex data modeling."
+  - title: "🛠️ Developer Tools"
+    details: "Comprehensive CLI for schema introspection, query debugging, database connectivity checks, and migration management."
+  - title: "🎯 Multiple Dialects"
+    details: "First-class support for PostgreSQL, MySQL, and SQLite with dialect-specific optimizations and feature detection."
+  - title: "📊 Production Ready"
+    details: "Built-in monitoring hooks, performance tracking, graceful error handling, and operational best practices for enterprise deployment."
 ---
 
 <Home />
