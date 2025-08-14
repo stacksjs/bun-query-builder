@@ -21,6 +21,7 @@ This page covers concepts, API, recipes, performance tips, and common pitfalls w
 - CTEs and Recursive Queries
 - Locks and Concurrency Controls
 - Flow Utilities: when, tap, dump, dd, explain
+- Timeouts, Cancellation, and Hooks
 - Execution, toSQL, simple, values, raw
 - Debugging and toText
 - Security and SQL Injection Safety
@@ -111,6 +112,8 @@ await db
 ```ts
 await db.selectFrom('events').whereDate('start_at', '>=', new Date()).execute()
 await db.selectFrom('users').whereJsonContains('meta', { beta: true }).execute()
+// JSON path comparisons
+await db.selectFrom('users').whereJsonPath?.('meta->beta', '=', true)?.execute()
 ```
 
 ## Joining Tables
@@ -201,6 +204,55 @@ await db
   .with('Project')
   .selectAllRelations()
   .execute()
+```
+### Nested relations and many-to-many
+
+```ts
+await db
+  .selectFrom('users')
+  .with('Project', 'Project.tags') // nested path
+  .execute()
+```
+
+## Timeouts, Cancellation, and Hooks
+
+```ts
+// 1) Per-query timeout
+await db.selectFrom('users').withTimeout(250).get()
+
+// 2) AbortSignal
+const ac = new AbortController()
+const p = db.selectFrom('users').abort(ac.signal).get()
+ac.abort()
+await p
+
+// 3) Query hooks
+import { config } from '@/config'
+config.hooks = {
+  onQueryStart: ({ sql }) => logger.debug({ sql }),
+  onQueryEnd: ({ durationMs }) => logger.info({ durationMs }),
+  onQueryError: ({ error }) => logger.error(error),
+}
+```
+
+## Soft deletes
+
+Enable a global soft‑delete filter and override it per query.
+
+```ts
+import { config } from 'bun-query-builder'
+
+// Enable default filter (WHERE deleted_at IS NULL)
+config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
+
+// Default: filtered out
+await db.selectFrom('users').get()
+
+// Include soft‑deleted rows
+await db.selectFrom('users').withTrashed?.().get()
+
+// Only soft‑deleted rows
+await db.selectFrom('users').onlyTrashed?.().get()
 ```
 
 Configure alias formats via `config.aliasing.relationColumnAliasFormat`.

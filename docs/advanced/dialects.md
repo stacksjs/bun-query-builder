@@ -103,6 +103,13 @@ config.features = {
 config.debug = {
   captureText: false,
 }
+
+// Optional lifecycle hooks and tracing
+config.hooks = {
+  onQueryStart: ({ sql, kind }) => logger.debug({ kind, sql }),
+  onQueryEnd: ({ durationMs, rowCount }) => logger.info({ durationMs, rowCount }),
+  onQueryError: ({ error }) => logger.error(error),
+}
 ```
 
 ## Examples
@@ -200,6 +207,7 @@ config.sql.sharedLockSyntax = 'FOR SHARE'
 
 - All supported dialects use `LIMIT`/`OFFSET`; performance implications differ
 - For deep pagination, prefer `cursorPaginate`
+ - Composite cursors are supported by passing multiple columns (e.g., `['created_at', 'id']`)
 
 ## Timezones and Types
 

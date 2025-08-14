@@ -190,6 +190,16 @@ Detected a retriable error (deadlock/serialization or matching `sqlStates`).
 
 Pass `isolation` in the transaction options.
 
+### Can I run read-only transactions?
+
+Yes. Pass `{ readOnly: true }` to `transaction` when your database supports it (e.g., PostgreSQL).
+
+```ts
+await db.transaction(async (tx) => {
+  await tx.selectFrom('users').limit(10).execute()
+}, { readOnly: true })
+```
+
 ### Can I nest transactions?
 
 Use `savepoint` within a transaction. Starting a new top-level transaction inside another is not supported.

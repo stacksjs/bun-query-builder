@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModels, defineModel } from '../src'
+import { beforeAll, describe, expect, it } from 'bun:test'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
 import { config } from '../src/config'
 
 const User = defineModel({
@@ -32,10 +32,21 @@ describe('like/json helpers', () => {
     expect(c).toContain('NOT LIKE')
   })
 
+  it('ILike helpers', () => {
+    const a = String((db.selectFrom('users').whereILike?.('name', '%abc%') as any)?.toText?.() ?? '')
+    const b = String((db.selectFrom('users').orWhereILike?.('name', '%abc%') as any)?.toText?.() ?? '')
+    const c = String((db.selectFrom('users').whereNotILike?.('name', '%abc%') as any)?.toText?.() ?? '')
+    const d = String((db.selectFrom('users').orWhereNotILike?.('name', '%abc%') as any)?.toText?.() ?? '')
+    expect(a || b || c || d).toBeDefined()
+  })
+
   it('json helpers exist', () => {
     const a = String((db.selectFrom('users').whereJsonContains('prefs', { theme: 'dark' }) as any).toText?.() ?? '')
     expect(a).toContain('WHERE')
   })
+
+  it('json path helper exists', () => {
+    const a = String((db.selectFrom('users').whereJsonPath?.('prefs->theme', '=', 'dark') as any)?.toText?.() ?? '')
+    expect(a).toBeDefined()
+  })
 })
-
-

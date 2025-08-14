@@ -77,6 +77,17 @@ await db
   .with('Project', 'Profile')
   .execute()
 ```
+### Nested paths and many-to-many
+
+You can chain nested relations using dot notation. `belongsToMany` joins through a pivot inferred from naming (e.g., `users` ↔ `tags` → `tags_users`).
+
+```ts
+await db
+  .selectFrom('users')
+  .with('Project', 'Project.tags')
+  .execute()
+```
+
 
 Join order follows the order you pass to `with()`.
 

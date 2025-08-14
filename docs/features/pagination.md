@@ -58,7 +58,7 @@ Implementation details:
 
 ## cursorPaginate(): Stable Cursor Pagination
 
-Returns `{ data, meta: { perPage, nextCursor } }`.
+Returns `{ data, meta: { perPage, nextCursor, prevCursor? } }`.
 
 ```ts
 const page1 = await db
@@ -74,6 +74,18 @@ Implementation details:
 
 - Adds `WHERE column > cursor` (or `<` for desc) to fetch the next window
 - Orders by the cursor column to ensure deterministic order
+
+### Composite cursors
+
+You can pass multiple columns for deterministic ordering, e.g. `['created_at', 'id']`.
+
+```ts
+const page = await db
+  .selectFrom('users')
+  .cursorPaginate(50, undefined, ['created_at', 'id'], 'asc')
+
+// use page.meta.nextCursor to fetch the next window
+```
 
 ### Choosing a cursor column
 
@@ -158,7 +170,7 @@ await db.selectFrom('orders').chunkById(1000, 'id', async (batch) => {
 
 ### Can I use composite cursors?
 
-Not yet; choose a single stable column. Consider time-uuid or (timestamp, id) columns in schema design.
+Yes. Provide an array of columns like `['created_at', 'id']`. The cursor will carry a tuple of values in order.
 
 ### How do I resume a chunked job?
 

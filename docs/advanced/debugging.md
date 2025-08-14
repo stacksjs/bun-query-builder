@@ -53,6 +53,57 @@ const q = db.selectFrom('orders').where(['status', '=', 'paid']).toSQL()
 expect(q.toText()).toContain('SELECT')
 ```
 
+## Query hooks and tracing
+
+Set `config.hooks` to observe query lifecycle events or attach tracing spans:
+
+```ts
+import { config } from 'bun-query-builder'
+
+config.hooks = {
+  onQueryStart: ({ sql, kind }) => logger.debug({ kind, sql }),
+  onQueryEnd: ({ sql, durationMs, rowCount }) => logger.info({ sql, durationMs, rowCount }),
+  onQueryError: ({ sql, error }) => logger.error({ sql, error }),
+  startSpan: ({ sql }) => {
+    const span = tracer.startSpan('db.query')
+    span.setAttribute('db.statement', sql)
+    return { end: (err?: any) => { if (err) span.recordException(err); span.end() } }
+  },
+}
+```
+
+## Timeouts and cancellation
+
+```ts
+await db.selectFrom('users').withTimeout(500).get()
+
+const ac = new AbortController()
+const p = db.selectFrom('users').abort(ac.signal).get()
+ac.abort()
+await p
+```
+
+## ILIKE and JSON helpers
+
+```ts
+db.selectFrom('users').whereILike?.('name', '%ali%').get()
+db.selectFrom('users').whereJsonContains('prefs', { theme: 'dark' }).get()
+db.selectFrom('users').whereJsonPath?.('prefs->theme', '=', 'dark').get()
+```
+
+## Relation eager loading
+
+```ts
+db.selectFrom('users').with?.('posts', 'posts.tags').get()
+```
+
+## Composite cursor pagination
+
+```ts
+const page = await db.selectFrom('users').cursorPaginate(25, undefined, ['created_at', 'id'], 'asc')
+const next = await db.selectFrom('users').cursorPaginate(25, page.meta.nextCursor, ['created_at', 'id'])
+```
+
 ## Common Pitfalls
 
 - Comparing query object directly to string (enable toText instead)
