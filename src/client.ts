@@ -1631,6 +1631,51 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
   ) => Promise<DB[TTable]['columns'] | undefined>
 
   /**
+   * # `findOrFail(table, id)`
+   * Fetch by primary key or throw if not found.
+   */
+  findOrFail: <TTable extends keyof DB & string>(
+    table: TTable,
+    id: DB[TTable]['columns'][DB[TTable]['primaryKey'] & keyof DB[TTable]['columns']] | any,
+  ) => Promise<DB[TTable]['columns']>
+
+  /**
+   * # `findMany(table, ids)`
+   * Fetch many by primary keys.
+   */
+  findMany: <TTable extends keyof DB & string>(
+    table: TTable,
+    ids: any[],
+  ) => Promise<DB[TTable]['columns'][]>
+
+  /**
+   * # `latest(table, column?)`
+   * Returns latest row by column or default timestamp column.
+   */
+  latest: <TTable extends keyof DB & string>(
+    table: TTable,
+    column?: keyof DB[TTable]['columns'] & string,
+  ) => Promise<DB[TTable]['columns'] | undefined>
+
+  /**
+   * # `oldest(table, column?)`
+   * Returns oldest row by column or default timestamp column.
+   */
+  oldest: <TTable extends keyof DB & string>(
+    table: TTable,
+    column?: keyof DB[TTable]['columns'] & string,
+  ) => Promise<DB[TTable]['columns'] | undefined>
+
+  /**
+   * # `skip(table, count)`
+   * Returns a builder with an offset applied.
+   */
+  skip: <TTable extends keyof DB & string>(
+    table: TTable,
+    count: number,
+  ) => SelectQueryBuilder<DB, TTable, DB[TTable]['columns'], TTable>
+
+  /**
    * # `rawQuery(sql)`
    * Execute a raw SQL string (single statement) with no parameters.
    */
@@ -2781,6 +2826,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     async find(table, id) {
       return await (this as any).selectFrom(table).find(id)
+    },
+    async findOrFail(table, id) {
+      return await (this as any).selectFrom(table).findOrFail(id)
+    },
+    async findMany(table, ids) {
+      return await (this as any).selectFrom(table).findMany(ids)
+    },
+    async latest(table, column) {
+      return await (this as any).selectFrom(table).latest(column as any).first()
+    },
+    async oldest(table, column) {
+      return await (this as any).selectFrom(table).oldest(column as any).first()
+    },
+    skip(table, count) {
+      return (this as any).selectFrom(table).offset(count)
     },
     async rawQuery(query: string) {
       return await (bunSql as any).unsafe(query)
