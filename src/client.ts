@@ -563,53 +563,480 @@ export interface BaseSelectQueryBuilder<
   ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined | T2>
   crossJoin: <T2 extends keyof DB & string>(table: T2) => SelectQueryBuilder<DB, TTable, TSelected, TJoined | T2>
   crossJoinSub: (sub: { toSQL: () => any }, alias: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `groupBy`
+   *
+   * Adds a GROUP BY clause.
+   *
+   * @example
+   * ```ts
+   * const sql = db.selectFrom('users').groupBy('role').toSQL()
+   * const rows = await db.selectFrom('users').groupBy('role', 'status').get()
+   * ```
+   */
   groupBy: (...columns: (keyof DB[TTable]['columns'] & string | string)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `groupByRaw`
+   *
+   * Adds a raw GROUP BY fragment.
+   *
+   * @example
+   * ```ts
+   * const sql = db.selectFrom('users').groupByRaw(sql`date_trunc('day', created_at)`).toSQL()
+   * const rows = await db.selectFrom('users').groupByRaw(sql`1`).get()
+   * ```
+   */
   groupByRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `having`
+   *
+   * Adds a HAVING clause using the flexible expression format.
+   *
+   * @example
+   * ```ts
+   * const sql = db.selectFrom('users').groupBy('role').having(['count', '>', 10]).toSQL()
+   * const rows = await db.selectFrom('users').having({ active: true }).get()
+   * ```
+   */
   having: (expr: WhereExpression<any>) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `havingRaw`
+   *
+   * Adds a raw HAVING fragment.
+   *
+   * @example
+   * ```ts
+   * const sql = db.selectFrom('users').groupBy('role').havingRaw(sql`count(*) > 10`).toSQL()
+   * const rows = await db.selectFrom('users').havingRaw(sql`count(*) > 0`).get()
+   * ```
+   */
   havingRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `addSelect`
+   *
+   * Adds additional columns to the SELECT list.
+   *
+   * @example
+   * ```ts
+   * const sql = db.selectFrom('users').addSelect('id', 'name').toSQL()
+   * const rows = await db.selectFrom('users').addSelect('email').get()
+   * ```
+   */
   addSelect: (...columns: (keyof DB[TTable]['columns'] & string | string)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `orderByRaw`
+   *
+   * Adds a raw ORDER BY fragment.
+   *
+   * @example
+   * ```ts
+   * const sql = db.selectFrom('users').orderByRaw(sql`random()`).toSQL()
+   * const rows = await db.selectFrom('users').orderByRaw(sql`1`).get()
+   * ```
+   */
   orderByRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `union`
+   *
+   * Unions another query.
+   *
+   * @example
+   * ```ts
+   * const a = db.selectFrom('users').where({ active: true })
+   * const b = db.selectFrom('users').where({ admin: true })
+   * const rows = await a.union(b).get()
+   * const sql = a.union(b).toSQL()
+   * ```
+   */
   union: (other: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `unionAll`
+   *
+   * Unions another query including duplicates.
+   *
+   * @example
+   * ```ts
+   * const a = db.selectFrom('users').where({ active: true })
+   * const b = db.selectFrom('users').where({ admin: true })
+   * const rows = await a.unionAll(b).get()
+   * const sql = a.unionAll(b).toSQL()
+   * ```
+   */
   unionAll: (other: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `forPage`
+   *
+   * Applies limit/offset based on page size and page number.
+   *
+   * @example
+   * ```ts
+   * const page = await db.selectFrom('users').forPage(2, 10).get()
+   * const sql = db.selectFrom('users').forPage(3, 20).toSQL()
+   * ```
+   */
   forPage: (page: number, perPage: number) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   selectAllRelations?: () => SelectQueryBuilder<DB, TTable, any, TJoined>
   // where helpers
+  /**
+   * # `whereNull`
+   *
+   * Filters rows where a column is NULL.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereNull('deleted_at').get()
+   * const sql = db.selectFrom('users').whereNull('deleted_at').toSQL()
+   * ```
+   */
   whereNull?: (column: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereNotNull`
+   *
+   * Filters rows where a column is NOT NULL.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereNotNull('deleted_at').get()
+   * const sql = db.selectFrom('users').whereNotNull('deleted_at').toSQL()
+   * ```
+   */
   whereNotNull?: (column: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // whereBetween intentionally omitted here because it is declared above as required
+  /**
+   * # `whereExists`
+   *
+   * Filters rows where the subquery returns at least one row.
+   *
+   * @example
+   * ```ts
+   * const sub = db.selectFrom('posts').whereColumn('posts.user_id', '=', 'users.id')
+   * const rows = await db.selectFrom('users').whereExists(sub).get()
+   * const sql = db.selectFrom('users').whereExists(sub).toSQL()
+   * ```
+   */
   whereExists?: (subquery: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereJsonDoesntContain`
+   *
+   * Filters rows where a JSON column does not contain the given JSON value.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('posts').whereJsonDoesntContain('tags', ['spam']).get()
+   * const sql = db.selectFrom('posts').whereJsonDoesntContain('tags', ['spam']).toSQL()
+   * ```
+   */
   whereJsonDoesntContain?: (column: string, json: unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereJsonContainsKey`
+   *
+   * Filters rows where a JSON path contains the given key.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('posts').whereJsonContainsKey('meta.published').get()
+   * const sql = db.selectFrom('posts').whereJsonContainsKey('meta.tags').toSQL()
+   * ```
+   */
   whereJsonContainsKey?: (path: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereJsonDoesntContainKey`
+   *
+   * Filters rows where a JSON path does not contain the given key.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('posts').whereJsonDoesntContainKey('meta.archived').get()
+   * const sql = db.selectFrom('posts').whereJsonDoesntContainKey('meta.archived').toSQL()
+   * ```
+   */
   whereJsonDoesntContainKey?: (path: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereJsonLength`
+   *
+   * Filters rows by the length of a JSON array at the given path.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('posts').whereJsonLength('tags', '>=', 2).get()
+   * const sql = db.selectFrom('posts').whereJsonLength('tags', 0).toSQL()
+   * ```
+   */
   whereJsonLength?: (path: string, opOrLen: WhereOperator | number, len?: number) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // relations
+  /**
+   * # `with`
+   *
+   * Auto-joins related tables inferred from schema metadata.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').with('posts', 'profiles').get()
+   * const sql = db.selectFrom('users').with('posts').toSQL()
+   * ```
+   */
   with?: (...relations: string[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
   // locks
+  /**
+   * # `lockForUpdate`
+   *
+   * Applies a FOR UPDATE row lock to the query.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').where({ id: 1 }).lockForUpdate().get()
+   * const sql = db.selectFrom('users').lockForUpdate().toSQL()
+   * ```
+   */
   lockForUpdate: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `sharedLock`
+   *
+   * Applies a shared lock syntax depending on the dialect configuration.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').where({ id: 1 }).sharedLock().get()
+   * const sql = db.selectFrom('users').sharedLock().toSQL()
+   * ```
+   */
   sharedLock: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // ctes
+  /**
+   * # `withCTE`
+   *
+   * Adds a non-recursive Common Table Expression (CTE).
+   *
+   * @example
+   * ```ts
+   * const recent = db.selectFrom('users').whereDate('created_at', '>=', '2024-01-01')
+   * const rows = await db.selectFrom('users').withCTE('recent_users', recent).get()
+   * const sql = db.selectFrom('users').withCTE('recent_users', recent).toSQL()
+   * ```
+   */
   withCTE: (name: string, sub: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `withRecursive`
+   *
+   * Adds a recursive Common Table Expression (CTE).
+   *
+   * @example
+   * ```ts
+   * const tree = db.selectFrom('categories') // build recursive CTE
+   * const rows = await db.selectFrom('categories').withRecursive('tree', tree).get()
+   * const sql = db.selectFrom('categories').withRecursive('tree', tree).toSQL()
+   * ```
+   */
   withRecursive: (name: string, sub: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // results helpers
+  /**
+   * # `value`
+   *
+   * Returns a single column value from the first row.
+   *
+   * @example
+   * ```ts
+   * const name = await db.selectFrom('users').whereId(1).value('name')
+   * const createdAt = await db.selectFrom('users').orderBy('id', 'desc').value('created_at')
+   * ```
+   */
   value: <K extends keyof TSelected & string>(column: K) => Promise<SelectedRow<DB, TTable, TSelected>[K]>
   pluck: {
+    /**
+     * # `pluck(column)`
+     *
+     * Returns an array of values for a single column.
+     *
+     * @example
+     * ```ts
+     * const names = await db.selectFrom('users').pluck('name')
+     * const ids = await db.selectFrom('users').orderBy('id').pluck('id')
+     * ```
+     */
     <K extends keyof TSelected & string>(column: K): Promise<SelectedRow<DB, TTable, TSelected>[K][]>
+    /**
+     * # `pluck(column, key)`
+     *
+     * Returns an object keyed by the given key column.
+     *
+     * @example
+     * ```ts
+     * const byId = await db.selectFrom('users').pluck('email', 'id')
+     * const map = await db.selectFrom('users').pluck('name', 'email')
+     * ```
+     */
     <K extends keyof TSelected & string, K2 extends keyof TSelected & string>(column: K, key: K2): Promise<Record<string, SelectedRow<DB, TTable, TSelected>[K]>>
   }
+  /**
+   * # `exists`
+   *
+   * Returns true if the query returns at least one row.
+   *
+   * @example
+   * ```ts
+   * const hasUsers = await db.selectFrom('users').exists()
+   * const hasAdmins = await db.selectFrom('users').where({ admin: true }).exists()
+   * ```
+   */
   exists: () => Promise<boolean>
+  /**
+   * # `doesntExist`
+   *
+   * Returns true if the query returns no rows.
+   *
+   * @example
+   * ```ts
+   * const noUsers = await db.selectFrom('users').where({ id: -1 }).doesntExist()
+   * const none = await db.selectFrom('users').where({ active: false }).doesntExist()
+   * ```
+   */
   doesntExist: () => Promise<boolean>
+  /**
+   * # `cursorPaginate`
+   *
+   * Cursor-based pagination helper.
+   *
+   * @example
+   * ```ts
+   * const page1 = await db.selectFrom('users').cursorPaginate(10)
+   * const page2 = await db.selectFrom('users').cursorPaginate(10, page1.meta.nextCursor)
+   * ```
+   */
   cursorPaginate: (perPage: number, cursor?: string | number, column?: string, direction?: 'asc' | 'desc') => Promise<{ data: any[], meta: { perPage: number, nextCursor: string | number | null } }>
+  /**
+   * # `chunk`
+   *
+   * Iterates through results in pages and invokes the handler for each chunk.
+   *
+   * @example
+   * ```ts
+   * await db.selectFrom('users').chunk(100, async rows => {
+   *   // process rows
+   * })
+   * const done = await db.selectFrom('users').chunk(50, () => {})
+   * ```
+   */
   chunk: (size: number, handler: (rows: any[]) => Promise<void> | void) => Promise<void>
+  /**
+   * # `chunkById`
+   *
+   * Iterates through results using cursor-based pagination on an id-like column.
+   *
+   * @example
+   * ```ts
+   * await db.selectFrom('users').chunkById(100, 'id', async rows => { /* noop */ })
+   * await db.selectFrom('users').chunkById(100)
+   * ```
+   */
   chunkById: (size: number, column?: string, handler?: (rows: any[]) => Promise<void> | void) => Promise<void>
+  /**
+   * # `eachById`
+   *
+   * Iterates row-by-row using id-based cursor pagination.
+   *
+   * @example
+   * ```ts
+   * await db.selectFrom('users').eachById(100, 'id', async row => { /* noop */ })
+   * await db.selectFrom('users').eachById(50)
+   * ```
+   */
   eachById: (size: number, column?: string, handler?: (row: any) => Promise<void> | void) => Promise<void>
+  /**
+   * # `when`
+   *
+   * Conditionally modifies the query.
+   *
+   * @example
+   * ```ts
+   * const activeOnly = true
+   * const q = db.selectFrom('users').when(activeOnly, qb => qb.where({ active: true }))
+   * const sql = q.toSQL()
+   * ```
+   */
   when: (condition: any, then: (qb: any) => any, otherwise?: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `tap`
+   *
+   * Runs a side-effect function and returns the builder for chaining.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').tap(qb => qb.orderBy('id')).get()
+   * const sql = db.selectFrom('users').tap(() => {}).toSQL()
+   * ```
+   */
   tap: (fn: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `dump`
+   *
+   * Logs the SQL string to the console and returns the builder.
+   *
+   * @example
+   * ```ts
+   * db.selectFrom('users').whereId(1).dump().get()
+   * db.selectFrom('users').orderBy('id').dump()
+   * ```
+   */
   dump: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `dd`
+   *
+   * Dumps the SQL and throws an error to stop execution.
+   *
+   * @example
+   * ```ts
+   * // db.selectFrom('users').whereId(1).dd()
+   * ```
+   */
   dd: () => never
+  /**
+   * # `explain`
+   *
+   * Runs EXPLAIN on the built query and returns the plan rows.
+   *
+   * @example
+   * ```ts
+   * const plan = await db.selectFrom('users').whereId(1).explain()
+   * const plan2 = await db.selectFrom('users').orderBy('id').limit(1).explain()
+   * ```
+   */
   explain: () => Promise<any[]>
+  /**
+   * # `simple`
+   *
+   * Returns the Bun.sql simple representation for the built query.
+   *
+   * @example
+   * ```ts
+   * const s = db.selectFrom('users').whereId(1).simple()
+   * const t = db.selectFrom('users').orderBy('id').simple()
+   * ```
+   */
   simple: () => any
   toText?: () => string
+  /**
+   * # `paginate`
+   *
+   * Paginates results using LIMIT/OFFSET and returns data with meta info.
+   *
+   * @example
+   * ```ts
+   * const res = await db.selectFrom('users').paginate(10, 2)
+   * const res2 = await db.selectFrom('users').where({ active: true }).paginate(25)
+   * ```
+   */
   paginate: (perPage: number, page?: number) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
+  /**
+   * # `simplePaginate`
+   *
+   * Lightweight paginator using LIMIT/OFFSET and a hasMore flag.
+   *
+   * @example
+   * ```ts
+   * const res = await db.selectFrom('users').simplePaginate(10, 1)
+   * const res2 = await db.selectFrom('users').where({ active: true }).simplePaginate(25)
+   * ```
+   */
   simplePaginate: (perPage: number, page?: number) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, hasMore: boolean } }>
   /**
    * # `toSQL`
@@ -684,62 +1111,408 @@ export type SelectQueryBuilder<
 > = BaseSelectQueryBuilder<DB, TTable, TSelected, TJoined> & DynamicWhereMethods<DB, TTable, TSelected, TJoined>
 
 export interface InsertQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
+  /**
+   * # `values`
+   *
+   * Sets the row or rows to insert.
+   *
+   * @example
+   * ```ts
+   * const id = await db.insertInto('users').values({ name: 'Alice' }).execute()
+   * const rows = await db.insertInto('users').values([{ name: 'A' }, { name: 'B' }]).execute()
+   * ```
+   */
   values: (data: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[]) => InsertQueryBuilder<DB, TTable>
+  /**
+   * # `returning`
+   *
+   * Adds a RETURNING clause and switches to a select builder of those columns.
+   *
+   * @example
+   * ```ts
+   * const row = await db.insertInto('users').values({ name: 'Alice' }).returning('id', 'name').first()
+   * const sql = db.insertInto('users').values({ name: 'A' }).returning('id').toSQL()
+   * ```
+   */
   returning: <K extends keyof DB[TTable]['columns'] & string>(...cols: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
+  /**
+   * # `toSQL`
+   *
+   * Returns the SQL string for the INSERT statement.
+   *
+   * @example
+   * ```ts
+   * const sql = db.insertInto('users').values({ name: 'A' }).toSQL()
+   * ```
+   */
   toSQL: () => string
+  /**
+   * # `execute`
+   *
+   * Executes the INSERT. Returns affected row count or inserted rows when using RETURNING.
+   *
+   * @example
+   * ```ts
+   * const count = await db.insertInto('users').values({ name: 'A' }).execute()
+   * const rows = await db.insertInto('users').values({ name: 'A' }).returning('id').execute()
+   * ```
+   */
   execute: () => Promise<number | DB[TTable]['columns'] | DB[TTable]['columns'][]>
 }
 
 export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
+  /**
+   * # `set`
+   *
+   * Sets columns and values to update.
+   *
+   * @example
+   * ```ts
+   * const sql = db.updateTable('users').set({ name: 'Alice' }).where({ id: 1 }).toSQL()
+   * ```
+   */
   set: (values: Partial<DB[TTable]['columns']>) => UpdateQueryBuilder<DB, TTable>
+  /**
+   * # `where`
+   *
+   * Filters rows to update using a flexible expression.
+   *
+   * @example
+   * ```ts
+   * const cnt = await db.updateTable('users').set({ active: true }).where({ id: 1 }).execute()
+   * ```
+   */
   where: (expr: WhereExpression<DB[TTable]['columns']>) => UpdateQueryBuilder<DB, TTable>
+  /**
+   * # `returning`
+   *
+   * Adds a RETURNING clause and switches to a select builder of those columns.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.updateTable('users').set({ name: 'A' }).returning('id').execute()
+   * ```
+   */
   returning: <K extends keyof DB[TTable]['columns'] & string>(...cols: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
+  /**
+   * # `toSQL`
+   *
+   * Returns the SQL string for the UPDATE statement.
+   *
+   * @example
+   * ```ts
+   * const sql = db.updateTable('users').set({ name: 'A' }).toSQL()
+   * ```
+   */
   toSQL: () => string
+  /**
+   * # `execute`
+   *
+   * Executes the UPDATE and returns the number of affected rows.
+   *
+   * @example
+   * ```ts
+   * const count = await db.updateTable('users').set({ active: true }).where({ id: 1 }).execute()
+   * ```
+   */
   execute: () => Promise<number>
 }
 
 export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
+  /**
+   * # `where`
+   *
+   * Filters rows to delete using a flexible expression.
+   *
+   * @example
+   * ```ts
+   * const count = await db.deleteFrom('users').where({ inactive: true }).execute()
+   * ```
+   */
   where: (expr: WhereExpression<DB[TTable]['columns']>) => DeleteQueryBuilder<DB, TTable>
+  /**
+   * # `returning`
+   *
+   * Adds a RETURNING clause and switches to a select builder of those columns.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.deleteFrom('users').where({ id: 1 }).returning('id').execute()
+   * ```
+   */
   returning: <K extends keyof DB[TTable]['columns'] & string>(...cols: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
+  /**
+   * # `toSQL`
+   *
+   * Returns the SQL string for the DELETE statement.
+   *
+   * @example
+   * ```ts
+   * const sql = db.deleteFrom('users').where({ id: 1 }).toSQL()
+   * ```
+   */
   toSQL: () => string
+  /**
+   * # `execute`
+   *
+   * Executes the DELETE and returns the number of affected rows.
+   *
+   * @example
+   * ```ts
+   * const count = await db.deleteFrom('users').where({ id: 1 }).execute()
+   * ```
+   */
   execute: () => Promise<number>
 }
 
 export interface QueryBuilder<DB extends DatabaseSchema<any>> {
   // typed select list (column names or raw aliases)
+  /**
+   * # `select`
+   *
+   * Starts a SELECT query for a table with explicit columns or raw aliases.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.select('users', 'id', 'name').get()
+   * const sql = db.select('users', 'id', `count(*) as c`).toSQL()
+   * ```
+   */
   select: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(
     table: TTable,
     ...columns: (K | `${string} as ${string}`)[]
   ) => SelectQueryBuilder<DB, TTable, any>
+  /**
+   * # `selectFrom`
+   *
+   * Starts a SELECT * query for the given table with typed dynamic where methods.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereId(1).get()
+   * const sql = db.selectFrom('users').orderBy('id').toSQL()
+   * ```
+   */
   selectFrom: <TTable extends keyof DB & string>(table: TTable) => TypedSelectQueryBuilder<DB, TTable, DB[TTable]['columns'], TTable, `SELECT ${string} FROM ${TTable}`>
+  /**
+   * # `insertInto`
+   *
+   * Starts an INSERT query for the given table.
+   *
+   * @example
+   * ```ts
+   * const id = await db.insertInto('users').values({ name: 'A' }).execute()
+   * const row = await db.insertInto('users').values({ name: 'A' }).returning('id').first()
+   * ```
+   */
   insertInto: <TTable extends keyof DB & string>(table: TTable) => TypedInsertQueryBuilder<DB, TTable>
+  /**
+   * # `updateTable`
+   *
+   * Starts an UPDATE query for the given table.
+   *
+   * @example
+   * ```ts
+   * const count = await db.updateTable('users').set({ active: true }).where({ id: 1 }).execute()
+   * ```
+   */
   updateTable: <TTable extends keyof DB & string>(table: TTable) => UpdateQueryBuilder<DB, TTable>
+  /**
+   * # `deleteFrom`
+   *
+   * Starts a DELETE query for the given table.
+   *
+   * @example
+   * ```ts
+   * const count = await db.deleteFrom('users').where({ id: 1 }).execute()
+   * ```
+   */
   deleteFrom: <TTable extends keyof DB & string>(table: TTable) => DeleteQueryBuilder<DB, TTable>
+  /**
+   * # `selectFromSub`
+   *
+   * Selects from a subquery with an alias.
+   *
+   * @example
+   * ```ts
+   * const sub = db.selectFrom('users').where({ active: true })
+   * const sql = db.selectFromSub(sub, 'u').toSQL()
+   * ```
+   */
   selectFromSub: (sub: { toSQL: () => any }, alias: string) => SelectQueryBuilder<DB, keyof DB & string, any>
+  /**
+   * # `sql`
+   *
+   * Exposes the underlying Bun.sql tag for advanced usage.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.sql`SELECT 1 as one`.execute()
+   * ```
+   */
   sql: any
+  /**
+   * # `raw`
+   *
+   * Tagged template passthrough to Bun.sql.
+   *
+   * @example
+   * ```ts
+   * const q = db.raw`SELECT ${1} as one`
+   * ```
+   */
   raw: (strings: TemplateStringsArray, ...values: any[]) => any
+  /**
+   * # `simple`
+   *
+   * Tagged template passthrough that returns a simple statement.
+   *
+   * @example
+   * ```ts
+   * const s = db.simple`SELECT ${1}`
+   * ```
+   */
   simple: (strings: TemplateStringsArray, ...values: any[]) => any
+  /**
+   * # `unsafe`
+   *
+   * Executes an unsafe raw SQL string with optional parameters.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.unsafe('SELECT 1 as one')
+   * ```
+   */
   unsafe: (query: string, params?: any[]) => Promise<any>
+  /**
+   * # `file`
+   *
+   * Executes a SQL file with optional parameters (if supported by Bun.sql).
+   *
+   * @example
+   * ```ts
+   * const rows = await db.file('queries/users.sql')
+   * ```
+   */
   file: (path: string, params?: any[]) => Promise<any>
+  /**
+   * # `reserve`
+   *
+   * Reserves a connection from the pool and returns a scoped query builder.
+   *
+   * @example
+   * ```ts
+   * const reserved = await db.reserve()
+   * try { await reserved.selectFrom('users').get() } finally { reserved.release() }
+   * ```
+   */
   reserve: () => Promise<(QueryBuilder<DB> & { release: () => void })>
+  /**
+   * # `close`
+   *
+   * Closes the underlying connection/pool.
+   *
+   * @example
+   * ```ts
+   * await db.close()
+   * ```
+   */
   close: (opts?: { timeout?: number }) => Promise<void>
   // Pub/Sub (stubs until Bun exposes API)
+  /**
+   * # `listen`
+   *
+   * Subscribes to a channel (placeholder until Bun exposes API).
+   *
+   * @example
+   * ```ts
+   * await db.listen('events')
+   * ```
+   */
   listen: (channel: string, handler?: (payload: any) => void) => Promise<void>
+  /**
+   * # `unlisten`
+   *
+   * Unsubscribes from a channel or all channels (placeholder).
+   */
   unlisten: (channel?: string) => Promise<void>
+  /**
+   * # `notify`
+   *
+   * Sends a notification to a channel (placeholder).
+   */
   notify: (channel: string, payload?: any) => Promise<void>
   // COPY support (stubs until available)
+  /**
+   * # `copyTo`
+   *
+   * Streams out data from a query or table (placeholder).
+   */
   copyTo: (queryOrTable: string, options?: Record<string, any>) => Promise<any>
+  /**
+   * # `copyFrom`
+   *
+   * Streams data into a table (placeholder).
+   */
   copyFrom: (queryOrTable: string, source: AsyncIterable<any> | Iterable<any>, options?: Record<string, any>) => Promise<any>
   // Pool readiness
+  /**
+   * # `ping`
+   *
+   * Executes a lightweight query to confirm connectivity.
+   */
   ping: () => Promise<boolean>
+  /**
+   * # `waitForReady`
+   *
+   * Repeatedly pings until ready or attempts exhausted.
+   */
   waitForReady: (opts?: { attempts?: number, delayMs?: number }) => Promise<void>
+  /**
+   * # `transaction`
+   *
+   * Runs the provided function within a transaction with retry options.
+   *
+   * @example
+   * ```ts
+   * const res = await db.transaction(async tx => {
+   *   await tx.insertInto('users').values({ name: 'A' }).execute()
+   *   return 'ok'
+   * })
+   * ```
+   */
   transaction: <T>(fn: (tx: QueryBuilder<DB>) => Promise<T> | T, options?: TransactionOptions) => Promise<T>
+  /**
+   * # `savepoint`
+   *
+   * Executes the provided function inside a database savepoint.
+   */
   savepoint: <T>(fn: (sp: QueryBuilder<DB>) => Promise<T> | T) => Promise<T>
+  /**
+   * # `beginDistributed` / `commitDistributed` / `rollbackDistributed`
+   *
+   * Distributed transaction primitives (if supported by Bun.sql).
+   */
   beginDistributed: <T>(name: string, fn: (tx: QueryBuilder<DB>) => Promise<T> | T) => Promise<T>
   commitDistributed: (name: string) => Promise<void>
   rollbackDistributed: (name: string) => Promise<void>
+  /**
+   * # `configure`
+   *
+   * Applies runtime configuration overrides to this builder instance.
+   */
   configure: (opts: Partial<typeof config>) => QueryBuilder<DB>
+  /**
+   * # `setTransactionDefaults`
+   *
+   * Sets default transaction options for this builder instance.
+   */
   setTransactionDefaults: (defaults: TransactionOptions) => void
+  /**
+   * # `transactional`
+   *
+   * Wraps a function so it runs inside a new transaction when called.
+   */
   transactional: <TArgs extends any[], R>(fn: (tx: QueryBuilder<DB>, ...args: TArgs) => Promise<R> | R, options?: TransactionOptions) => (...args: TArgs) => Promise<R>
   // aggregates
   count: <TTable extends keyof DB & string>(table: TTable, column?: keyof DB[TTable]['columns'] & string) => Promise<number>
