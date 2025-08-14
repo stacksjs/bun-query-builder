@@ -1,5 +1,5 @@
 import type { SchemaMeta } from './meta'
-import type { DatabaseSchema } from './schema'
+import type { DatabaseSchema, InferTableName, ModelRecord } from './schema'
 import { sql as bunSql } from 'bun'
 import { config } from './config'
 
@@ -1083,6 +1083,7 @@ export interface BaseSelectQueryBuilder<
    */
   toSQL: () => string
   execute: () => Promise<SelectedRow<DB, TTable, TSelected>[]>
+  executeTakeFirst: () => Promise<SelectedRow<DB, TTable, TSelected> | undefined>
   // Laravel-style retrieval helpers
   /**
    * # `get`
@@ -1248,6 +1249,7 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * ```
    */
   execute: () => Promise<number>
+  executeTakeFirst?: () => Promise<{ numUpdatedRows?: number }>
 }
 
 export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
@@ -1295,6 +1297,7 @@ export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * ```
    */
   execute: () => Promise<number>
+  executeTakeFirst?: () => Promise<{ numDeletedRows?: number }>
 }
 
 export interface QueryBuilder<DB extends DatabaseSchema<any>> {
@@ -1557,6 +1560,81 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
   insertGetId: <TTable extends keyof DB & string>(table: TTable, values: Partial<DB[TTable]['columns']>, idColumn?: keyof DB[TTable]['columns'] & string) => Promise<any>
   updateOrInsert: <TTable extends keyof DB & string>(table: TTable, match: Partial<DB[TTable]['columns']>, values: Partial<DB[TTable]['columns']>) => Promise<boolean>
   upsert: <TTable extends keyof DB & string>(table: TTable, rows: Partial<DB[TTable]['columns']>[], conflictColumns: (keyof DB[TTable]['columns'] & string)[], mergeColumns?: (keyof DB[TTable]['columns'] & string)[]) => Promise<any>
+
+  /**
+   * # `create(table, values)`
+   *
+   * Inserts a row and returns the created record.
+   */
+  create: <TTable extends keyof DB & string>(
+    table: TTable,
+    values: Partial<DB[TTable]['columns']>,
+  ) => Promise<DB[TTable]['columns']>
+
+  /**
+   * # `createMany(table, rows)`
+   *
+   * Inserts multiple rows. Returns void.
+   */
+  createMany: <TTable extends keyof DB & string>(
+    table: TTable,
+    rows: Partial<DB[TTable]['columns']>[],
+  ) => Promise<void>
+
+  /**
+   * # `firstOrCreate(table, match, [defaults])`
+   *
+   * Returns the first matching row, or creates one with defaults merged and returns it.
+   */
+  firstOrCreate: <TTable extends keyof DB & string>(
+    table: TTable,
+    match: Partial<DB[TTable]['columns']>,
+    defaults?: Partial<DB[TTable]['columns']>,
+  ) => Promise<DB[TTable]['columns']>
+
+  /**
+   * # `updateOrCreate(table, match, values)`
+   *
+   * Updates the first matching row with values or creates a new one if none exists, then returns it.
+   */
+  updateOrCreate: <TTable extends keyof DB & string>(
+    table: TTable,
+    match: Partial<DB[TTable]['columns']>,
+    values: Partial<DB[TTable]['columns']>,
+  ) => Promise<DB[TTable]['columns']>
+
+  /**
+   * # `save(table, values)`
+   * If values contain the primary key and a row exists, updates it; otherwise creates a new row. Returns the row.
+   */
+  save: <TTable extends keyof DB & string>(
+    table: TTable,
+    values: Partial<DB[TTable]['columns']>,
+  ) => Promise<DB[TTable]['columns']>
+
+  /**
+   * # `remove(table, id)`
+   * Deletes by primary key and returns adapter's first result object.
+   */
+  remove: <TTable extends keyof DB & string>(
+    table: TTable,
+    id: DB[TTable]['columns'][DB[TTable]['primaryKey'] & keyof DB[TTable]['columns']] | any,
+  ) => Promise<any>
+
+  /**
+   * # `find(table, id)`
+   * Fetch by primary key. Returns the row or undefined.
+   */
+  find: <TTable extends keyof DB & string>(
+    table: TTable,
+    id: DB[TTable]['columns'][DB[TTable]['primaryKey'] & keyof DB[TTable]['columns']] | any,
+  ) => Promise<DB[TTable]['columns'] | undefined>
+
+  /**
+   * # `rawQuery(sql)`
+   * Execute a raw SQL string (single statement) with no parameters.
+   */
+  rawQuery: (query: string) => Promise<any>
 }
 
 // Typed INSERT builder to expose a structured SQL literal in hovers
@@ -2685,6 +2763,59 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const setCols = (mergeColumns ?? []).map(c => String(c))
       const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON CONFLICT (${bunSql(targetCols as any)}) DO UPDATE SET ${bunSql(setCols.reduce((acc, c) => ({ ...acc, [c]: (bunSql as any)(`EXCLUDED.${c}`) }), {}))}`
       return (built as any).execute()
+    },
+    async save(table, values) {
+      const pk = meta?.primaryKeys[String(table)] ?? 'id'
+      const id = (values as any)[pk]
+      if (id != null) {
+        await (this as any).updateTable(table).set(values as any).where({ [pk]: id } as any).execute()
+        const row = await (this as any).selectFrom(table).find(id)
+        if (!row)
+          throw new Error('save() failed to retrieve updated row')
+        return row
+      }
+      return await (this as any).create(table, values)
+    },
+    async remove(table, id) {
+      return await (this as any).deleteFrom(table).where({ id } as any).execute()
+    },
+    async find(table, id) {
+      return await (this as any).selectFrom(table).find(id)
+    },
+    async rawQuery(query: string) {
+      return await (bunSql as any).unsafe(query)
+    },
+    async create(table, values) {
+      const pk = meta?.primaryKeys[String(table)] ?? 'id'
+      const id = await (this as any).insertGetId(table, values, pk)
+      const row = await (this as any).selectFrom(table).find(id)
+      if (!row)
+        throw new Error('create() failed to retrieve inserted row')
+      return row
+    },
+    async createMany(table, rows) {
+      await (this as any).insertInto(table).values(rows).execute()
+    },
+    async firstOrCreate(table, match, defaults) {
+      const existing = await (this as any).selectFrom(table).where(match as any).first()
+      if (existing)
+        return existing
+      return await (this as any).create(table, { ...(match as any), ...(defaults as any) })
+    },
+    async updateOrCreate(table, match, values) {
+      const existing = await (this as any).selectFrom(table).where(match as any).first()
+      if (existing) {
+        await (this as any).updateTable(table).set(values as any).where(match as any).execute()
+        const pk = meta?.primaryKeys[String(table)] ?? 'id'
+        const id = (existing as any)[pk]
+        const refreshed = id != null
+          ? await (this as any).selectFrom(table).find(id)
+          : await (this as any).selectFrom(table).where(match as any).first()
+        if (!refreshed)
+          throw new Error('updateOrCreate() failed to retrieve updated row')
+        return refreshed
+      }
+      return await (this as any).create(table, { ...(match as any), ...(values as any) })
     },
     async count(table, column) {
       const col = column ? bunSql(String(column)) : bunSql`*`

@@ -2,7 +2,7 @@
 // Dummy typed showcase for bun-query-builder
 // This file is not meant to run database operations. It demonstrates types.
 
-import type { QueryBuilder, SelectQueryBuilder } from './src'
+import type { SelectQueryBuilder } from './src'
 // Import example models
 import Comment from './examples/models/Comment'
 import Post from './examples/models/Post'
@@ -52,8 +52,7 @@ const usersQ = db
   .limit(10)
   // .toSQL()
 
-type UsersSelected = SelectedOf<typeof usersQ>
-const usersSelectedExample: UsersSelected | undefined = undefined
+const usersQHover = usersQ.rows
 const usersRowsPromise = usersQ.execute()
 
 // Join across typed tables
@@ -83,13 +82,11 @@ const sql = db.insertInto('comments').values(newComment).toSQL()
 
 // Returning examples to hover precise row shapes
 const insertUserQ = db.insertInto('users').values(newUser).returning('id', 'email')
-type InsertUserRow = SelectedOf<typeof insertUserQ>
-const insertUserRowExample: InsertUserRow | undefined = undefined
+const insertUserHover = insertUserQ.rows
 const insertedUsersPromise = insertUserQ.execute()
 
 const updateUserQ = db.updateTable('users').set({ role: 'member' }).where({ id: 1 }).returning('id', 'created_at')
-type UpdateUserRow = SelectedOf<typeof updateUserQ>
-const updateUserRowExample: UpdateUserRow | undefined = undefined
+const updateUserHover = updateUserQ.rows
 const updatedUsersPromise = updateUserQ.execute()
 
 // No explicit types needed: hover these locals to see fully inferred row shapes
@@ -130,3 +127,25 @@ const usersRecentHover = usersRecentQ.rows
 // db.select('users', 'does_not_exist')
 // db.updateTable('users').set({ nope: 123 })
 // db.insertInto('posts').values({ not_a_column: true })
+
+// CRUD helper examples
+async function typedCrudHelpers() {
+  const created = await db.create('users', { email: 'bob@example.com', name: 'Bob', role: 'member' })
+  const fetched = await db.find('users', 1)
+  const upserted = await db.save('users', { id: 1, role: 'admin' })
+  await db.createMany('users', [{ email: 'c1@example.com', name: 'C1', role: 'guest' }])
+  const firstOrCreated = await db.firstOrCreate('users', { email: 'alice@example.com' }, { name: 'Alice', role: 'member' })
+  const updatedOrCreated = await db.updateOrCreate('users', { email: 'd@example.com' }, { name: 'D', role: 'guest' })
+  const deleted = await db.remove('users', 123)
+  const rawRes = await db.rawQuery('SELECT 1')
+  const totalUsers = await db.count('users', 'id')
+  void created
+  void fetched
+  void upserted
+  void firstOrCreated
+  void updatedOrCreated
+  void deleted
+  void rawRes
+  void totalUsers
+}
+void typedCrudHelpers
