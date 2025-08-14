@@ -217,7 +217,17 @@ export function generateSql(plan: MigrationPlan): string {
 export function hashMigrationPlan(plan: MigrationPlan): string {
   // eslint-disable-next-line ts/no-require-imports
   const crypto = require('node:crypto')
-  const canon = JSON.stringify(plan, Object.keys(plan).sort())
+  function canonicalize(value: any): any {
+    if (value == null || typeof value !== 'object' || value instanceof Date)
+      return value
+    if (Array.isArray(value))
+      return value.map(v => canonicalize(v))
+    const out: Record<string, any> = {}
+    for (const key of Object.keys(value).sort())
+      out[key] = canonicalize(value[key])
+    return out
+  }
+  const canon = JSON.stringify(canonicalize(plan))
   return crypto.createHash('sha256').update(canon).digest('hex')
 }
 

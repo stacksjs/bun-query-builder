@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, beforeAll } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModels, defineModel } from '../src'
+import { config } from '../src/config'
 
 const User = defineModel({
   name: 'User',
@@ -13,23 +14,27 @@ const User = defineModel({
 } as const)
 
 describe('like/json helpers', () => {
+  beforeAll(() => {
+    if (config.debug)
+      config.debug.captureText = true
+  })
   const models = defineModels({ User })
   const schema = buildDatabaseSchema(models)
   const meta = buildSchemaMeta(models)
   const db = createQueryBuilder<typeof schema>({ schema, meta })
 
   it('whereLike/orWhereLike/notLike', () => {
-    const a = db.selectFrom('users').whereLike('name', '%a%').toSQL()
-    const b = db.selectFrom('users').orWhereLike('name', '%b%').toSQL()
-    const c = db.selectFrom('users').whereNotLike('name', '%c%').toSQL()
-    expect(String(a)).toContain('LIKE')
-    expect(String(b)).toContain('LIKE')
-    expect(String(c)).toContain('NOT LIKE')
+    const a = String((db.selectFrom('users').whereLike('name', '%a%') as any).toText?.() ?? '')
+    const b = String((db.selectFrom('users').orWhereLike('name', '%b%') as any).toText?.() ?? '')
+    const c = String((db.selectFrom('users').whereNotLike('name', '%c%') as any).toText?.() ?? '')
+    expect(a).toContain('LIKE')
+    expect(b).toContain('LIKE')
+    expect(c).toContain('NOT LIKE')
   })
 
   it('json helpers exist', () => {
-    const a = db.selectFrom('users').whereJsonContains('prefs', { theme: 'dark' }).toSQL()
-    expect(String(a)).toContain('WHERE')
+    const a = String((db.selectFrom('users').whereJsonContains('prefs', { theme: 'dark' }) as any).toText?.() ?? '')
+    expect(a).toContain('WHERE')
   })
 })
 

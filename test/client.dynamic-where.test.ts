@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, beforeAll } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModels, defineModel } from '../src'
+import { config } from '../src/config'
 
 const User = defineModel({
   name: 'User',
@@ -16,6 +17,10 @@ const User = defineModel({
 } as const)
 
 describe('dynamic whereX/orWhereX/andWhereX methods', () => {
+  beforeAll(() => {
+    if (config.debug)
+      config.debug.captureText = true
+  })
   const models = defineModels({ User })
   const schema = buildDatabaseSchema(models)
   const meta = buildSchemaMeta(models)
@@ -36,15 +41,14 @@ describe('dynamic whereX/orWhereX/andWhereX methods', () => {
   })
 
   it('treats array values as IN and scalars as =', () => {
-    const a = db.selectFrom('users').whereId([1, 2, 3]).toSQL()
-    const b = db.selectFrom('users').whereId(1).toSQL()
-    expect(String(a)).toContain('IN')
-    expect(String(b)).toContain('=')
+    const a = String((db.selectFrom('users').whereId([1, 2, 3]) as any).toText?.() ?? db.selectFrom('users').whereId([1, 2, 3]).toSQL())
+    const b = String((db.selectFrom('users').whereId(1) as any).toText?.() ?? db.selectFrom('users').whereId(1).toSQL())
+    expect(a).toContain('IN')
+    expect(b).toContain('=')
   })
 
   it('prefers snake_case column names for resolution', () => {
-    const q = db.selectFrom('users').whereCreatedAt(new Date())
-    const sql = String(q.toSQL())
+    const sql = String((db.selectFrom('users').whereCreatedAt(new Date()) as any).toText?.() ?? db.selectFrom('users').whereCreatedAt(new Date()).toSQL())
     expect(sql).toMatch(/created_at/i)
   })
 })

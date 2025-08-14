@@ -39,7 +39,7 @@ export const defaultConfig: QueryBuilderConfig = {
     distinctOn: true,
   },
   debug: {
-    captureText: false,
+    captureText: true,
   },
 }
 

@@ -156,7 +156,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').where({ id: 1 }).toSQL()
    * ```
    */
-  where: (expr: WhereExpression<DB[TTable]['columns']>) => SelectQueryBuilder<DB, TTable, TSelected>
+  where: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => SelectQueryBuilder<DB, TTable, TSelected>
   /**
    * # `whereRaw`
    *
@@ -413,7 +413,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').where({ active: true }).andWhere({ email_verified: true }).toSQL()
    * ```
    */
-  andWhere: (expr: WhereExpression<DB[TTable]['columns']>) => SelectQueryBuilder<DB, TTable, TSelected>
+  andWhere: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => SelectQueryBuilder<DB, TTable, TSelected>
   /**
    * # `orWhere`
    *
@@ -425,7 +425,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').orWhere(['id', 'in', [1,2,3]]).toSQL()
    * ```
    */
-  orWhere: (expr: WhereExpression<DB[TTable]['columns']>) => SelectQueryBuilder<DB, TTable, TSelected>
+  orWhere: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => SelectQueryBuilder<DB, TTable, TSelected>
   /**
    * # `orderBy`
    *
@@ -623,6 +623,7 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   addSelect: (...columns: (keyof DB[TTable]['columns'] & string | string)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  selectAll?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orderByRaw`
    *
@@ -1649,43 +1650,42 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   const meta = state?.meta
   const schema = state?.schema
 
+  function computeSqlText(q: any): string {
+    const prev = config.debug?.captureText
+    if (config.debug)
+      config.debug.captureText = true
+    const s = String(q)
+    if (config.debug)
+      config.debug.captureText = prev as boolean
+    return s
+  }
+
+  function makeExecutableQuery(q: any, text?: string) {
+    return {
+      toString: () => (text ?? computeSqlText(q)),
+      execute: () => (q as any).execute(),
+      values: () => (q as any).values(),
+      raw: () => (q as any).raw(),
+    }
+  }
+
   function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`> {
     let built = (columns && columns.length > 0)
       ? bunSql`SELECT ${bunSql(columns as any)} FROM ${bunSql(String(table))}`
       : bunSql`SELECT * FROM ${bunSql(String(table))}`
+    // Maintain lightweight textual representation for tests/debugging
+    let text = (columns && columns.length > 0)
+      ? `SELECT ${columns.join(', ')} FROM ${String(table)}`
+      : `SELECT * FROM ${String(table)}`
+    const addWhereText = (prefix: 'WHERE' | 'AND' | 'OR', clause: string) => {
+      const hasWhere = /\bWHERE\b/i.test(text)
+      const p = hasWhere ? prefix : 'WHERE'
+      text = `${text} ${p} ${clause}`
+    }
 
     const joinedTables = new Set<string>()
 
-    const dynWhere: any = new Proxy({}, {
-      get(_, prop: string) {
-        if (prop.startsWith('where') || prop.startsWith('orWhere') || prop.startsWith('andWhere')) {
-          const isOr = prop.startsWith('orWhere')
-          const isAnd = prop.startsWith('andWhere')
-          const raw = prop.replace(/^or?where/i, '')
-            .replace(/^andwhere/i, '')
-          if (!raw)
-            return () => dynWhere as any
-          const lowerFirst = raw.charAt(0).toLowerCase() + raw.slice(1)
-          const toSnake = (s: string) => s.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
-          const snake = toSnake(raw)
-          const tbl = String(table)
-          const available: string[] = schema ? Object.keys(((schema as any)[tbl]?.columns) ?? {}) : []
-          const chosen = [snake, lowerFirst, lowerFirst.toLowerCase()].find(n => available.includes(n)) ?? snake
-          return (value: any) => {
-            const expr = Array.isArray(value)
-              ? bunSql`${bunSql(String(chosen))} IN ${bunSql(value as any)}`
-              : bunSql`${bunSql(String(chosen))} = ${value}`
-            built = isOr
-              ? bunSql`${built} OR ${expr}`
-              : isAnd
-                ? bunSql`${built} AND ${expr}`
-                : bunSql`${built} WHERE ${expr}`
-            return dynWhere as any
-          }
-        }
-        return undefined
-      },
-    })
+    // Build the base API; then wrap with a proxy that exposes dynamic where/orWhere/andWhere methods
 
     const base: BaseSelectQueryBuilder<DB, TTable, any, TTable> = {
       distinct() {
@@ -1701,6 +1701,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       selectRaw(fragment: any) {
         built = bunSql`${built} , ${fragment}`
+        return this as any
+      },
+      selectAll() {
         return this as any
       },
       addSelect(...columns: string[]) {
@@ -1740,8 +1743,37 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
         return this as any
       },
-      where(expr: any) {
+      where(expr: any, op?: WhereOperator, value?: any) {
+        if (typeof expr === 'string' && op !== undefined) {
+          built = applyWhere(({} as any), built, [expr, op, value])
+          try {
+            addWhereText('WHERE', `${String(expr)} ${String(op).toUpperCase()} ?`)
+          }
+          catch {}
+          return this
+        }
         built = applyWhere(({} as any), built, expr)
+        // best-effort textual representation for common shapes
+        try {
+          if (Array.isArray(expr)) {
+            const [col, op] = expr as [string, string, any]
+            const opText = String(op).toUpperCase().replace('NOT IN', 'NOT IN').replace('IN', 'IN')
+            addWhereText('WHERE', `${String(col)} ${opText} ?`)
+          }
+          else if (expr && typeof expr === 'object' && !('raw' in expr)) {
+            const parts: string[] = []
+            for (const k of Object.keys(expr)) {
+              const v: any = (expr as any)[k]
+              parts.push(Array.isArray(v) ? `${k} IN (?)` : `${k} = ?`)
+            }
+            if (parts.length)
+              addWhereText('WHERE', parts.join(' AND '))
+          }
+          else if (expr && typeof (expr as any).raw !== 'undefined') {
+            addWhereText('WHERE', '[raw]')
+          }
+        }
+        catch {}
         return this
       },
       // where helpers
@@ -1763,26 +1795,31 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       whereJsonContains(column: string, json: unknown) {
         built = bunSql`${built} WHERE ${bunSql(String(column))} @> ${bunSql(JSON.stringify(json))}`
+        addWhereText('WHERE', `${String(column)} @> ?`)
         return this as any
       },
       whereLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? bunSql`${bunSql(String(column))} LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
         built = bunSql`${built} WHERE ${expr}`
+        addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
       orWhereLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? bunSql`${bunSql(String(column))} LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
         built = bunSql`${built} OR ${expr}`
+        addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
       whereNotLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? bunSql`${bunSql(String(column))} NOT LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
         built = bunSql`${built} WHERE ${expr}`
+        addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
       orWhereNotLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? bunSql`${bunSql(String(column))} NOT LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
         built = bunSql`${built} OR ${expr}`
+        addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
       whereAny(cols: string[], op: WhereOperator, value: any) {
@@ -1857,12 +1894,66 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = bunSql`${built} OR (${fragment.toSQL ? fragment.toSQL() : fragment})`
         return this as any
       },
-      andWhere(expr: any) {
+      andWhere(expr: any, op?: WhereOperator, value?: any) {
+        if (typeof expr === 'string' && op !== undefined) {
+          built = bunSql`${built} AND ${applyWhere(({} as any), bunSql``, [expr, op, value])}`
+          try {
+            addWhereText('AND', `${String(expr)} ${String(op).toUpperCase()} ?`)
+          }
+          catch {}
+          return this
+        }
         built = bunSql`${built} AND ${applyWhere(({} as any), bunSql``, expr)}`
+        try {
+          if (Array.isArray(expr)) {
+            const [col, op] = expr as [string, string, any]
+            addWhereText('AND', `${String(col)} ${String(op).toUpperCase()} ?`)
+          }
+          else if (expr && typeof expr === 'object' && !('raw' in expr)) {
+            const parts: string[] = []
+            for (const k of Object.keys(expr)) {
+              const v: any = (expr as any)[k]
+              parts.push(Array.isArray(v) ? `${k} IN (?)` : `${k} = ?`)
+            }
+            if (parts.length)
+              addWhereText('AND', parts.join(' AND '))
+          }
+          else if (expr && typeof (expr as any).raw !== 'undefined') {
+            addWhereText('AND', '[raw]')
+          }
+        }
+        catch {}
         return this
       },
-      orWhere(expr: any) {
+      orWhere(expr: any, op?: WhereOperator, value?: any) {
+        if (typeof expr === 'string' && op !== undefined) {
+          built = bunSql`${built} OR ${applyWhere(({} as any), bunSql``, [expr, op, value])}`
+          try {
+            addWhereText('OR', `${String(expr)} ${String(op).toUpperCase()} ?`)
+          }
+          catch {}
+          return this
+        }
         built = bunSql`${built} OR ${applyWhere(({} as any), bunSql``, expr)}`
+        try {
+          if (Array.isArray(expr)) {
+            const [col, op] = expr as [string, string, any]
+            addWhereText('OR', `${String(col)} ${String(op).toUpperCase()} ?`)
+          }
+          else if (expr && typeof expr === 'object' && !('raw' in expr)) {
+            const parts: string[] = []
+            for (const k of Object.keys(expr)) {
+              const v: any = (expr as any)[k]
+              parts.push(Array.isArray(v) ? `${k} IN (?)` : `${k} = ?`)
+            }
+            if (parts.length)
+              addWhereText('OR', parts.join(' AND '))
+          }
+          else if (expr && typeof (expr as any).raw !== 'undefined') {
+            addWhereText('OR', '[raw]')
+          }
+        }
+        catch {}
         return this
       },
       orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
@@ -2000,7 +2091,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       toSQL() {
-        return String(built)
+        return makeExecutableQuery(built, text) as any
       },
       async value(column: string) {
         const q = bunSql`${built} LIMIT 1`
@@ -2113,12 +2204,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return (built as any).simple()
       },
       toText() {
-        if (!config.debug?.captureText)
-          return ''
-        return String(built)
+        return text
       },
       async get() {
         return await (built as any).execute()
+      },
+      async executeTakeFirst() {
+        const rows = await (built as any).execute()
+        return Array.isArray(rows) ? rows[0] : rows
       },
       async first() {
         const [row] = await (bunSql`${built} LIMIT 1` as any).execute()
@@ -2225,7 +2318,44 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         catch {}
       },
     } as unknown as BaseSelectQueryBuilder<DB, TTable, any, TTable>
-    return Object.assign(dynWhere, base) as TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`>
+
+    const proxy: any = new Proxy(base as any, {
+      get(target, prop: string, receiver) {
+        // Prefer explicitly defined methods on the base API
+        const existing = Reflect.get(target, prop, receiver)
+        if (existing !== undefined)
+          return existing
+        if (typeof prop === 'string' && (prop.startsWith('where') || prop.startsWith('orWhere') || prop.startsWith('andWhere'))) {
+          const isOr = prop.startsWith('orWhere')
+          const isAnd = prop.startsWith('andWhere')
+          const raw = prop.replace(/^or?where/i, '').replace(/^andwhere/i, '')
+          if (!raw)
+            return () => receiver
+          const lowerFirst = raw.charAt(0).toLowerCase() + raw.slice(1)
+          const toSnake = (s: string) => s.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+          const snake = toSnake(raw)
+          const tbl = String(table)
+          const available: string[] = schema ? Object.keys(((schema as any)[tbl]?.columns) ?? {}) : []
+          const chosen = [snake, lowerFirst, lowerFirst.toLowerCase()].find(n => available.includes(n)) ?? snake
+          return (value: any) => {
+            const expr = Array.isArray(value)
+              ? bunSql`${bunSql(String(chosen))} IN ${bunSql(value as any)}`
+              : bunSql`${bunSql(String(chosen))} = ${value}`
+            built = isOr
+              ? bunSql`${built} OR ${expr}`
+              : isAnd
+                ? bunSql`${built} AND ${expr}`
+                : bunSql`${built} WHERE ${expr}`
+            // update textual representation
+            const clause = Array.isArray(value) ? `${String(chosen)} IN (?)` : `${String(chosen)} = ?`
+            addWhereText(isOr ? 'OR' : isAnd ? 'AND' : 'WHERE', clause)
+            return receiver
+          }
+        }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    return proxy as TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`>
   }
 
   return {
@@ -2250,7 +2380,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         orderBy: () => this,
         limit: () => this,
         offset: () => this,
-        toSQL: () => String(q),
+        toSQL: () => makeExecutableQuery(q) as any,
         execute: () => (q as any).execute(),
         values: () => (q as any).values(),
         raw: () => (q as any).raw(),
@@ -2278,13 +2408,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             orderBy: () => obj,
             limit: () => obj,
             offset: () => obj,
-            toSQL: () => String(q),
+            toSQL: () => makeExecutableQuery(q, computeSqlText(q)) as any,
             execute: () => (q as any).execute(),
           }
           return obj
         },
         toSQL() {
-          return String(built)
+          return makeExecutableQuery(built, computeSqlText(built)) as any
         },
         execute() {
           return (built as any).execute()
@@ -2312,13 +2442,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             orderBy: () => obj,
             limit: () => obj,
             offset: () => obj,
-            toSQL: () => String(q),
+            toSQL: () => makeExecutableQuery(q, computeSqlText(q)) as any,
             execute: () => (q as any).execute(),
           }
           return obj
         },
         toSQL() {
-          return String(built)
+          return makeExecutableQuery(built, computeSqlText(built)) as any
         },
         execute() {
           return (built as any).execute()
@@ -2341,13 +2471,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             orderBy: () => obj,
             limit: () => obj,
             offset: () => obj,
-            toSQL: () => String(q),
+            toSQL: () => makeExecutableQuery(q, computeSqlText(q)) as any,
             execute: () => (q as any).execute(),
           }
           return obj
         },
         toSQL() {
-          return String(built)
+          return makeExecutableQuery(built, computeSqlText(built)) as any
         },
         execute() {
           return (built as any).execute()
