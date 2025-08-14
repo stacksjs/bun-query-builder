@@ -52,7 +52,7 @@ type SnakeToPascal<S extends string> = S extends `${infer H}_${infer T}`
 // Typed SQL builder (type-level only). We piggy-back on the runtime builder but
 // thread a phantom TSql string through method signatures so hovers can show the
 // composed SQL at compile-time for common operations.
-type TypedDynamicWhereMethods<
+type _TypedDynamicWhereMethods<
   DB extends DatabaseSchema<any>,
   TTable extends keyof DB & string,
   TSelected,
@@ -77,16 +77,47 @@ export type TypedSelectQueryBuilder<
   TTable extends keyof DB & string,
   TSelected,
   TJoined extends string = TTable,
-  TSql extends string = string,
-> = SelectQueryBuilder<DB, TTable, TSelected, TJoined> &
-  TypedDynamicWhereMethods<DB, TTable, TSelected, TJoined, TSql> & {
-    toSQL: () => TSql
-    orderBy: <C extends keyof DB[TTable]['columns'] & string, D extends 'asc' | 'desc' = 'asc'>(
-      column: C,
-      direction?: D,
-    ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} ORDER BY ${C} ${D}`>
-    limit: <N extends number>(n: N) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} LIMIT ${N}`>
-  }
+  TSql extends string = `SELECT * FROM ${TTable}`,
+> = Omit<
+  BaseSelectQueryBuilder<DB, TTable, TSelected, TJoined>,
+  'toSQL' | 'where' | 'andWhere' | 'orWhere' | 'orderBy' | 'limit'
+> & DynamicWhereMethods<DB, TTable, TSelected, TJoined>
+& _TypedDynamicWhereMethods<DB, TTable, TSelected, TJoined, TSql>
+& {
+  toSQL: () => TSql
+  where: (<K extends keyof DB[TTable]['columns'] & string>(
+    expr: Record<K, DB[TTable]['columns'][K]>,
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${K} = ?`>) & (<K extends keyof DB[TTable]['columns'] & string, OP extends WhereOperator>(
+    expr: [K, OP, any],
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${K} ${Uppercase<OP>} ${OP extends 'in' | 'not in' ? '(?)' : '?'}`>) & ((
+    expr: WhereExpression<DB[TTable]['columns']> | string,
+    op?: WhereOperator,
+    value?: any,
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${string}`>)
+  andWhere: (<K extends keyof DB[TTable]['columns'] & string>(
+    expr: Record<K, DB[TTable]['columns'][K]>,
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${K} = ?`>) & (<K extends keyof DB[TTable]['columns'] & string, OP extends WhereOperator>(
+    expr: [K, OP, any],
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${K} ${Uppercase<OP>} ${OP extends 'in' | 'not in' ? '(?)' : '?'}`>) & ((
+    expr: WhereExpression<DB[TTable]['columns']> | string,
+    op?: WhereOperator,
+    value?: any,
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${string}`>)
+  orWhere: (<K extends keyof DB[TTable]['columns'] & string>(
+    expr: Record<K, DB[TTable]['columns'][K]>,
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${K} = ?`>) & (<K extends keyof DB[TTable]['columns'] & string, OP extends WhereOperator>(
+    expr: [K, OP, any],
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${K} ${Uppercase<OP>} ${OP extends 'in' | 'not in' ? '(?)' : '?'}`>) & ((
+    expr: WhereExpression<DB[TTable]['columns']> | string,
+    op?: WhereOperator,
+    value?: any,
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${string}`>)
+  orderBy: <C extends keyof DB[TTable]['columns'] & string, D extends 'asc' | 'desc' = 'asc'>(
+    column: C,
+    direction?: D,
+  ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} ORDER BY ${C} ${D}`>
+  limit: <N extends number>(n: N) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} LIMIT ${N}`>
+}
 
 type DynamicWhereMethods<
   DB extends DatabaseSchema<any>,
@@ -1294,7 +1325,7 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * const sql = db.selectFrom('users').orderBy('id').toSQL()
    * ```
    */
-  selectFrom: <TTable extends keyof DB & string>(table: TTable) => TypedSelectQueryBuilder<DB, TTable, DB[TTable]['columns'], TTable, `SELECT ${string} FROM ${TTable}`>
+  selectFrom: <TTable extends keyof DB & string>(table: TTable) => TypedSelectQueryBuilder<DB, TTable, DB[TTable]['columns'], TTable, `SELECT * FROM ${TTable}`>
   /**
    * # `insertInto`
    *
@@ -1669,7 +1700,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     }
   }
 
-  function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`> {
+  function makeSelect<TTable extends keyof DB & string>(table: TTable): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT * FROM ${TTable}`>
+  function makeSelect<TTable extends keyof DB & string>(table: TTable, columns: string[]): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`>
+  function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): any {
     let built = (columns && columns.length > 0)
       ? bunSql`SELECT ${bunSql(columns as any)} FROM ${bunSql(String(table))}`
       : bunSql`SELECT * FROM ${bunSql(String(table))}`
@@ -2355,7 +2388,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return Reflect.get(target, prop, receiver)
       },
     })
-    return proxy as TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`>
+    return proxy as any
   }
 
   return {
@@ -2365,11 +2398,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       Object.assign(config, opts)
       return this as any
     },
-    select(table, ...columns) {
-      return makeSelect<any>(table, columns as string[])
+    select<TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(
+      table: TTable,
+      ...columns: (K | `${string} as ${string}`)[]
+    ): SelectQueryBuilder<DB, TTable, any, TTable> {
+      return makeSelect<any>(table, columns as string[]) as unknown as SelectQueryBuilder<DB, TTable, any, TTable>
     },
     selectFrom<TTable extends keyof DB & string>(table: TTable) {
-      return makeSelect<any>(table)
+      return makeSelect<TTable>(table)
     },
     selectFromSub(sub, alias) {
       const q = bunSql`SELECT * FROM (${sub.toSQL()}) AS ${bunSql(alias)}`

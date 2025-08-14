@@ -20,7 +20,7 @@ const meta = buildSchemaMeta(models)
 type DB = typeof schema
 
 // Create a typed query builder instance
-const db: QueryBuilder<DB> = createQueryBuilder<typeof schema>({ schema, meta })
+const db = createQueryBuilder<typeof schema>({ schema, meta })
 
 // Typed columns for convenience in examples below
 type Users = typeof schema['users']['columns']
@@ -50,6 +50,8 @@ const usersQ = db
   .where({ id: 1 })
   .orderBy('id', 'desc')
   .limit(10)
+  // .toSQL()
+
 type UsersSelected = SelectedOf<typeof usersQ>
 const usersSelectedExample: UsersSelected | undefined = undefined
 const usersRowsPromise = usersQ.execute()
