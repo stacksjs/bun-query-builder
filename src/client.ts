@@ -924,7 +924,7 @@ export interface BaseSelectQueryBuilder<
    *
    * @example
    * ```ts
-   * await db.selectFrom('users').chunkById(100, 'id', async rows => { /* noop */ })
+   * await db.selectFrom('users').chunkById(100, 'id', async rows => { // noop })
    * await db.selectFrom('users').chunkById(100)
    * ```
    */
@@ -936,7 +936,7 @@ export interface BaseSelectQueryBuilder<
    *
    * @example
    * ```ts
-   * await db.selectFrom('users').eachById(100, 'id', async row => { /* noop */ })
+   * await db.selectFrom('users').eachById(100, 'id', async row => { // noop })
    * await db.selectFrom('users').eachById(50)
    * ```
    */
