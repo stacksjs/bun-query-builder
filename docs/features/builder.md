@@ -218,6 +218,9 @@ await db
 
 ```ts
 // 1) Per-query timeout
+// 3) Query hooks
+import { config } from '@/config'
+
 await db.selectFrom('users').withTimeout(250).get()
 
 // 2) AbortSignal
@@ -225,9 +228,6 @@ const ac = new AbortController()
 const p = db.selectFrom('users').abort(ac.signal).get()
 ac.abort()
 await p
-
-// 3) Query hooks
-import { config } from '@/config'
 config.hooks = {
   onQueryStart: ({ sql }) => logger.debug({ sql }),
   onQueryEnd: ({ durationMs }) => logger.info({ durationMs }),
