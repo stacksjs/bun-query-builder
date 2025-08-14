@@ -149,3 +149,44 @@ async function typedCrudHelpers() {
   void totalUsers
 }
 void typedCrudHelpers
+
+// Model-like facade using db helpers
+const UserModel = {
+  create(values: Partial<Users>) {
+    return db.create('users', values)
+  },
+  createMany(rows: Partial<Users>[]) {
+    return db.createMany('users', rows)
+  },
+  firstOrCreate(match: Partial<Users>, defaults?: Partial<Users>) {
+    return db.firstOrCreate('users', match, defaults)
+  },
+  updateOrCreate(match: Partial<Users>, values: Partial<Users>) {
+    return db.updateOrCreate('users', match, values)
+  },
+  save(values: Partial<Users>) {
+    return db.save('users', values)
+  },
+  find(id: number) {
+    return db.find('users', id)
+  },
+  remove(id: number) {
+    return db.remove('users', id)
+  },
+}
+
+async function modelLikeExamples() {
+  const created = await UserModel.create({ email: 'bob@example.com', name: 'Bob', role: 'member' })
+  const found = await UserModel.find(1)
+  const saved = await UserModel.save({ id: 1, role: 'admin' })
+  await UserModel.createMany([{ email: 'x@y.z', name: 'X', role: 'guest' }])
+  const foc = await UserModel.firstOrCreate({ email: 'z@y.z' }, { name: 'Z', role: 'member' })
+  const uoc = await UserModel.updateOrCreate({ email: 'w@y.z' }, { name: 'W', role: 'guest' })
+  await UserModel.remove(123)
+  void created
+  void found
+  void saved
+  void foc
+  void uoc
+}
+void modelLikeExamples
