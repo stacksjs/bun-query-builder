@@ -20,6 +20,26 @@ export type WhereExpression<TableColumns> =
 
 export type QueryResult = any
 
+/**
+ * # `SortDirection`
+ *
+ * The direction used when ordering query results.
+ */
+export type SortDirection = 'asc' | 'desc'
+
+/**
+ * # `ColumnName<DB, TTable>`
+ *
+ * Helper type extracting a string union of column names for a given table.
+ */
+export type ColumnName<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> = keyof DB[TTable]['columns'] & string
+// Named row alias to improve IDE hover readability
+export type SelectedRow<
+  DB extends DatabaseSchema<any>,
+  _TTable extends keyof DB & string,
+  TSelected,
+> = Readonly<TSelected>
+
 type JoinColumn<DB extends DatabaseSchema<any>, TTables extends string> = TTables extends any
   ? `${TTables}.${keyof DB[TTables]['columns'] & string}`
   : never
@@ -88,42 +108,431 @@ export interface BaseSelectQueryBuilder<
   TJoined extends string = TTable,
 > {
   // modifiers
+  /**
+   * # `distinct`
+   *
+   * Applies a DISTINCT modifier to the select list.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').distinct().get()
+   * const sql = db.selectFrom('users').distinct().toSQL()
+   * ```
+   */
   distinct: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `distinctOn`
+   *
+   * Applies a DISTINCT ON clause (PostgreSQL).
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').distinctOn('email').get()
+   * const sql = db.selectFrom('users').distinctOn('email', 'name').toSQL()
+   * ```
+   */
   distinctOn: (...columns: (keyof DB[TTable]['columns'] & string | string)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `selectRaw`
+   *
+   * Appends a raw fragment to the SELECT list.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').selectRaw(sql`count(*) as c`).get()
+   * const sqlText = db.selectFrom('users').selectRaw(sql`now() as ts`).toSQL()
+   * ```
+   */
   selectRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `where`
+   *
+   * Adds a WHERE clause using an object, tuple, or raw fragment.
+   *
+   * @example
+   * ```ts
+   * const users = await db.selectFrom('users').where({ id: 1, active: true }).get()
+   * const newer = await db.selectFrom('users').where(['created_at', '>', '2024-01-01']).get()
+   * const sqlText = db.selectFrom('users').where({ id: 1 }).toSQL()
+   * ```
+   */
   where: (expr: WhereExpression<DB[TTable]['columns']>) => SelectQueryBuilder<DB, TTable, TSelected>
+  /**
+   * # `whereRaw`
+   *
+   * Adds a raw WHERE fragment.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereRaw(sql`lower(name) = lower(${'Alice'})`).get()
+   * const sqlText = db.selectFrom('users').whereRaw(sql`custom_condition`).toSQL()
+   * ```
+   */
   whereRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereColumn`
+   *
+   * Compares one column to another column.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereColumn('created_at', '>=', 'updated_at').get()
+   * const sqlText = db.selectFrom('users').whereColumn('a', '=', 'b').toSQL()
+   * ```
+   */
   whereColumn: (left: string, op: WhereOperator, right: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `orWhereColumn`
+   *
+   * Adds an OR column-to-column comparison.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').where({ active: true }).orWhereColumn('last_login', '<', 'created_at').get()
+   * const sqlText = db.selectFrom('users').orWhereColumn('a', '!=', 'b').toSQL()
+   * ```
+   */
   orWhereColumn: (left: string, op: WhereOperator, right: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereIn`
+   *
+   * Filters rows where a column is IN a list or subquery.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereIn('id', [1, 2, 3]).get()
+   * const sqlText = db.selectFrom('users').whereIn('id', db.selectFrom('admins').selectRaw(sql`id`)).toSQL()
+   * ```
+   */
   whereIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `orWhereIn`
+   *
+   * Adds an OR IN filter.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').where({ active: true }).orWhereIn('role', ['admin', 'owner']).get()
+   * const sqlText = db.selectFrom('users').orWhereIn('id', [1, 2]).toSQL()
+   * ```
+   */
   orWhereIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereNotIn`
+   *
+   * Filters rows where a column is NOT IN a list or subquery.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereNotIn('id', [1, 2, 3]).get()
+   * const sqlText = db.selectFrom('users').whereNotIn('id', [4, 5]).toSQL()
+   * ```
+   */
   whereNotIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `orWhereNotIn`
+   *
+   * Adds an OR NOT IN filter.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').where({ active: true }).orWhereNotIn('id', [1, 2]).get()
+   * const sqlText = db.selectFrom('users').orWhereNotIn('role', ['banned']).toSQL()
+   * ```
+   */
   orWhereNotIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // convenience like wrappers
+  /**
+   * # `whereLike`
+   *
+   * Adds a LIKE filter for a column (case-insensitive by default).
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereLike('name', '%ali%').get()
+   * const rowsCs = await db.selectFrom('users').whereLike('name', '%Ali%', true).get()
+   * ```
+   */
   whereLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `orWhereLike`
+   *
+   * Adds an OR LIKE filter.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').where({ active: true }).orWhereLike('email', '%@example.com').get()
+   * const sqlText = db.selectFrom('users').orWhereLike('name', 'a%').toSQL()
+   * ```
+   */
   orWhereLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereNotLike`
+   *
+   * Adds a NOT LIKE filter for a column.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereNotLike('name', 'admin%').get()
+   * const sqlText = db.selectFrom('users').whereNotLike('email', '%spam%').toSQL()
+   * ```
+   */
   whereNotLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `orWhereNotLike`
+   *
+   * Adds an OR NOT LIKE filter.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').where({ active: true }).orWhereNotLike('name', '%test%').get()
+   * const sqlText = db.selectFrom('users').orWhereNotLike('name', '%bot%').toSQL()
+   * ```
+   */
   orWhereNotLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // where any/all/none on list of columns
+  /**
+   * # `whereAny`
+   *
+   * Matches when any of the given columns satisfy the operator/value.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereAny(['first_name', 'last_name'], 'like', '%ali%').get()
+   * const sqlText = db.selectFrom('users').whereAny(['email', 'username'], 'like', 'a%').toSQL()
+   * ```
+   */
   whereAny: (columns: (keyof DB[TTable]['columns'] & string)[], op: WhereOperator, value: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereAll`
+   *
+   * Matches when all of the given columns satisfy the operator/value.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereAll(['active', 'email_verified'], 'is', true).get()
+   * const sqlText = db.selectFrom('users').whereAll(['a', 'b'], '=', 1).toSQL()
+   * ```
+   */
   whereAll: (columns: (keyof DB[TTable]['columns'] & string)[], op: WhereOperator, value: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereNone`
+   *
+   * Matches when none of the given columns satisfy the operator/value.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereNone(['role', 'status'], 'in', ['banned']).get()
+   * const sqlText = db.selectFrom('users').whereNone(['a'], '!=', 1).toSQL()
+   * ```
+   */
   whereNone: (columns: (keyof DB[TTable]['columns'] & string)[], op: WhereOperator, value: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereNested`
+   *
+   * Wraps a subquery or fragment in parentheses and applies it with WHERE.
+   *
+   * @example
+   * ```ts
+   * const sub = db.selectFrom('users').whereLike('name', 'a%')
+   * const rows = await db.selectFrom('users').whereNested(sub).get()
+   * const sqlText = db.selectFrom('users').whereNested(sub).toSQL()
+   * ```
+   */
   whereNested: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `orWhereNested`
+   *
+   * Adds an OR-wrapped nested condition.
+   *
+   * @example
+   * ```ts
+   * const sub = db.selectFrom('users').where({ active: true })
+   * const rows = await db.selectFrom('users').orWhereNested(sub).get()
+   * const sqlText = db.selectFrom('users').orWhereNested(sub).toSQL()
+   * ```
+   */
   orWhereNested: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // date/json helpers (basic variants)
+  /**
+   * # `whereDate`
+   *
+   * Compares a column to a date value using the given operator.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereDate('created_at', '>=', '2024-01-01').get()
+   * const sqlText = db.selectFrom('users').whereDate('created_at', '<', new Date()).toSQL()
+   * ```
+   */
   whereDate: (column: string, op: WhereOperator, date: string | Date) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereBetween`
+   *
+   * Filters rows where a column is within the given inclusive range.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereBetween('id', 10, 20).get()
+   * const sqlText = db.selectFrom('users').whereBetween('created_at', '2024-01-01', '2024-12-31').toSQL()
+   * ```
+   */
   whereBetween: (column: string, start: any, end: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereNotBetween`
+   *
+   * Filters rows where a column is outside the given inclusive range.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereNotBetween('id', 10, 20).get()
+   * const sqlText = db.selectFrom('users').whereNotBetween('created_at', '2024-01-01', '2024-12-31').toSQL()
+   * ```
+   */
   whereNotBetween: (column: string, start: any, end: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereJsonContains`
+   *
+   * Filters rows where a JSON column contains the given JSON value.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('posts').whereJsonContains('tags', ['bun']).get()
+   * const sqlText = db.selectFrom('posts').whereJsonContains('meta', { published: true }).toSQL()
+   * ```
+   */
   whereJsonContains: (column: string, json: unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `andWhere`
+   *
+   * Adds an AND condition using the flexible expression format.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').where({ active: true }).andWhere(['id', '>', 100]).get()
+   * const sqlText = db.selectFrom('users').where({ active: true }).andWhere({ email_verified: true }).toSQL()
+   * ```
+   */
   andWhere: (expr: WhereExpression<DB[TTable]['columns']>) => SelectQueryBuilder<DB, TTable, TSelected>
+  /**
+   * # `orWhere`
+   *
+   * Adds an OR condition using the flexible expression format.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').where({ active: true }).orWhere({ admin: true }).get()
+   * const sqlText = db.selectFrom('users').orWhere(['id', 'in', [1,2,3]]).toSQL()
+   * ```
+   */
   orWhere: (expr: WhereExpression<DB[TTable]['columns']>) => SelectQueryBuilder<DB, TTable, TSelected>
-  orderBy: (column: keyof DB[TTable]['columns'] & string, direction?: 'asc' | 'desc') => SelectQueryBuilder<DB, TTable, TSelected>
-  orderByDesc: (column: keyof DB[TTable]['columns'] & string) => SelectQueryBuilder<DB, TTable, TSelected>
+  /**
+   * # `orderBy`
+   *
+   * Orders the result by a column in ascending or descending order.
+   *
+   * @param column The column to order by (strongly typed to the table's columns)
+   * @param direction Optional direction (asc | desc). Defaults to asc.
+   *
+   * @example
+   * ```ts
+   * // Setup
+   * const models = defineModels({ User })
+   * const schema = buildDatabaseSchema(models)
+   * const meta = buildSchemaMeta(models)
+   * const db = createQueryBuilder<typeof schema>({ schema, meta })
+   *
+   * // Usage
+   * const rows = await db.selectFrom('users').orderBy('created_at', 'desc').get()
+   * const sql = db.selectFrom('users').orderBy('id').toSQL()
+   * ```
+   */
+  orderBy: (column: ColumnName<DB, TTable>, direction?: SortDirection) => SelectQueryBuilder<DB, TTable, TSelected>
+  /**
+   * # `orderByDesc`
+   *
+   * Convenience for ordering by a column in descending order.
+   *
+   * @param column The column to order by (strongly typed to the table's columns)
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').orderByDesc('id').get()
+   * const sql = db.selectFrom('users').orderByDesc('id').toSQL()
+   * ```
+   */
+  orderByDesc: (column: ColumnName<DB, TTable>) => SelectQueryBuilder<DB, TTable, TSelected>
+  /**
+   * # `inRandomOrder`
+   *
+   * Orders results randomly using the configured SQL dialect function.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').inRandomOrder().limit(5).get()
+   * const sql = db.selectFrom('users').inRandomOrder().toSQL()
+   * ```
+   */
   inRandomOrder: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `reorder`
+   *
+   * Replaces any existing ORDER BY clause.
+   *
+   * @example
+   * ```ts
+   * const sql = db.selectFrom('users').orderBy('id').reorder('created_at', 'desc').toSQL()
+   * const rows = await db.selectFrom('users').reorder('name', 'asc').get()
+   * ```
+   */
   reorder: (column: string, direction?: 'asc' | 'desc') => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `latest`
+   *
+   * Orders by the given column (or default timestamp) descending.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').latest().get()
+   * const sql = db.selectFrom('users').latest('created_at').toSQL()
+   * ```
+   */
   latest: (column?: keyof DB[TTable]['columns'] & string) => SelectQueryBuilder<DB, TTable, TSelected>
+  /**
+   * # `oldest`
+   *
+   * Orders by the given column (or default timestamp) ascending.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').oldest().get()
+   * const sql = db.selectFrom('users').oldest('created_at').toSQL()
+   * ```
+   */
   oldest: (column?: keyof DB[TTable]['columns'] & string) => SelectQueryBuilder<DB, TTable, TSelected>
+  /**
+   * # `limit`
+   *
+   * Limits the number of rows returned.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').limit(10).get()
+   * const sql = db.selectFrom('users').limit(5).toSQL()
+   * ```
+   */
   limit: (n: number) => SelectQueryBuilder<DB, TTable, TSelected>
+  /**
+   * # `offset`
+   *
+   * Offsets the starting row.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').limit(10).offset(10).get()
+   * const sql = db.selectFrom('users').offset(20).toSQL()
+   * ```
+   */
   offset: (n: number) => SelectQueryBuilder<DB, TTable, TSelected>
   // Joins
   join: <T2 extends keyof DB & string>(
@@ -182,10 +591,10 @@ export interface BaseSelectQueryBuilder<
   withCTE: (name: string, sub: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   withRecursive: (name: string, sub: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // results helpers
-  value: <K extends keyof TSelected & string>(column: K) => Promise<TSelected[K]>
+  value: <K extends keyof TSelected & string>(column: K) => Promise<SelectedRow<DB, TTable, TSelected>[K]>
   pluck: {
-    <K extends keyof TSelected & string>(column: K): Promise<TSelected[K][]>
-    <K extends keyof TSelected & string, K2 extends keyof TSelected & string>(column: K, key: K2): Promise<Record<string, TSelected[K]>>
+    <K extends keyof TSelected & string>(column: K): Promise<SelectedRow<DB, TTable, TSelected>[K][]>
+    <K extends keyof TSelected & string, K2 extends keyof TSelected & string>(column: K, key: K2): Promise<Record<string, SelectedRow<DB, TTable, TSelected>[K]>>
   }
   exists: () => Promise<boolean>
   doesntExist: () => Promise<boolean>
@@ -200,16 +609,60 @@ export interface BaseSelectQueryBuilder<
   explain: () => Promise<any[]>
   simple: () => any
   toText?: () => string
-  paginate: (perPage: number, page?: number) => Promise<{ data: TSelected[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
-  simplePaginate: (perPage: number, page?: number) => Promise<{ data: TSelected[], meta: { perPage: number, page: number, hasMore: boolean } }>
+  paginate: (perPage: number, page?: number) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
+  simplePaginate: (perPage: number, page?: number) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, hasMore: boolean } }>
+  /**
+   * # `toSQL`
+   *
+   * Returns the SQL string for the current query (with placeholders).
+   *
+   * @example
+   * ```ts
+   * const sql = db.selectFrom('users').where({ id: 1 }).toSQL()
+   * const text = db.selectFrom('users').orderBy('id').toSQL()
+   * ```
+   */
   toSQL: () => string
-  execute: () => Promise<TSelected[]>
+  execute: () => Promise<SelectedRow<DB, TTable, TSelected>[]>
   // Laravel-style retrieval helpers
-  get: () => Promise<TSelected[]>
-  first: () => Promise<TSelected | undefined>
-  firstOrFail: () => Promise<TSelected>
-  find: (id: any) => Promise<TSelected | undefined>
-  findOrFail: (id: any) => Promise<TSelected>
+  /**
+   * # `get`
+   *
+   * Executes the query and returns all rows.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereName('Alice').get()
+   * const rows2 = await db.selectFrom('users').orderBy('id', 'desc').get()
+   * ```
+   */
+  get: () => Promise<SelectedRow<DB, TTable, TSelected>[]>
+  /**
+   * # `first`
+   *
+   * Returns the first row or undefined if none found.
+   *
+   * @example
+   * ```ts
+   * const row = await db.selectFrom('users').whereId(1).first()
+   * const row2 = await db.selectFrom('users').orderBy('id').first()
+   * ```
+   */
+  first: () => Promise<SelectedRow<DB, TTable, TSelected> | undefined>
+  /**
+   * # `firstOrFail`
+   *
+   * Returns the first row or throws if none found.
+   *
+   * @example
+   * ```ts
+   * const row = await db.selectFrom('users').whereId(1).firstOrFail()
+   * const row2 = await db.selectFrom('users').where({ email: 'a@b.c' }).firstOrFail()
+   * ```
+   */
+  firstOrFail: () => Promise<SelectedRow<DB, TTable, TSelected>>
+  find: (id: any) => Promise<SelectedRow<DB, TTable, TSelected> | undefined>
+  findOrFail: (id: any) => Promise<SelectedRow<DB, TTable, TSelected>>
   findMany: (ids: any[]) => Promise<TSelected[]>
   lazy: () => AsyncIterable<TSelected>
   lazyById: () => AsyncIterable<TSelected>
