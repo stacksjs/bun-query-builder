@@ -1,6 +1,10 @@
+import type { SupportedDialect } from '../src'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { CAC } from 'cac'
 import { version } from '../package.json'
-import { buildDatabaseSchema, buildMigrationPlan, createQueryBuilder, generateSql, loadModels } from '../src'
+import { buildDatabaseSchema, buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../src'
 import { config } from '../src/config'
 
 const cli = new CAC('query-builder')
@@ -88,12 +92,59 @@ cli
 cli
   .command('migrate <dir>', 'Generate SQL migrations from models')
   .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--state <path>', 'Path to migration state file (defaults to <dir>/.qb-migrations.<dialect>.json)')
+  .option('--apply', 'Execute the generated SQL against the database')
+  .option('--full', 'Force full migration SQL instead of incremental diff')
   .example('query-builder migrate ./app/Models --dialect postgres')
   .action(async (dir: string, opts: any) => {
+    const dialect = String(opts.dialect) as SupportedDialect
     const models = loadModels({ modelsDir: dir })
-    const plan = buildMigrationPlan(models, { dialect: opts.dialect })
-    const sql = generateSql(plan)
-    console.log(sql)
+    const plan = buildMigrationPlan(models, { dialect })
+
+    const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
+    const statePath = String(opts.state || defaultStatePath)
+
+    let previous: any | undefined
+    if (existsSync(statePath)) {
+      try {
+        const raw = readFileSync(statePath, 'utf8')
+        const parsed = JSON.parse(raw)
+        previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
+      }
+      catch {
+        // ignore corrupt state; treat as no previous
+      }
+    }
+
+    const sql = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
+    const hasChanges = /\b(?:CREATE|ALTER)\b/i.test(sql)
+
+    if (opts.apply) {
+      const qb = createQueryBuilder()
+      // Use a temp file to execute multiple statements safely via file()
+      const dirPath = mkdtempSync(join(tmpdir(), 'qb-migrate-'))
+      const filePath = join(dirPath, 'migration.sql')
+      try {
+        if (hasChanges) {
+          writeFileSync(filePath, sql)
+          await qb.file(filePath)
+          console.log('-- Migration applied')
+        }
+        else {
+          console.log('-- No changes; nothing to apply')
+        }
+        // On success, write state snapshot with current plan and hash
+        writeFileSync(statePath, JSON.stringify({ plan, hash: hashMigrationPlan(plan), updatedAt: new Date().toISOString() }, null, 2))
+      }
+      catch (err) {
+        console.error('-- Migration failed:', err)
+        const proc = await import('node:process')
+        proc.default.exitCode = 1
+      }
+    }
+    else {
+      console.log(sql)
+    }
   })
 
 cli

@@ -210,3 +210,185 @@ export function generateSql(plan: MigrationPlan): string {
   }
   return chunks.join('\n')
 }
+
+/**
+ * Compute a stable hash for a migration plan. Useful for snapshotting.
+ */
+export function hashMigrationPlan(plan: MigrationPlan): string {
+  // eslint-disable-next-line ts/no-require-imports
+  const crypto = require('node:crypto')
+  const canon = JSON.stringify(plan, Object.keys(plan).sort())
+  return crypto.createHash('sha256').update(canon).digest('hex')
+}
+
+function mapTablesByName(tables: TablePlan[]): Record<string, TablePlan> {
+  const map: Record<string, TablePlan> = {}
+  for (const t of tables)
+    map[t.table] = t
+  return map
+}
+
+function mapColumnsByName(columns: ColumnPlan[]): Record<string, ColumnPlan> {
+  const map: Record<string, ColumnPlan> = {}
+  for (const c of columns)
+    map[c.name] = c
+  return map
+}
+
+function mapIndexesByKey(indexes: IndexPlan[]): Record<string, IndexPlan> {
+  const map: Record<string, IndexPlan> = {}
+  for (const i of indexes) {
+    const key = `${i.type}:${i.name}:${i.columns.join(',')}`
+    map[key] = i
+  }
+  return map
+}
+
+/**
+ * Generate safe, additive-only SQL to migrate from a previous plan to a new plan.
+ * - Creates new tables
+ * - Adds new columns (no drops or type/nullable/default changes)
+ * - Adds new foreign keys for newly added columns
+ * - Adds new indexes and unique indexes
+ *
+ * If there is no previous plan or the dialect changed, generates full SQL.
+ */
+export function generateDiffSql(previous: MigrationPlan | undefined, next: MigrationPlan): string {
+  if (!previous || previous.dialect !== next.dialect)
+    return generateSql(next)
+
+  const chunks: string[] = []
+  const q = (id: string) => next.dialect === 'mysql' ? `\`${id}\`` : `"${id}"`
+
+  const prevTables = mapTablesByName(previous.tables)
+  const nextTables = mapTablesByName(next.tables)
+
+  // 1) New tables -> full create
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
+      chunks.push(`CREATE TABLE ${q(t.table)} (\n  ${t.columns.map((c) => {
+        // Reuse column rendering from generateSql
+        const plan: MigrationPlan = { dialect: next.dialect, tables: [] }
+        const tmp: ColumnPlan = c
+        const typeSql = (() => {
+          switch (tmp.type) {
+            case 'string': return next.dialect === 'mysql' ? 'varchar(255)' : 'varchar(255)'
+            case 'text': return 'text'
+            case 'boolean': return next.dialect === 'mysql' ? 'tinyint(1)' : 'boolean'
+            case 'integer': return next.dialect === 'sqlite' ? 'integer' : 'integer'
+            case 'bigint': return 'bigint'
+            case 'float': return 'real'
+            case 'double': return 'double precision'
+            case 'decimal': return 'decimal(10,2)'
+            case 'date': return 'date'
+            case 'datetime': return next.dialect === 'mysql' ? 'datetime' : 'timestamp'
+            case 'json': return next.dialect === 'mysql' ? 'json' : (next.dialect === 'postgres' ? 'jsonb' : 'text')
+            default: return 'text'
+          }
+        })()
+        const parts: string[] = [q(tmp.name), typeSql]
+        if (tmp.isPrimaryKey)
+          parts.push('primary key')
+        if (!tmp.isNullable && !tmp.isPrimaryKey)
+          parts.push('not null')
+        if (tmp.hasDefault) {
+          const dv = tmp.defaultValue
+          if (typeof dv === 'string')
+            parts.push(`default '${dv.replace(/'/g, '\'\'')}'`)
+          else if (typeof dv === 'number' || typeof dv === 'bigint')
+            parts.push(`default ${dv}`)
+          else if (typeof dv === 'boolean')
+            parts.push(`default ${dv ? 1 : 0}`)
+          else if (dv instanceof Date)
+            parts.push(`default '${dv.toISOString()}'`)
+        }
+        return parts.join(' ')
+      }).join(',\n  ')}\n);`)
+      for (const c of t.columns) {
+        if (c.references) {
+          const fkName = `${t.table}_${c.name}_fk`
+          chunks.push(`ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
+        }
+      }
+      for (const idx of t.indexes) {
+        const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
+        const idxName = `${t.table}_${idx.name}`
+        chunks.push(`CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`)
+      }
+    }
+  }
+
+  // 2) Existing tables -> add-only diffs
+  for (const tableName of Object.keys(nextTables)) {
+    const prev = prevTables[tableName]
+    const curr = nextTables[tableName]
+    if (!prev)
+      continue
+
+    const prevCols = mapColumnsByName(prev.columns)
+    const currCols = mapColumnsByName(curr.columns)
+
+    // Add new columns
+    for (const colName of Object.keys(currCols)) {
+      if (!prevCols[colName]) {
+        const c = currCols[colName]
+        // Render column (without primary key for ADD COLUMN safety)
+        const typeSql = (() => {
+          switch (c.type) {
+            case 'string': return next.dialect === 'mysql' ? 'varchar(255)' : 'varchar(255)'
+            case 'text': return 'text'
+            case 'boolean': return next.dialect === 'mysql' ? 'tinyint(1)' : 'boolean'
+            case 'integer': return next.dialect === 'sqlite' ? 'integer' : 'integer'
+            case 'bigint': return 'bigint'
+            case 'float': return 'real'
+            case 'double': return 'double precision'
+            case 'decimal': return 'decimal(10,2)'
+            case 'date': return 'date'
+            case 'datetime': return next.dialect === 'mysql' ? 'datetime' : 'timestamp'
+            case 'json': return next.dialect === 'mysql' ? 'json' : (next.dialect === 'postgres' ? 'jsonb' : 'text')
+            default: return 'text'
+          }
+        })()
+        const parts: string[] = [q(c.name), typeSql]
+        // Avoid setting primary key via ADD COLUMN, which is unsafe
+        if (!c.isNullable && !c.isPrimaryKey)
+          parts.push('not null')
+        if (c.hasDefault) {
+          const dv = c.defaultValue
+          if (typeof dv === 'string')
+            parts.push(`default '${dv.replace(/'/g, '\'\'')}'`)
+          else if (typeof dv === 'number' || typeof dv === 'bigint')
+            parts.push(`default ${dv}`)
+          else if (typeof dv === 'boolean')
+            parts.push(`default ${dv ? 1 : 0}`)
+          else if (dv instanceof Date)
+            parts.push(`default '${dv.toISOString()}'`)
+        }
+        chunks.push(`ALTER TABLE ${q(curr.table)} ADD COLUMN ${parts.join(' ')};`)
+
+        if (c.references) {
+          const fkName = `${curr.table}_${c.name}_fk`
+          chunks.push(`ALTER TABLE ${q(curr.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
+        }
+      }
+    }
+
+    // Add new indexes
+    const prevIdx = mapIndexesByKey(prev.indexes)
+    const currIdx = mapIndexesByKey(curr.indexes)
+    for (const key of Object.keys(currIdx)) {
+      if (!prevIdx[key]) {
+        const idx = currIdx[key]
+        const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
+        const idxName = `${curr.table}_${idx.name}`
+        chunks.push(`CREATE ${kind}INDEX ${q(idxName)} ON ${q(curr.table)} (${idx.columns.map(c => q(c)).join(', ')});`)
+      }
+    }
+  }
+
+  if (chunks.length === 0)
+    return '-- No changes detected\n'
+
+  return chunks.join('\n')
+}

@@ -49,7 +49,7 @@ Enable `captureText` in tests to snapshot SQL text for critical queries.
 ```ts
 import { config } from 'bun-query-builder'
 config.debug = { captureText: true }
-const q = db.selectFrom('orders').where(['status', '=', 'paid']).toSQL() as any
+const q = db.selectFrom('orders').where(['status', '=', 'paid']).toSQL()
 expect(q.toText()).toContain('SELECT')
 ```
 
@@ -73,7 +73,7 @@ You can toggle debugging on a specific builder instance without changing global 
 ```ts
 const local = createQueryBuilder<typeof schema>({ meta, schema })
 local.configure({ debug: { captureText: true } })
-const q = local.selectFrom('users').limit(1).toSQL() as any
+const q = local.selectFrom('users').limit(1).toSQL()
 console.log(q.toText())
 ```
 
@@ -253,7 +253,7 @@ let last: string | undefined
 config.debug = { captureText: true }
 
 async function run(qb: any) {
-  const q = qb.toSQL() as any
+  const q = qb.toSQL()
   last = q.toText?.()
   return await q.execute()
 }
