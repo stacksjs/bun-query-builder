@@ -179,6 +179,23 @@ export interface SqlConfig {
 }
 
 /**
+ * # `QueryHooks`
+ *
+ * Optional lifecycle hooks around query execution. These are invoked for any
+ * statement executed through the builder (select/insert/update/delete/raw).
+ */
+export interface QueryHooks {
+  /** Called right before a query executes. */
+  onQueryStart?: (event: { sql: string, params?: any[], kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
+  /** Called after a query succeeds. */
+  onQueryEnd?: (event: { sql: string, params?: any[], durationMs: number, rowCount?: number, kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
+  /** Called after a query fails. */
+  onQueryError?: (event: { sql: string, params?: any[], error: any, durationMs: number, kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
+  /** Optional tracer integration. Return an object with end() to finish a span. */
+  startSpan?: (event: { sql: string, params?: any[], kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => { end: (error?: any) => void }
+}
+
+/**
  * # `FeatureToggles`
  *
  * Optional features that may be enabled per instance.
@@ -229,5 +246,16 @@ export interface QueryBuilderConfig {
   debug?: {
     /** When true, capture query text for debugging via `toText()`. */
     captureText: boolean
+  }
+  /** Lifecycle query hooks for logging/tracing. */
+  hooks?: QueryHooks
+  /** Soft delete behavior. */
+  softDeletes?: {
+    /** When true, apply a default `WHERE deleted_at IS NULL` filter. */
+    enabled: boolean
+    /** Column name used for soft delete flag/timestamp. */
+    column: string
+    /** When true, default filter is applied unless `.withTrashed()` is called. */
+    defaultFilter: boolean
   }
 }

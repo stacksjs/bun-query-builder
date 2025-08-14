@@ -41,6 +41,12 @@ export const defaultConfig: QueryBuilderConfig = {
   debug: {
     captureText: true,
   },
+  hooks: {},
+  softDeletes: {
+    enabled: false,
+    column: 'deleted_at',
+    defaultFilter: true,
+  },
 }
 
 // eslint-disable-next-line antfu/no-top-level-await

@@ -1,5 +1,6 @@
+/* eslint-disable no-console */
 import type { SchemaMeta } from './meta'
-import type { DatabaseSchema, InferTableName, ModelRecord } from './schema'
+import type { DatabaseSchema } from './schema'
 import { sql as bunSql } from 'bun'
 import { config } from './config'
 
@@ -195,7 +196,7 @@ export interface BaseSelectQueryBuilder<
    *
    * @example
    * ```ts
-   * const rows = await db.selectFrom('users').whereRaw(sql`lower(name) = lower(${'Alice'})`).get()
+   * const rows = await db.selectFrom('users').whereRaw(sql`lower(name) = lower(${ 'Alice' })`).get()
    * const sqlText = db.selectFrom('users').whereRaw(sql`custom_condition`).toSQL()
    * ```
    */
@@ -285,6 +286,8 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   whereLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** Case-insensitive LIKE using native ILIKE on PostgreSQL, fallback LOWER() elsewhere. */
+  whereILike?: (column: keyof DB[TTable]['columns'] & string, pattern: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orWhereLike`
    *
@@ -297,6 +300,7 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   orWhereLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereILike?: (column: keyof DB[TTable]['columns'] & string, pattern: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereNotLike`
    *
@@ -309,6 +313,7 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   whereNotLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereNotILike?: (column: keyof DB[TTable]['columns'] & string, pattern: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orWhereNotLike`
    *
@@ -321,6 +326,7 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   orWhereNotLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereNotILike?: (column: keyof DB[TTable]['columns'] & string, pattern: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // where any/all/none on list of columns
   /**
    * # `whereAny`
@@ -433,6 +439,8 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   whereJsonContains: (column: string, json: unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** JSON path comparison across dialects */
+  whereJsonPath?: (path: string, op: WhereOperator, value: unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `andWhere`
    *
@@ -565,6 +573,10 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   offset: (n: number) => SelectQueryBuilder<DB, TTable, TSelected>
+  /** Apply a timeout (ms) for this query (cancel on expiration). */
+  withTimeout?: (ms: number) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** Attach an AbortSignal to cancel this query when aborted. */
+  abort?: (signal: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // Joins
   join: <T2 extends keyof DB & string>(
     table: T2,
@@ -1132,8 +1144,22 @@ export interface BaseSelectQueryBuilder<
   readonly rows: TSelected[]
   readonly row: TSelected
   values: () => Promise<any[][]>
+  /** Return parameter values for debugging/tests. */
+  toParams?: () => any[]
   raw: () => Promise<any[][]>
   cancel: () => void
+  /** Include soft-deleted rows in results. */
+  withTrashed?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** Only return soft-deleted rows. */
+  onlyTrashed?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** Apply a named scope defined on the model. */
+  scope?: (name: string, value?: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** Shallow clone of this builder to branch query modifications. */
+  clone?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** Window function helpers */
+  rowNumber?: (alias?: string, partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  denseRank?: (alias?: string, partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  rank?: (alias?: string, partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
 }
 
 export type SelectQueryBuilder<
@@ -1680,6 +1706,14 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * Execute a raw SQL string (single statement) with no parameters.
    */
   rawQuery: (query: string) => Promise<any>
+  /** Safely wrap/validate an identifier for raw fragments. */
+  id?: (name: string) => any
+  /** Safely wrap/validate multiple identifiers. */
+  ids?: (...names: string[]) => any
+  /** Take an advisory lock (PostgreSQL only). */
+  advisoryLock?: (key: number | string) => Promise<void>
+  /** Try to take an advisory lock and return false if unavailable (PostgreSQL only). */
+  tryAdvisoryLock?: (key: number | string) => Promise<boolean>
 }
 
 // Typed INSERT builder to expose a structured SQL literal in hovers
@@ -1758,6 +1792,10 @@ function isRetriableTxError(err: any): boolean {
     msg.includes('deadlock')
     || msg.includes('serialization failure')
     || msg.includes('could not serialize access')
+    || msg.includes('deadlock found when trying to get lock') // MySQL
+    || msg.includes('lock wait timeout exceeded') // MySQL
+    || msg.includes('database is locked') // SQLite
+    || msg.includes('busy') // SQLite BUSY
   )
 }
 
@@ -1772,6 +1810,12 @@ export interface TransactionOptions {
   sqlStates?: string[]
   backoff?: TxBackoff
   logger?: (event: TxLoggerEvent) => void
+  /** When true, executes transaction in read-only mode (where supported). */
+  readOnly?: boolean
+  /** Called when a transaction is rolled back. */
+  onRollback?: (error: any) => void
+  /** Called after rollback completes. */
+  afterRollback?: () => void
 }
 
 function matchesSqlState(err: any, states?: string[]): boolean {
@@ -1814,6 +1858,95 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     return s
   }
 
+  function runWithHooks<T = any>(q: any, kind: 'select' | 'insert' | 'update' | 'delete' | 'raw', opts?: { signal?: AbortSignal, timeoutMs?: number }) {
+    const text = computeSqlText(q)
+    const hooks = config.hooks
+    const startAt = Date.now()
+    let span: { end: (error?: any) => void } | undefined
+    try {
+      hooks?.onQueryStart?.({ sql: text, kind })
+      if (hooks?.startSpan)
+        span = hooks.startSpan({ sql: text, kind })
+    }
+    catch {}
+
+    let finished = false
+    const finish = (err?: any, rowCount?: number) => {
+      if (finished)
+        return
+      finished = true
+      const durationMs = Date.now() - startAt
+      try {
+        if (err) {
+          hooks?.onQueryError?.({ sql: text, error: err, durationMs, kind })
+        }
+        else {
+          hooks?.onQueryEnd?.({ sql: text, durationMs, rowCount, kind })
+        }
+      }
+      catch {}
+      try {
+        span?.end(err)
+      }
+      catch {}
+    }
+
+    const execPromise = (q as any).execute() as Promise<any>
+
+    // Handle timeout/abort by canceling the query if driver supports it
+    const promises: Promise<any>[] = [execPromise]
+    let timeoutId: any
+    if (opts?.timeoutMs && opts.timeoutMs > 0) {
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          try {
+            (q as any).cancel?.()
+          }
+          catch {}
+          const err = new Error(`Query timed out after ${opts.timeoutMs}ms`)
+          ;(err as any).code = 'EBQBTIMEOUT'
+          reject(err)
+        }, opts.timeoutMs)
+      })
+      promises.push(timeoutPromise)
+    }
+    if (opts?.signal) {
+      if (opts.signal.aborted) {
+        try {
+          (q as any).cancel?.()
+        }
+        catch {}
+        const err = new Error('Query aborted')
+          ;(err as any).code = 'EBQBABORT'
+        finish(err)
+        return Promise.reject(err)
+      }
+      const abortHandler = () => {
+        try {
+          (q as any).cancel?.()
+        }
+        catch {}
+      }
+      opts.signal.addEventListener('abort', abortHandler, { once: true })
+      execPromise.finally(() => {
+        opts.signal?.removeEventListener('abort', abortHandler)
+      })
+    }
+
+    return Promise.race(promises)
+      .then((rows) => {
+        clearTimeout(timeoutId)
+        const rc = Array.isArray(rows) ? rows.length : (typeof rows === 'number' ? rows : undefined)
+        finish(undefined, rc)
+        return rows as T
+      })
+      .catch((err) => {
+        clearTimeout(timeoutId)
+        finish(err)
+        throw err
+      })
+  }
+
   function makeExecutableQuery(q: any, text?: string) {
     return {
       toString: () => (text ?? computeSqlText(q)),
@@ -1840,6 +1973,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     }
 
     const joinedTables = new Set<string>()
+    let timeoutMs: number | undefined
+    let abortSignal: AbortSignal | undefined
+    let includeTrashed = false
+    let onlyTrashed = false
 
     // Build the base API; then wrap with a proxy that exposes dynamic where/orWhere/andWhere methods
 
@@ -1859,6 +1996,49 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = bunSql`${built} , ${fragment}`
         return this as any
       },
+      rowNumber(alias = 'row_number', partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) {
+        const parts: any[] = []
+        if (partitionBy) {
+          const cols = Array.isArray(partitionBy) ? partitionBy : [partitionBy]
+          parts.push(bunSql`PARTITION BY ${bunSql(cols as any)}`)
+        }
+        if (orderBy && orderBy.length) {
+          const ob = orderBy.map(([c, d]) => bunSql`${bunSql(c)} ${d === 'desc' ? bunSql`DESC` : bunSql`ASC`}`)
+          const expr = ob.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc}, ${p}`))
+          parts.push(bunSql`ORDER BY ${expr}`)
+        }
+        const over = parts.length ? bunSql`OVER (${bunSql(parts as any)})` : bunSql`OVER ()`
+        built = bunSql`${built} , ROW_NUMBER() ${over} AS ${bunSql(alias)}`
+        return this as any
+      },
+      denseRank(alias = 'dense_rank', partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) {
+        const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
+        const parts: any[] = []
+        if (cols.length)
+          parts.push(bunSql`PARTITION BY ${bunSql(cols as any)}`)
+        if (orderBy && orderBy.length) {
+          const ob = orderBy.map(([c, d]) => bunSql`${bunSql(c)} ${d === 'desc' ? bunSql`DESC` : bunSql`ASC`}`)
+          const expr = ob.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc}, ${p}`))
+          parts.push(bunSql`ORDER BY ${expr}`)
+        }
+        const over = parts.length ? bunSql`OVER (${bunSql(parts as any)})` : bunSql`OVER ()`
+        built = bunSql`${built} , DENSE_RANK() ${over} AS ${bunSql(alias)}`
+        return this as any
+      },
+      rank(alias = 'rank', partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) {
+        const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
+        const parts: any[] = []
+        if (cols.length)
+          parts.push(bunSql`PARTITION BY ${bunSql(cols as any)}`)
+        if (orderBy && orderBy.length) {
+          const ob = orderBy.map(([c, d]) => bunSql`${bunSql(c)} ${d === 'desc' ? bunSql`DESC` : bunSql`ASC`}`)
+          const expr = ob.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc}, ${p}`))
+          parts.push(bunSql`ORDER BY ${expr}`)
+        }
+        const over = parts.length ? bunSql`OVER (${bunSql(parts as any)})` : bunSql`OVER ()`
+        built = bunSql`${built} , RANK() ${over} AS ${bunSql(alias)}`
+        return this as any
+      },
       selectAll() {
         return this as any
       },
@@ -1874,7 +2054,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (!meta || relations.length === 0)
           return this as any
         const parentTable = String(table)
-        const parentPk = meta.primaryKeys[parentTable] ?? 'id'
 
         const singularize = (name: string) => {
           if (config.relations.singularizeStrategy === 'none')
@@ -1882,20 +2061,61 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return name.endsWith('s') ? name.slice(0, -1) : name
         }
 
-        for (const rel of relations) {
-          const maybeModel = rel
-          const targetTable = meta.modelToTable[maybeModel] || meta.tableToModel[maybeModel] ? (meta.modelToTable[maybeModel] ?? maybeModel) : rel
+        const addJoin = (fromTable: string, relationKey: string) => {
+          const rels = meta.relations?.[fromTable]
+          const resolveTarget = (): string | undefined => {
+            const pick = (m?: Record<string, string>) => {
+              const modelName = m?.[relationKey]
+              return modelName ? meta.modelToTable[modelName] : undefined
+            }
+            return pick(rels?.hasOne) || pick(rels?.hasMany) || pick(rels?.belongsTo) || pick(rels?.belongsToMany)
+          }
+          const targetTable = resolveTarget() ?? (meta.modelToTable[relationKey] || meta.tableToModel[relationKey] ? (meta.modelToTable[relationKey] ?? relationKey) : relationKey)
           const childTable = String(targetTable)
-          if (!childTable || childTable === parentTable)
-            continue
-          const _childPk = meta.primaryKeys[childTable] ?? 'id'
+          if (!childTable || childTable === fromTable)
+            return fromTable
 
-          const fkInChild = `${singularize(parentTable)}_id`
-          const _fkInParent = `${singularize(childTable)}_id`
+          // belongsToMany: join through pivot
+          const isBtm = Boolean(rels?.belongsToMany?.[relationKey])
+          if (isBtm) {
+            const a = singularize(fromTable)
+            const b = singularize(childTable)
+            const pivot = [a, b].sort().join('_')
+            const fromPk = meta.primaryKeys[fromTable] ?? 'id'
+            const childPk = meta.primaryKeys[childTable] ?? 'id'
+            const fkA = `${singularize(fromTable)}_id`
+            const fkB = `${singularize(childTable)}_id`
+            built = bunSql`${built} LEFT JOIN ${bunSql(pivot)} ON ${bunSql(`${pivot}.${fkA}`)} = ${bunSql(`${fromTable}.${fromPk}`)} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${childTable}.${childPk}`)} = ${bunSql(`${pivot}.${fkB}`)}`
+            joinedTables.add(pivot)
+            joinedTables.add(childTable)
+            return childTable
+          }
 
-          // prefer child.fk = parent.pk
-          built = bunSql`${built} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${childTable}.${fkInChild}`)} = ${bunSql(`${parentTable}.${parentPk}`)}`
+          // belongsTo: parent has fk to child
+          const isBt = Boolean(rels?.belongsTo?.[relationKey])
+          if (isBt) {
+            const fkInParent = `${singularize(childTable)}_id`
+            const childPk = meta.primaryKeys[childTable] ?? 'id'
+            built = bunSql`${built} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${fromTable}.${fkInParent}`)} = ${bunSql(`${childTable}.${childPk}`)}`
+            joinedTables.add(childTable)
+            return childTable
+          }
+
+          // hasOne/hasMany: child has fk to parent
+          const fkInChild = `${singularize(fromTable)}_id`
+          const pk = meta.primaryKeys[fromTable] ?? 'id'
+          built = bunSql`${built} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${childTable}.${fkInChild}`)} = ${bunSql(`${fromTable}.${pk}`)}`
           joinedTables.add(childTable)
+          return childTable
+        }
+
+        for (const rel of relations) {
+          const parts = rel.split('.')
+          let from = parentTable
+          for (const part of parts) {
+            const next = addJoin(from, part) || from
+            from = next
+          }
         }
         return this as any
       },
@@ -1954,10 +2174,35 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         addWhereText('WHERE', `${String(column)} @> ?`)
         return this as any
       },
+      whereJsonPath(path: string, op: WhereOperator, value: any) {
+        const dialect = config.dialect
+        if (dialect === 'postgres') {
+          built = bunSql`${built} WHERE ${bunSql(path)} ${op} ${value}`
+        }
+        else if (dialect === 'mysql') {
+          built = bunSql`${built} WHERE JSON_EXTRACT(${bunSql(path)}) ${op} ${value}`
+        }
+        else {
+          built = bunSql`${built} WHERE json_extract(${bunSql(path)}) ${op} ${value}`
+        }
+        return this as any
+      },
       whereLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? bunSql`${bunSql(String(column))} LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
         built = bunSql`${built} WHERE ${expr}`
         addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
+        return this as any
+      },
+      whereILike(column: string, pattern: string) {
+        if (config.dialect === 'postgres') {
+          built = bunSql`${built} WHERE ${bunSql(String(column))} ILIKE ${pattern}`
+          addWhereText('WHERE', `${String(column)} ILIKE ?`)
+        }
+        else {
+          const expr = bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
+          built = bunSql`${built} WHERE ${expr}`
+          addWhereText('WHERE', `LOWER(${String(column)}) LIKE LOWER(?)`)
+        }
         return this as any
       },
       orWhereLike(column: string, pattern: string, caseSensitive = false) {
@@ -1966,16 +2211,52 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
+      orWhereILike(column: string, pattern: string) {
+        if (config.dialect === 'postgres') {
+          built = bunSql`${built} OR ${bunSql(String(column))} ILIKE ${pattern}`
+          addWhereText('OR', `${String(column)} ILIKE ?`)
+        }
+        else {
+          const expr = bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
+          built = bunSql`${built} OR ${expr}`
+          addWhereText('OR', `LOWER(${String(column)}) LIKE LOWER(?)`)
+        }
+        return this as any
+      },
       whereNotLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? bunSql`${bunSql(String(column))} NOT LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
         built = bunSql`${built} WHERE ${expr}`
         addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
+      whereNotILike(column: string, pattern: string) {
+        if (config.dialect === 'postgres') {
+          built = bunSql`${built} WHERE ${bunSql(String(column))} NOT ILIKE ${pattern}`
+          addWhereText('WHERE', `${String(column)} NOT ILIKE ?`)
+        }
+        else {
+          const expr = bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
+          built = bunSql`${built} WHERE ${expr}`
+          addWhereText('WHERE', `LOWER(${String(column)}) NOT LIKE LOWER(?)`)
+        }
+        return this as any
+      },
       orWhereNotLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? bunSql`${bunSql(String(column))} NOT LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
         built = bunSql`${built} OR ${expr}`
         addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
+        return this as any
+      },
+      orWhereNotILike(column: string, pattern: string) {
+        if (config.dialect === 'postgres') {
+          built = bunSql`${built} OR ${bunSql(String(column))} NOT ILIKE ${pattern}`
+          addWhereText('OR', `${String(column)} NOT ILIKE ?`)
+        }
+        else {
+          const expr = bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
+          built = bunSql`${built} OR ${expr}`
+          addWhereText('OR', `LOWER(${String(column)}) NOT LIKE LOWER(?)`)
+        }
         return this as any
       },
       whereAny(cols: string[], op: WhereOperator, value: any) {
@@ -2251,11 +2532,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async value(column: string) {
         const q = bunSql`${built} LIMIT 1`
-        const [row] = await (q as any).execute()
+        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
+        const [row] = rows
         return row?.[column]
       },
       async pluck(column: any, key?: any) {
-        const rows = await (built as any).execute()
+        const rows = await runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
         if (key) {
           const out: Record<string, any> = {}
           for (const r of rows) out[String(r?.[key])] = r?.[column]
@@ -2265,7 +2547,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async exists() {
         const q = bunSql`SELECT EXISTS (${built}) as e`
-        const [row] = await (q as any).execute()
+        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
+        const [row] = rows
         return Boolean(row?.e)
       },
       async doesntExist() {
@@ -2274,32 +2557,53 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async paginate(perPage: number, page = 1) {
         const countQ = bunSql`SELECT COUNT(*) as c FROM (${built}) as sub`
-        const [cRow] = await (countQ as any).execute()
+        const cRows = await runWithHooks<any[]>(countQ, 'select', { signal: abortSignal, timeoutMs })
+        const [cRow] = cRows
         const total = Number(cRow?.c ?? 0)
         const lastPage = Math.max(1, Math.ceil(total / perPage))
         const p = Math.max(1, Math.min(page, lastPage))
         const offset = (p - 1) * perPage
-        const data = await (bunSql`${built} LIMIT ${perPage} OFFSET ${offset}` as any).execute()
+        const data = await runWithHooks<any[]>(bunSql`${built} LIMIT ${perPage} OFFSET ${offset}`, 'select', { signal: abortSignal, timeoutMs })
         return { data, meta: { perPage, page: p, total, lastPage } }
       },
       async simplePaginate(perPage: number, page = 1) {
         const p = Math.max(1, page)
         const offset = (p - 1) * perPage
-        const data = await (bunSql`${built} LIMIT ${perPage + 1} OFFSET ${offset}` as any).execute()
+        const data = await runWithHooks<any[]>(bunSql`${built} LIMIT ${perPage + 1} OFFSET ${offset}`, 'select', { signal: abortSignal, timeoutMs })
         const hasMore = data.length > perPage
         return { data: hasMore ? data.slice(0, perPage) : data, meta: { perPage, page: p, hasMore } }
       },
-      async cursorPaginate(perPage: number, cursor?: string | number, column = 'id', direction: 'asc' | 'desc' = 'asc') {
+      async cursorPaginate(perPage: number, cursor?: any, column: string | string[] = 'id', direction: 'asc' | 'desc' = 'asc') {
         let q = built
         if (cursor !== undefined && cursor !== null) {
-          q = direction === 'asc'
-            ? bunSql`${q} WHERE ${bunSql(String(column))} > ${cursor}`
-            : bunSql`${q} WHERE ${bunSql(String(column))} < ${cursor}`
+          if (Array.isArray(column)) {
+            const cols = column.map(c => bunSql(String(c)))
+            const comp = direction === 'asc' ? bunSql`>` : bunSql`<`
+            const tupleCols = bunSql`(${bunSql(cols as any)})`
+            const tupleVals = bunSql`(${bunSql(cursor as any)})`
+            q = bunSql`${q} WHERE ${tupleCols} ${comp} ${tupleVals}`
+          }
+          else {
+            q = direction === 'asc'
+              ? bunSql`${q} WHERE ${bunSql(String(column))} > ${cursor}`
+              : bunSql`${q} WHERE ${bunSql(String(column))} < ${cursor}`
+          }
         }
-        q = bunSql`${q} ORDER BY ${bunSql(String(column))} ${direction === 'asc' ? bunSql`ASC` : bunSql`DESC`} LIMIT ${perPage + 1}`
-        const rows = await (q as any).execute()
-        const next = rows.length > perPage ? rows[perPage]?.[column] : null
-        return { data: rows.slice(0, perPage), meta: { perPage, nextCursor: next ?? null } }
+        if (Array.isArray(column)) {
+          const orderParts = column.map(c => bunSql`${bunSql(String(c))} ${direction === 'asc' ? bunSql`ASC` : bunSql`DESC`}`)
+          const orderExpr = orderParts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc}, ${p}`))
+          q = bunSql`${q} ORDER BY ${orderExpr} LIMIT ${perPage + 1}`
+        }
+        else {
+          q = bunSql`${q} ORDER BY ${bunSql(String(column))} ${direction === 'asc' ? bunSql`ASC` : bunSql`DESC`} LIMIT ${perPage + 1}`
+        }
+        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
+        const next = rows.length > perPage
+          ? (Array.isArray(column) ? column.map(c => rows[perPage]?.[c]) : rows[perPage]?.[column])
+          : null
+        const data = rows.slice(0, perPage)
+        const prevCursor = data.length ? (Array.isArray(column) ? column.map(c => data[0]?.[c]) : data[0]?.[column]) : null
+        return { data, meta: { perPage, nextCursor: next ?? null, prevCursor } }
       },
       async chunk(size: number, handler: (rows: any[]) => Promise<void> | void) {
         let page = 1
@@ -2331,6 +2635,32 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           for (const r of rows) await handler?.(r as any)
         })
       },
+      withTimeout(ms: number) {
+        timeoutMs = Math.max(1, Math.floor(ms))
+        return this as any
+      },
+      abort(signal: any) {
+        abortSignal = signal
+        return this as any
+      },
+      withTrashed() {
+        includeTrashed = true
+        onlyTrashed = false
+        return this as any
+      },
+      onlyTrashed() {
+        includeTrashed = true
+        onlyTrashed = true
+        return this as any
+      },
+      scope(name: string, value?: any) {
+        const tbl = String(table)
+        const scopeMap = meta?.scopes?.[tbl]
+        const fn = scopeMap?.[name]
+        if (fn)
+          return fn(this, value)
+        return this as any
+      },
       when(condition: any, then: (qb: any) => any, otherwise?: (qb: any) => any) {
         if (condition)
           return then(this)
@@ -2343,18 +2673,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       dump() {
-        // eslint-disable-next-line no-console
         console.log(String(built))
         return this as any
       },
       dd() {
-        // eslint-disable-next-line no-console
         console.log(String(built))
         throw new Error('Dump and Die')
       },
       async explain() {
         const q = bunSql`EXPLAIN ${built}`
-        return await (q as any).execute()
+        return await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
       },
       simple() {
         return (built as any).simple()
@@ -2363,14 +2691,25 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return text
       },
       async get() {
-        return await (built as any).execute()
+        // Apply soft-deletes default filter if enabled and table has the column
+        if (config.softDeletes?.enabled && config.softDeletes.defaultFilter && !includeTrashed) {
+          const col = config.softDeletes.column
+          const tbl = String(table)
+          const hasCol = schema ? Boolean((schema as any)[tbl]?.columns?.[col]) : true
+          if (hasCol && !/\bdeleted_at\b/i.test(text)) {
+            built = bunSql`${built} WHERE ${bunSql(String(col))} IS ${onlyTrashed ? bunSql`NOT NULL` : bunSql`NULL`}`
+            addWhereText('WHERE', `${String(col)} IS ${onlyTrashed ? 'NOT ' : ''}NULL`)
+          }
+        }
+        return await runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
       },
       async executeTakeFirst() {
-        const rows = await (built as any).execute()
+        const rows = await runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
         return Array.isArray(rows) ? rows[0] : rows
       },
       async first() {
-        const [row] = await (bunSql`${built} LIMIT 1` as any).execute()
+        const rows = await runWithHooks<any[]>(bunSql`${built} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
+        const [row] = rows
         return row as any
       },
       async firstOrFail() {
@@ -2381,7 +2720,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async find(id: any) {
         const pk = meta?.primaryKeys[String(table)] ?? 'id'
-        const [row] = await (bunSql`${built} WHERE ${bunSql(pk)} = ${id} LIMIT 1` as any).execute()
+        const rows = await runWithHooks<any[]>(bunSql`${built} WHERE ${bunSql(pk)} = ${id} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
+        const [row] = rows
         return row as any
       },
       async findOrFail(id: any) {
@@ -2392,7 +2732,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async findMany(ids: any[]) {
         const pk = meta?.primaryKeys[String(table)] ?? 'id'
-        const rows = await (bunSql`${built} WHERE ${bunSql(String(pk))} IN ${bunSql(ids as any)}` as any).execute()
+        const rows = await runWithHooks<any[]>(bunSql`${built} WHERE ${bunSql(String(pk))} IN ${bunSql(ids as any)}`, 'select', { signal: abortSignal, timeoutMs })
         return rows as any
       },
       async* lazy() {
@@ -2432,7 +2772,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async count() {
         const q = bunSql`SELECT COUNT(*) as c FROM (${built}) as sub`
-        const [row] = await (q as any).execute()
+        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
+        const [row] = rows
         return Number(row?.c ?? 0)
       },
       lockForUpdate() {
@@ -2453,10 +2794,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       execute() {
-        return (built as any).execute()
+        return runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
       },
       values() {
         return (built as any).values()
+      },
+      toParams() {
+        return (built as any).values?.() ?? []
       },
       raw() {
         return (built as any).raw()
@@ -2469,10 +2813,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       cancel() {
         try {
-          ;(built as any).cancel()
+          (built as any).cancel()
         }
         catch {}
       },
+
     } as unknown as BaseSelectQueryBuilder<DB, TTable, any, TTable>
 
     const proxy: any = new Proxy(base as any, {
@@ -2521,6 +2866,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       Object.assign(config, opts)
       return this as any
     },
+    /** Escape/validate identifier names (best-effort) */
+    id(name: string) {
+      if (!/^[A-Z_][\w.]*$/i.test(name))
+        throw new Error(`Invalid identifier: ${name}`)
+      return bunSql(String(name))
+    },
+    ids(...names: string[]) {
+      for (const n of names) {
+        if (!/^[A-Z_][\w.]*$/i.test(n))
+          throw new Error(`Invalid identifier: ${n}`)
+      }
+      return bunSql(names as any)
+    },
     select<TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(
       table: TTable,
       ...columns: (K | `${string} as ${string}`)[]
@@ -2540,7 +2898,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         limit: () => this,
         offset: () => this,
         toSQL: () => makeExecutableQuery(q) as any,
-        execute: () => (q as any).execute(),
+        execute: () => runWithHooks<any[]>(q, 'select'),
         values: () => (q as any).values(),
         raw: () => (q as any).raw(),
         cancel: () => {
@@ -2568,7 +2926,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             limit: () => obj,
             offset: () => obj,
             toSQL: () => makeExecutableQuery(q, computeSqlText(q)) as any,
-            execute: () => (q as any).execute(),
+            execute: () => runWithHooks<any[]>(q, 'insert'),
           }
           return obj
         },
@@ -2576,7 +2934,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return makeExecutableQuery(built, computeSqlText(built)) as any
         },
         execute() {
-          return (built as any).execute()
+          return runWithHooks<number | any[]>(built, 'insert')
         },
       }
       return api as TypedInsertQueryBuilder<DB, TTable>
@@ -2602,7 +2960,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             limit: () => obj,
             offset: () => obj,
             toSQL: () => makeExecutableQuery(q, computeSqlText(q)) as any,
-            execute: () => (q as any).execute(),
+            execute: () => runWithHooks<any[]>(q, 'update'),
           }
           return obj
         },
@@ -2610,7 +2968,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return makeExecutableQuery(built, computeSqlText(built)) as any
         },
         execute() {
-          return (built as any).execute()
+          return runWithHooks<number>(built, 'update')
         },
       }
     },
@@ -2631,7 +2989,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             limit: () => obj,
             offset: () => obj,
             toSQL: () => makeExecutableQuery(q, computeSqlText(q)) as any,
-            execute: () => (q as any).execute(),
+            execute: () => runWithHooks<any[]>(q, 'delete'),
           }
           return obj
         },
@@ -2639,7 +2997,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return makeExecutableQuery(built, computeSqlText(built)) as any
         },
         execute() {
-          return (built as any).execute()
+          return runWithHooks<number>(built, 'delete')
         },
       }
     },
@@ -2649,6 +3007,27 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     simple(strings: TemplateStringsArray, ...values: any[]) {
       return (bunSql(strings, ...values) as any).simple()
+    },
+    async advisoryLock(key: number | string): Promise<void> {
+      if (config.dialect !== 'postgres')
+        return
+      const s = String(key)
+      let hash = 7
+      for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
+      const k = typeof key === 'number' ? key : Math.abs(hash)
+      const q = bunSql`SELECT pg_advisory_lock(${k})`
+      await runWithHooks<any[]>(q, 'raw')
+    },
+    async tryAdvisoryLock(key: number | string): Promise<boolean> {
+      if (config.dialect !== 'postgres')
+        return false
+      const s = String(key)
+      let hash = 7
+      for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
+      const k = typeof key === 'number' ? key : Math.abs(hash)
+      const q = bunSql`SELECT pg_try_advisory_lock(${k}) as ok`
+      const rows = await runWithHooks<any[]>(q, 'raw')
+      return Boolean(rows?.[0]?.ok)
     },
     unsafe(query: string, params?: any[]) {
       return (bunSql as any).unsafe(query, params)
@@ -2690,7 +3069,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     async ping() {
       try {
         const q = bunSql`SELECT 1`
-        await (q as any).execute()
+        await runWithHooks<any[]>(q, 'select')
         return true
       }
       catch {
@@ -2720,6 +3099,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const lvl = level === 'read committed' ? bunSql`READ COMMITTED` : level === 'repeatable read' ? bunSql`REPEATABLE READ` : bunSql`SERIALIZABLE`
             await (tx as any)`${bunSql`SET TRANSACTION ISOLATION LEVEL`} ${lvl}`.execute()
           }
+          if (opts?.readOnly) {
+            try {
+              await (tx as any)`${bunSql`SET TRANSACTION READ ONLY`}`.execute()
+            }
+            catch {}
+          }
           const res = await fn(qb)
           const durationMs = Date.now() - start
           opts.logger?.({ type: 'commit', attempt, durationMs })
@@ -2745,6 +3130,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               await sleep(delay)
             continue
           }
+          try {
+            opts.onRollback?.(err)
+          }
+          catch {}
+          try {
+            opts.afterRollback?.()
+          }
+          catch {}
           throw err
         }
       }
@@ -2843,7 +3236,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return (this as any).selectFrom(table).offset(count)
     },
     async rawQuery(query: string) {
-      return await (bunSql as any).unsafe(query)
+      const start = Date.now()
+      try {
+        config.hooks?.onQueryStart?.({ sql: query, kind: 'raw' })
+        const res = await (bunSql as any).unsafe(query)
+        config.hooks?.onQueryEnd?.({ sql: query, durationMs: Date.now() - start, kind: 'raw' })
+        return res
+      }
+      catch (err) {
+        config.hooks?.onQueryError?.({ sql: query, error: err, durationMs: Date.now() - start, kind: 'raw' })
+        throw err
+      }
     },
     async create(table, values) {
       const pk = meta?.primaryKeys[String(table)] ?? 'id'
@@ -2903,5 +3306,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const [row] = await (q as any).execute()
       return (row?.m as any)
     },
+
   }
 }
