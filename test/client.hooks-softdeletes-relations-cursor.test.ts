@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
 import { config } from '../src/config'
+import { mockQueryBuilderState } from './utils'
 
 const User = defineModel({
   name: 'User',
@@ -63,13 +64,21 @@ describe('hooks, soft deletes, relations and cursor pagination', () => {
       onQueryError: () => {},
       startSpan: () => ({ end: () => {} }),
     }
-    const db = createQueryBuilder<typeof schema>({ schema, meta })
+    const db = createQueryBuilder<typeof schema>({
+      ...mockQueryBuilderState,
+      schema,
+      meta,
+    })
     const q: any = db.selectFrom('users').where({ id: 1 }).toSQL()
     expect(String(q)).toContain('SELECT')
   })
 
   it('soft deletes helpers exist and are chainable', () => {
-    const db = createQueryBuilder<typeof schema>({ schema, meta })
+    const db = createQueryBuilder<typeof schema>({
+      ...mockQueryBuilderState,
+      schema,
+      meta,
+    })
     const base = db.selectFrom('users')
     const wt = base.withTrashed?.()
     const ot = base.onlyTrashed?.()
@@ -78,14 +87,22 @@ describe('hooks, soft deletes, relations and cursor pagination', () => {
   })
 
   it('with() nesting composes without throwing', () => {
-    const db = createQueryBuilder<typeof schema>({ schema, meta })
+    const db = createQueryBuilder<typeof schema>({
+      ...mockQueryBuilderState,
+      schema,
+      meta,
+    })
     const q: any = db.selectFrom('users').with?.('posts')
     const sql = String(q?.toSQL?.() ?? '')
     expect(sql.toLowerCase()).toContain('select')
   })
 
   it('composite cursor paginate composes without throwing', () => {
-    const db = createQueryBuilder<typeof schema>({ schema, meta })
+    const db = createQueryBuilder<typeof schema>({
+      ...mockQueryBuilderState,
+      schema,
+      meta,
+    })
     const q: any = db.selectFrom('users')
     // mimic composition that cursorPaginate would add
     const sql = String(q.orderBy('created_at', 'asc').orderBy('id', 'asc').limit(3).toSQL())

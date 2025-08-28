@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
 import { config } from '../src/config'
+import { mockQueryBuilderState } from './utils'
 
 const User = defineModel({
   name: 'User',
@@ -18,10 +19,15 @@ describe('like/json helpers', () => {
     if (config.debug)
       config.debug.captureText = true
   })
+
   const models = defineModels({ User })
   const schema = buildDatabaseSchema(models)
   const meta = buildSchemaMeta(models)
-  const db = createQueryBuilder<typeof schema>({ schema, meta })
+  const db = createQueryBuilder<typeof schema>({
+    ...mockQueryBuilderState,
+    schema,
+    meta,
+  })
 
   it('whereLike/orWhereLike/notLike', () => {
     const a = String((db.selectFrom('users').whereLike('name', '%a%') as any).toText?.() ?? '')
