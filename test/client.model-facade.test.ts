@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
 
 const models = {
@@ -75,5 +75,3 @@ describe('model-like facade usage examples (typed only)', () => {
     void UserModel.oldest('created_at')
   })
 })
-
-

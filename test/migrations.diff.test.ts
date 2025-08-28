@@ -119,5 +119,3 @@ describe('migrations - diffing and hashing', () => {
     expect(sql.toLowerCase()).toContain('unique index')
   })
 })
-
-

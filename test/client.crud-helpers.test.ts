@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
 
 const models = {
@@ -47,5 +47,3 @@ describe('query builder - CRUD-style helpers availability', () => {
     expect(typeof q.execute).toBe('function')
   })
 })
-
-

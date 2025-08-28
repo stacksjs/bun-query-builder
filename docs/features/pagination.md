@@ -172,7 +172,7 @@ async function getInfinitePosts(cursor?: string) {
 }
 
 // Client-side infinite scroll usage
-let allPosts: any[] = []
+const allPosts: any[] = []
 let cursor: string | undefined
 
 async function loadMorePosts() {

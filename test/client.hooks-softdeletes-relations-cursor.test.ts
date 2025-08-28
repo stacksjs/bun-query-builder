@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModels, defineModel } from '../src'
+import { beforeAll, describe, expect, it } from 'bun:test'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
 import { config } from '../src/config'
 
 const User = defineModel({
@@ -92,5 +92,3 @@ describe('hooks, soft deletes, relations and cursor pagination', () => {
     expect(sql.toLowerCase()).toContain('select')
   })
 })
-
-

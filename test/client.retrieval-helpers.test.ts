@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModels, defineModel } from '../src'
+import { describe, expect, it } from 'bun:test'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
 
 const User = defineModel({
   name: 'User',
@@ -39,5 +39,3 @@ describe('retrieval helpers', () => {
     expect('row' in q).toBe(true)
   })
 })
-
-
