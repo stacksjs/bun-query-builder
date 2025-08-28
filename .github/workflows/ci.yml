@@ -134,6 +134,3 @@ jobs:
 
       - name: Build
         run: bun run build
-
-      - name: Publish Commit
-        run: bunx pkg-pr-new publish
