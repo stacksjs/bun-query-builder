@@ -63,6 +63,29 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: test_db
+
     steps:
       - uses: actions/checkout@v4
 
@@ -79,6 +102,12 @@ jobs:
 
       - name: Install Dependencies
         run: bun install
+
+      - name: Wait for PostgreSQL
+        run: |
+          echo "Waiting for PostgreSQL to be ready..."
+          timeout 60 bash -c 'until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done'
+          echo "PostgreSQL is ready!"
 
       - name: Unit Test
         run: bun test
@@ -105,6 +134,3 @@ jobs:
 
       - name: Build
         run: bun run build
-
-      - name: Publish Commit
-        run: bunx pkg-pr-new publish
