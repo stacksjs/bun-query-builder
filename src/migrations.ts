@@ -279,7 +279,6 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       const t = nextTables[tableName]
       chunks.push(`CREATE TABLE ${q(t.table)} (\n  ${t.columns.map((c) => {
         // Reuse column rendering from generateSql
-        const plan: MigrationPlan = { dialect: next.dialect, tables: [] }
         const tmp: ColumnPlan = c
         const typeSql = (() => {
           switch (tmp.type) {

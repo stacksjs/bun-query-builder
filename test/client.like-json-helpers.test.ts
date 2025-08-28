@@ -9,7 +9,7 @@ const User = defineModel({
   attributes: {
     id: { validation: { rule: { validate: (v: number) => typeof v === 'number' } as any } },
     name: { validation: { rule: { validate: (v: string) => typeof v === 'string' } as any } },
-    prefs: { validation: { rule: { validate: (v: unknown) => true } as any } },
+    prefs: { validation: { rule: { validate: (_v: unknown) => true } as any } },
   },
 } as const)
 

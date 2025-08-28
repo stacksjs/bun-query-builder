@@ -11,7 +11,7 @@ const User = defineModel({
     name: { validation: { rule: { validate: (v: string) => typeof v === 'string' } as any } },
     email: { validation: { rule: { validate: (v: string) => typeof v === 'string' } as any } },
     created_at: { validation: { rule: { validate: (v: string) => typeof v === 'string' } as any } },
-    deleted_at: { validation: { rule: { validate: (v: string | null) => true } as any } },
+    deleted_at: { validation: { rule: { validate: (_v: string | null) => true } as any } },
     role: { validation: { rule: { validate: (v: string) => typeof v === 'string' } as any } },
   },
   hasMany: { posts: 'Post' },
