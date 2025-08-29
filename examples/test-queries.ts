@@ -32,6 +32,8 @@ async function simpleMigration() {
 
   const sqlScript = migration.sqlStatements
 
+  console.log(sqlScript)
+
   await executeMigration(sqlScript)
 }
 
@@ -43,3 +45,5 @@ export {
   schema,
   simpleMigration,
 }
+
+await simpleMigration()

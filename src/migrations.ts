@@ -194,20 +194,30 @@ export function generateSql(plan: MigrationPlan): string[] {
     return parts.join(' ')
   }
 
+  // First, create all tables
   for (const t of plan.tables) {
     statements.push(`CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`)
+  }
+
+  // Then, add all foreign key constraints (after all tables exist)
+  for (const t of plan.tables) {
     for (const c of t.columns) {
       if (c.references) {
         const fkName = `${t.table}_${c.name}_fk`
         statements.push(`ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
       }
     }
+  }
+
+  // Finally, create all indexes (after all tables exist)
+  for (const t of plan.tables) {
     for (const idx of t.indexes) {
       const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
       const idxName = `${t.table}_${idx.name}`
       statements.push(`CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`)
     }
   }
+
   return statements
 }
 
@@ -287,7 +297,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   const prevTables = mapTablesByName(previous.tables)
   const nextTables = mapTablesByName(next.tables)
 
-  // 1) New tables -> full create
+  // 1) New tables -> create tables first
   for (const tableName of Object.keys(nextTables)) {
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
@@ -328,12 +338,26 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         }
         return parts.join(' ')
       }).join(',\n  ')}\n);`)
+    }
+  }
+
+  // 2) Add foreign key constraints for new tables (after all tables exist)
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
       for (const c of t.columns) {
         if (c.references) {
           const fkName = `${t.table}_${c.name}_fk`
           chunks.push(`ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
         }
       }
+    }
+  }
+
+  // 3) Create indexes for new tables (after all tables exist)
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
       for (const idx of t.indexes) {
         const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
         const idxName = `${t.table}_${idx.name}`
