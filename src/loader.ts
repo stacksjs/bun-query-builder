@@ -8,7 +8,7 @@ export interface LoadModelsOptions {
   modelsDir: string
 }
 
-export async function loadModels(options: LoadModelsOptions): ModelRecord {
+export async function loadModels(options: LoadModelsOptions): Promise<ModelRecord> {
   const cwd = options.cwd ?? process.cwd()
   const dir = options.modelsDir.startsWith('/') ? options.modelsDir : `${cwd}/${options.modelsDir}`
 

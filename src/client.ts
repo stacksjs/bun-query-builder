@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import type { SchemaMeta } from './meta'
 import type { DatabaseSchema } from './schema'
 import { sql as bunSql } from 'bun'

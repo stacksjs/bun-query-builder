@@ -1,6 +1,7 @@
 import { CAC } from 'cac'
 import { version } from '../package.json'
-import { explain, file, introspect, migrate, ping, sql, unsafe, waitReady } from '../src/actions'
+import { explain, file, introspect, ping, sql, unsafe, waitReady } from '../src/actions'
+import { generateMigration } from '../src/actions/migrate'
 
 const cli = new CAC('query-builder')
 
@@ -72,7 +73,7 @@ cli
   .example('query-builder migrate ./app/Models --dialect postgres')
   .action(async (dir: string, opts: any) => {
     try {
-      await migrate(dir, {
+      await generateMigration(dir, {
         dialect: opts.dialect,
         state: opts.state,
         apply: opts.apply,

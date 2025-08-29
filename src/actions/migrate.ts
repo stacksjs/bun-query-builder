@@ -1,8 +1,8 @@
 import type { SupportedDialect } from '../types'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { sql as bunSql } from 'bun'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../index'
+import { buildMigrationPlan, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../index'
 
 export interface MigrateOptions {
   dialect?: SupportedDialect
@@ -11,7 +11,14 @@ export interface MigrateOptions {
   full?: boolean
 }
 
-export async function migrate(dir: string, opts: MigrateOptions = {}) {
+export interface GenerateMigrationResult {
+  sql: string
+  sqlStatements: string[]
+  hasChanges: boolean
+  plan: any
+}
+
+export async function generateMigration(dir: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
   const models = await loadModels({ modelsDir: dir })
 
@@ -32,23 +39,20 @@ export async function migrate(dir: string, opts: MigrateOptions = {}) {
     }
   }
 
-  const sql = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
-  const hasChanges = /\b(?:CREATE|ALTER)\b/i.test(sql)
+  const sqlStatements = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
+  const sql = sqlStatements.join('\n')
+  const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
 
   if (opts.apply) {
-    const qb = createQueryBuilder()
-    // Use a temp file to execute multiple statements safely via file()
-    const dirPath = mkdtempSync(join(tmpdir(), 'qb-migrate-'))
-    const filePath = join(dirPath, 'migration.sql')
     try {
-      if (hasChanges) {
-        writeFileSync(filePath, sql)
-        await qb.file(filePath)
-        console.log('-- Migration applied')
-      }
-      else {
-        console.log('-- No changes; nothing to apply')
-      }
+      // if (hasChanges) {
+      //   await executeMigration(sqlStatements)
+      //   console.log('-- Migration applied')
+      // }
+      // else {
+      //   console.log('-- No changes; nothing to apply')
+      // }
+
       // On success, write state snapshot with current plan and hash
       writeFileSync(statePath, JSON.stringify({ plan, hash: hashMigrationPlan(plan), updatedAt: new Date().toISOString() }, null, 2))
     }
@@ -57,9 +61,23 @@ export async function migrate(dir: string, opts: MigrateOptions = {}) {
       throw err
     }
   }
-  else {
-    console.log(sql)
+
+  return { sql, sqlStatements, hasChanges, plan }
+}
+
+export async function executeMigration(sqlStatements: string[]): Promise<boolean> {
+  try {
+    for (const sql of sqlStatements) {
+      // Use raw SQL execution instead of template literal to avoid parameter binding issues
+      await bunSql.unsafe(sql).execute()
+    }
+
+    console.log('-- Migration executed successfully')
+  }
+  catch (err) {
+    console.error('-- Migration execution failed:', err)
+    throw err
   }
 
-  return { sql, hasChanges, plan }
+  return true
 }

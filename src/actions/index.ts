@@ -1,7 +1,7 @@
 export { explain } from './explain'
 export { file } from './file'
 export { introspect } from './introspect'
-export { migrate } from './migrate'
+export { executeMigration, generateMigration } from './migrate'
 export { ping } from './ping'
 export { sql } from './sql'
 export { unsafe } from './unsafe'

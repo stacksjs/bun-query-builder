@@ -1,6 +1,5 @@
-import { buildDatabaseSchema, buildMigrationPlan, buildSchemaMeta, createQueryBuilder } from 'bun-query-builder'
-
-import { migrate } from '../src/actions'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from 'bun-query-builder'
+import { executeMigration, generateMigration } from '../src/actions/migrate'
 import User from './models/User'
 
 // Define models with proper structure
@@ -29,9 +28,11 @@ async function basicSelectQuery() {
 }
 
 async function simpleMigration() {
-  const migration = await migrate('./models', { dialect: 'postgres' })
+  const migration = await generateMigration('./models', { dialect: 'postgres', apply: true, full: true })
 
-  console.log(migration)
+  const sqlScript = migration.sqlStatements
+
+  await executeMigration(sqlScript)
 }
 
 // Export for use in other files
@@ -40,7 +41,5 @@ export {
   db,
   meta,
   schema,
+  simpleMigration,
 }
-
-// Uncomment to run examples when this file is executed directly
-await simpleMigration()

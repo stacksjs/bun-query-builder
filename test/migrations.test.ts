@@ -43,7 +43,8 @@ describe('migration planner', () => {
   it('generates SQL for the plan', () => {
     const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
     const sql = generateSql(plan)
-    expect(typeof sql).toBe('string')
     expect(sql.length).toBeGreaterThan(0)
+    expect(sql.join('\n').toLowerCase()).toContain('create table')
+    expect(sql.join('\n').toLowerCase()).toContain('unique index')
   })
 })

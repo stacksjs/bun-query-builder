@@ -59,13 +59,13 @@ describe('migrations - diffing and hashing', () => {
   it('dialect specific types map as expected', () => {
     const planPg = buildMigrationPlan(baseModels as any, { dialect: 'postgres' })
     const sqlPg = generateSql(planPg)
-    expect(sqlPg.toLowerCase()).toContain('timestamp')
+    expect(sqlPg.join('\n').toLowerCase()).toContain('timestamp')
     const planMy = buildMigrationPlan(baseModels as any, { dialect: 'mysql' })
     const sqlMy = generateSql(planMy)
-    expect(sqlMy.toLowerCase()).toContain('datetime')
+    expect(sqlMy.join('\n').toLowerCase()).toContain('datetime')
     const planSq = buildMigrationPlan(baseModels as any, { dialect: 'sqlite' })
     const sqlSq = generateSql(planSq)
-    expect(sqlSq.toLowerCase()).toContain('timestamp')
+    expect(sqlSq.join('\n').toLowerCase()).toContain('timestamp')
   })
 
   it('performance: diff and sql generation are fast for 100 tables', () => {
@@ -115,7 +115,7 @@ describe('migrations - diffing and hashing', () => {
     } as const)
     const p = buildMigrationPlan(models as any, { dialect: 'postgres' })
     const sql = generateSql(p)
-    expect(sql.toLowerCase()).toContain('create table')
-    expect(sql.toLowerCase()).toContain('unique index')
+    expect(sql.join('\n').toLowerCase()).toContain('create table')
+    expect(sql.join('\n').toLowerCase()).toContain('unique index')
   })
 })
