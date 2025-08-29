@@ -84,5 +84,8 @@
       }
     },
     "commit-msg": "bunx gitlint --edit .git/COMMIT_EDITMSG"
+  },
+  "dependencies": {
+    "@stacksjs/launchpad": "^0.6.4"
   }
 }
