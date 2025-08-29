@@ -61,6 +61,9 @@
     "preview:docs": "bun --bun vitepress preview docs",
     "typecheck": "bun --bun tsc --noEmit"
   },
+  "dependencies": {
+    "@stacksjs/launchpad": "^0.6.4"
+  },
   "devDependencies": {
     "@stacksjs/bumpx": "^0.1.17",
     "@stacksjs/docs": "^0.70.23",
@@ -84,8 +87,5 @@
       }
     },
     "commit-msg": "bunx gitlint --edit .git/COMMIT_EDITMSG"
-  },
-  "dependencies": {
-    "@stacksjs/launchpad": "^0.6.4"
   }
 }
