@@ -13,7 +13,8 @@ export interface MigrateOptions {
 
 export async function migrate(dir: string, opts: MigrateOptions = {}) {
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
-  const models = loadModels({ modelsDir: dir })
+  const models = await loadModels({ modelsDir: dir })
+
   const plan = buildMigrationPlan(models, { dialect })
 
   const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)

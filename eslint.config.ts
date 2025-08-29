@@ -14,6 +14,9 @@ const config: ESLintConfig = stacks({
     'fixtures/**',
     '**/*.md',
   ],
+  rules: {
+    'no-console': 'off',
+  },
 })
 
 export default config

@@ -8,7 +8,7 @@ export interface LoadModelsOptions {
   modelsDir: string
 }
 
-export function loadModels(options: LoadModelsOptions): ModelRecord {
+export async function loadModels(options: LoadModelsOptions): ModelRecord {
   const cwd = options.cwd ?? process.cwd()
   const dir = options.modelsDir.startsWith('/') ? options.modelsDir : `${cwd}/${options.modelsDir}`
 
@@ -23,8 +23,8 @@ export function loadModels(options: LoadModelsOptions): ModelRecord {
     const ext = extname(full)
     if (!['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs'].includes(ext))
       continue
-    // eslint-disable-next-line ts/no-require-imports
-    const mod = require(full)
+
+    const mod = await import(full)
     const def: ModelDefinition = mod.default ?? mod
     const fileName = basename(entry, ext)
     const name = def.name ?? fileName
