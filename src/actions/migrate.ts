@@ -1,9 +1,9 @@
 import type { SupportedDialect } from '../types'
 import { sql as bunSql } from 'bun'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
-import { tmpdir } from 'node:os'
 
 export interface MigrateOptions {
   dialect?: SupportedDialect

@@ -41,11 +41,11 @@ describe('CLI', () => {
 
   it('introspect prints JSON schema from models dir', () => {
     const dir = makeTempModelsDir()
-   
+
     const out = runCli(['introspect', dir])
 
     expect(out.code).toBe(0)
-    
+
     const json = JSON.parse(out.stdout)
 
     expect(Object.keys(json)).toContain('users')
