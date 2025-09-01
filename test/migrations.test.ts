@@ -1,5 +1,4 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
-import { executeMigration, generateMigration } from '../src/actions/migrate'
 import { config } from '../src/config'
 import { buildMigrationPlan, generateSql } from '../src/migrations'
 import { defineModels } from '../src/schema'

@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
-import { executeMigration, generateMigration } from '../src/actions/migrate'
 import { config } from '../src/config'
 import { mockQueryBuilderState } from './utils'
 

@@ -161,6 +161,15 @@ export function generateSql(plan: MigrationPlan): string[] {
 
   const columnSql = (c: ColumnPlan): string => {
     const typeSql = (() => {
+      // For PostgreSQL, use SERIAL types for auto-incrementing primary keys
+      if (plan.dialect === 'postgres' && c.isPrimaryKey) {
+        switch (c.type) {
+          case 'integer': return 'SERIAL'
+          case 'bigint': return 'BIGSERIAL'
+          default: break
+        }
+      }
+
       switch (c.type) {
         case 'string': return plan.dialect === 'mysql' ? 'varchar(255)' : 'varchar(255)'
         case 'text': return 'text'

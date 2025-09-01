@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
+import { buildDatabaseSchema, buildSchemaMeta, defineModels } from '../src'
 import { executeMigration, generateMigration } from '../src/actions/migrate'
 import { config } from '../src/config'
-import { buildDatabaseSchema, buildSchemaMeta, defineModels } from '../src'
 
 beforeAll(async () => {
   if (config.debug)
@@ -14,7 +14,8 @@ beforeAll(async () => {
     if (result.sqlStatements.length > 0) {
       await executeMigration(result.sqlStatements)
     }
-  } catch (error) {
+  }
+  catch (error) {
     console.error('Migration failed:', error)
   }
 })
