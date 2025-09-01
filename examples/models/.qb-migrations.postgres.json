@@ -7,7 +7,7 @@
         "columns": [
           {
             "name": "id",
-            "type": "string",
+            "type": "bigint",
             "isPrimaryKey": true,
             "isUnique": false,
             "isNullable": true,
@@ -57,7 +57,7 @@
         "columns": [
           {
             "name": "id",
-            "type": "string",
+            "type": "bigint",
             "isPrimaryKey": true,
             "isUnique": false,
             "isNullable": true,
@@ -119,7 +119,7 @@
         "columns": [
           {
             "name": "id",
-            "type": "string",
+            "type": "bigint",
             "isPrimaryKey": true,
             "isUnique": false,
             "isNullable": true,
@@ -182,6 +182,6 @@
       }
     ]
   },
-  "hash": "58c61bc30f98692ad22370cfdd420e540794f8ddea8ba5cc88acafb9f6a08909",
-  "updatedAt": "2025-08-29T15:26:48.792Z"
+  "hash": "07d6a806dfe86105d61e74436ed09d4806fba38d688ea2ea405947135c6d8fb5",
+  "updatedAt": "2025-09-01T07:32:54.585Z"
 }

@@ -42,7 +42,6 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
   const sqlStatements = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
   const sql = sqlStatements.join('\n')
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
-
   if (opts.apply) {
     try {
       // if (hasChanges) {

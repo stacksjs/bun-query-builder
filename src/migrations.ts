@@ -47,7 +47,7 @@ export interface MigrationPlan {
 
 function guessTypeFromName(columnName: string): NormalizedColumnType | undefined {
   if (columnName.endsWith('_id'))
-    return 'bigint'
+    return 'bigint' // Match primary key type
   if (columnName.endsWith('_at'))
     return 'datetime'
   if (columnName.startsWith('is_') || columnName.startsWith('has_'))
@@ -107,11 +107,13 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         else if (dv instanceof Date)
           inferred = 'datetime'
       }
-      // Final fallback
-      if (!inferred)
-        inferred = 'string'
-
       const isPk = attrName === primaryKey
+      
+      // Final fallback - primary keys should be integers, others default to string
+      if (!inferred) {
+        inferred = isPk ? 'bigint' : 'string'
+      }
+      
       const col: ColumnPlan = {
         name: attrName,
         type: inferred,
