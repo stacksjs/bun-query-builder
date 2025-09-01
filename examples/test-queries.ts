@@ -1,4 +1,4 @@
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from 'bun-query-builder'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
 import { executeMigration, generateMigration } from '../src/actions/migrate'
 import User from './models/User'
 

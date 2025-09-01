@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
+import { executeMigration, generateMigration } from '../src/actions/migrate'
 import { config } from '../src/config'
 import { mockQueryBuilderState } from './utils'
 
@@ -46,13 +47,24 @@ const Tag = defineModel({
   belongsToMany: { posts: 'Post' },
 } as const)
 
-describe('hooks, soft deletes, relations and cursor pagination', () => {
-  beforeAll(() => {
-    if (config.debug)
-      config.debug.captureText = true
-    config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
-  })
+beforeAll(async () => {
+  if (config.debug)
+    config.debug.captureText = true
+  config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
 
+  // Run migration actions
+  try {
+    const result = await generateMigration('./examples/models', { dialect: 'postgres', full: true })
+    if (result.sqlStatements.length > 0) {
+      await executeMigration(result.sqlStatements)
+    }
+  }
+  catch (error) {
+    console.error('Migration failed:', error)
+  }
+})
+
+describe('hooks, soft deletes, relations and cursor pagination', () => {
   const models = defineModels({ User, Post, Tag })
   const schema = buildDatabaseSchema(models)
   const meta = buildSchemaMeta(models)
