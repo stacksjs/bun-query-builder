@@ -47,7 +47,7 @@ export interface MigrationPlan {
 
 function guessTypeFromName(columnName: string): NormalizedColumnType | undefined {
   if (columnName.endsWith('_id'))
-    return 'bigint'
+    return 'bigint' // Match primary key type
   if (columnName.endsWith('_at'))
     return 'datetime'
   if (columnName.startsWith('is_') || columnName.startsWith('has_'))
@@ -107,11 +107,13 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         else if (dv instanceof Date)
           inferred = 'datetime'
       }
-      // Final fallback
-      if (!inferred)
-        inferred = 'string'
-
       const isPk = attrName === primaryKey
+
+      // Final fallback - primary keys should be integers, others default to string
+      if (!inferred) {
+        inferred = isPk ? 'bigint' : 'string'
+      }
+
       const col: ColumnPlan = {
         name: attrName,
         type: inferred,
@@ -153,12 +155,21 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
   return { dialect: options.dialect, tables }
 }
 
-export function generateSql(plan: MigrationPlan): string {
-  const chunks: string[] = []
+export function generateSql(plan: MigrationPlan): string[] {
+  const statements: string[] = []
   const q = (id: string) => plan.dialect === 'mysql' ? `\`${id}\`` : `"${id}"`
 
   const columnSql = (c: ColumnPlan): string => {
     const typeSql = (() => {
+      // For PostgreSQL, use SERIAL types for auto-incrementing primary keys
+      if (plan.dialect === 'postgres' && c.isPrimaryKey) {
+        switch (c.type) {
+          case 'integer': return 'SERIAL'
+          case 'bigint': return 'BIGSERIAL'
+          default: break
+        }
+      }
+
       switch (c.type) {
         case 'string': return plan.dialect === 'mysql' ? 'varchar(255)' : 'varchar(255)'
         case 'text': return 'text'
@@ -194,21 +205,45 @@ export function generateSql(plan: MigrationPlan): string {
     return parts.join(' ')
   }
 
+  // First, create all tables
   for (const t of plan.tables) {
-    chunks.push(`CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`)
+    statements.push(`CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`)
+  }
+
+  // Then, add all foreign key constraints (after all tables exist)
+  for (const t of plan.tables) {
     for (const c of t.columns) {
       if (c.references) {
         const fkName = `${t.table}_${c.name}_fk`
-        chunks.push(`ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
+        statements.push(`ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
       }
     }
+  }
+
+  // Finally, create all indexes (after all tables exist)
+  for (const t of plan.tables) {
     for (const idx of t.indexes) {
       const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
       const idxName = `${t.table}_${idx.name}`
-      chunks.push(`CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`)
+      statements.push(`CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`)
     }
   }
-  return chunks.join('\n')
+
+  return statements
+}
+
+/**
+ * Helper function to convert SQL statements array to a single string (for backward compatibility)
+ */
+export function generateSqlString(plan: MigrationPlan): string {
+  return generateSql(plan).join('\n')
+}
+
+/**
+ * Helper function to convert diff SQL statements array to a single string (for backward compatibility)
+ */
+export function generateDiffSqlString(previous: MigrationPlan | undefined, next: MigrationPlan): string {
+  return generateDiffSql(previous, next).join('\n')
 }
 
 /**
@@ -263,7 +298,7 @@ function mapIndexesByKey(indexes: IndexPlan[]): Record<string, IndexPlan> {
  *
  * If there is no previous plan or the dialect changed, generates full SQL.
  */
-export function generateDiffSql(previous: MigrationPlan | undefined, next: MigrationPlan): string {
+export function generateDiffSql(previous: MigrationPlan | undefined, next: MigrationPlan): string[] {
   if (!previous || previous.dialect !== next.dialect)
     return generateSql(next)
 
@@ -273,13 +308,12 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   const prevTables = mapTablesByName(previous.tables)
   const nextTables = mapTablesByName(next.tables)
 
-  // 1) New tables -> full create
+  // 1) New tables -> create tables first
   for (const tableName of Object.keys(nextTables)) {
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
       chunks.push(`CREATE TABLE ${q(t.table)} (\n  ${t.columns.map((c) => {
         // Reuse column rendering from generateSql
-        const plan: MigrationPlan = { dialect: next.dialect, tables: [] }
         const tmp: ColumnPlan = c
         const typeSql = (() => {
           switch (tmp.type) {
@@ -315,12 +349,26 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         }
         return parts.join(' ')
       }).join(',\n  ')}\n);`)
+    }
+  }
+
+  // 2) Add foreign key constraints for new tables (after all tables exist)
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
       for (const c of t.columns) {
         if (c.references) {
           const fkName = `${t.table}_${c.name}_fk`
           chunks.push(`ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
         }
       }
+    }
+  }
+
+  // 3) Create indexes for new tables (after all tables exist)
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
       for (const idx of t.indexes) {
         const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
         const idxName = `${t.table}_${idx.name}`
@@ -398,7 +446,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   }
 
   if (chunks.length === 0)
-    return '-- No changes detected\n'
+    return ['-- No changes detected']
 
-  return chunks.join('\n')
+  return chunks
 }

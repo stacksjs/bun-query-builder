@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModels, defineModel } from '../src'
+import { beforeAll, describe, expect, it } from 'bun:test'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
 import { config } from '../src/config'
+import { mockQueryBuilderState } from './utils'
 
 const User = defineModel({
   name: 'User',
@@ -11,7 +12,7 @@ const User = defineModel({
     name: { validation: { rule: { validate: (v: string) => typeof v === 'string' } as any } },
     email: { validation: { rule: { validate: (v: string) => typeof v === 'string' } as any } },
     created_at: { validation: { rule: { validate: (v: string) => typeof v === 'string' } as any } },
-    deleted_at: { validation: { rule: { validate: (v: string | null) => true } as any } },
+    deleted_at: { validation: { rule: { validate: (_v: string | null) => true } as any } },
     role: { validation: { rule: { validate: (v: string) => typeof v === 'string' } as any } },
   },
   hasMany: { posts: 'Post' },
@@ -45,13 +46,13 @@ const Tag = defineModel({
   belongsToMany: { posts: 'Post' },
 } as const)
 
-describe('hooks, soft deletes, relations and cursor pagination', () => {
-  beforeAll(() => {
-    if (config.debug)
-      config.debug.captureText = true
-    config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
-  })
+beforeAll(async () => {
+  if (config.debug)
+    config.debug.captureText = true
+  config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
+})
 
+describe('hooks, soft deletes, relations and cursor pagination', () => {
   const models = defineModels({ User, Post, Tag })
   const schema = buildDatabaseSchema(models)
   const meta = buildSchemaMeta(models)
@@ -63,13 +64,21 @@ describe('hooks, soft deletes, relations and cursor pagination', () => {
       onQueryError: () => {},
       startSpan: () => ({ end: () => {} }),
     }
-    const db = createQueryBuilder<typeof schema>({ schema, meta })
+    const db = createQueryBuilder<typeof schema>({
+      ...mockQueryBuilderState,
+      schema,
+      meta,
+    })
     const q: any = db.selectFrom('users').where({ id: 1 }).toSQL()
     expect(String(q)).toContain('SELECT')
   })
 
   it('soft deletes helpers exist and are chainable', () => {
-    const db = createQueryBuilder<typeof schema>({ schema, meta })
+    const db = createQueryBuilder<typeof schema>({
+      ...mockQueryBuilderState,
+      schema,
+      meta,
+    })
     const base = db.selectFrom('users')
     const wt = base.withTrashed?.()
     const ot = base.onlyTrashed?.()
@@ -78,19 +87,25 @@ describe('hooks, soft deletes, relations and cursor pagination', () => {
   })
 
   it('with() nesting composes without throwing', () => {
-    const db = createQueryBuilder<typeof schema>({ schema, meta })
+    const db = createQueryBuilder<typeof schema>({
+      ...mockQueryBuilderState,
+      schema,
+      meta,
+    })
     const q: any = db.selectFrom('users').with?.('posts')
     const sql = String(q?.toSQL?.() ?? '')
     expect(sql.toLowerCase()).toContain('select')
   })
 
   it('composite cursor paginate composes without throwing', () => {
-    const db = createQueryBuilder<typeof schema>({ schema, meta })
+    const db = createQueryBuilder<typeof schema>({
+      ...mockQueryBuilderState,
+      schema,
+      meta,
+    })
     const q: any = db.selectFrom('users')
     // mimic composition that cursorPaginate would add
     const sql = String(q.orderBy('created_at', 'asc').orderBy('id', 'asc').limit(3).toSQL())
     expect(sql.toLowerCase()).toContain('select')
   })
 })
-
-

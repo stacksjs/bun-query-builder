@@ -30,9 +30,9 @@ describe('migrations - diffing and hashing', () => {
   it('diff produces CREATE statements first time and empty/no-op next time', () => {
     const p1 = buildMigrationPlan(baseModels as any, { dialect: 'postgres' })
     const first = generateDiffSql(undefined, p1)
-    expect(first).toContain('CREATE TABLE')
+    expect(first.join('\n')).toContain('CREATE TABLE')
     const second = generateDiffSql(p1, p1)
-    expect(second.toLowerCase()).toContain('no changes')
+    expect(second.join('\n').toLowerCase()).toContain('no changes')
   })
 
   it('adding a column yields ALTER TABLE ADD COLUMN and optional FK', () => {
@@ -52,20 +52,21 @@ describe('migrations - diffing and hashing', () => {
     const p1 = buildMigrationPlan(baseModels as any, { dialect: 'postgres' })
     const p2 = buildMigrationPlan(models2 as any, { dialect: 'postgres' })
     const sql = generateDiffSql(p1, p2)
-    expect(sql).toContain('CREATE TABLE "projects"')
-    expect(sql).toContain('ALTER TABLE "projects" ADD CONSTRAINT')
+
+    expect(sql.join('\n')).toContain('CREATE TABLE "projects"')
+    expect(sql.join('\n')).toContain('ALTER TABLE "projects" ADD CONSTRAINT')
   })
 
   it('dialect specific types map as expected', () => {
     const planPg = buildMigrationPlan(baseModels as any, { dialect: 'postgres' })
     const sqlPg = generateSql(planPg)
-    expect(sqlPg.toLowerCase()).toContain('timestamp')
+    expect(sqlPg.join('\n').toLowerCase()).toContain('timestamp')
     const planMy = buildMigrationPlan(baseModels as any, { dialect: 'mysql' })
     const sqlMy = generateSql(planMy)
-    expect(sqlMy.toLowerCase()).toContain('datetime')
+    expect(sqlMy.join('\n').toLowerCase()).toContain('datetime')
     const planSq = buildMigrationPlan(baseModels as any, { dialect: 'sqlite' })
     const sqlSq = generateSql(planSq)
-    expect(sqlSq.toLowerCase()).toContain('timestamp')
+    expect(sqlSq.join('\n').toLowerCase()).toContain('timestamp')
   })
 
   it('performance: diff and sql generation are fast for 100 tables', () => {
@@ -89,8 +90,8 @@ describe('migrations - diffing and hashing', () => {
     const sql = generateSql(plan)
     const diff = generateDiffSql(undefined, plan)
     const dt = performance.now() - t0
-    expect(sql.length).toBeGreaterThan(1000)
-    expect(diff.length).toBeGreaterThan(1000)
+    expect(sql.join('\n').length).toBeGreaterThan(1000)
+    expect(diff.join('\n').length).toBeGreaterThan(1000)
     // budget: 200ms on CI machines; adjust as needed
     expect(dt).toBeLessThan(200)
   })
@@ -115,9 +116,7 @@ describe('migrations - diffing and hashing', () => {
     } as const)
     const p = buildMigrationPlan(models as any, { dialect: 'postgres' })
     const sql = generateSql(p)
-    expect(sql.toLowerCase()).toContain('create table')
-    expect(sql.toLowerCase()).toContain('unique index')
+    expect(sql.join('\n').toLowerCase()).toContain('create table')
+    expect(sql.join('\n').toLowerCase()).toContain('unique index')
   })
 })
-
-

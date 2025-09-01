@@ -1,26 +1,25 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
-
-const models = {
-  User: {
-    name: 'User',
-    table: 'users',
-    primaryKey: 'id',
-    attributes: {
-      id: { validation: { rule: {} } },
-      email: { validation: { rule: {} } },
-      name: { validation: { rule: {} } },
-      role: { validation: { rule: {} } },
-      created_at: { validation: { rule: {} } },
-    },
-  },
-} as const
-
-const schema = buildDatabaseSchema(models as any)
-const meta = buildSchemaMeta(models as any)
+import { mockQueryBuilderState } from './utils'
 
 function qb() {
-  return createQueryBuilder<typeof schema>({ schema, meta })
+  const models = {
+    users: {
+      columns: {
+        id: { type: 'integer', isPrimaryKey: true },
+        name: { type: 'text' },
+        email: { type: 'text' },
+        created_at: { type: 'timestamp' },
+      },
+    },
+  } as any
+  const schema = buildDatabaseSchema(models as any)
+  const meta = buildSchemaMeta(models as any)
+  return createQueryBuilder<typeof schema>({
+    ...mockQueryBuilderState,
+    schema,
+    meta,
+  })
 }
 
 describe('query builder - CRUD-style helpers availability', () => {
@@ -47,5 +46,3 @@ describe('query builder - CRUD-style helpers availability', () => {
     expect(typeof q.execute).toBe('function')
   })
 })
-
-

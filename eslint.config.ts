@@ -12,7 +12,11 @@ const config: ESLintConfig = stacks({
   yaml: true,
   ignores: [
     'fixtures/**',
+    '**/*.md',
   ],
+  rules: {
+    'no-console': 'off',
+  },
 })
 
 export default config

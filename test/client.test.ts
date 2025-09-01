@@ -1,37 +1,46 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
 import { config } from '../src/config'
-
-const models = {
-  User: {
-    name: 'User',
-    table: 'users',
-    primaryKey: 'id',
-    attributes: {
-      id: { validation: { rule: {} } },
-      name: { validation: { rule: {} } },
-      active: { validation: { rule: {} } },
-      created_at: { validation: { rule: {} } },
-    },
-  },
-  Project: {
-    name: 'Project',
-    table: 'projects',
-    primaryKey: 'id',
-    attributes: {
-      id: { validation: { rule: {} } },
-      user_id: { validation: { rule: {} } },
-      name: { validation: { rule: {} } },
-      status: { validation: { rule: {} } },
-    },
-  },
-} as const
-
-const schema = buildDatabaseSchema(models as any)
-const meta = buildSchemaMeta(models as any)
+import { mockQueryBuilderState } from './utils'
 
 function qb() {
-  return createQueryBuilder<typeof schema>({ meta, schema })
+  const models = {
+    users: {
+      columns: {
+        id: { type: 'integer', isPrimaryKey: true },
+        name: { type: 'text' },
+        email: { type: 'text' },
+        active: { type: 'boolean' },
+        email_verified: { type: 'boolean' },
+        created_at: { type: 'timestamp' },
+        updated_at: { type: 'timestamp' },
+        role: { type: 'text' },
+        deleted_at: { type: 'timestamp' },
+      },
+    },
+    posts: {
+      columns: {
+        id: { type: 'integer', isPrimaryKey: true },
+        title: { type: 'text' },
+        user_id: { type: 'integer' },
+        created_at: { type: 'timestamp' },
+      },
+    },
+    categories: {
+      columns: {
+        id: { type: 'integer', isPrimaryKey: true },
+        name: { type: 'text' },
+        parent_id: { type: 'integer' },
+      },
+    },
+  } as any
+  const schema = buildDatabaseSchema(models as any)
+  const meta = buildSchemaMeta(models as any)
+  return createQueryBuilder<typeof schema>({
+    ...mockQueryBuilderState,
+    meta,
+    schema,
+  })
 }
 
 function toTextOf(q: any): string {
