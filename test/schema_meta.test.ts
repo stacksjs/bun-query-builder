@@ -1,5 +1,23 @@
-import { describe, expect, it } from 'bun:test'
+import { beforeAll, describe, expect, it } from 'bun:test'
+import { executeMigration, generateMigration } from '../src/actions/migrate'
+import { config } from '../src/config'
 import { buildDatabaseSchema, buildSchemaMeta, defineModels } from '../src'
+
+beforeAll(async () => {
+  if (config.debug)
+    config.debug.captureText = true
+  config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
+
+  // Run migration actions
+  try {
+    const result = await generateMigration('./examples/models', { dialect: 'postgres', full: true })
+    if (result.sqlStatements.length > 0) {
+      await executeMigration(result.sqlStatements)
+    }
+  } catch (error) {
+    console.error('Migration failed:', error)
+  }
+})
 
 const models = defineModels({
   User: {
