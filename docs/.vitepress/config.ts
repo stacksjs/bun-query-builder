@@ -65,6 +65,7 @@ const sidebar = [
       { text: 'Relations', link: '/features/relations' },
       { text: 'Transactions', link: '/features/transactions' },
       { text: 'Pagination', link: '/features/pagination' },
+      { text: 'Migrations', link: '/features/migrations' },
       { text: 'CLI', link: '/features/cli' },
     ],
   },
