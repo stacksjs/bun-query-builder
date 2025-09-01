@@ -30,11 +30,7 @@ async function basicSelectQuery() {
 async function simpleMigration() {
   const migration = await generateMigration('./models', { dialect: 'postgres', apply: true, full: true })
 
-  const sqlScript = migration.sqlStatements
-
-  console.log(sqlScript)
-
-  await executeMigration(sqlScript)
+  await executeMigration(migration)
 }
 
 // Export for use in other files

@@ -259,3 +259,42 @@ export interface QueryBuilderConfig {
     defaultFilter: boolean
   }
 }
+
+export interface CliOption {
+  verbose: boolean
+}
+
+export interface SqlOptions {
+  limit?: number
+}
+
+export interface WaitReadyOptions {
+  attempts?: number
+  delay?: number
+}
+
+export interface FileOptions {
+  params?: string
+}
+
+export interface IntrospectOptions {
+  verbose?: boolean
+}
+
+export interface MigrateOptions {
+  dialect?: SupportedDialect
+  state?: string
+  apply?: boolean
+  full?: boolean
+}
+
+export interface GenerateMigrationResult {
+  sql: string
+  sqlStatements: string[]
+  hasChanges: boolean
+  plan: any
+}
+
+export interface UnsafeOptions {
+  params?: string
+}

@@ -1,8 +1,6 @@
-import { buildDatabaseSchema, loadModels } from '../index'
+import type { IntrospectOptions } from '../types'
 
-export interface IntrospectOptions {
-  verbose?: boolean
-}
+import { buildDatabaseSchema, loadModels } from '../index'
 
 export async function introspect(dir: string, _opts: IntrospectOptions = {}) {
   const models = await loadModels({ modelsDir: dir })

@@ -1,23 +1,9 @@
-import type { SupportedDialect } from '../types'
+import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '../types'
 import { sql as bunSql } from 'bun'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
-
-export interface MigrateOptions {
-  dialect?: SupportedDialect
-  state?: string
-  apply?: boolean
-  full?: boolean
-}
-
-export interface GenerateMigrationResult {
-  sql: string
-  sqlStatements: string[]
-  hasChanges: boolean
-  plan: any
-}
 
 export async function generateMigration(dir: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
@@ -69,7 +55,9 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
   return { sql, sqlStatements, hasChanges, plan }
 }
 
-export async function executeMigration(sqlStatements: string[]): Promise<boolean> {
+export async function executeMigration(migration: GenerateMigrationResult): Promise<boolean> {
+  const { sqlStatements } = migration
+
   try {
     for (const sql of sqlStatements) {
       // Use raw SQL execution instead of template literal to avoid parameter binding issues

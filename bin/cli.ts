@@ -1,13 +1,10 @@
+import type { CliOption, FileOptions, MigrateOptions, SqlOptions, UnsafeOptions } from '../src/types'
 import { CAC } from 'cac'
 import { version } from '../package.json'
 import { explain, file, introspect, ping, sql, unsafe, waitReady } from '../src/actions'
 import { generateMigration } from '../src/actions/migrate'
 
 const cli = new CAC('query-builder')
-
-interface CliOption {
-  verbose: boolean
-}
 
 cli
   .command('introspect <dir>', 'Load models and print inferred schema')
@@ -21,7 +18,7 @@ cli
   .command('sql <dir> <table>', 'Build a sample query for a table')
   .option('--limit <n>', 'Limit rows', { default: 10 })
   .example('query-builder sql ./app/Models users --limit 5')
-  .action(async (dir: string, table: string, opts: any) => {
+  .action(async (dir: string, table: string, opts: SqlOptions) => {
     await sql(dir, table, opts)
   })
 
@@ -51,7 +48,7 @@ cli
   .command('unsafe <sql>', 'Execute an unsafe SQL string (one statement with params)')
   .option('--params <json>', 'JSON array of parameters')
   .example('query-builder unsafe "SELECT * FROM users WHERE id = $1" --params "[1]"')
-  .action(async (sql: string, opts: any) => {
+  .action(async (sql: string, opts: UnsafeOptions) => {
     await unsafe(sql, opts)
   })
 
@@ -60,7 +57,7 @@ cli
   .option('--params <json>', 'JSON array of parameters')
   .example('query-builder file ./migrations/seed.sql')
   .example('query-builder file ./reports/top.sql --params "[30]"')
-  .action(async (path: string, opts: any) => {
+  .action(async (path: string, opts: FileOptions) => {
     await file(path, opts)
   })
 
@@ -71,7 +68,7 @@ cli
   .option('--apply', 'Execute the generated SQL against the database')
   .option('--full', 'Force full migration SQL instead of incremental diff')
   .example('query-builder migrate ./app/Models --dialect postgres')
-  .action(async (dir: string, opts: any) => {
+  .action(async (dir: string, opts: MigrateOptions) => {
     try {
       await generateMigration(dir, {
         dialect: opts.dialect,

@@ -11,8 +11,9 @@ beforeAll(async () => {
   // Run migration actions
   try {
     const result = await generateMigration('./examples/models', { dialect: 'postgres', full: true })
+
     if (result.sqlStatements.length > 0) {
-      await executeMigration(result.sqlStatements)
+      await executeMigration(result)
     }
   }
   catch (error) {

@@ -1,9 +1,6 @@
+import type { SqlOptions } from '../types'
 import { config } from '../config'
 import { buildDatabaseSchema, createQueryBuilder, loadModels } from '../index'
-
-export interface SqlOptions {
-  limit?: number
-}
 
 export function sql(dir: string, table: string, opts: SqlOptions = {}) {
   const models = loadModels({ modelsDir: dir })

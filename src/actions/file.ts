@@ -1,8 +1,5 @@
+import type { FileOptions } from '../types'
 import { createQueryBuilder } from '../index'
-
-export interface FileOptions {
-  params?: string
-}
 
 export async function file(path: string, opts: FileOptions = {}) {
   const qb = createQueryBuilder()

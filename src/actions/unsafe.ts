@@ -1,8 +1,5 @@
+import type { UnsafeOptions } from '../types'
 import { createQueryBuilder } from '../index'
-
-export interface UnsafeOptions {
-  params?: string
-}
 
 export async function unsafe(sql: string, opts: UnsafeOptions = {}) {
   const qb = createQueryBuilder()

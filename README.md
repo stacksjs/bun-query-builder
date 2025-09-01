@@ -28,7 +28,13 @@ Define your data model once and get a type-safe query experience _(a la Kysely/L
 
 ## Get Started
 
-Install and use in code:
+### Installation
+
+```bash
+bun add bun-query-builder
+```
+
+### Usage
 
 ```ts
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from 'bun-query-builder'
@@ -50,6 +56,24 @@ const q = db
   .limit(10)
 
 const rows = await q.execute()
+```
+
+## Migrations
+
+Generate and execute migrations from your models:
+
+```ts
+import { generateMigration, executeMigration } from 'bun-query-builder'
+
+// Generate migration from models directory
+const migration = await generateMigration('./models', { 
+  dialect: 'postgres', 
+  apply: true, 
+  full: true 
+})
+
+// Execute the migration
+await executeMigration(migration)
 ```
 
 ### CLI

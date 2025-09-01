@@ -1,9 +1,5 @@
+import type { WaitReadyOptions } from '../types'
 import { createQueryBuilder } from '../index'
-
-export interface WaitReadyOptions {
-  attempts?: number
-  delay?: number
-}
 
 export async function waitReady(opts: WaitReadyOptions = {}) {
   const attempts = Number(opts.attempts || 10)
