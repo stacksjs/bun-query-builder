@@ -42,7 +42,6 @@ async function simpleSelectQuery() {
 async function simpleInsertQuery() {
   // TODO: execute after insertion must return ids
   const q = await db.insertInto('users').values({ name: 'John Doe', email: 'john123.doe@example.com', created_at: new Date() }).execute()
-  
 
   console.warn('Results:', q)
 }
@@ -53,9 +52,7 @@ export {
   db,
   meta,
   schema,
+  simpleInsertQuery,
   simpleMigration,
   simpleSelectQuery,
-  simpleInsertQuery,
 }
-
-await simpleInsertQuery()
