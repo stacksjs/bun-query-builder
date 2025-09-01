@@ -1,7 +1,7 @@
 {
   "name": "bun-query-builder",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "description": "A simple yet performant query builder for TypeScript. Built with Bun.",
   "author": "Chris Breuer <chris@stacksjs.org>",
   "license": "MIT",
@@ -13,7 +13,12 @@
   "bugs": {
     "url": "https://github.com/stacksjs/bun-query-builder/issues"
   },
-  "keywords": ["typescript", "query-builder", "bun", "package"],
+  "keywords": [
+    "typescript",
+    "query-builder",
+    "bun",
+    "package"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -30,7 +35,10 @@
     "qbx": "./dist/bin/cli.js",
     "qb": "./dist/bin/cli.js"
   },
-  "files": ["README.md", "dist"],
+  "files": [
+    "README.md",
+    "dist"
+  ],
   "scripts": {
     "build": "bun --bun build.ts && bun run compile",
     "compile": "bun build ./bin/cli.ts --compile --minify --outfile bin/query-builder",
@@ -65,16 +73,16 @@
     "@stacksjs/launchpad": "^0.6.4"
   },
   "devDependencies": {
-    "@stacksjs/bumpx": "^0.1.17",
+    "@stacksjs/bumpx": "^0.1.61",
     "@stacksjs/docs": "^0.70.23",
     "@stacksjs/eslint-config": "^4.14.0-beta.3",
     "@stacksjs/gitlint": "^0.1.5",
-    "@stacksjs/logsmith": "^0.1.8",
-    "@types/bun": "^1.2.20",
-    "buddy-bot": "^0.8.9",
+    "@stacksjs/logsmith": "^0.1.15",
+    "@types/bun": "^1.2.21",
+    "buddy-bot": "^0.8.10",
     "bun-git-hooks": "^0.2.19",
     "bun-plugin-dtsx": "0.21.12",
-    "bunfig": "^0.14.1",
+    "bunfig": "^0.15.0",
     "typescript": "^5.9.2"
   },
   "overrides": {
