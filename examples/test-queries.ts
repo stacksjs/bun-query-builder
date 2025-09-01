@@ -33,6 +33,20 @@ async function simpleMigration() {
   await executeMigration(migration)
 }
 
+async function simpleSelectQuery() {
+  const q = await db.selectFrom('users').executeTakeFirst()
+
+  console.warn('Results:', q)
+}
+
+async function simpleInsertQuery() {
+  // TODO: execute after insertion must return ids
+  const q = await db.insertInto('users').values({ name: 'John Doe', email: 'john123.doe@example.com', created_at: new Date() }).execute()
+  
+
+  console.warn('Results:', q)
+}
+
 // Export for use in other files
 export {
   basicSelectQuery,
@@ -40,4 +54,8 @@ export {
   meta,
   schema,
   simpleMigration,
+  simpleSelectQuery,
+  simpleInsertQuery,
 }
+
+await simpleInsertQuery()
