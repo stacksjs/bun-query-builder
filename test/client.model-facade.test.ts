@@ -66,7 +66,7 @@ describe('model-like facade usage examples (typed only)', () => {
     // smoke-compile calls (no runtime exec)
     void UserModel.create({ email: 'x@y.z', name: 'X', role: 'guest' })
     void UserModel.createMany([{ email: 'a@b.c', name: 'A', role: 'member' }])
-    void UserModel.firstOrCreate({ email: 'x@y.z' }, { name: 'X' })
+    void UserModel.firstOrCreate({ email: 'unique1@test.com' }, { name: 'X' })
     void UserModel.updateOrCreate({ email: 'm@n.o' }, { name: 'M' })
     void UserModel.save({ id: 1, role: 'admin' })
     void UserModel.find(1)
