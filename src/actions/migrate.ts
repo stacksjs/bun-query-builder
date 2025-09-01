@@ -1,8 +1,9 @@
 import type { SupportedDialect } from '../types'
 import { sql as bunSql } from 'bun'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildMigrationPlan, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../index'
+import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
+import { tmpdir } from 'node:os'
 
 export interface MigrateOptions {
   dialect?: SupportedDialect
@@ -43,15 +44,19 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
   const sql = sqlStatements.join('\n')
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
   if (opts.apply) {
+    const qb = createQueryBuilder()
+    // Use a temp file to execute multiple statements safely via file()
+    const dirPath = mkdtempSync(join(tmpdir(), 'qb-migrate-'))
+    const filePath = join(dirPath, 'migration.sql')
     try {
-      // if (hasChanges) {
-      //   await executeMigration(sqlStatements)
-      //   console.log('-- Migration applied')
-      // }
-      // else {
-      //   console.log('-- No changes; nothing to apply')
-      // }
-
+      if (hasChanges) {
+        writeFileSync(filePath, sql)
+        await qb.file(filePath)
+        console.log('-- Migration applied')
+      }
+      else {
+        console.log('-- No changes; nothing to apply')
+      }
       // On success, write state snapshot with current plan and hash
       writeFileSync(statePath, JSON.stringify({ plan, hash: hashMigrationPlan(plan), updatedAt: new Date().toISOString() }, null, 2))
     }

@@ -14,7 +14,7 @@ cli
   .option('--verbose', 'Enable verbose logging')
   .example('query-builder introspect ./app/Models --verbose')
   .action(async (dir: string, _options?: CliOption) => {
-    introspect(dir, _options)
+    await introspect(dir, _options)
   })
 
 cli
@@ -22,7 +22,7 @@ cli
   .option('--limit <n>', 'Limit rows', { default: 10 })
   .example('query-builder sql ./app/Models users --limit 5')
   .action(async (dir: string, table: string, opts: any) => {
-    sql(dir, table, opts)
+    await sql(dir, table, opts)
   })
 
 cli

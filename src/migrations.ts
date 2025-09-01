@@ -108,12 +108,12 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           inferred = 'datetime'
       }
       const isPk = attrName === primaryKey
-      
+
       // Final fallback - primary keys should be integers, others default to string
       if (!inferred) {
         inferred = isPk ? 'bigint' : 'string'
       }
-      
+
       const col: ColumnPlan = {
         name: attrName,
         type: inferred,

@@ -45,5 +45,3 @@ export {
   schema,
   simpleMigration,
 }
-
-await simpleMigration()

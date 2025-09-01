@@ -30,9 +30,9 @@ describe('migrations - diffing and hashing', () => {
   it('diff produces CREATE statements first time and empty/no-op next time', () => {
     const p1 = buildMigrationPlan(baseModels as any, { dialect: 'postgres' })
     const first = generateDiffSql(undefined, p1)
-    expect(first).toContain('CREATE TABLE')
+    expect(first.join('\n')).toContain('CREATE TABLE')
     const second = generateDiffSql(p1, p1)
-    expect(second.toLowerCase()).toContain('no changes')
+    expect(second.join('\n').toLowerCase()).toContain('no changes')
   })
 
   it('adding a column yields ALTER TABLE ADD COLUMN and optional FK', () => {
@@ -52,8 +52,9 @@ describe('migrations - diffing and hashing', () => {
     const p1 = buildMigrationPlan(baseModels as any, { dialect: 'postgres' })
     const p2 = buildMigrationPlan(models2 as any, { dialect: 'postgres' })
     const sql = generateDiffSql(p1, p2)
-    expect(sql).toContain('CREATE TABLE "projects"')
-    expect(sql).toContain('ALTER TABLE "projects" ADD CONSTRAINT')
+
+    expect(sql.join('\n')).toContain('CREATE TABLE "projects"')
+    expect(sql.join('\n')).toContain('ALTER TABLE "projects" ADD CONSTRAINT')
   })
 
   it('dialect specific types map as expected', () => {
@@ -89,8 +90,8 @@ describe('migrations - diffing and hashing', () => {
     const sql = generateSql(plan)
     const diff = generateDiffSql(undefined, plan)
     const dt = performance.now() - t0
-    expect(sql.length).toBeGreaterThan(1000)
-    expect(diff.length).toBeGreaterThan(1000)
+    expect(sql.join('\n').length).toBeGreaterThan(1000)
+    expect(diff.join('\n').length).toBeGreaterThan(1000)
     // budget: 200ms on CI machines; adjust as needed
     expect(dt).toBeLessThan(200)
   })
