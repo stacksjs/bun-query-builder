@@ -99,7 +99,7 @@ describe('CLI', () => {
     const dir = makeTempModelsDir()
     const out = runCli(['migrate', dir, '--dialect', 'postgres'])
     expect(typeof out.stdout).toBe('string')
-    expect(out.stdout.length).toBe(0)
+    expect(out.stdout.length).toBeGreaterThan(0)
     rmSync(dir, { recursive: true, force: true })
   })
 })

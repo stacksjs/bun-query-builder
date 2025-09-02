@@ -4,15 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
 import { bunSql } from '../db'
-
+import { config } from '../config'
 export async function generateMigration(dir: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
-  const models = await loadModels({ modelsDir: dir })
 
+  const models = await loadModels({ modelsDir: dir })
   const plan = buildMigrationPlan(models, { dialect })
 
   const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
   const statePath = String(opts.state || defaultStatePath)
+
+
 
   let previous: any | undefined
   if (existsSync(statePath)) {
@@ -30,6 +32,10 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
   const sql = sqlStatements.join('\n')
 
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
+
+  console.log('current dialect is', dialect)
+  console.log(defaultStatePath)
+  console.log(sqlStatements)
   if (opts.apply) {
     const qb = createQueryBuilder()
     // Use a temp file to execute multiple statements safely via file()
@@ -59,6 +65,8 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 export async function executeMigration(migration: GenerateMigrationResult): Promise<boolean> {
   const { sqlStatements } = migration
 
+  console.log('database dialect is', config.dialect)
+  
   try {
     for (const sql of sqlStatements) {
       // Use raw SQL execution instead of template literal to avoid parameter binding issues

@@ -37,10 +37,11 @@ function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseCon
  */
 export function getBunSql(): SQL {
   const connectionString = createConnectionString(config.dialect, config.database)
+
   return new SQL(connectionString)
 }
 
-// Export the configured SQL instance as the default export
+// Note: This is created once when the module loads, so it may not reflect config changes
 export const bunSql = getBunSql()
 
 // Also export the SQL class for advanced usage
