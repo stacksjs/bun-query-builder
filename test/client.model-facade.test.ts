@@ -27,32 +27,32 @@ describe('model-like facade usage examples (typed only)', () => {
   it('user-like facade compiles with helper calls', async () => {
     const db = qb()
     const UserModel = {
-      create(values: Partial<(typeof schema)['users']['columns']>) {
-        return db.create('users', values)
+      async create(values: Partial<(typeof schema)['users']['columns']>) {
+        return await db.create('users', values)
       },
-      createMany(rows: Partial<(typeof schema)['users']['columns']>[]) {
-        return db.createMany('users', rows)
+      async createMany(rows: Partial<(typeof schema)['users']['columns']>[]) {
+        return await db.createMany('users', rows)
       },
-      firstOrCreate(match: Partial<(typeof schema)['users']['columns']>, defaults?: Partial<(typeof schema)['users']['columns']>) {
-        return db.firstOrCreate('users', match, defaults)
+      async firstOrCreate(match: Partial<(typeof schema)['users']['columns']>, defaults?: Partial<(typeof schema)['users']['columns']>) {
+        return await db.firstOrCreate('users', match, defaults)
       },
-      updateOrCreate(match: Partial<(typeof schema)['users']['columns']>, values: Partial<(typeof schema)['users']['columns']>) {
-        return db.updateOrCreate('users', match, values)
+      async updateOrCreate(match: Partial<(typeof schema)['users']['columns']>, values: Partial<(typeof schema)['users']['columns']>) {
+        return await db.updateOrCreate('users', match, values)
       },
-      save(values: Partial<(typeof schema)['users']['columns']>) {
-        return db.save('users', values)
+      async save(values: Partial<(typeof schema)['users']['columns']>) {
+        return await db.save('users', values)
       },
-      find(id: number) {
-        return db.find('users', id)
+      async find(id: number) {
+        return await db.find('users', id)
       },
-      remove(id: number) {
-        return db.remove('users', id)
+      async remove(id: number) {
+        return await db.remove('users', id)
       },
-      latest(col: keyof (typeof schema)['users']['columns'] = 'created_at') {
-        return db.latest('users', col as any)
+      async latest(col: keyof (typeof schema)['users']['columns'] = 'created_at') {
+        return await db.latest('users', col as any)
       },
-      oldest(col: keyof (typeof schema)['users']['columns'] = 'created_at') {
-        return db.oldest('users', col as any)
+      async oldest(col: keyof (typeof schema)['users']['columns'] = 'created_at') {
+        return await db.oldest('users', col as any)
       },
     }
 
