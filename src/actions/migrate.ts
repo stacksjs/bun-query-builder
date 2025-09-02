@@ -1,5 +1,5 @@
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '../types'
-import { sql as bunSql } from 'bun'
+import { bunSql } from '../db'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

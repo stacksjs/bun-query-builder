@@ -1,6 +1,6 @@
 import type { SchemaMeta } from './meta'
 import type { DatabaseSchema } from './schema'
-import { sql as bunSql } from 'bun'
+import { bunSql } from './db'
 import { config } from './config'
 
 // Where condition helpers

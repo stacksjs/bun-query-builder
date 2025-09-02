@@ -207,6 +207,15 @@ export interface FeatureToggles {
   distinctOn: boolean
 }
 
+export interface DatabaseConfig {
+  database: string
+  username: string
+  password: string
+  host: string
+  url?: string
+  port: number
+}
+
 /**
  * # `QueryBuilderConfig`
  *
@@ -228,6 +237,9 @@ export interface QueryBuilderConfig {
   verbose: boolean
   /** Target SQL dialect. */
   dialect: SupportedDialect
+
+  database: DatabaseConfig,
+
   /** Timestamp column naming conventions. */
   timestamps: TimestampConfig
   /** Defaults for pagination helpers. */

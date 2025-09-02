@@ -4,6 +4,13 @@ import { loadConfig } from 'bunfig'
 export const defaultConfig: QueryBuilderConfig = {
   verbose: true,
   dialect: 'postgres',
+  database: {
+    database: 'postgres',
+    username: 'postgres',
+    password: 'postgres',
+    host: 'localhost',
+    port: 5432,
+  },
   timestamps: {
     createdAt: 'created_at',
     updatedAt: 'updated_at',
