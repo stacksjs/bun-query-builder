@@ -15,7 +15,7 @@ const db = createQueryBuilder<typeof schema>({ schema, meta })
 async function basicSelectQuery() {
   console.warn('=== Basic SELECT Query ===')
 
-  db
+  await db
     .selectFrom('users')
     .where({ role: 'admin' })
     .orderBy('created_at', 'desc')
@@ -41,7 +41,7 @@ async function simpleSelectQuery() {
 
 async function simpleInsertQuery() {
   // TODO: execute after insertion must return ids
-  const q = await db.insertInto('users').values({ name: 'John Doe', email: 'john123.doe@example.com', created_at: new Date() }).execute()
+  const q = await db.create('users', { name: 'John Doe', email: 'john123.doe@example.com', created_at: new Date() })
 
   console.warn('Results:', q)
 }

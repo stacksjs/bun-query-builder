@@ -2,7 +2,7 @@ import type { CliOption, FileOptions, MigrateOptions, SqlOptions, UnsafeOptions 
 import { CAC } from 'cac'
 import { version } from '../package.json'
 import { explain, file, introspect, ping, sql, unsafe, waitReady } from '../src/actions'
-import { generateMigration } from '../src/actions/migrate'
+import { generateMigration, resetDatabase } from '../src/actions/migrate'
 
 const cli = new CAC('query-builder')
 
@@ -89,6 +89,25 @@ cli
   .example('query-builder explain "SELECT * FROM users WHERE active = true"')
   .action(async (sql: string) => {
     await explain(sql)
+  })
+
+cli
+  .command('reset <dir>', 'Drop all tables and reset database')
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--state <path>', 'Path to migration state file (defaults to <dir>/.qb-migrations.<dialect>.json)')
+  .example('query-builder reset ./app/Models --dialect postgres')
+  .action(async (dir: string, opts: MigrateOptions) => {
+    try {
+      await resetDatabase(dir, {
+        dialect: opts.dialect,
+        state: opts.state,
+      })
+    }
+    catch (err) {
+      console.error('-- Reset failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
   })
 
 cli.command('version', 'Show the version of the CLI').action(() => {

@@ -3177,7 +3177,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     async insertGetId(table, values, idColumn = 'id' as any) {
       const q = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} RETURNING ${bunSql(String(idColumn))} as id`
-      const [row] = await (q as any).execute()
+
+      const [row] = await q.execute()
+
       return row?.id
     },
     async updateOrInsert(table, match, values) {
@@ -3263,6 +3265,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const pk = meta?.primaryKeys[String(table)] ?? 'id'
       const id = await (this as any).insertGetId(table, values, pk)
       const row = await (this as any).selectFrom(table).find(id)
+
+      console.log('row is', row)
       if (!row)
         throw new Error('create() failed to retrieve inserted row')
       return row

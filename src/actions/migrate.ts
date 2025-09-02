@@ -73,3 +73,49 @@ export async function executeMigration(migration: GenerateMigrationResult): Prom
 
   return true
 }
+
+export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Promise<boolean> {
+  const dialect = String(opts.dialect || 'postgres') as SupportedDialect
+  const models = await loadModels({ modelsDir: dir })
+  const plan = buildMigrationPlan(models, { dialect })
+
+  try {
+    // Get all table names from the migration plan
+    const tableNames = plan.tables.map(table => table.table)
+
+    if (tableNames.length === 0) {
+      console.log('-- No tables found to drop')
+      return true
+    }
+
+    console.log(`-- Dropping ${tableNames.length} tables: ${tableNames.join(', ')}`)
+
+    // Drop tables in reverse order to handle foreign key constraints
+    // (drop dependent tables first)
+    for (const tableName of tableNames.reverse()) {
+      const dropSql = dialect === 'mysql'
+        ? `DROP TABLE IF EXISTS \`${tableName}\``
+        : `DROP TABLE IF EXISTS "${tableName}" CASCADE`
+
+      await bunSql.unsafe(dropSql).execute()
+      console.log(`-- Dropped table: ${tableName}`)
+    }
+
+    // Clean up migration state file
+    const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
+    const statePath = String(opts.state || defaultStatePath)
+
+    if (existsSync(statePath)) {
+      const fs = await import('node:fs')
+      fs.unlinkSync(statePath)
+      console.log(`-- Removed migration state file: ${statePath}`)
+    }
+
+    console.log('-- Database reset completed successfully')
+    return true
+  }
+  catch (err) {
+    console.error('-- Database reset failed:', err)
+    throw err
+  }
+}

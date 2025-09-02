@@ -93,19 +93,19 @@ const updateUserHover = updateUserQ.rows
 // No explicit types needed: hover these locals to see fully inferred row shapes
 async function typedRows() {
   // Commented out actual database operations to prevent test failures
-  // const usersRows = await db.selectFrom('users').where({ id: 1 }).limit(10).execute()
-  // const postsJoinRows = await db
-  //   .selectFrom('posts')
-  //   .join('users', 'posts.id', '=', 'users.id')
-  //   .where({ id: 1 })
-  //   .orderBy('created_at', 'desc')
-  //   .execute()
-  // const insertedUsers = await db.insertInto('users').values(newUser).returning('id', 'email').execute()
-  // const updatedUsers = await db.updateTable('users').set({ role: 'member' }).where({ id: 1 }).returning('id', 'created_at').execute()
-  // void usersRows
-  // void postsJoinRows
-  // void insertedUsers
-  // void updatedUsers
+  const usersRows = await db.selectFrom('users').where({ id: 1 }).limit(10).execute()
+  const postsJoinRows = await db
+    .selectFrom('posts')
+    .join('users', 'posts.id', '=', 'users.id')
+    .where({ id: 1 })
+    .orderBy('created_at', 'desc')
+    .execute()
+  const insertedUsers = await db.insertInto('users').values(newUser).returning('id', 'email').execute()
+  const updatedUsers = await db.updateTable('users').set({ role: 'member' }).where({ id: 1 }).returning('id', 'created_at').execute()
+  void usersRows
+  void postsJoinRows
+  void insertedUsers
+  void updatedUsers
 }
 void typedRows
 
