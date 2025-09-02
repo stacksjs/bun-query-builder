@@ -3178,9 +3178,18 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     async insertGetId(table, values, idColumn = 'id' as any) {
       if (config.dialect === 'mysql') {
         // MySQL doesn't support RETURNING, so we need to insert and then get the last insert ID
-        await bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)}`.execute()
-        const [result] = await bunSql`SELECT LAST_INSERT_ID() as id`.execute()
-        return result?.id
+        // Use a single query to avoid connection issues
+        const insertQuery = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)}`
+        const result = await insertQuery.execute()
+        
+        // For MySQL, the result should contain the insertId
+        if (result && typeof result === 'object' && 'insertId' in result) {
+          return result.insertId
+        }
+        
+        // Fallback: try to get LAST_INSERT_ID() in the same connection
+        const [lastIdResult] = await bunSql`SELECT LAST_INSERT_ID() as id`.execute()
+        return lastIdResult?.id
       }
       else {
         // PostgreSQL and other databases that support RETURNING
@@ -3270,13 +3279,43 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     async create(table, values) {
       const pk = meta?.primaryKeys[String(table)] ?? 'id'
-      const id = await (this as any).insertGetId(table, values, pk)
-      const row = await (this as any).selectFrom(table).find(id)
+      
+      if (config.dialect === 'postgres') {
+        // For PostgreSQL, use RETURNING to get the ID, then fetch the full row
+        const q = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} RETURNING ${bunSql(String(pk))} as id`
+        const [result] = await q.execute()
+        
+        if (!result?.id) {
+          console.error(`create() failed to get insert ID for table ${String(table)}`)
+          console.error('Inserted values:', values)
+          throw new Error(`create() failed to get insert ID for table ${String(table)}`)
+        }
+        
+        const row = await (this as any).selectFrom(table).find(result.id)
+        
+        if (!row) {
+          console.error(`create() failed to retrieve inserted row for table ${String(table)} with id ${result.id}`)
+          console.error('Inserted values:', values)
+          throw new Error(`create() failed to retrieve inserted row for table ${String(table)} with id ${result.id}`)
+        }
+        return row
+      } else {
+        // For MySQL and other databases
+        const id = await (this as any).insertGetId(table, values, pk)
+        
+        if (id == null) {
+          throw new Error(`create() failed to get insert ID for table ${String(table)}`)
+        }
+        
+        const row = await (this as any).selectFrom(table).find(id)
 
-      console.log('row is', row)
-      if (!row)
-        throw new Error('create() failed to retrieve inserted row')
-      return row
+        if (!row) {
+          console.error(`create() failed to retrieve inserted row for table ${String(table)} with id ${id}`)
+          console.error('Inserted values:', values)
+          throw new Error(`create() failed to retrieve inserted row for table ${String(table)} with id ${id}`)
+        }
+        return row
+      }
     },
     async createMany(table, rows) {
       await (this as any).insertInto(table).values(rows).execute()
