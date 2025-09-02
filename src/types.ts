@@ -238,7 +238,7 @@ export interface QueryBuilderConfig {
   /** Target SQL dialect. */
   dialect: SupportedDialect
 
-  database: DatabaseConfig,
+  database: DatabaseConfig
 
   /** Timestamp column naming conventions. */
   timestamps: TimestampConfig

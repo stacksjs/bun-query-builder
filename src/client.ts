@@ -1,7 +1,7 @@
 import type { SchemaMeta } from './meta'
 import type { DatabaseSchema } from './schema'
-import { bunSql } from './db'
 import { config } from './config'
+import { bunSql } from './db'
 
 // Where condition helpers
 type Primitive = string | number | boolean | bigint | Date | null | undefined

@@ -1,9 +1,9 @@
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '../types'
-import { bunSql } from '../db'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
+import { bunSql } from '../db'
 
 export async function generateMigration(dir: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
@@ -28,6 +28,7 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
   const sqlStatements = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
   const sql = sqlStatements.join('\n')
+
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
   if (opts.apply) {
     const qb = createQueryBuilder()

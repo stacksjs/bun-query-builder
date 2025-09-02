@@ -1,6 +1,6 @@
+import type { DatabaseConfig, SupportedDialect } from './types'
 import { SQL } from 'bun'
 import { config } from './config'
-import type { DatabaseConfig, SupportedDialect } from './types'
 
 /**
  * Creates a database connection string based on the configured dialect and database settings.
@@ -16,17 +16,17 @@ function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseCon
   switch (dialect) {
     case 'postgres':
       return `postgres://${username}:${password}@${host}${port ? `:${port}` : ''}/${database}`
-    
+
     case 'mysql':
       return `mysql://${username}:${password}@${host}${port ? `:${port}` : ''}/${database}`
-    
+
     case 'sqlite':
       // For SQLite, database is treated as the filename
       if (database === ':memory:') {
         return ':memory:'
       }
       return `sqlite://${database}`
-    
+
     default:
       throw new Error(`Unsupported dialect: ${dialect}`)
   }
