@@ -3176,11 +3176,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return (built as any).execute()
     },
     async insertGetId(table, values, idColumn = 'id' as any) {
-      const q = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} RETURNING ${bunSql(String(idColumn))} as id`
-
-      const [row] = await q.execute()
-
-      return row?.id
+      if (config.dialect === 'mysql') {
+        // MySQL doesn't support RETURNING, so we need to insert and then get the last insert ID
+        await bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)}`.execute()
+        const [result] = await bunSql`SELECT LAST_INSERT_ID() as id`.execute()
+        return result?.id
+      } else {
+        // PostgreSQL and other databases that support RETURNING
+        const q = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} RETURNING ${bunSql(String(idColumn))} as id`
+        const [row] = await q.execute()
+        return row?.id
+      }
     },
     async updateOrInsert(table, match, values) {
       const whereParts = Object.keys(match).map(k => bunSql`${bunSql(String(k))} = ${bunSql((match as any)[k])}`)

@@ -7,8 +7,8 @@ describe('test configuration', () => {
     console.log('Test config dialect:', config.dialect)
     console.log('Database config:', config.database)
 
-    expect(config.dialect).toBe('mysql')
+    expect(config.dialect).toBe('postgres')
     expect(config.database.database).toBe('test_db')
-    expect(config.database.port).toBe(3306)
+    expect(config.database.port).toBe(5432)
   })
 })
