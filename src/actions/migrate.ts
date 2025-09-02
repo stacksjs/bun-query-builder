@@ -3,8 +3,9 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
-import { bunSql } from '../db'
 import { config } from '../config'
+import { bunSql } from '../db'
+
 export async function generateMigration(dir: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
 
@@ -13,8 +14,6 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
   const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
   const statePath = String(opts.state || defaultStatePath)
-
-
 
   let previous: any | undefined
   if (existsSync(statePath)) {
@@ -66,7 +65,7 @@ export async function executeMigration(migration: GenerateMigrationResult): Prom
   const { sqlStatements } = migration
 
   console.log('database dialect is', config.dialect)
-  
+
   try {
     for (const sql of sqlStatements) {
       // Use raw SQL execution instead of template literal to avoid parameter binding issues
