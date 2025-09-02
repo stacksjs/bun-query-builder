@@ -187,8 +187,13 @@ export function generateSql(plan: MigrationPlan): string[] {
     })()
 
     const parts: string[] = [q(c.name), typeSql]
-    if (c.isPrimaryKey)
+    if (c.isPrimaryKey) {
       parts.push('primary key')
+      // Add AUTO_INCREMENT for MySQL primary keys
+      if (plan.dialect === 'mysql' && (c.type === 'integer' || c.type === 'bigint')) {
+        parts.push('auto_increment')
+      }
+    }
     if (!c.isNullable && !c.isPrimaryKey)
       parts.push('not null')
     if (c.hasDefault) {
@@ -332,8 +337,13 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
           }
         })()
         const parts: string[] = [q(tmp.name), typeSql]
-        if (tmp.isPrimaryKey)
+        if (tmp.isPrimaryKey) {
           parts.push('primary key')
+          // Add AUTO_INCREMENT for MySQL primary keys
+          if (next.dialect === 'mysql' && (tmp.type === 'integer' || tmp.type === 'bigint')) {
+            parts.push('auto_increment')
+          }
+        }
         if (!tmp.isNullable && !tmp.isPrimaryKey)
           parts.push('not null')
         if (tmp.hasDefault) {
