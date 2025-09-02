@@ -10,7 +10,7 @@ beforeAll(async () => {
 
   // Run migration actions
   try {
-    const result = await generateMigration('./examples/models', { dialect: 'mysql', full: true })
+    const result = await generateMigration('./examples/models', { dialect: config.dialect, full: true })
 
     if (result.sqlStatements.length > 0) {
       await executeMigration(result)
