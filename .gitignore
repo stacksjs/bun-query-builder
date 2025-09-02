@@ -10,5 +10,6 @@ logs
 node_modules
 temp
 docs/.vitepress/cache
-
+./bin/qb
+./bin/query-builder
 examples/models/.qb-migrations.postgres.json
