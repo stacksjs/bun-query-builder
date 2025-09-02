@@ -3205,11 +3205,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const pk = meta?.primaryKeys[String(table)] ?? 'id'
       const id = (values as any)[pk]
       if (id != null) {
-        await (this as any).updateTable(table).set(values as any).where({ [pk]: id } as any).execute()
-        const row = await (this as any).selectFrom(table).find(id)
-        if (!row)
-          throw new Error('save() failed to retrieve updated row')
-        return row
+        // Try to update first
+        const updateResult = await (this as any).updateTable(table).set(values as any).where({ [pk]: id } as any).execute()
+        
+        // Check if any rows were actually updated
+        if (updateResult && updateResult.changes > 0) {
+          // Row was updated, retrieve it
+          const row = await (this as any).selectFrom(table).find(id)
+          if (!row)
+            throw new Error('save() failed to retrieve updated row')
+          return row
+        } else {
+          // No rows were updated, the row doesn't exist, so create it
+          return await (this as any).create(table, values)
+        }
       }
       return await (this as any).create(table, values)
     },
