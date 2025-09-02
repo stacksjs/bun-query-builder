@@ -3207,17 +3207,18 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       if (id != null) {
         // First check if the row exists
         const existingRow = await (this as any).selectFrom(table).find(id)
-        
+
         if (existingRow) {
           // Row exists, update it
           await (this as any).updateTable(table).set(values as any).where({ [pk]: id } as any).execute()
-          
+
           // Retrieve the updated row
           const updatedRow = await (this as any).selectFrom(table).find(id)
           if (!updatedRow)
             throw new Error('save() failed to retrieve updated row')
           return updatedRow
-        } else {
+        }
+        else {
           // Row doesn't exist, create it
           return await (this as any).create(table, values)
         }
