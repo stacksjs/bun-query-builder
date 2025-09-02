@@ -7,7 +7,7 @@ export const defaultConfig: QueryBuilderConfig = {
   database: {
     database: 'test_db',
     username: 'root',
-    password: '',
+    password: 'root',
     host: 'localhost',
     port: 3306,
   },
