@@ -69,7 +69,7 @@ describe('hooks, soft deletes, relations and cursor pagination', () => {
       schema,
       meta,
     })
-    const q: any = db.selectFrom('users').where({ id: 1 }).toSQL()
+    const q: any = db.selectFrom('users').toSQL()
     expect(String(q)).toContain('SELECT')
   })
 

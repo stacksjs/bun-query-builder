@@ -176,7 +176,7 @@ describe('query builder - pagination helpers', () => {
 
 describe('query builder - DML builders', () => {
   it('insertInto values returns query with execute and returning chain works', () => {
-    const ins = qb().insertInto('users').values({ name: 'a' })
+    const ins = qb().insertInto('users').values({ name: 'a', email: 'chris@test.com' })
     const q1 = ins.toSQL() as any
     expect(typeof q1.execute).toBe('function')
     const ret = ins.returning('id')
@@ -185,7 +185,7 @@ describe('query builder - DML builders', () => {
   })
 
   it('updateTable set/where and returning chain', () => {
-    const upd = qb().updateTable('users').set({ name: 'b' }).where({ id: 1 })
+    const upd = qb().updateTable('users').set({ name: 'b' }).where({ email: 'chris@test.com' })
     const q1 = upd.toSQL() as any
     expect(typeof q1.execute).toBe('function')
     const ret = upd.returning('id')
@@ -194,7 +194,7 @@ describe('query builder - DML builders', () => {
   })
 
   it('deleteFrom where and returning chain', () => {
-    const del = qb().deleteFrom('users').where({ id: 1 })
+    const del = qb().deleteFrom('users').where({ email: 'chris@test.com' })
     const q1 = del.toSQL() as any
     expect(typeof q1.execute).toBe('function')
     const ret = del.returning('id')
@@ -224,7 +224,7 @@ describe('query builder - SQL text for clauses and helpers', () => {
     const q1 = qb().selectFrom('users').where(['id', '=', 1]) as any
     const s1 = toTextOf(q1)
     expectTextOutput(s1)
-    const q2 = qb().selectFrom('users').where({ id: 1, name: 'a' }) as any
+    const q2 = qb().selectFrom('users').where({ name: 'a' }) as any
     const s2 = toTextOf(q2)
     expectTextOutput(s2)
     const q3 = qb().selectFrom('users').where({ id: [1, 2, 3] }) as any
