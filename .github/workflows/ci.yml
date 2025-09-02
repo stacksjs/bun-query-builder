@@ -18,13 +18,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
       - name: Use cached node_modules
-        uses: actions/cache@v4.2.4
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: node-modules-${{ hashFiles('**/bun.lock') }}
@@ -41,13 +41,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
       - name: Use cached node_modules
-        uses: actions/cache@v4.2.4
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: node-modules-${{ hashFiles('**/bun.lock') }}
@@ -65,7 +65,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17
+        image: postgres:15
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
@@ -87,13 +87,13 @@ jobs:
       POSTGRES_DB: test_db
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
       - name: Use cached node_modules
-        uses: actions/cache@v4.2.4
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: node-modules-${{ hashFiles('**/bun.lock') }}
@@ -116,13 +116,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
       - name: Use cached node_modules
-        uses: actions/cache@v4.2.4.2.4
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: node-modules-${{ hashFiles('**/bun.lock') }}
@@ -134,6 +134,3 @@ jobs:
 
       - name: Build
         run: bun run build
-
-      - name: Publish Commit
-        run: bunx pkg-pr-new publish
