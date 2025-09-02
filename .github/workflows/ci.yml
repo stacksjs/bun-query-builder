@@ -64,27 +64,26 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      postgres:
-        image: postgres:15
+      mysql:
+        image: mysql:8.0
         env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_DB: test_db
+          MYSQL_ROOT_PASSWORD: ''
+          MYSQL_DATABASE: test_db
         options: >-
-          --health-cmd pg_isready
+          --health-cmd="mysqladmin ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
-          - 5432:5432
+          - 3306:3306
 
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: test_db
+      DATABASE_URL: mysql://root:@localhost:3306/test_db
+      MYSQL_HOST: localhost
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ''
+      MYSQL_DATABASE: test_db
 
     steps:
       - uses: actions/checkout@v4
@@ -103,11 +102,11 @@ jobs:
       - name: Install Dependencies
         run: bun install
 
-      - name: Wait for PostgreSQL
+      - name: Wait for MySQL
         run: |
-          echo "Waiting for PostgreSQL to be ready..."
-          timeout 60 bash -c 'until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done'
-          echo "PostgreSQL is ready!"
+          echo "Waiting for MySQL to be ready..."
+          timeout 60 bash -c 'until mysqladmin ping -h localhost -P 3306 -u root; do sleep 1; done'
+          echo "MySQL is ready!"
 
       - name: Unit Test
         run: bun test
