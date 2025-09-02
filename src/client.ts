@@ -3181,7 +3181,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         await bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)}`.execute()
         const [result] = await bunSql`SELECT LAST_INSERT_ID() as id`.execute()
         return result?.id
-      } else {
+      }
+      else {
         // PostgreSQL and other databases that support RETURNING
         const q = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} RETURNING ${bunSql(String(idColumn))} as id`
         const [row] = await q.execute()
