@@ -176,7 +176,7 @@ describe('query builder - pagination helpers', () => {
 
 describe('query builder - DML builders', () => {
   it('insertInto values returns query with execute and returning chain works', () => {
-    const ins = qb().insertInto('users').values({ id: 1, name: 'a' })
+    const ins = qb().insertInto('users').values({ name: 'a' })
     const q1 = ins.toSQL() as any
     expect(typeof q1.execute).toBe('function')
     const ret = ins.returning('id')
