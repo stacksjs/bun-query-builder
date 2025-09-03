@@ -56,3 +56,5 @@ export {
   simpleMigration,
   simpleSelectQuery,
 }
+
+simpleMigration()

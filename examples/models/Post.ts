@@ -1,4 +1,4 @@
-import { defineModel } from '../../src'
+import { defineModel } from 'bun-query-builder'
 import { v } from '../validation'
 
 const model: {
