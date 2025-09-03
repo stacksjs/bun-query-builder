@@ -1,5 +1,5 @@
-import { defineModel } from 'bun-query-builder'
-import { v } from '../validation'
+import { v } from '@/examples/validation'
+import { defineModel } from '@/index'
 
 const model = defineModel({
   name: 'User',

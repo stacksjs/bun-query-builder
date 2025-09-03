@@ -1,10 +1,10 @@
-import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '../types'
+import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
-import { config } from '../config'
-import { bunSql } from '../db'
+import { config } from '@/config'
+import { bunSql } from '@/db'
+import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '@/index'
 
 export async function generateMigration(dir: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
