@@ -2,8 +2,7 @@ import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import process from 'node:process'
-import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
+import { buildMigrationPlan, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
 import { config } from '../config'
 import { bunSql } from '../db'
 
@@ -36,18 +35,15 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
 
-  console.log('current dialect is', dialect)
-  console.log(defaultStatePath)
-  console.log(sqlStatements)
   if (opts.apply) {
-    const qb = createQueryBuilder()
     // Use a temp file to execute multiple statements safely via file()
     const dirPath = mkdtempSync(join(tmpdir(), 'qb-migrate-'))
     const filePath = join(dirPath, 'migration.sql')
+
     try {
       if (hasChanges) {
         writeFileSync(filePath, sql)
-        await qb.file(filePath)
+
         console.log('-- Migration applied')
       }
       else {
@@ -134,8 +130,8 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
 
 export async function copyModelsToGenerated(dir: string): Promise<void> {
   try {
-    // Ensure the generated directory exists
-    const generatedDir = join(process.cwd(), 'generated')
+    // Ensure the generated directory exists at the workspace root
+    const generatedDir = join(__dirname, '..', '..', 'generated')
     if (!existsSync(generatedDir)) {
       mkdirSync(generatedDir, { recursive: true })
       console.log('-- Created generated directory')
