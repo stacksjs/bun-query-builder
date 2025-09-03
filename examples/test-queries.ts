@@ -28,9 +28,9 @@ async function basicSelectQuery() {
 }
 
 async function simpleMigration() {
-  const migration = await generateMigration('./models', { dialect: 'postgres', apply: true, full: true })
+  await generateMigration('./models', { dialect: 'postgres', apply: true, full: true })
 
-  await executeMigration(migration)
+  await executeMigration()
 }
 
 async function simpleSelectQuery() {

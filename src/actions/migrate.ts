@@ -2,7 +2,8 @@ import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildMigrationPlan, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
+import process from 'node:process'
+import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
 import { config } from '../config'
 import { bunSql } from '../db'
 
@@ -17,6 +18,7 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
   const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
   const statePath = String(opts.state || defaultStatePath)
+  
 
   let previous: any | undefined
   if (existsSync(statePath)) {
@@ -35,15 +37,19 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
 
+  // Write SQL statements to scripts.sql file
+  const scriptsPath = join(__dirname, '..', '..', 'sql', 'scripts.sql')
+  writeFileSync(scriptsPath, sql)
+  console.log(`-- SQL statements written to: ${scriptsPath}`)
+
   if (opts.apply) {
     // Use a temp file to execute multiple statements safely via file()
     const dirPath = mkdtempSync(join(tmpdir(), 'qb-migrate-'))
     const filePath = join(dirPath, 'migration.sql')
-
+    
     try {
       if (hasChanges) {
         writeFileSync(filePath, sql)
-
         console.log('-- Migration applied')
       }
       else {
@@ -61,17 +67,18 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
   return { sql, sqlStatements, hasChanges, plan }
 }
 
-export async function executeMigration(migration: GenerateMigrationResult): Promise<boolean> {
-  const { sqlStatements } = migration
+export async function executeMigration(): Promise<boolean> {
+  const scriptsPath = join(__dirname, '..', '..', 'sql', 'scripts.sql')
+  
+  if (!existsSync(scriptsPath)) {
+    throw new Error('scripts.sql file not found. Run generateMigration first.')
+  }
 
   console.log('database dialect is', config.dialect)
 
   try {
-    for (const sql of sqlStatements) {
-      // Use raw SQL execution instead of template literal to avoid parameter binding issues
-      await bunSql.unsafe(sql).execute()
-    }
-
+    const qb = createQueryBuilder()
+    await qb.file(scriptsPath)
     console.log('-- Migration executed successfully')
   }
   catch (err) {

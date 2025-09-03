@@ -2,7 +2,7 @@ import type { CliOption, FileOptions, MigrateOptions, SqlOptions, UnsafeOptions 
 import { CAC } from 'cac'
 import { version } from '../package.json'
 import { explain, file, introspect, ping, sql, unsafe, waitReady } from '../src/actions'
-import { generateMigration, resetDatabase } from '../src/actions/migrate'
+import { executeMigration, generateMigration, resetDatabase } from '../src/actions/migrate'
 
 const cli = new CAC('query-builder')
 
@@ -76,6 +76,8 @@ cli
         apply: opts.apply,
         full: opts.full,
       })
+
+      await executeMigration()
     }
     catch (err) {
       console.error('-- Migration failed:', err)
