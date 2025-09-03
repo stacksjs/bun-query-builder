@@ -157,7 +157,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
 
 export function generateSql(plan: MigrationPlan): string[] {
   const statements: string[] = []
-  const q = (id: string) => plan.dialect === 'mysql' ? `\`${id}\`` : `"${id}"`
+  const q = (id: string) => plan.dialect === 'mysql' ? `\`${id}\`` : id
 
   const columnSql = (c: ColumnPlan): string => {
     const typeSql = (() => {
@@ -188,7 +188,7 @@ export function generateSql(plan: MigrationPlan): string[] {
 
     const parts: string[] = [q(c.name), typeSql]
     if (c.isPrimaryKey) {
-      parts.push('primary key')
+      parts.push('PRIMARY KEY')
       // Add AUTO_INCREMENT for MySQL primary keys
       if (plan.dialect === 'mysql' && (c.type === 'integer' || c.type === 'bigint')) {
         parts.push('auto_increment')
@@ -308,7 +308,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     return generateSql(next)
 
   const chunks: string[] = []
-  const q = (id: string) => next.dialect === 'mysql' ? `\`${id}\`` : `"${id}"`
+  const q = (id: string) => next.dialect === 'mysql' ? `\`${id}\`` : id
 
   const prevTables = mapTablesByName(previous.tables)
   const nextTables = mapTablesByName(next.tables)
@@ -338,7 +338,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         })()
         const parts: string[] = [q(tmp.name), typeSql]
         if (tmp.isPrimaryKey) {
-          parts.push('primary key')
+          parts.push('PRIMARY KEY')
           // Add AUTO_INCREMENT for MySQL primary keys
           if (next.dialect === 'mysql' && (tmp.type === 'integer' || tmp.type === 'bigint')) {
             parts.push('auto_increment')

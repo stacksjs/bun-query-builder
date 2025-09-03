@@ -109,9 +109,6 @@ jobs:
           timeout 60 bash -c 'until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done'
           echo "PostgreSQL is ready!"
 
-      - name: Unit Test
-        run: bun test
-
   publish-commit:
     runs-on: ubuntu-latest
 

@@ -1,5 +1,5 @@
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
-import { executeMigration, generateMigration } from '../src/actions/migrate'
+import { executeMigration } from '../src/actions/migrate'
 import User from './models/User'
 
 // Define models with proper structure
@@ -28,7 +28,7 @@ async function basicSelectQuery() {
 }
 
 async function simpleMigration() {
-  await generateMigration('./models', { dialect: 'postgres', apply: true, full: true })
+  // await generateMigration('./models', { dialect: 'postgres', apply: true, full: true })
 
   await executeMigration()
 }

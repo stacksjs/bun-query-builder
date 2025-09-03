@@ -1,5 +1,5 @@
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { config } from '@/config'
@@ -70,8 +70,7 @@ export async function executeMigration(): Promise<boolean> {
     throw new Error('sql directory not found. Run generateMigration first.')
   }
 
-  const fs = await import('node:fs')
-  const files = fs.readdirSync(sqlDir)
+  const files = readdirSync(sqlDir)
   const scriptFiles = files.filter(file => file.startsWith('script-') && file.endsWith('.sql')).sort()
 
   if (scriptFiles.length === 0) {
@@ -216,13 +215,11 @@ function getSqlDirectory(): string {
 }
 
 async function createMigrationsTable(qb: any): Promise<void> {
-  const createTableSql = `
-    CREATE TABLE IF NOT EXISTS migrations (
-      id SERIAL PRIMARY KEY,
-      migration VARCHAR(255) NOT NULL UNIQUE,
-      executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-  `
+  const createTableSql = `CREATE TABLE IF NOT EXISTS migrations (
+    id SERIAL PRIMARY KEY,
+    migration VARCHAR(255) NOT NULL UNIQUE,
+    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`
 
   try {
     await qb.unsafe(createTableSql).execute()
@@ -248,7 +245,9 @@ async function getExecutedMigrations(qb: any): Promise<string[]> {
 
 async function recordMigration(qb: any, migrationFile: string): Promise<void> {
   try {
-    await qb.unsafe('INSERT INTO migrations (migration) VALUES (?)', [migrationFile]).execute()
+    console.log(`-- Recording migration: ${migrationFile}`)
+    await qb.unsafe('INSERT INTO migrations (migration) VALUES ($1)', [migrationFile]).execute()
+    console.log(`-- Successfully recorded migration: ${migrationFile}`)
   }
   catch (err) {
     console.error(`-- Failed to record migration ${migrationFile}:`, err)
