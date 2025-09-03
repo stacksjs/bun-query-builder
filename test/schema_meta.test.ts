@@ -13,7 +13,7 @@ beforeAll(async () => {
     const result = await generateMigration('./examples/models', { dialect: config.dialect, full: true })
 
     if (result.sqlStatements.length > 0) {
-      await executeMigration(result)
+      await executeMigration()
     }
   }
   catch (error) {

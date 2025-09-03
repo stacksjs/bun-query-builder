@@ -2,7 +2,6 @@ import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import process from 'node:process'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../'
 import { config } from '../config'
 import { bunSql } from '../db'
@@ -18,7 +17,6 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
   const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
   const statePath = String(opts.state || defaultStatePath)
-  
 
   let previous: any | undefined
   if (existsSync(statePath)) {
@@ -46,7 +44,7 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
     // Use a temp file to execute multiple statements safely via file()
     const dirPath = mkdtempSync(join(tmpdir(), 'qb-migrate-'))
     const filePath = join(dirPath, 'migration.sql')
-    
+
     try {
       if (hasChanges) {
         writeFileSync(filePath, sql)
@@ -69,7 +67,7 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
 export async function executeMigration(): Promise<boolean> {
   const scriptsPath = join(__dirname, '..', '..', 'sql', 'scripts.sql')
-  
+
   if (!existsSync(scriptsPath)) {
     throw new Error('scripts.sql file not found. Run generateMigration first.')
   }
