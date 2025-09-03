@@ -35,10 +35,8 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
 
-  // Write SQL statements to scripts.sql file
-  const scriptsPath = join(__dirname, '..', '..', 'sql', 'scripts.sql')
-  writeFileSync(scriptsPath, sql)
-  console.log(`-- SQL statements written to: ${scriptsPath}`)
+  // Write SQL statements to timestamped script file
+  await writeTimestampedScript(sql)
 
   if (opts.apply) {
     // Use a temp file to execute multiple statements safely via file()
@@ -66,18 +64,58 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 }
 
 export async function executeMigration(): Promise<boolean> {
-  const scriptsPath = join(__dirname, '..', '..', 'sql', 'scripts.sql')
+  const sqlDir = getSqlDirectory()
 
-  if (!existsSync(scriptsPath)) {
-    throw new Error('scripts.sql file not found. Run generateMigration first.')
+  if (!existsSync(sqlDir)) {
+    throw new Error('sql directory not found. Run generateMigration first.')
+  }
+
+  const fs = await import('node:fs')
+  const files = fs.readdirSync(sqlDir)
+  const scriptFiles = files.filter(file => file.startsWith('script-') && file.endsWith('.sql')).sort()
+
+  if (scriptFiles.length === 0) {
+    throw new Error('No script files found. Run generateMigration first.')
   }
 
   console.log('database dialect is', config.dialect)
+  console.log(`-- Found ${scriptFiles.length} script files to execute`)
 
   try {
     const qb = createQueryBuilder()
-    await qb.file(scriptsPath)
-    console.log('-- Migration executed successfully')
+
+    // Create migrations table if it doesn't exist
+    await createMigrationsTable(qb)
+
+    // Get already executed migrations
+    const executedMigrations = await getExecutedMigrations(qb)
+
+    // Filter out already executed migrations
+    const pendingMigrations = scriptFiles.filter(file => !executedMigrations.includes(file))
+
+    if (pendingMigrations.length === 0) {
+      console.log('-- No pending migrations to execute')
+      return true
+    }
+
+    console.log(`-- Executing ${pendingMigrations.length} pending migrations`)
+
+    for (const file of pendingMigrations) {
+      const filePath = join(sqlDir, file)
+      console.log(`-- Executing: ${file}`)
+
+      try {
+        await qb.file(filePath)
+        await recordMigration(qb, file)
+        console.log(`-- ✓ Migration ${file} executed successfully`)
+      }
+      catch (err) {
+        console.error(`-- ✗ Migration ${file} failed:`, err)
+        throw err
+      }
+    }
+
+    console.log('-- All migrations executed successfully')
   }
   catch (err) {
     console.error('-- Migration execution failed:', err)
@@ -171,4 +209,56 @@ export async function copyModelsToGenerated(dir: string): Promise<void> {
     console.error('-- Failed to copy model files:', err)
     throw err
   }
+}
+
+function getSqlDirectory(): string {
+  return join(__dirname, '..', '..', 'sql')
+}
+
+async function createMigrationsTable(qb: any): Promise<void> {
+  const createTableSql = `
+    CREATE TABLE IF NOT EXISTS migrations (
+      id SERIAL PRIMARY KEY,
+      migration VARCHAR(255) NOT NULL UNIQUE,
+      executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `
+
+  try {
+    await qb.unsafe(createTableSql).execute()
+    console.log('-- Migrations table ready')
+  }
+  catch (err) {
+    console.error('-- Failed to create migrations table:', err)
+    throw err
+  }
+}
+
+async function getExecutedMigrations(qb: any): Promise<string[]> {
+  try {
+    const result = await qb.unsafe('SELECT migration FROM migrations ORDER BY executed_at').execute()
+    return result.map((row: any) => row.migration)
+  }
+  catch (err) {
+    console.error('-- Failed to get executed migrations:', err)
+    // If table doesn't exist or query fails, return empty array
+    return []
+  }
+}
+
+async function recordMigration(qb: any, migrationFile: string): Promise<void> {
+  try {
+    await qb.unsafe('INSERT INTO migrations (migration) VALUES (?)', [migrationFile]).execute()
+  }
+  catch (err) {
+    console.error(`-- Failed to record migration ${migrationFile}:`, err)
+    throw err
+  }
+}
+
+async function writeTimestampedScript(sql: string): Promise<void> {
+  const timestamp = Math.floor(Date.now() / 1000)
+  const scriptsPath = join(__dirname, '..', '..', 'sql', `script-${timestamp}.sql`)
+  writeFileSync(scriptsPath, sql)
+  console.log(`-- SQL statements written to: script-${timestamp}.sql`)
 }
