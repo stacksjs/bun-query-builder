@@ -8,8 +8,8 @@ function createMigrationFile(statement: string, fileName: string): void {
   if (!statement) return
   
   const timestamp = Math.floor(Date.now() / 1000)
-  const fullFileName = `${fileName}-${timestamp}.ts`
-  const sqlDir = join(__dirname, '..', '..', 'sql')
+  const fullFileName = `${fileName}-${timestamp}.sql`
+  const sqlDir = join(__dirname, '..', 'sql')
   const filePath = join(sqlDir, fullFileName)
   
   writeFileSync(filePath, statement)
