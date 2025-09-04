@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
+import { setupDatabase } from './setup'
 
 describe('test configuration', () => {
   beforeAll(async () => {
     // Set up database for config tests
-    await resetDatabase('./examples/models', { dialect: 'postgres' })
+    await setupDatabase()
   })
 
   afterAll(async () => {

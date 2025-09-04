@@ -2,12 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resetDatabase } from '@/actions'
 import { deleteMigrationFiles } from '@/actions/migrate'
 import pkg from '../package.json'
+import { setupDatabase } from './setup'
 
 beforeAll(async () => {
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await setupDatabase()
 })
 
 afterAll(async () => {
