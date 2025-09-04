@@ -1,5 +1,5 @@
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
-import { executeMigration } from '../src/actions/migrate'
+import { executeMigration, resetDatabase } from '../src/actions/migrate'
 import User from './models/User'
 
 // Define models with proper structure
@@ -33,6 +33,10 @@ async function simpleMigration() {
   await executeMigration()
 }
 
+async function freshDatabase() {
+  await resetDatabase('./models', { dialect: 'postgres' })
+}
+
 async function simpleSelectQuery() {
   const q = await db.selectFrom('users').executeTakeFirst()
 
@@ -57,4 +61,4 @@ export {
   simpleSelectQuery,
 }
 
-simpleMigration()
+freshDatabase()

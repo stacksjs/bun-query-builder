@@ -1,5 +1,5 @@
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { config } from '@/config'
@@ -7,7 +7,7 @@ import { bunSql } from '@/db'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '@/index'
 
 export async function generateMigration(dir: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
-  const dialect = String(opts.dialect || 'postgres') as SupportedDialect
+  const dialect = String(opts.dialect || config.dialect || 'postgres') as SupportedDialect
 
   // Copy model files to generated directory
   await copyModelsToGenerated(dir)
@@ -130,6 +130,14 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
   const plan = buildMigrationPlan(models, { dialect })
 
   try {
+    // Drop migrations table first to clear migration history
+    const dropMigrationsSql = dialect === 'mysql'
+      ? 'DROP TABLE IF EXISTS `migrations`'
+      : 'DROP TABLE IF EXISTS "migrations" CASCADE'
+
+    await bunSql.unsafe(dropMigrationsSql).execute()
+    console.log('-- Dropped migrations table')
+
     // Get all table names from the migration plan
     const tableNames = plan.tables.map(table => table.table)
 
@@ -156,8 +164,7 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
     const statePath = String(opts.state || defaultStatePath)
 
     if (existsSync(statePath)) {
-      const fs = await import('node:fs')
-      fs.unlinkSync(statePath)
+      unlinkSync(statePath)
       console.log(`-- Removed migration state file: ${statePath}`)
     }
 
@@ -180,8 +187,7 @@ export async function copyModelsToGenerated(dir: string): Promise<void> {
     }
 
     // Read all files from the models directory
-    const fs = await import('node:fs')
-    const files = fs.readdirSync(dir)
+    const files = readdirSync(dir)
 
     // Filter for TypeScript files
     const modelFiles = files.filter(file => file.endsWith('.ts') || file.endsWith('.js'))
