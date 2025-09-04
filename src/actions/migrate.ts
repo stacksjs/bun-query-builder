@@ -35,27 +35,27 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
 
-  // if (opts.apply) {
-  //   // Use a temp file to execute multiple statements safely via file()
-  //   const dirPath = mkdtempSync(join(tmpdir(), 'qb-migrate-'))
-  //   const filePath = join(dirPath, 'migration.sql')
+  if (opts.apply) {
+    // Use a temp file to execute multiple statements safely via file()
+    const dirPath = mkdtempSync(join(tmpdir(), 'qb-migrate-'))
+    const filePath = join(dirPath, 'migration.sql')
 
-  //   try {
-  //     if (hasChanges) {
-  //       writeFileSync(filePath, sql)
-  //       console.log('-- Migration applied')
-  //     }
-  //     else {
-  //       console.log('-- No changes; nothing to apply')
-  //     }
-  //     // On success, write state snapshot with current plan and hash
-  //     writeFileSync(statePath, JSON.stringify({ plan, hash: hashMigrationPlan(plan), updatedAt: new Date().toISOString() }, null, 2))
-  //   }
-  //   catch (err) {
-  //     console.error('-- Migration failed:', err)
-  //     throw err
-  //   }
-  // }
+    try {
+      if (hasChanges) {
+        writeFileSync(filePath, sql)
+        console.log('-- Migration applied')
+      }
+      else {
+        console.log('-- No changes; nothing to apply')
+      }
+      // On success, write state snapshot with current plan and hash
+      writeFileSync(statePath, JSON.stringify({ plan, hash: hashMigrationPlan(plan), updatedAt: new Date().toISOString() }, null, 2))
+    }
+    catch (err) {
+      console.error('-- Migration failed:', err)
+      throw err
+    }
+  }
 
   return { sql, sqlStatements, hasChanges, plan }
 }
@@ -68,7 +68,7 @@ export async function executeMigration(): Promise<boolean> {
   }
 
   const files = readdirSync(sqlDir)
-  const scriptFiles = files.filter(file => (file.startsWith('script-') || file.startsWith('create-') || file.startsWith('update-')) && file.endsWith('.ts')).sort()
+  const scriptFiles = files.filter(file => file.endsWith('.sql')).sort()
 
   if (scriptFiles.length === 0) {
     throw new Error('No script files found. Run generateMigration first.')
@@ -184,12 +184,8 @@ export async function deleteMigrationFiles(dir: string, opts: MigrateOptions = {
   const sqlDir = getSqlDirectory()
   if (existsSync(sqlDir)) {
     const sqlFiles = readdirSync(sqlDir)
-    const migrationFiles = sqlFiles.filter(file => 
-      file.startsWith('script-') || 
-      file.startsWith('create-') || 
-      file.startsWith('update-')
-    )
-    
+    const migrationFiles = sqlFiles.filter(file => file.endsWith('.sql'))
+
     for (const file of migrationFiles) {
       const filePath = join(sqlDir, file)
       unlinkSync(filePath)
@@ -239,7 +235,7 @@ export async function copyModelsToGenerated(dir: string): Promise<void> {
 }
 
 function getSqlDirectory(): string {
-  return join(__dirname, '..', '..', 'sql')
+  return join(__dirname, '..', 'sql')
 }
 
 async function createMigrationsTable(qb: any): Promise<void> {
@@ -282,4 +278,3 @@ async function recordMigration(qb: any, migrationFile: string): Promise<void> {
     throw err
   }
 }
-

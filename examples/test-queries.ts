@@ -1,5 +1,5 @@
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
-import { executeMigration, generateMigration, resetDatabase } from '../src/actions/migrate'
+import { generateMigration, resetDatabase } from '../src/actions/migrate'
 import User from './models/User'
 
 // Define models with proper structure

@@ -1,17 +1,23 @@
 import type { ModelRecord } from './schema'
 import type { SupportedDialect } from './types'
-import { buildSchemaMeta } from './meta'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { buildSchemaMeta } from './meta'
+
+let migrationCounter = 0
 
 function createMigrationFile(statement: string, fileName: string): void {
-  if (!statement) return
-  
-  const timestamp = Math.floor(Date.now() / 1000)
-  const fullFileName = `${fileName}-${timestamp}.sql`
+  if (!statement)
+    return
+
+  const baseTimestamp = Math.floor(Date.now() / 1000)
+  const timestamp = baseTimestamp + migrationCounter
+  migrationCounter++
+
+  const fullFileName = `${timestamp}-${fileName}.sql`
   const sqlDir = join(__dirname, '..', 'sql')
   const filePath = join(sqlDir, fullFileName)
-  
+
   writeFileSync(filePath, statement)
   console.log(`-- Migration file created: ${fullFileName}`)
 }
@@ -170,6 +176,9 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
 }
 
 export function generateSql(plan: MigrationPlan): string[] {
+  // Reset migration counter for proper ordering
+  migrationCounter = 0
+
   const statements: string[] = []
   const q = (id: string) => plan.dialect === 'mysql' ? `\`${id}\`` : id
 
@@ -224,26 +233,7 @@ export function generateSql(plan: MigrationPlan): string[] {
     return parts.join(' ')
   }
 
-  // First, create all tables
-  for (const t of plan.tables) {
-    const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`
-    statements.push(createTableStatement)
-    createMigrationFile(createTableStatement, `create-${t.table}-table`)
-  }
-
-  // Then, add all foreign key constraints (after all tables exist)
-  for (const t of plan.tables) {
-    for (const c of t.columns) {
-      if (c.references) {
-        const fkName = `${t.table}_${c.name}_fk`
-        const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
-        statements.push(alterTableStatement)
-        createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
-      }
-    }
-  }
-
-  // Finally, create all indexes (after all tables exist)
+  // Then, create all indexes (CREATE statements - will execute in middle)
   for (const t of plan.tables) {
     for (const idx of t.indexes) {
       const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
@@ -252,6 +242,27 @@ export function generateSql(plan: MigrationPlan): string[] {
       statements.push(createIndexStatement)
       createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
     }
+  }
+
+  setTimeout(() => {
+  // First, create all foreign key constraints (ALTER statements - will execute last)
+    for (const t of plan.tables) {
+      for (const c of t.columns) {
+        if (c.references) {
+          const fkName = `${t.table}_${c.name}_fk`
+          const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
+          statements.push(alterTableStatement)
+          createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
+        }
+      }
+    }
+  }, 1000)
+
+  // Finally, create all tables (CREATE statements - will execute first)
+  for (const t of plan.tables) {
+    const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`
+    statements.push(createTableStatement)
+    createMigrationFile(createTableStatement, `create-${t.table}-table`)
   }
 
   return statements
@@ -327,13 +338,45 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   if (!previous || previous.dialect !== next.dialect)
     return generateSql(next)
 
+  // Reset migration counter for proper ordering
+  migrationCounter = 0
+
   const chunks: string[] = []
   const q = (id: string) => next.dialect === 'mysql' ? `\`${id}\`` : id
 
   const prevTables = mapTablesByName(previous.tables)
   const nextTables = mapTablesByName(next.tables)
 
-  // 1) New tables -> create tables first
+  // 1) Add foreign key constraints for new tables (ALTER statements - will execute last)
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
+      for (const c of t.columns) {
+        if (c.references) {
+          const fkName = `${t.table}_${c.name}_fk`
+          const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
+          chunks.push(alterTableStatement)
+          createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
+        }
+      }
+    }
+  }
+
+  // 2) Create indexes for new tables (CREATE statements - will execute in middle)
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
+      for (const idx of t.indexes) {
+        const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
+        const idxName = `${t.table}_${idx.name}`
+        const createIndexStatement = `CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`
+        chunks.push(createIndexStatement)
+        createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
+      }
+    }
+  }
+
+  // 3) New tables -> create tables (CREATE statements - will execute first)
   for (const tableName of Object.keys(nextTables)) {
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
@@ -384,36 +427,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 2) Add foreign key constraints for new tables (after all tables exist)
-  for (const tableName of Object.keys(nextTables)) {
-    if (!prevTables[tableName]) {
-      const t = nextTables[tableName]
-      for (const c of t.columns) {
-        if (c.references) {
-          const fkName = `${t.table}_${c.name}_fk`
-          const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
-          chunks.push(alterTableStatement)
-          createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
-        }
-      }
-    }
-  }
-
-  // 3) Create indexes for new tables (after all tables exist)
-  for (const tableName of Object.keys(nextTables)) {
-    if (!prevTables[tableName]) {
-      const t = nextTables[tableName]
-      for (const idx of t.indexes) {
-        const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
-        const idxName = `${t.table}_${idx.name}`
-        const createIndexStatement = `CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`
-        chunks.push(createIndexStatement)
-        createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
-      }
-    }
-  }
-
-  // 2) Existing tables -> add-only diffs
+  // 4) Existing tables -> add-only diffs (ALTER statements first, then CREATE)
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]
     const curr = nextTables[tableName]
@@ -423,7 +437,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     const prevCols = mapColumnsByName(prev.columns)
     const currCols = mapColumnsByName(curr.columns)
 
-    // Add new columns
+    // Add new columns (ALTER statements - will execute last)
     for (const colName of Object.keys(currCols)) {
       if (!prevCols[colName]) {
         const c = currCols[colName]
@@ -472,7 +486,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       }
     }
 
-    // Add new indexes
+    // Add new indexes (CREATE statements - will execute in middle)
     const prevIdx = mapIndexesByKey(prev.indexes)
     const currIdx = mapIndexesByKey(curr.indexes)
     for (const key of Object.keys(currIdx)) {
