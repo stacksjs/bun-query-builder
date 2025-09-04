@@ -7,7 +7,7 @@
         "@stacksjs/launchpad": "^0.6.4",
       },
       "devDependencies": {
-        "@stacksjs/bumpx": "^0.1.69",
+        "@stacksjs/bumpx": "^0.1.78",
         "@stacksjs/docs": "^0.70.23",
         "@stacksjs/eslint-config": "^4.14.0-beta.3",
         "@stacksjs/gitlint": "^0.1.5",
@@ -503,7 +503,7 @@
 
     "@sindresorhus/is": ["@sindresorhus/is@4.6.0", "", {}, "sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw=="],
 
-    "@stacksjs/bumpx": ["@stacksjs/bumpx@0.1.69", "", { "dependencies": { "@stacksjs/clapp": "^0.1.16", "@stacksjs/logsmith": "^0.1.15", "bunfig": "^0.14.1" }, "bin": { "bumpx": "dist/bin/cli.js" } }, "sha512-cTgJG8GlRL8V/rFMLn0hWE0bMZsDGP/+1LDrodfeYr/sOWpxs/hBx7GfLITekTn0e3kPfCAAYvbgwmrGNCgtig=="],
+    "@stacksjs/bumpx": ["@stacksjs/bumpx@0.1.78", "", { "dependencies": { "@stacksjs/clapp": "^0.1.16", "@stacksjs/logsmith": "^0.1.15", "bunfig": "^0.14.1" }, "bin": { "bumpx": "dist/bin/cli.js" } }, "sha512-lLPd3vQSk3H6s60s7TtJiopmykVCJ0ZSU2C5zRPaHDbdL7XZv1+PBCPOMDxfO04xOZsX3NmCZumHz511kVqFqg=="],
 
     "@stacksjs/clapp": ["@stacksjs/clapp@0.1.18", "", { "dependencies": { "mri": "^1.2.0", "wrap-ansi": "^9.0.0" }, "bin": { "clapp": "dist/bin/cli.js", "@stacksjs/clapp": "dist/bin/cli.js" } }, "sha512-i9Yx47IXR/8CFhvztTIEuWNt1FME56KttZlKLI0RStvMCdZPFjeZW1E+8PHYMvwAnNz1ezLWUnLynqcf1vHj4Q=="],
 
