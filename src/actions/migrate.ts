@@ -6,6 +6,15 @@ import { config } from '@/config'
 import { bunSql } from '@/db'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '@/index'
 
+function ensureSqlDirectory(): string {
+  const sqlDir = getSqlDirectory()
+  if (!existsSync(sqlDir)) {
+    mkdirSync(sqlDir, { recursive: true })
+    console.log(`-- Created SQL directory: ${sqlDir}`)
+  }
+  return sqlDir
+}
+
 export async function generateMigration(dir: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
   const dialect = String(opts.dialect || config.dialect || 'postgres') as SupportedDialect
 
@@ -61,11 +70,7 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 }
 
 export async function executeMigration(): Promise<boolean> {
-  const sqlDir = getSqlDirectory()
-
-  if (!existsSync(sqlDir)) {
-    throw new Error('sql directory not found. Run generateMigration first.')
-  }
+  const sqlDir = ensureSqlDirectory()
 
   const files = readdirSync(sqlDir)
   const scriptFiles = files.filter(file => file.endsWith('.sql')).sort()
@@ -136,7 +141,7 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
     }
     catch (err) {
       // Ignore errors when dropping migrations table
-      console.log('-- Migrations table may not exist, skipping drop')
+      console.error(err)
     }
 
     // Try to load models and get table names
@@ -147,7 +152,7 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
       tableNames = plan.tables.map(table => table.table)
     }
     catch (err) {
-      console.log('-- Could not load models, skipping table drops')
+      console.error(err)
       tableNames = []
     }
 
@@ -169,6 +174,7 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
           console.log(`-- Dropped table: ${tableName}`)
         }
         catch (err) {
+          console.error(err)
           // Ignore errors when dropping tables (they might not exist)
           console.log(`-- Table ${tableName} may not exist, skipping drop`)
         }
@@ -180,6 +186,7 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
       await deleteMigrationFiles(dir, opts)
     }
     catch (err) {
+      console.error(err)
       console.log('-- Could not clean up migration files')
     }
 
@@ -206,7 +213,7 @@ export async function deleteMigrationFiles(dir: string, opts: MigrateOptions = {
   }
 
   // Clean up all files in the sql directory
-  const sqlDir = getSqlDirectory()
+  const sqlDir = ensureSqlDirectory()
   if (existsSync(sqlDir)) {
     const sqlFiles = readdirSync(sqlDir)
     const migrationFiles = sqlFiles.filter(file => file.endsWith('.sql'))

@@ -1,10 +1,19 @@
 import type { ModelRecord } from './schema'
 import type { SupportedDialect } from './types'
-import { writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildSchemaMeta } from './meta'
 
 let migrationCounter = 0
+
+function ensureSqlDirectory(): string {
+  const sqlDir = join(__dirname, '..', 'sql')
+  if (!existsSync(sqlDir)) {
+    mkdirSync(sqlDir, { recursive: true })
+    console.log(`-- Created SQL directory: ${sqlDir}`)
+  }
+  return sqlDir
+}
 
 function createMigrationFile(statement: string, fileName: string): void {
   if (!statement)
@@ -15,7 +24,7 @@ function createMigrationFile(statement: string, fileName: string): void {
   migrationCounter++
 
   const fullFileName = `${timestamp}-${fileName}.sql`
-  const sqlDir = join(__dirname, '..', 'sql')
+  const sqlDir = ensureSqlDirectory()
   const filePath = join(sqlDir, fullFileName)
 
   writeFileSync(filePath, statement)
