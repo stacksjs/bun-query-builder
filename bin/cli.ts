@@ -94,6 +94,37 @@ cli
   })
 
 cli
+  .command('migrate:fresh <dir>', 'Reset database and run all migrations')
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--state <path>', 'Path to migration state file (defaults to <dir>/.qb-migrations.<dialect>.json)')
+  .option('--full', 'Force full migration SQL instead of incremental diff')
+  .example('query-builder migrate:fresh ./app/Models --dialect postgres')
+  .action(async (dir: string, opts: MigrateOptions) => {
+    try {
+      console.log('-- Resetting database...')
+      await resetDatabase(dir, {
+        dialect: opts.dialect,
+        state: opts.state,
+      })
+
+      console.log('-- Generating fresh migrations...')
+      await generateMigration(dir, {
+        dialect: opts.dialect,
+        state: opts.state,
+        full: opts.full,
+      })
+
+      console.log('-- Executing migrations...')
+      await executeMigration()
+    }
+    catch (err) {
+      console.error('-- Migrate fresh failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
   .command('reset <dir>', 'Drop all tables and reset database')
   .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
   .option('--state <path>', 'Path to migration state file (defaults to <dir>/.qb-migrations.<dialect>.json)')
