@@ -80,12 +80,29 @@ export async function executeMigration(): Promise<boolean> {
   try {
     const qb = createQueryBuilder()
 
-    for (const file of scriptFiles) {
+    // Create migrations table if it doesn't exist
+    await createMigrationsTable(qb)
+
+    // Get already executed migrations
+    const executedMigrations = await getExecutedMigrations(qb)
+
+    // Filter out already executed migrations
+    const pendingMigrations = scriptFiles.filter(file => !executedMigrations.includes(file))
+
+    if (pendingMigrations.length === 0) {
+      console.log('-- No pending migrations to execute')
+      return true
+    }
+
+    console.log(`-- Executing ${pendingMigrations.length} pending migrations`)
+
+    for (const file of pendingMigrations) {
       const filePath = join(sqlDir, file)
       console.log(`-- Executing: ${file}`)
 
       try {
         await qb.file(filePath)
+        await recordMigration(qb, file)
         console.log(`-- ✓ Migration ${file} executed successfully`)
       }
       catch (err) {
