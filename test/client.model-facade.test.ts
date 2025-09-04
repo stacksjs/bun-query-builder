@@ -1,5 +1,15 @@
-import { describe, expect, it } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, resetDatabase } from '../src'
+
+beforeAll(async () => {
+  // Set up database for model facade tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
+
+afterAll(async () => {
+  // Clean up database after model facade tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
 
 const models = {
   User: {
