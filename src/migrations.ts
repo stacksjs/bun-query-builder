@@ -1,6 +1,20 @@
 import type { ModelRecord } from './schema'
 import type { SupportedDialect } from './types'
 import { buildSchemaMeta } from './meta'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+function createMigrationFile(statement: string, fileName: string): void {
+  if (!statement) return
+  
+  const timestamp = Math.floor(Date.now() / 1000)
+  const fullFileName = `${fileName}-${timestamp}.ts`
+  const sqlDir = join(__dirname, '..', '..', 'sql')
+  const filePath = join(sqlDir, fullFileName)
+  
+  writeFileSync(filePath, statement)
+  console.log(`-- Migration file created: ${fullFileName}`)
+}
 
 export type PrimitiveDefault = string | number | boolean | bigint | Date
 
@@ -212,7 +226,9 @@ export function generateSql(plan: MigrationPlan): string[] {
 
   // First, create all tables
   for (const t of plan.tables) {
-    statements.push(`CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`)
+    const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`
+    statements.push(createTableStatement)
+    createMigrationFile(createTableStatement, `create-${t.table}-table`)
   }
 
   // Then, add all foreign key constraints (after all tables exist)
@@ -220,7 +236,9 @@ export function generateSql(plan: MigrationPlan): string[] {
     for (const c of t.columns) {
       if (c.references) {
         const fkName = `${t.table}_${c.name}_fk`
-        statements.push(`ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
+        const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
+        statements.push(alterTableStatement)
+        createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
       }
     }
   }
@@ -230,7 +248,9 @@ export function generateSql(plan: MigrationPlan): string[] {
     for (const idx of t.indexes) {
       const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
       const idxName = `${t.table}_${idx.name}`
-      statements.push(`CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`)
+      const createIndexStatement = `CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`
+      statements.push(createIndexStatement)
+      createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
     }
   }
 
@@ -317,7 +337,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   for (const tableName of Object.keys(nextTables)) {
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
-      chunks.push(`CREATE TABLE ${q(t.table)} (\n  ${t.columns.map((c) => {
+      const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map((c) => {
         // Reuse column rendering from generateSql
         const tmp: ColumnPlan = c
         const typeSql = (() => {
@@ -358,7 +378,9 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
             parts.push(`default '${dv.toISOString()}'`)
         }
         return parts.join(' ')
-      }).join(',\n  ')}\n);`)
+      }).join(',\n  ')}\n);`
+      chunks.push(createTableStatement)
+      createMigrationFile(createTableStatement, `create-${t.table}-table`)
     }
   }
 
@@ -369,7 +391,9 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       for (const c of t.columns) {
         if (c.references) {
           const fkName = `${t.table}_${c.name}_fk`
-          chunks.push(`ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
+          const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
+          chunks.push(alterTableStatement)
+          createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
         }
       }
     }
@@ -382,7 +406,9 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       for (const idx of t.indexes) {
         const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
         const idxName = `${t.table}_${idx.name}`
-        chunks.push(`CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`)
+        const createIndexStatement = `CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`
+        chunks.push(createIndexStatement)
+        createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
       }
     }
   }
@@ -433,11 +459,15 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
           else if (dv instanceof Date)
             parts.push(`default '${dv.toISOString()}'`)
         }
-        chunks.push(`ALTER TABLE ${q(curr.table)} ADD COLUMN ${parts.join(' ')};`)
+        const addColumnStatement = `ALTER TABLE ${q(curr.table)} ADD COLUMN ${parts.join(' ')};`
+        chunks.push(addColumnStatement)
+        createMigrationFile(addColumnStatement, `alter-${curr.table}-add-${c.name}`)
 
         if (c.references) {
           const fkName = `${curr.table}_${c.name}_fk`
-          chunks.push(`ALTER TABLE ${q(curr.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`)
+          const addFkStatement = `ALTER TABLE ${q(curr.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
+          chunks.push(addFkStatement)
+          createMigrationFile(addFkStatement, `alter-${curr.table}-${c.name}`)
         }
       }
     }
@@ -450,7 +480,9 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         const idx = currIdx[key]
         const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
         const idxName = `${curr.table}_${idx.name}`
-        chunks.push(`CREATE ${kind}INDEX ${q(idxName)} ON ${q(curr.table)} (${idx.columns.map(c => q(c)).join(', ')});`)
+        const createIndexStatement = `CREATE ${kind}INDEX ${q(idxName)} ON ${q(curr.table)} (${idx.columns.map(c => q(c)).join(', ')});`
+        chunks.push(createIndexStatement)
+        createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${curr.table}`)
       }
     }
   }
