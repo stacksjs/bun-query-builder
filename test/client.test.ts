@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
 import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
+import { setupDatabase } from './setup'
 import { mockQueryBuilderState } from './utils'
 
 function qb() {
@@ -55,7 +56,7 @@ function expectTextOutput(s: string) {
 
 beforeAll(async () => {
   // Set up database for client tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await setupDatabase()
 })
 
 afterAll(async () => {

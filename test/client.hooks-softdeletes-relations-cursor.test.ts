@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
 import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
+import { setupDatabase } from './setup'
 import { mockQueryBuilderState } from './utils'
 
 const User = defineModel({
@@ -53,7 +54,7 @@ beforeAll(async () => {
   config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
 
   // Set up database for hooks/soft deletes/relations tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await setupDatabase()
 })
 
 afterAll(async () => {

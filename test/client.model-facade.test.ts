@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, resetDatabase } from '../src'
+import { setupDatabase } from './setup'
 
 beforeAll(async () => {
   // Set up database for model facade tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await setupDatabase()
 })
 
 afterAll(async () => {

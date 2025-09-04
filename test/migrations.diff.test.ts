@@ -2,11 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { resetDatabase } from '../src/actions/migrate'
 import { buildMigrationPlan, generateDiffSql, generateSql, hashMigrationPlan } from '../src/migrations'
 import { defineModels } from '../src/schema'
+import { setupDatabase } from './setup'
 
 describe('migrations - diffing and hashing', () => {
   beforeAll(async () => {
     // Set up database for migration tests
-    await resetDatabase('./examples/models', { dialect: 'postgres' })
+    await setupDatabase()
   })
 
   afterAll(async () => {

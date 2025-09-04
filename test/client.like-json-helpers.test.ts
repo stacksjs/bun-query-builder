@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
 import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
+import { setupDatabase } from './setup'
 import { mockQueryBuilderState } from './utils'
 
 const User = defineModel({
@@ -21,7 +22,7 @@ describe('like/json helpers', () => {
       config.debug.captureText = true
 
     // Set up database for like/json helper tests
-    await resetDatabase('./examples/models', { dialect: 'postgres' })
+    await setupDatabase()
   })
 
   afterAll(async () => {

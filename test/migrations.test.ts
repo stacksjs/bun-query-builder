@@ -3,6 +3,7 @@ import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
 import { buildMigrationPlan, generateSql } from '../src/migrations'
 import { defineModels } from '../src/schema'
+import { setupDatabase } from './setup'
 
 const models = defineModels({
   User: {
@@ -35,7 +36,7 @@ beforeAll(async () => {
   config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
 
   // Set up database for migration tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await setupDatabase()
 })
 
 afterAll(async () => {

@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
 import { resetDatabase } from '../src/actions/migrate'
+import { setupDatabase } from './setup'
 
 beforeAll(async () => {
   // Set up database for transaction tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await setupDatabase()
 })
 
 afterAll(async () => {
