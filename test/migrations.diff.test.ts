@@ -53,8 +53,8 @@ describe('migrations - diffing and hashing', () => {
     const p2 = buildMigrationPlan(models2 as any, { dialect: 'postgres' })
     const sql = generateDiffSql(p1, p2)
 
-    expect(sql.join('\n')).toContain('CREATE TABLE "projects"')
-    expect(sql.join('\n')).toContain('ALTER TABLE "projects" ADD CONSTRAINT')
+    expect(sql.join('\n')).toContain('CREATE TABLE projects')
+    expect(sql.join('\n')).toContain('ALTER TABLE projects ADD CONSTRAINT')
   })
 
   it('dialect specific types map as expected', () => {

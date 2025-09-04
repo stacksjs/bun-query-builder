@@ -3,14 +3,6 @@ import { buildDatabaseSchema, buildSchemaMeta, defineModels } from '../src'
 import { config } from '../src/config'
 import { setupDatabase } from './setup'
 
-beforeAll(async () => {
-  if (config.debug)
-    config.debug.captureText = true
-  config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
-
-  await setupDatabase()
-})
-
 const models = defineModels({
   User: {
     name: 'User',
@@ -26,9 +18,18 @@ const models = defineModels({
   },
 } as const)
 
+beforeAll(async () => {
+  if (config.debug)
+    config.debug.captureText = true
+  config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
+
+  await setupDatabase()
+})
+
 describe('schema and meta builders', () => {
   it('buildDatabaseSchema maps attributes and primary keys', () => {
     const schema = buildDatabaseSchema(models)
+
     expect(Object.keys(schema)).toEqual(['users', 'projects'])
     expect(Object.keys(schema.users.columns)).toEqual(['id', 'email'])
     expect(schema.users.primaryKey).toBe('id')

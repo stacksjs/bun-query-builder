@@ -159,14 +159,8 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
       console.log(`-- Dropped table: ${tableName}`)
     }
 
-    // Clean up migration state file
-    const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
-    const statePath = String(opts.state || defaultStatePath)
-
-    if (existsSync(statePath)) {
-      unlinkSync(statePath)
-      console.log(`-- Removed migration state file: ${statePath}`)
-    }
+    // Clean up migration files
+    await deleteMigrationFiles(dir, opts)
 
     console.log('-- Database reset completed successfully')
     return true
@@ -174,6 +168,31 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
   catch (err) {
     console.error('-- Database reset failed:', err)
     throw err
+  }
+}
+
+export async function deleteMigrationFiles(dir: string, opts: MigrateOptions = {}): Promise<void> {
+  const dialect = String(opts.dialect || 'postgres') as SupportedDialect
+
+  // Clean up migration state file
+  const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
+  const statePath = String(opts.state || defaultStatePath)
+
+  if (existsSync(statePath)) {
+    unlinkSync(statePath)
+    console.log(`-- Removed migration state file: ${statePath}`)
+  }
+
+  // Clean up all files in the sql directory
+  const sqlDir = getSqlDirectory()
+  if (existsSync(sqlDir)) {
+    const sqlFiles = readdirSync(sqlDir)
+    for (const file of sqlFiles) {
+      const filePath = join(sqlDir, file)
+      unlinkSync(filePath)
+      console.log(`-- Removed SQL file: ${file}`)
+    }
+    console.log(`-- Cleaned up ${sqlFiles.length} files from sql directory`)
   }
 }
 
