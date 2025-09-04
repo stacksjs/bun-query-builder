@@ -80,29 +80,12 @@ export async function executeMigration(): Promise<boolean> {
   try {
     const qb = createQueryBuilder()
 
-    // Create migrations table if it doesn't exist
-    await createMigrationsTable(qb)
-
-    // Get already executed migrations
-    const executedMigrations = await getExecutedMigrations(qb)
-
-    // Filter out already executed migrations
-    const pendingMigrations = scriptFiles.filter(file => !executedMigrations.includes(file))
-
-    if (pendingMigrations.length === 0) {
-      console.log('-- No pending migrations to execute')
-      return true
-    }
-
-    console.log(`-- Executing ${pendingMigrations.length} pending migrations`)
-
-    for (const file of pendingMigrations) {
+    for (const file of scriptFiles) {
       const filePath = join(sqlDir, file)
       console.log(`-- Executing: ${file}`)
 
       try {
         await qb.file(filePath)
-        await recordMigration(qb, file)
         console.log(`-- ✓ Migration ${file} executed successfully`)
       }
       catch (err) {
@@ -235,7 +218,7 @@ export async function copyModelsToGenerated(dir: string): Promise<void> {
 }
 
 function getSqlDirectory(): string {
-  return join(__dirname, '..', 'sql')
+  return join(__dirname, '..', '..', 'sql')
 }
 
 async function createMigrationsTable(qb: any): Promise<void> {

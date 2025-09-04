@@ -233,6 +233,25 @@ export function generateSql(plan: MigrationPlan): string[] {
     return parts.join(' ')
   }
 
+  // Finally, create all tables (CREATE statements - will execute first)
+  for (const t of plan.tables) {
+    const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`
+    statements.push(createTableStatement)
+    createMigrationFile(createTableStatement, `create-${t.table}-table`)
+  }
+
+  // First, create all foreign key constraints (ALTER statements - will execute last)
+  for (const t of plan.tables) {
+    for (const c of t.columns) {
+      if (c.references) {
+        const fkName = `${t.table}_${c.name}_fk`
+        const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
+        statements.push(alterTableStatement)
+        createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
+      }
+    }
+  }
+
   // Then, create all indexes (CREATE statements - will execute in middle)
   for (const t of plan.tables) {
     for (const idx of t.indexes) {
@@ -242,27 +261,6 @@ export function generateSql(plan: MigrationPlan): string[] {
       statements.push(createIndexStatement)
       createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
     }
-  }
-
-  setTimeout(() => {
-  // First, create all foreign key constraints (ALTER statements - will execute last)
-    for (const t of plan.tables) {
-      for (const c of t.columns) {
-        if (c.references) {
-          const fkName = `${t.table}_${c.name}_fk`
-          const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
-          statements.push(alterTableStatement)
-          createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
-        }
-      }
-    }
-  }, 1000)
-
-  // Finally, create all tables (CREATE statements - will execute first)
-  for (const t of plan.tables) {
-    const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`
-    statements.push(createTableStatement)
-    createMigrationFile(createTableStatement, `create-${t.table}-table`)
   }
 
   return statements
