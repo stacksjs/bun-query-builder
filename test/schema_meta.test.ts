@@ -1,5 +1,5 @@
-import { beforeAll, describe, expect, it } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, defineModels } from '../src'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { buildDatabaseSchema, buildSchemaMeta, defineModels, resetDatabase } from '../src'
 import { config } from '../src/config'
 import { setupDatabase } from './setup'
 
@@ -24,6 +24,10 @@ beforeAll(async () => {
   config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
 
   await setupDatabase()
+})
+
+afterAll(async () => {
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
 })
 
 describe('schema and meta builders', () => {

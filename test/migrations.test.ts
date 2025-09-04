@@ -1,4 +1,5 @@
-import { beforeAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
 import { buildMigrationPlan, generateSql } from '../src/migrations'
 import { defineModels } from '../src/schema'
@@ -32,6 +33,14 @@ beforeAll(async () => {
   if (config.debug)
     config.debug.captureText = true
   config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
+
+  // Set up database for migration tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
+
+afterAll(async () => {
+  // Clean up database after migration tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
 })
 
 describe('migration planner', () => {

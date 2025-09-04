@@ -1,5 +1,6 @@
-import { beforeAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
+import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
 import { mockQueryBuilderState } from './utils'
 
@@ -50,6 +51,14 @@ beforeAll(async () => {
   if (config.debug)
     config.debug.captureText = true
   config.softDeletes = { enabled: true, column: 'deleted_at', defaultFilter: true }
+
+  // Set up database for hooks/soft deletes/relations tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
+
+afterAll(async () => {
+  // Clean up database after hooks/soft deletes/relations tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
 })
 
 describe('hooks, soft deletes, relations and cursor pagination', () => {

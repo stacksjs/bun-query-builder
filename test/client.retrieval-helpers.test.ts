@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
+import { resetDatabase } from '../src/actions/migrate'
 
 const User = defineModel({
   name: 'User',
@@ -13,6 +14,16 @@ const User = defineModel({
 } as const)
 
 describe('retrieval helpers', () => {
+  beforeAll(async () => {
+    // Set up database for retrieval helper tests
+    await resetDatabase('./examples/models', { dialect: 'postgres' })
+  })
+
+  afterAll(async () => {
+    // Clean up database after retrieval helper tests
+    await resetDatabase('./examples/models', { dialect: 'postgres' })
+  })
+
   const models = defineModels({ User })
   const schema = buildDatabaseSchema(models)
   const meta = buildSchemaMeta(models)

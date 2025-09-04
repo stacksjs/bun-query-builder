@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
+import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
 import { mockQueryBuilderState } from './utils'
 
@@ -51,6 +52,16 @@ function toTextOf(q: any): string {
 function expectTextOutput(s: string) {
   expect(typeof s).toBe('string')
 }
+
+beforeAll(async () => {
+  // Set up database for client tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
+
+afterAll(async () => {
+  // Clean up database after client tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
 
 describe('query builder - basics', () => {
   it('builds simple select returns a query object', () => {

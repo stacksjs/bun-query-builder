@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
+import { resetDatabase } from '../src/actions/migrate'
 
 const models = {
   User: {
@@ -16,6 +17,16 @@ const meta = buildSchemaMeta(models as any)
 function qb() {
   return createQueryBuilder<typeof schema>({ meta, schema })
 }
+
+beforeAll(async () => {
+  // Set up database for transaction tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
+
+afterAll(async () => {
+  // Clean up database after transaction tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
 
 describe('transactions API shape', () => {
   it('exposes transaction helpers', async () => {

@@ -1,5 +1,6 @@
-import { beforeAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
+import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
 
 const User = defineModel({
@@ -17,9 +18,17 @@ const User = defineModel({
 } as const)
 
 describe('dynamic whereX/orWhereX/andWhereX methods', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     if (config.debug)
       config.debug.captureText = true
+
+    // Set up database for dynamic where tests
+    await resetDatabase('./examples/models', { dialect: 'postgres' })
+  })
+
+  afterAll(async () => {
+    // Clean up database after dynamic where tests
+    await resetDatabase('./examples/models', { dialect: 'postgres' })
   })
   const models = defineModels({ User })
   const schema = buildDatabaseSchema(models)

@@ -1,8 +1,18 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { resetDatabase } from '../src/actions/migrate'
 import { buildMigrationPlan, generateDiffSql, generateSql, hashMigrationPlan } from '../src/migrations'
 import { defineModels } from '../src/schema'
 
 describe('migrations - diffing and hashing', () => {
+  beforeAll(async () => {
+    // Set up database for migration tests
+    await resetDatabase('./examples/models', { dialect: 'postgres' })
+  })
+
+  afterAll(async () => {
+    // Clean up database after migration tests
+    await resetDatabase('./examples/models', { dialect: 'postgres' })
+  })
   const baseModels = defineModels({
     User: {
       name: 'User',

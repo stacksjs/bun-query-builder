@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
+import { resetDatabase } from '../src/actions/migrate'
 import { mockQueryBuilderState } from './utils'
 
 function qb() {
@@ -21,6 +22,16 @@ function qb() {
     meta,
   })
 }
+
+beforeAll(async () => {
+  // Set up database for CRUD helper tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
+
+afterAll(async () => {
+  // Clean up database after CRUD helper tests
+  await resetDatabase('./examples/models', { dialect: 'postgres' })
+})
 
 describe('query builder - CRUD-style helpers availability', () => {
   it('exposes helper functions on the builder', () => {
