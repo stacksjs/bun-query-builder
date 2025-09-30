@@ -3,6 +3,7 @@ import type { SupportedDialect } from './types'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildSchemaMeta } from './meta'
+import { getDialectDriver } from './drivers'
 
 let migrationCounter = 0
 
@@ -233,65 +234,7 @@ export function generateSql(plan: MigrationPlan): string[] {
   migrationCounter = 0
 
   const statements: string[] = []
-  const q = (id: string) => plan.dialect === 'mysql' ? `\`${id}\`` : id
-
-  const columnSql = (c: ColumnPlan): string => {
-    const typeSql = (() => {
-      // For PostgreSQL, use SERIAL types for auto-incrementing primary keys
-      if (plan.dialect === 'postgres' && c.isPrimaryKey) {
-        switch (c.type) {
-          case 'integer': return 'SERIAL'
-          case 'bigint': return 'BIGSERIAL'
-          default: break
-        }
-      }
-
-      switch (c.type) {
-        case 'string': return plan.dialect === 'mysql' ? 'varchar(255)' : 'varchar(255)'
-        case 'text': return 'text'
-        case 'boolean': return plan.dialect === 'mysql' ? 'tinyint(1)' : 'boolean'
-        case 'integer': return plan.dialect === 'sqlite' ? 'integer' : 'integer'
-        case 'bigint': return 'bigint'
-        case 'float': return 'real'
-        case 'double': return 'double precision'
-        case 'decimal': return 'decimal(10,2)'
-        case 'date': return 'date'
-        case 'datetime': return plan.dialect === 'mysql' ? 'datetime' : 'timestamp'
-        case 'json': return plan.dialect === 'mysql' ? 'json' : (plan.dialect === 'postgres' ? 'jsonb' : 'text')
-        case 'enum': 
-          if (c.enumValues && c.enumValues.length > 0) {
-            // Use the column name + "type" as the enum type name
-            const enumTypeName = `${c.name}_type`
-            return enumTypeName
-          }
-          return 'text' // fallback
-        default: return 'text'
-      }
-    })()
-
-    const parts: string[] = [q(c.name), typeSql]
-    if (c.isPrimaryKey) {
-      parts.push('PRIMARY KEY')
-      // Add AUTO_INCREMENT for MySQL primary keys
-      if (plan.dialect === 'mysql' && (c.type === 'integer' || c.type === 'bigint')) {
-        parts.push('auto_increment')
-      }
-    }
-    if (!c.isNullable && !c.isPrimaryKey)
-      parts.push('not null')
-    if (c.hasDefault) {
-      const dv = c.defaultValue
-      if (typeof dv === 'string')
-        parts.push(`default '${dv.replace(/'/g, '\'\'')}'`)
-      else if (typeof dv === 'number' || typeof dv === 'bigint')
-        parts.push(`default ${dv}`)
-      else if (typeof dv === 'boolean')
-        parts.push(`default ${dv ? 1 : 0}`)
-      else if (dv instanceof Date)
-        parts.push(`default '${dv.toISOString()}'`)
-    }
-    return parts.join(' ')
-  }
+  const driver = getDialectDriver(plan.dialect)
 
   // Create tables with their enum types in the same migration file
   for (const t of plan.tables) {
@@ -303,16 +246,17 @@ export function generateSql(plan: MigrationPlan): string[] {
       if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
         const enumTypeName = `${c.name}_type`
         if (!enumTypes.has(enumTypeName)) {
-          const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
-          const createEnumStatement = `CREATE TYPE ${q(enumTypeName)} AS ENUM (${enumValues});`
-          tableStatements.push(createEnumStatement)
+          const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
+          if (createEnumStatement) {
+            tableStatements.push(createEnumStatement)
+          }
           enumTypes.add(enumTypeName)
         }
       }
     }
     
     // Then, create the table
-    const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`
+    const createTableStatement = driver.createTable(t)
     tableStatements.push(createTableStatement)
     
     // Add all statements to the main statements array
@@ -327,8 +271,7 @@ export function generateSql(plan: MigrationPlan): string[] {
   for (const t of plan.tables) {
     for (const c of t.columns) {
       if (c.references) {
-        const fkName = `${t.table}_${c.name}_fk`
-        const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
+        const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column)
         statements.push(alterTableStatement)
         createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
       }
@@ -338,9 +281,7 @@ export function generateSql(plan: MigrationPlan): string[] {
   // Then, create all indexes (CREATE statements - will execute in middle)
   for (const t of plan.tables) {
     for (const idx of t.indexes) {
-      const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
-      const idxName = `${t.table}_${idx.name}`
-      const createIndexStatement = `CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`
+      const createIndexStatement = driver.createIndex(t.table, idx)
       statements.push(createIndexStatement)
       createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
     }
@@ -423,7 +364,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   migrationCounter = 0
 
   const chunks: string[] = []
-  const q = (id: string) => next.dialect === 'mysql' ? `\`${id}\`` : id
+  const driver = getDialectDriver(next.dialect)
 
   const prevTables = mapTablesByName(previous.tables)
   const nextTables = mapTablesByName(next.tables)
@@ -434,8 +375,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       const t = nextTables[tableName]
       for (const c of t.columns) {
         if (c.references) {
-          const fkName = `${t.table}_${c.name}_fk`
-          const alterTableStatement = `ALTER TABLE ${q(t.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
+          const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column)
           chunks.push(alterTableStatement)
           createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
         }
@@ -448,9 +388,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
       for (const idx of t.indexes) {
-        const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
-        const idxName = `${t.table}_${idx.name}`
-        const createIndexStatement = `CREATE ${kind}INDEX ${q(idxName)} ON ${q(t.table)} (${idx.columns.map(c => q(c)).join(', ')});`
+        const createIndexStatement = driver.createIndex(t.table, idx)
         chunks.push(createIndexStatement)
         createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
       }
@@ -469,64 +407,17 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
           const enumTypeName = `${c.name}_type`
           if (!enumTypes.has(enumTypeName)) {
-            const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
-            const createEnumStatement = `CREATE TYPE IF NOT EXISTS ${q(enumTypeName)} AS ENUM (${enumValues});`
-            tableStatements.push(createEnumStatement)
+            const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
+            if (createEnumStatement) {
+              tableStatements.push(createEnumStatement)
+            }
             enumTypes.add(enumTypeName)
           }
         }
       }
       
       // Then, create the table
-      const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map((c) => {
-        // Reuse column rendering from generateSql
-        const tmp: ColumnPlan = c
-        const typeSql = (() => {
-          switch (tmp.type) {
-            case 'string': return next.dialect === 'mysql' ? 'varchar(255)' : 'varchar(255)'
-            case 'text': return 'text'
-            case 'boolean': return next.dialect === 'mysql' ? 'tinyint(1)' : 'boolean'
-            case 'integer': return next.dialect === 'sqlite' ? 'integer' : 'integer'
-            case 'bigint': return 'bigint'
-            case 'float': return 'real'
-            case 'double': return 'double precision'
-            case 'decimal': return 'decimal(10,2)'
-            case 'date': return 'date'
-            case 'datetime': return next.dialect === 'mysql' ? 'datetime' : 'timestamp'
-            case 'json': return next.dialect === 'mysql' ? 'json' : (next.dialect === 'postgres' ? 'jsonb' : 'text')
-            case 'enum': 
-              if (tmp.enumValues && tmp.enumValues.length > 0) {
-                // Create a singular enum type name from the column name
-                const enumTypeName = tmp.name.endsWith('s') ? tmp.name.slice(0, -1) : tmp.name
-                return enumTypeName
-              }
-              return 'text' // fallback
-            default: return 'text'
-          }
-        })()
-        const parts: string[] = [q(tmp.name), typeSql]
-        if (tmp.isPrimaryKey) {
-          parts.push('PRIMARY KEY')
-          // Add AUTO_INCREMENT for MySQL primary keys
-          if (next.dialect === 'mysql' && (tmp.type === 'integer' || tmp.type === 'bigint')) {
-            parts.push('auto_increment')
-          }
-        }
-        if (!tmp.isNullable && !tmp.isPrimaryKey)
-          parts.push('not null')
-        if (tmp.hasDefault) {
-          const dv = tmp.defaultValue
-          if (typeof dv === 'string')
-            parts.push(`default '${dv.replace(/'/g, '\'\'')}'`)
-          else if (typeof dv === 'number' || typeof dv === 'bigint')
-            parts.push(`default ${dv}`)
-          else if (typeof dv === 'boolean')
-            parts.push(`default ${dv ? 1 : 0}`)
-          else if (dv instanceof Date)
-            parts.push(`default '${dv.toISOString()}'`)
-        }
-        return parts.join(' ')
-      }).join(',\n  ')}\n);`
+      const createTableStatement = driver.createTable(t)
       tableStatements.push(createTableStatement)
       
       // Add all statements to the main chunks array
@@ -539,6 +430,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   }
 
   // 5) Create enum types for new columns in existing tables
+  const enumTypes = new Set<string>()
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]
     const curr = nextTables[tableName]
@@ -555,10 +447,11 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
           const enumTypeName = `${c.name}_type`
           if (!enumTypes.has(enumTypeName)) {
-            const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
-            const createEnumStatement = `CREATE TYPE IF NOT EXISTS ${q(enumTypeName)} AS ENUM (${enumValues});`
-            chunks.push(createEnumStatement)
-            createMigrationFile(createEnumStatement, `create-${enumTypeName}-enum`)
+            const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
+            if (createEnumStatement) {
+              chunks.push(createEnumStatement)
+              createMigrationFile(createEnumStatement, `create-${enumTypeName}-enum`)
+            }
             enumTypes.add(enumTypeName)
           }
         }
@@ -580,52 +473,12 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     for (const colName of Object.keys(currCols)) {
       if (!prevCols[colName]) {
         const c = currCols[colName]
-        // Render column (without primary key for ADD COLUMN safety)
-        const typeSql = (() => {
-          switch (c.type) {
-            case 'string': return next.dialect === 'mysql' ? 'varchar(255)' : 'varchar(255)'
-            case 'text': return 'text'
-            case 'boolean': return next.dialect === 'mysql' ? 'tinyint(1)' : 'boolean'
-            case 'integer': return next.dialect === 'sqlite' ? 'integer' : 'integer'
-            case 'bigint': return 'bigint'
-            case 'float': return 'real'
-            case 'double': return 'double precision'
-            case 'decimal': return 'decimal(10,2)'
-            case 'date': return 'date'
-            case 'datetime': return next.dialect === 'mysql' ? 'datetime' : 'timestamp'
-            case 'json': return next.dialect === 'mysql' ? 'json' : (next.dialect === 'postgres' ? 'jsonb' : 'text')
-            case 'enum': 
-              if (c.enumValues && c.enumValues.length > 0) {
-                // Create a singular enum type name from the column name
-                const enumTypeName = `${c.name}_type`
-                return enumTypeName
-              }
-              return 'text' // fallback
-            default: return 'text'
-          }
-        })()
-        const parts: string[] = [q(c.name), typeSql]
-        // Avoid setting primary key via ADD COLUMN, which is unsafe
-        if (!c.isNullable && !c.isPrimaryKey)
-          parts.push('not null')
-        if (c.hasDefault) {
-          const dv = c.defaultValue
-          if (typeof dv === 'string')
-            parts.push(`default '${dv.replace(/'/g, '\'\'')}'`)
-          else if (typeof dv === 'number' || typeof dv === 'bigint')
-            parts.push(`default ${dv}`)
-          else if (typeof dv === 'boolean')
-            parts.push(`default ${dv ? 1 : 0}`)
-          else if (dv instanceof Date)
-            parts.push(`default '${dv.toISOString()}'`)
-        }
-        const addColumnStatement = `ALTER TABLE ${q(curr.table)} ADD COLUMN ${parts.join(' ')};`
+        const addColumnStatement = driver.addColumn(curr.table, c)
         chunks.push(addColumnStatement)
         createMigrationFile(addColumnStatement, `alter-${curr.table}-add-${c.name}`)
 
         if (c.references) {
-          const fkName = `${curr.table}_${c.name}_fk`
-          const addFkStatement = `ALTER TABLE ${q(curr.table)} ADD CONSTRAINT ${q(fkName)} FOREIGN KEY (${q(c.name)}) REFERENCES ${q(c.references.table)}(${q(c.references.column)});`
+          const addFkStatement = driver.addForeignKey(curr.table, c.name, c.references.table, c.references.column)
           chunks.push(addFkStatement)
           createMigrationFile(addFkStatement, `alter-${curr.table}-${c.name}`)
         }
@@ -638,9 +491,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     for (const key of Object.keys(currIdx)) {
       if (!prevIdx[key]) {
         const idx = currIdx[key]
-        const kind = idx.type === 'unique' ? 'UNIQUE ' : ''
-        const idxName = `${curr.table}_${idx.name}`
-        const createIndexStatement = `CREATE ${kind}INDEX ${q(idxName)} ON ${q(curr.table)} (${idx.columns.map(c => q(c)).join(', ')});`
+        const createIndexStatement = driver.createIndex(curr.table, idx)
         chunks.push(createIndexStatement)
         createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${curr.table}`)
       }

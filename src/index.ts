@@ -1,6 +1,7 @@
 export * from './actions'
 export * from './client'
 export * from './config'
+export * from './drivers'
 export * from './factory'
 export * from './loader'
 export * from './meta'

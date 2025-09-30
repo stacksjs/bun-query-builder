@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { config } from '@/config'
 import { bunSql } from '@/db'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '@/index'
+import { getDialectDriver } from '@/drivers'
 
 function ensureSqlDirectory(): string {
   const sqlDir = getSqlDirectory()
@@ -71,6 +72,7 @@ export async function generateMigration(dir: string, opts: MigrateOptions = {}):
 
 export async function executeMigration(): Promise<boolean> {
   const sqlDir = ensureSqlDirectory()
+  const dialect = config.dialect || 'postgres'
 
   const files = readdirSync(sqlDir)
   const scriptFiles = files.filter(file => file.endsWith('.sql')).sort()
@@ -79,17 +81,17 @@ export async function executeMigration(): Promise<boolean> {
     throw new Error('No script files found. Run generateMigration first.')
   }
 
-  console.log('database dialect is', config.dialect)
+  console.log('database dialect is', dialect)
   console.log(`-- Found ${scriptFiles.length} script files to execute`)
 
   try {
     const qb = createQueryBuilder()
 
     // Create migrations table if it doesn't exist
-    await createMigrationsTable(qb)
+    await createMigrationsTable(qb, dialect)
 
     // Get already executed migrations
-    const executedMigrations = await getExecutedMigrations(qb)
+    const executedMigrations = await getExecutedMigrations(qb, dialect)
 
     // Filter out already executed migrations
     const pendingMigrations = scriptFiles.filter(file => !executedMigrations.includes(file))
@@ -107,7 +109,7 @@ export async function executeMigration(): Promise<boolean> {
 
       try {
         await qb.file(filePath)
-        await recordMigration(qb, file)
+        await recordMigration(qb, file, dialect)
         console.log(`-- ✓ Migration ${file} executed successfully`)
       }
       catch (err) {
@@ -128,12 +130,11 @@ export async function executeMigration(): Promise<boolean> {
 
 export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Promise<boolean> {
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
+  const driver = getDialectDriver(dialect)
 
   try {
     // Drop migrations table first to clear migration history
-    const dropMigrationsSql = dialect === 'mysql'
-      ? 'DROP TABLE IF EXISTS `migrations`'
-      : 'DROP TABLE IF EXISTS "migrations" CASCADE'
+    const dropMigrationsSql = driver.dropTable('migrations')
 
     try {
       await bunSql.unsafe(dropMigrationsSql).execute()
@@ -180,10 +181,7 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
       // (drop dependent tables first)
       for (const tableName of tableNames.reverse()) {
         try {
-          const dropSql = dialect === 'mysql'
-            ? `DROP TABLE IF EXISTS \`${tableName}\``
-            : `DROP TABLE IF EXISTS "${tableName}" CASCADE`
-
+          const dropSql = driver.dropTable(tableName)
           await bunSql.unsafe(dropSql).execute()
           console.log(`-- Dropped table: ${tableName}`)
         }
@@ -201,9 +199,11 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
       
       for (const enumTypeName of enumTypeNames) {
         try {
-          const dropEnumSql = `DROP TYPE IF EXISTS "${enumTypeName}" CASCADE`
-          await bunSql.unsafe(dropEnumSql).execute()
-          console.log(`-- Dropped enum type: ${enumTypeName}`)
+          const dropEnumSql = driver.dropEnumType(enumTypeName)
+          if (dropEnumSql) {
+            await bunSql.unsafe(dropEnumSql).execute()
+            console.log(`-- Dropped enum type: ${enumTypeName}`)
+          }
         }
         catch (err) {
           console.error(err)
@@ -305,12 +305,9 @@ function getSqlDirectory(): string {
   return join(__dirname, '..', '..', 'sql')
 }
 
-async function createMigrationsTable(qb: any): Promise<void> {
-  const createTableSql = `CREATE TABLE IF NOT EXISTS migrations (
-    id SERIAL PRIMARY KEY,
-    migration VARCHAR(255) NOT NULL UNIQUE,
-    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )`
+async function createMigrationsTable(qb: any, dialect: SupportedDialect): Promise<void> {
+  const driver = getDialectDriver(dialect)
+  const createTableSql = driver.createMigrationsTable()
 
   try {
     await qb.unsafe(createTableSql).execute()
@@ -322,9 +319,10 @@ async function createMigrationsTable(qb: any): Promise<void> {
   }
 }
 
-async function getExecutedMigrations(qb: any): Promise<string[]> {
+async function getExecutedMigrations(qb: any, dialect: SupportedDialect): Promise<string[]> {
+  const driver = getDialectDriver(dialect)
   try {
-    const result = await qb.unsafe('SELECT migration FROM migrations ORDER BY executed_at').execute()
+    const result = await qb.unsafe(driver.getExecutedMigrationsQuery()).execute()
     return result.map((row: any) => row.migration)
   }
   catch (err) {
@@ -334,10 +332,11 @@ async function getExecutedMigrations(qb: any): Promise<string[]> {
   }
 }
 
-async function recordMigration(qb: any, migrationFile: string): Promise<void> {
+async function recordMigration(qb: any, migrationFile: string, dialect: SupportedDialect): Promise<void> {
+  const driver = getDialectDriver(dialect)
   try {
     console.log(`-- Recording migration: ${migrationFile}`)
-    await qb.unsafe('INSERT INTO migrations (migration) VALUES ($1)', [migrationFile]).execute()
+    await qb.unsafe(driver.recordMigrationQuery(), [migrationFile]).execute()
     console.log(`-- Successfully recorded migration: ${migrationFile}`)
   }
   catch (err) {
