@@ -144,16 +144,30 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
       console.error(err)
     }
 
-    // Try to load models and get table names
+    // Try to load models and get table names and enum types
     let tableNames: string[] = []
+    let enumTypeNames: string[] = []
     try {
       const models = await loadModels({ modelsDir: dir })
       const plan = buildMigrationPlan(models, { dialect })
       tableNames = plan.tables.map(table => table.table)
+      
+      // Extract enum type names from all tables
+      const enumTypes = new Set<string>()
+      for (const table of plan.tables) {
+        for (const column of table.columns) {
+          if (column.type === 'enum' && column.enumValues && column.enumValues.length > 0) {
+            const enumTypeName = `${column.name}_type`
+            enumTypes.add(enumTypeName)
+          }
+        }
+      }
+      enumTypeNames = Array.from(enumTypes)
     }
     catch (err) {
       console.error(err)
       tableNames = []
+      enumTypeNames = []
     }
 
     if (tableNames.length === 0) {
@@ -179,6 +193,27 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
           console.log(`-- Table ${tableName} may not exist, skipping drop`)
         }
       }
+    }
+
+    // Drop enum types after dropping tables
+    if (enumTypeNames.length > 0) {
+      console.log(`-- Dropping ${enumTypeNames.length} enum types: ${enumTypeNames.join(', ')}`)
+      
+      for (const enumTypeName of enumTypeNames) {
+        try {
+          const dropEnumSql = `DROP TYPE IF EXISTS "${enumTypeName}" CASCADE`
+          await bunSql.unsafe(dropEnumSql).execute()
+          console.log(`-- Dropped enum type: ${enumTypeName}`)
+        }
+        catch (err) {
+          console.error(err)
+          // Ignore errors when dropping enum types (they might not exist)
+          console.log(`-- Enum type ${enumTypeName} may not exist, skipping drop`)
+        }
+      }
+    }
+    else {
+      console.log('-- No enum types found to drop')
     }
 
     // Clean up migration files

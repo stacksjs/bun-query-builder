@@ -470,7 +470,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
           const enumTypeName = `${c.name}_type`
           if (!enumTypes.has(enumTypeName)) {
             const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
-            const createEnumStatement = `CREATE TYPE ${q(enumTypeName)} AS ENUM (${enumValues});`
+            const createEnumStatement = `CREATE TYPE IF NOT EXISTS ${q(enumTypeName)} AS ENUM (${enumValues});`
             tableStatements.push(createEnumStatement)
             enumTypes.add(enumTypeName)
           }
@@ -556,7 +556,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
           const enumTypeName = `${c.name}_type`
           if (!enumTypes.has(enumTypeName)) {
             const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
-            const createEnumStatement = `CREATE TYPE ${q(enumTypeName)} AS ENUM (${enumValues});`
+            const createEnumStatement = `CREATE TYPE IF NOT EXISTS ${q(enumTypeName)} AS ENUM (${enumValues});`
             chunks.push(createEnumStatement)
             createMigrationFile(createEnumStatement, `create-${enumTypeName}-enum`)
             enumTypes.add(enumTypeName)
