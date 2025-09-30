@@ -1,1 +1,0 @@
-CREATE TYPE statu AS ENUM ('active', 'inactive');

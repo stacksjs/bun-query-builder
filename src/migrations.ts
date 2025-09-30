@@ -293,28 +293,34 @@ export function generateSql(plan: MigrationPlan): string[] {
     return parts.join(' ')
   }
 
-  // First, create all enum types (CREATE TYPE statements - will execute first)
-  const enumTypes = new Set<string>()
+  // Create tables with their enum types in the same migration file
   for (const t of plan.tables) {
+    const tableStatements: string[] = []
+    
+    // First, collect all enum types needed for this table
+    const enumTypes = new Set<string>()
     for (const c of t.columns) {
       if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
         const enumTypeName = `${c.name}_type`
         if (!enumTypes.has(enumTypeName)) {
           const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
           const createEnumStatement = `CREATE TYPE ${q(enumTypeName)} AS ENUM (${enumValues});`
-          statements.push(createEnumStatement)
-          createMigrationFile(createEnumStatement, `create-${enumTypeName}-enum`)
+          tableStatements.push(createEnumStatement)
           enumTypes.add(enumTypeName)
         }
       }
     }
-  }
-
-  // Then, create all tables (CREATE statements - will execute second)
-  for (const t of plan.tables) {
+    
+    // Then, create the table
     const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`
-    statements.push(createTableStatement)
-    createMigrationFile(createTableStatement, `create-${t.table}-table`)
+    tableStatements.push(createTableStatement)
+    
+    // Add all statements to the main statements array
+    statements.push(...tableStatements)
+    
+    // Create a single migration file for this table with all its statements
+    const combinedStatement = tableStatements.join('\n\n')
+    createMigrationFile(combinedStatement, `create-${t.table}-table`)
   }
 
   // First, create all foreign key constraints (ALTER statements - will execute last)
@@ -451,30 +457,27 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 3) Create enum types for new tables (CREATE TYPE statements - will execute first)
-  const enumTypes = new Set<string>()
+  // 3) New tables -> create tables with their enum types in the same migration file
   for (const tableName of Object.keys(nextTables)) {
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
+      const tableStatements: string[] = []
+      
+      // First, collect all enum types needed for this table
+      const enumTypes = new Set<string>()
       for (const c of t.columns) {
         if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
           const enumTypeName = `${c.name}_type`
           if (!enumTypes.has(enumTypeName)) {
             const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
             const createEnumStatement = `CREATE TYPE ${q(enumTypeName)} AS ENUM (${enumValues});`
-            chunks.push(createEnumStatement)
-            createMigrationFile(createEnumStatement, `create-${enumTypeName}-enum`)
+            tableStatements.push(createEnumStatement)
             enumTypes.add(enumTypeName)
           }
         }
       }
-    }
-  }
-
-  // 4) New tables -> create tables (CREATE statements - will execute second)
-  for (const tableName of Object.keys(nextTables)) {
-    if (!prevTables[tableName]) {
-      const t = nextTables[tableName]
+      
+      // Then, create the table
       const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map((c) => {
         // Reuse column rendering from generateSql
         const tmp: ColumnPlan = c
@@ -524,8 +527,14 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         }
         return parts.join(' ')
       }).join(',\n  ')}\n);`
-      chunks.push(createTableStatement)
-      createMigrationFile(createTableStatement, `create-${t.table}-table`)
+      tableStatements.push(createTableStatement)
+      
+      // Add all statements to the main chunks array
+      chunks.push(...tableStatements)
+      
+      // Create a single migration file for this table with all its statements
+      const combinedStatement = tableStatements.join('\n\n')
+      createMigrationFile(combinedStatement, `create-${t.table}-table`)
     }
   }
 
