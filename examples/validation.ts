@@ -6,6 +6,7 @@ export interface Validator<T> {
   validate: (value: T) => boolean
   test?: (value: T) => boolean
   getRules?: () => Array<{ test: (value: T) => boolean }>
+  _values?: readonly any[]
 }
 
 function make<T>(): Validator<T> {
