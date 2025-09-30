@@ -15,12 +15,12 @@ function make<T>(): Validator<T> {
 
 function makeEnum<T extends string | number>(values: readonly T[]): Validator<T> {
   const fn = ((): boolean => true) as (value: T) => boolean
-  return { 
-    validate: fn, 
-    test: fn, 
+  return {
+    validate: fn,
+    test: fn,
     getRules: () => [{ test: fn }],
     name: 'enum',
-    _values: values as any
+    _values: values as any,
   }
 }
 

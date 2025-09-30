@@ -2,8 +2,8 @@ import type { ModelRecord } from './schema'
 import type { SupportedDialect } from './types'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildSchemaMeta } from './meta'
 import { getDialectDriver } from './drivers'
+import { buildSchemaMeta } from './meta'
 
 let migrationCounter = 0
 
@@ -120,7 +120,7 @@ function detectEnumFromValidationRule(rule: unknown): string[] | undefined {
       }
     }
   }
-  
+
   // Fallback: try to detect enum by checking if the rule has enum-like properties
   if (rule && typeof rule === 'object') {
     const ruleObj = rule as any
@@ -130,7 +130,7 @@ function detectEnumFromValidationRule(rule: unknown): string[] | undefined {
       return possibleValues.map((v: any) => String(v))
     }
   }
-  
+
   return undefined
 }
 
@@ -159,14 +159,15 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
 
       // Type inference heuristics
       let inferred: NormalizedColumnType | undefined = guessTypeFromName(attrName)
-      let enumValues: string[] | undefined = undefined
-      
+      let enumValues: string[] | undefined
+
       // Check for enum validation rule first
       const enumVals = detectEnumFromValidationRule(attr.validation.rule)
       if (enumVals && enumVals.length > 0) {
         inferred = 'enum'
         enumValues = enumVals
-      } else if (!inferred) {
+      }
+      else if (!inferred) {
         // Fallback by default value type, if provided
         const dv = normalizeDefaultValue(attr.default)
         if (typeof dv === 'string')
@@ -239,7 +240,7 @@ export function generateSql(plan: MigrationPlan): string[] {
   // Create tables with their enum types in the same migration file
   for (const t of plan.tables) {
     const tableStatements: string[] = []
-    
+
     // First, collect all enum types needed for this table
     const enumTypes = new Set<string>()
     for (const c of t.columns) {
@@ -254,14 +255,14 @@ export function generateSql(plan: MigrationPlan): string[] {
         }
       }
     }
-    
+
     // Then, create the table
     const createTableStatement = driver.createTable(t)
     tableStatements.push(createTableStatement)
-    
+
     // Add all statements to the main statements array
     statements.push(...tableStatements)
-    
+
     // Create a single migration file for this table with all its statements
     const combinedStatement = tableStatements.join('\n\n')
     createMigrationFile(combinedStatement, `create-${t.table}-table`)
@@ -400,7 +401,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
       const tableStatements: string[] = []
-      
+
       // First, collect all enum types needed for this table
       const enumTypes = new Set<string>()
       for (const c of t.columns) {
@@ -415,14 +416,14 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
           }
         }
       }
-      
+
       // Then, create the table
       const createTableStatement = driver.createTable(t)
       tableStatements.push(createTableStatement)
-      
+
       // Add all statements to the main chunks array
       chunks.push(...tableStatements)
-      
+
       // Create a single migration file for this table with all its statements
       const combinedStatement = tableStatements.join('\n\n')
       createMigrationFile(combinedStatement, `create-${t.table}-table`)

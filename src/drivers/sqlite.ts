@@ -1,55 +1,41 @@
 import type { ColumnPlan, IndexPlan, TablePlan } from '../migrations'
 
-export interface DialectDriver {
-  createEnumType: (enumTypeName: string, values: string[]) => string
-  createTable: (table: TablePlan) => string
-  createIndex: (tableName: string, index: IndexPlan) => string
-  addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string) => string
-  addColumn: (tableName: string, column: ColumnPlan) => string
-  dropTable: (tableName: string) => string
-  dropEnumType: (enumTypeName: string) => string
-  createMigrationsTable: () => string
-  getExecutedMigrationsQuery: () => string
-  recordMigrationQuery: () => string
-}
-
-export class PostgresDriver implements DialectDriver {
+export class SQLiteDriver {
   private quoteIdentifier(id: string): string {
     return `"${id}"`
   }
 
   private getColumnType(column: ColumnPlan): string {
     switch (column.type) {
-      case 'string': return 'varchar(255)'
-      case 'text': return 'text'
-      case 'boolean': return 'boolean'
-      case 'integer': return 'integer'
-      case 'bigint': return 'bigint'
-      case 'float': return 'real'
-      case 'double': return 'double precision'
-      case 'decimal': return 'decimal(10,2)'
-      case 'date': return 'date'
-      case 'datetime': return 'timestamp'
-      case 'json': return 'jsonb'
+      case 'string': return 'TEXT'
+      case 'text': return 'TEXT'
+      case 'boolean': return 'INTEGER' // SQLite uses INTEGER for booleans (0/1)
+      case 'integer': return 'INTEGER'
+      case 'bigint': return 'INTEGER'
+      case 'float': return 'REAL'
+      case 'double': return 'REAL'
+      case 'decimal': return 'REAL'
+      case 'date': return 'TEXT'
+      case 'datetime': return 'TEXT'
+      case 'json': return 'TEXT'
       case 'enum':
         if (column.enumValues && column.enumValues.length > 0) {
-          return `${column.name}_type`
+          const enumValues = column.enumValues.map(v => `'${v.replace(/'/g, '\'\'')}'`).join(', ')
+          return `TEXT CHECK (${this.quoteIdentifier(column.name)} IN (${enumValues}))`
         }
-        return 'text'
-      default: return 'text'
+        return 'TEXT'
+      default: return 'TEXT'
     }
   }
 
   private getPrimaryKeyType(column: ColumnPlan): string {
-    switch (column.type) {
-      case 'integer': return 'SERIAL'
-      case 'bigint': return 'BIGSERIAL'
-      default: return this.getColumnType(column)
-    }
+    return this.getColumnType(column)
   }
 
-  private getAutoIncrementClause(_column: ColumnPlan): string {
-    // PostgreSQL uses SERIAL types instead of AUTO_INCREMENT
+  private getAutoIncrementClause(column: ColumnPlan): string {
+    if (column.isPrimaryKey && (column.type === 'integer' || column.type === 'bigint')) {
+      return 'AUTOINCREMENT'
+    }
     return ''
   }
 
@@ -66,7 +52,7 @@ export class PostgresDriver implements DialectDriver {
       return `default ${dv}`
     }
     else if (typeof dv === 'boolean') {
-      return `default ${dv ? 'true' : 'false'}`
+      return `default ${dv ? 1 : 0}`
     }
     else if (dv instanceof Date) {
       return `default '${dv.toISOString()}'`
@@ -74,9 +60,9 @@ export class PostgresDriver implements DialectDriver {
     return ''
   }
 
-  createEnumType(enumTypeName: string, values: string[]): string {
-    const enumValues = values.map(v => `'${v.replace(/'/g, '\'\'')}'`).join(', ')
-    return `CREATE TYPE ${this.quoteIdentifier(enumTypeName)} AS ENUM (${enumValues});`
+  createEnumType(_enumTypeName: string, _values: string[]): string {
+    // SQLite doesn't support CREATE TYPE, enums are handled inline with CHECK constraints
+    return ''
   }
 
   createTable(table: TablePlan): string {
@@ -113,18 +99,19 @@ export class PostgresDriver implements DialectDriver {
   }
 
   dropTable(tableName: string): string {
-    return `DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)} CASCADE`
+    return `DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)}`
   }
 
-  dropEnumType(enumTypeName: string): string {
-    return `DROP TYPE IF EXISTS ${this.quoteIdentifier(enumTypeName)} CASCADE`
+  dropEnumType(_enumTypeName: string): string {
+    // SQLite doesn't support DROP TYPE for enums
+    return ''
   }
 
   createMigrationsTable(): string {
     return `CREATE TABLE IF NOT EXISTS migrations (
-      id SERIAL PRIMARY KEY,
-      migration VARCHAR(255) NOT NULL UNIQUE,
-      executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      migration TEXT NOT NULL UNIQUE,
+      executed_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`
   }
 
@@ -133,15 +120,19 @@ export class PostgresDriver implements DialectDriver {
   }
 
   recordMigrationQuery(): string {
-    return 'INSERT INTO migrations (migration) VALUES ($1)'
+    return 'INSERT INTO migrations (migration) VALUES (?)'
   }
 
   private renderColumn(column: ColumnPlan): string {
-    const typeSql = column.isPrimaryKey ? this.getPrimaryKeyType(column) : this.getColumnType(column)
+    const typeSql = this.getColumnType(column)
     const parts: string[] = [this.quoteIdentifier(column.name), typeSql]
 
     if (column.isPrimaryKey) {
       parts.push('PRIMARY KEY')
+      const autoIncrement = this.getAutoIncrementClause(column)
+      if (autoIncrement) {
+        parts.push(autoIncrement)
+      }
     }
 
     if (!column.isNullable && !column.isPrimaryKey) {

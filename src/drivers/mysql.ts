@@ -1,29 +1,24 @@
-import type { ColumnPlan, IndexPlan, TablePlan, PrimitiveDefault } from '../migrations'
+import type { ColumnPlan, IndexPlan, TablePlan } from '../migrations'
 
 export interface DialectDriver {
-  quoteIdentifier(id: string): string
-  getColumnType(column: ColumnPlan): string
-  getPrimaryKeyType(column: ColumnPlan): string
-  getAutoIncrementClause(column: ColumnPlan): string
-  getDefaultValue(column: ColumnPlan): string
-  createEnumType(enumTypeName: string, values: string[]): string
-  createTable(table: TablePlan): string
-  createIndex(tableName: string, index: IndexPlan): string
-  addForeignKey(tableName: string, columnName: string, refTable: string, refColumn: string): string
-  addColumn(tableName: string, column: ColumnPlan): string
-  dropTable(tableName: string): string
-  dropEnumType(enumTypeName: string): string
-  createMigrationsTable(): string
-  getExecutedMigrationsQuery(): string
-  recordMigrationQuery(): string
+  createEnumType: (enumTypeName: string, values: string[]) => string
+  createTable: (table: TablePlan) => string
+  createIndex: (tableName: string, index: IndexPlan) => string
+  addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string) => string
+  addColumn: (tableName: string, column: ColumnPlan) => string
+  dropTable: (tableName: string) => string
+  dropEnumType: (enumTypeName: string) => string
+  createMigrationsTable: () => string
+  getExecutedMigrationsQuery: () => string
+  recordMigrationQuery: () => string
 }
 
 export class MySQLDriver implements DialectDriver {
-  quoteIdentifier(id: string): string {
+  private quoteIdentifier(id: string): string {
     return `\`${id}\``
   }
 
-  getColumnType(column: ColumnPlan): string {
+  private getColumnType(column: ColumnPlan): string {
     switch (column.type) {
       case 'string': return 'varchar(255)'
       case 'text': return 'text'
@@ -36,9 +31,9 @@ export class MySQLDriver implements DialectDriver {
       case 'date': return 'date'
       case 'datetime': return 'datetime'
       case 'json': return 'json'
-      case 'enum': 
+      case 'enum':
         if (column.enumValues && column.enumValues.length > 0) {
-          const enumValues = column.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
+          const enumValues = column.enumValues.map(v => `'${v.replace(/'/g, '\'\'')}'`).join(', ')
           return `ENUM(${enumValues})`
         }
         return 'text'
@@ -46,18 +41,18 @@ export class MySQLDriver implements DialectDriver {
     }
   }
 
-  getPrimaryKeyType(column: ColumnPlan): string {
+  private getPrimaryKeyType(column: ColumnPlan): string {
     return this.getColumnType(column)
   }
 
-  getAutoIncrementClause(column: ColumnPlan): string {
+  private getAutoIncrementClause(column: ColumnPlan): string {
     if (column.isPrimaryKey && (column.type === 'integer' || column.type === 'bigint')) {
       return 'auto_increment'
     }
     return ''
   }
 
-  getDefaultValue(column: ColumnPlan): string {
+  private getDefaultValue(column: ColumnPlan): string {
     if (!column.hasDefault || column.defaultValue === undefined) {
       return ''
     }
@@ -65,17 +60,20 @@ export class MySQLDriver implements DialectDriver {
     const dv = column.defaultValue
     if (typeof dv === 'string') {
       return `default '${dv.replace(/'/g, '\'\'')}'`
-    } else if (typeof dv === 'number' || typeof dv === 'bigint') {
+    }
+    else if (typeof dv === 'number' || typeof dv === 'bigint') {
       return `default ${dv}`
-    } else if (typeof dv === 'boolean') {
+    }
+    else if (typeof dv === 'boolean') {
       return `default ${dv ? 1 : 0}`
-    } else if (dv instanceof Date) {
+    }
+    else if (dv instanceof Date) {
       return `default '${dv.toISOString()}'`
     }
     return ''
   }
 
-  createEnumType(enumTypeName: string, values: string[]): string {
+  createEnumType(_enumTypeName: string, _values: string[]): string {
     // MySQL doesn't support CREATE TYPE, enums are handled inline in column definitions
     return ''
   }
@@ -100,16 +98,16 @@ export class MySQLDriver implements DialectDriver {
   addColumn(tableName: string, column: ColumnPlan): string {
     const typeSql = this.getColumnType(column)
     const parts: string[] = [this.quoteIdentifier(column.name), typeSql]
-    
+
     if (!column.isNullable && !column.isPrimaryKey) {
       parts.push('not null')
     }
-    
+
     const defaultValue = this.getDefaultValue(column)
     if (defaultValue) {
       parts.push(defaultValue)
     }
-    
+
     return `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD COLUMN ${parts.join(' ')};`
   }
 
@@ -117,7 +115,7 @@ export class MySQLDriver implements DialectDriver {
     return `DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)}`
   }
 
-  dropEnumType(enumTypeName: string): string {
+  dropEnumType(_enumTypeName: string): string {
     // MySQL doesn't support DROP TYPE for enums
     return ''
   }
@@ -141,7 +139,7 @@ export class MySQLDriver implements DialectDriver {
   private renderColumn(column: ColumnPlan): string {
     const typeSql = this.getColumnType(column)
     const parts: string[] = [this.quoteIdentifier(column.name), typeSql]
-    
+
     if (column.isPrimaryKey) {
       parts.push('PRIMARY KEY')
       const autoIncrement = this.getAutoIncrementClause(column)
@@ -149,16 +147,16 @@ export class MySQLDriver implements DialectDriver {
         parts.push(autoIncrement)
       }
     }
-    
+
     if (!column.isNullable && !column.isPrimaryKey) {
       parts.push('not null')
     }
-    
+
     const defaultValue = this.getDefaultValue(column)
     if (defaultValue) {
       parts.push(defaultValue)
     }
-    
+
     return parts.join(' ')
   }
 }

@@ -1,7 +1,8 @@
-import type { DialectDriver } from './postgres'
 import type { SupportedDialect } from '../types'
-import { PostgresDriver } from './postgres'
+import type { DialectDriver } from './postgres'
 import { MySQLDriver } from './mysql'
+import { PostgresDriver } from './postgres'
+import { SQLiteDriver } from './sqlite'
 
 export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
   switch (dialect) {
@@ -9,11 +10,14 @@ export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
       return new PostgresDriver()
     case 'mysql':
       return new MySQLDriver()
+    case 'sqlite':
+      return new SQLiteDriver()
     default:
       throw new Error(`Unsupported dialect: ${dialect}`)
   }
 }
 
+export { MySQLDriver } from './mysql'
 export type { DialectDriver } from './postgres'
 export { PostgresDriver } from './postgres'
-export { MySQLDriver } from './mysql'
+export { SQLiteDriver } from './sqlite'

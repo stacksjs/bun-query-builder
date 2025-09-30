@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { config } from '@/config'
 import { bunSql } from '@/db'
-import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '@/index'
 import { getDialectDriver } from '@/drivers'
+import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '@/index'
 
 function ensureSqlDirectory(): string {
   const sqlDir = getSqlDirectory()
@@ -152,7 +152,7 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
       const models = await loadModels({ modelsDir: dir })
       const plan = buildMigrationPlan(models, { dialect })
       tableNames = plan.tables.map(table => table.table)
-      
+
       // Extract enum type names from all tables
       const enumTypes = new Set<string>()
       for (const table of plan.tables) {
@@ -196,7 +196,7 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
     // Drop enum types after dropping tables
     if (enumTypeNames.length > 0) {
       console.log(`-- Dropping ${enumTypeNames.length} enum types: ${enumTypeNames.join(', ')}`)
-      
+
       for (const enumTypeName of enumTypeNames) {
         try {
           const dropEnumSql = driver.dropEnumType(enumTypeName)
