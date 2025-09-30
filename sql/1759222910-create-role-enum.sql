@@ -1,0 +1,1 @@
+CREATE TYPE role AS ENUM ('admin', 'member', 'guest');

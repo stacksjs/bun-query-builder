@@ -1,0 +1,1 @@
+ALTER TABLE comments ADD CONSTRAINT comments_post_id_fk FOREIGN KEY (post_id) REFERENCES posts(id);

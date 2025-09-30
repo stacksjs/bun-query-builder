@@ -45,6 +45,7 @@ export type NormalizedColumnType =
   | 'date'
   | 'datetime'
   | 'json'
+  | 'enum'
 
 export interface ColumnPlan {
   name: string
@@ -55,6 +56,7 @@ export interface ColumnPlan {
   hasDefault: boolean
   defaultValue?: PrimitiveDefault
   references?: { table: string, column: string }
+  enumValues?: string[]
 }
 
 export interface IndexPlan {
@@ -97,6 +99,40 @@ function normalizeDefaultValue(value: unknown): PrimitiveDefault | undefined {
   return undefined
 }
 
+function detectEnumFromValidationRule(rule: unknown): string[] | undefined {
+  // Check if the rule has the shape of an enum validator
+  if (rule && typeof rule === 'object' && 'name' in rule) {
+    const ruleObj = rule as any
+    // Look for enum-specific properties or patterns
+    if (ruleObj.name === 'enum' || (ruleObj.getRules && Array.isArray(ruleObj.getRules()))) {
+      // Try to extract enum values from various possible sources
+      if (ruleObj.enumValues && Array.isArray(ruleObj.enumValues)) {
+        return ruleObj.enumValues.map((v: any) => String(v))
+      }
+      // Check if the rule has a _values property (from the validation factory)
+      if (ruleObj._values && Array.isArray(ruleObj._values)) {
+        return ruleObj._values.map((v: any) => String(v))
+      }
+      // Check if the rule has values in its constructor or properties
+      if (ruleObj.values && Array.isArray(ruleObj.values)) {
+        return ruleObj.values.map((v: any) => String(v))
+      }
+    }
+  }
+  
+  // Fallback: try to detect enum by checking if the rule has enum-like properties
+  if (rule && typeof rule === 'object') {
+    const ruleObj = rule as any
+    // Look for arrays of string/number values that could be enum values
+    const possibleValues = ruleObj.enumValues || ruleObj._values || ruleObj.values
+    if (Array.isArray(possibleValues) && possibleValues.length > 0) {
+      return possibleValues.map((v: any) => String(v))
+    }
+  }
+  
+  return undefined
+}
+
 export interface InferenceOptions {
   dialect: SupportedDialect
 }
@@ -122,7 +158,14 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
 
       // Type inference heuristics
       let inferred: NormalizedColumnType | undefined = guessTypeFromName(attrName)
-      if (!inferred) {
+      let enumValues: string[] | undefined = undefined
+      
+      // Check for enum validation rule first
+      const enumVals = detectEnumFromValidationRule(attr.validation.rule)
+      if (enumVals && enumVals.length > 0) {
+        inferred = 'enum'
+        enumValues = enumVals
+      } else if (!inferred) {
         // Fallback by default value type, if provided
         const dv = normalizeDefaultValue(attr.default)
         if (typeof dv === 'string')
@@ -151,6 +194,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         isNullable,
         hasDefault: typeof attr.default !== 'undefined',
         defaultValue: normalizeDefaultValue(attr.default),
+        enumValues,
       }
 
       // Foreign key inference for *_id referencing another model's table
@@ -214,6 +258,13 @@ export function generateSql(plan: MigrationPlan): string[] {
         case 'date': return 'date'
         case 'datetime': return plan.dialect === 'mysql' ? 'datetime' : 'timestamp'
         case 'json': return plan.dialect === 'mysql' ? 'json' : (plan.dialect === 'postgres' ? 'jsonb' : 'text')
+        case 'enum': 
+          if (c.enumValues && c.enumValues.length > 0) {
+            // Use the column name + "type" as the enum type name
+            const enumTypeName = `${c.name}_type`
+            return enumTypeName
+          }
+          return 'text' // fallback
         default: return 'text'
       }
     })()
@@ -242,7 +293,24 @@ export function generateSql(plan: MigrationPlan): string[] {
     return parts.join(' ')
   }
 
-  // Finally, create all tables (CREATE statements - will execute first)
+  // First, create all enum types (CREATE TYPE statements - will execute first)
+  const enumTypes = new Set<string>()
+  for (const t of plan.tables) {
+    for (const c of t.columns) {
+      if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
+        const enumTypeName = `${c.name}_type`
+        if (!enumTypes.has(enumTypeName)) {
+          const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
+          const createEnumStatement = `CREATE TYPE ${q(enumTypeName)} AS ENUM (${enumValues});`
+          statements.push(createEnumStatement)
+          createMigrationFile(createEnumStatement, `create-${enumTypeName}-enum`)
+          enumTypes.add(enumTypeName)
+        }
+      }
+    }
+  }
+
+  // Then, create all tables (CREATE statements - will execute second)
   for (const t of plan.tables) {
     const createTableStatement = `CREATE TABLE ${q(t.table)} (\n  ${t.columns.map(c => columnSql(c)).join(',\n  ')}\n);`
     statements.push(createTableStatement)
@@ -383,7 +451,27 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 3) New tables -> create tables (CREATE statements - will execute first)
+  // 3) Create enum types for new tables (CREATE TYPE statements - will execute first)
+  const enumTypes = new Set<string>()
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
+      for (const c of t.columns) {
+        if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
+          const enumTypeName = `${c.name}_type`
+          if (!enumTypes.has(enumTypeName)) {
+            const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
+            const createEnumStatement = `CREATE TYPE ${q(enumTypeName)} AS ENUM (${enumValues});`
+            chunks.push(createEnumStatement)
+            createMigrationFile(createEnumStatement, `create-${enumTypeName}-enum`)
+            enumTypes.add(enumTypeName)
+          }
+        }
+      }
+    }
+  }
+
+  // 4) New tables -> create tables (CREATE statements - will execute second)
   for (const tableName of Object.keys(nextTables)) {
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
@@ -403,6 +491,13 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
             case 'date': return 'date'
             case 'datetime': return next.dialect === 'mysql' ? 'datetime' : 'timestamp'
             case 'json': return next.dialect === 'mysql' ? 'json' : (next.dialect === 'postgres' ? 'jsonb' : 'text')
+            case 'enum': 
+              if (tmp.enumValues && tmp.enumValues.length > 0) {
+                // Create a singular enum type name from the column name
+                const enumTypeName = tmp.name.endsWith('s') ? tmp.name.slice(0, -1) : tmp.name
+                return enumTypeName
+              }
+              return 'text' // fallback
             default: return 'text'
           }
         })()
@@ -434,7 +529,35 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 4) Existing tables -> add-only diffs (ALTER statements first, then CREATE)
+  // 5) Create enum types for new columns in existing tables
+  for (const tableName of Object.keys(nextTables)) {
+    const prev = prevTables[tableName]
+    const curr = nextTables[tableName]
+    if (!prev)
+      continue
+
+    const prevCols = mapColumnsByName(prev.columns)
+    const currCols = mapColumnsByName(curr.columns)
+
+    // Check for new enum columns
+    for (const colName of Object.keys(currCols)) {
+      if (!prevCols[colName]) {
+        const c = currCols[colName]
+        if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
+          const enumTypeName = `${c.name}_type`
+          if (!enumTypes.has(enumTypeName)) {
+            const enumValues = c.enumValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
+            const createEnumStatement = `CREATE TYPE ${q(enumTypeName)} AS ENUM (${enumValues});`
+            chunks.push(createEnumStatement)
+            createMigrationFile(createEnumStatement, `create-${enumTypeName}-enum`)
+            enumTypes.add(enumTypeName)
+          }
+        }
+      }
+    }
+  }
+
+  // 6) Existing tables -> add-only diffs (ALTER statements first, then CREATE)
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]
     const curr = nextTables[tableName]
@@ -462,6 +585,13 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
             case 'date': return 'date'
             case 'datetime': return next.dialect === 'mysql' ? 'datetime' : 'timestamp'
             case 'json': return next.dialect === 'mysql' ? 'json' : (next.dialect === 'postgres' ? 'jsonb' : 'text')
+            case 'enum': 
+              if (c.enumValues && c.enumValues.length > 0) {
+                // Create a singular enum type name from the column name
+                const enumTypeName = `${c.name}_type`
+                return enumTypeName
+              }
+              return 'text' // fallback
             default: return 'text'
           }
         })()

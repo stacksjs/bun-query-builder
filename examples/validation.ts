@@ -13,6 +13,17 @@ function make<T>(): Validator<T> {
   return { validate: fn, test: fn, getRules: () => [{ test: fn }] }
 }
 
+function makeEnum<T extends string | number>(values: readonly T[]): Validator<T> {
+  const fn = ((): boolean => true) as (value: T) => boolean
+  return { 
+    validate: fn, 
+    test: fn, 
+    getRules: () => [{ test: fn }],
+    name: 'enum',
+    _values: values as any
+  }
+}
+
 export const v = {
   string: (): Validator<string> => make<string>(),
   text: (): Validator<string> => make<string>(),
@@ -20,7 +31,7 @@ export const v = {
   bigint: (): Validator<bigint> => make<bigint>(),
   array: <T>(): Validator<T[]> => make<T[]>(),
   boolean: (): Validator<boolean> => make<boolean>(),
-  enum: <T extends string | number>(_values: readonly T[]): Validator<T> => make<T>(),
+  enum: <T extends string | number>(values: readonly T[]): Validator<T> => makeEnum(values),
   date: (): Validator<Date> => make<Date>(),
   datetime: (): Validator<Date> => make<Date>(),
   object: <T extends Record<string, any>>(): Validator<T> => make<T>(),

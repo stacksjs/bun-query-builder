@@ -24,6 +24,7 @@ const model: {
     user_id: { validation: { rule: v.integer() } },
     title: { validation: { rule: v.string() } },
     body: { validation: { rule: v.text() } },
+    roles: { validation: { rule: v.enum(['admin', 'member', 'guest'] as const) } },
     published: { validation: { rule: v.boolean() } },
     created_at: { validation: { rule: v.date() } },
     updated_at: { validation: { rule: v.date() } },
