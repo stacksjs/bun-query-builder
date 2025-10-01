@@ -6,6 +6,7 @@ export interface DialectDriver {
   createIndex: (tableName: string, index: IndexPlan) => string
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
+  modifyColumn: (tableName: string, column: ColumnPlan) => string
   dropTable: (tableName: string) => string
   dropColumn: (tableName: string, columnName: string) => string
   dropIndex: (tableName: string, indexName: string) => string
@@ -112,6 +113,12 @@ export class PostgresDriver implements DialectDriver {
     }
 
     return `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD COLUMN ${parts.join(' ')};`
+  }
+
+  modifyColumn(tableName: string, column: ColumnPlan): string {
+    const typeSql = this.getColumnType(column)
+    // PostgreSQL requires separate ALTER statements for type, nullability, and default
+    return `ALTER TABLE ${this.quoteIdentifier(tableName)} ALTER COLUMN ${this.quoteIdentifier(column.name)} TYPE ${typeSql};`
   }
 
   dropTable(tableName: string): string {

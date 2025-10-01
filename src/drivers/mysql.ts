@@ -6,6 +6,7 @@ export interface DialectDriver {
   createIndex: (tableName: string, index: IndexPlan) => string
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
+  modifyColumn: (tableName: string, column: ColumnPlan) => string
   dropTable: (tableName: string) => string
   dropColumn: (tableName: string, columnName: string) => string
   dropIndex: (tableName: string, indexName: string) => string
@@ -111,6 +112,23 @@ export class MySQLDriver implements DialectDriver {
     }
 
     return `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD COLUMN ${parts.join(' ')};`
+  }
+
+  modifyColumn(tableName: string, column: ColumnPlan): string {
+    const typeSql = this.getColumnType(column)
+    const parts: string[] = [this.quoteIdentifier(column.name), typeSql]
+
+    if (!column.isNullable && !column.isPrimaryKey) {
+      parts.push('not null')
+    }
+
+    const defaultValue = this.getDefaultValue(column)
+    if (defaultValue) {
+      parts.push(defaultValue)
+    }
+
+    // MySQL uses MODIFY COLUMN to change column definition
+    return `ALTER TABLE ${this.quoteIdentifier(tableName)} MODIFY COLUMN ${parts.join(' ')};`
   }
 
   dropTable(tableName: string): string {

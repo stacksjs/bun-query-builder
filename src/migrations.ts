@@ -366,6 +366,24 @@ function mapColumnsByName(columns: ColumnPlan[]): Record<string, ColumnPlan> {
   return map
 }
 
+function columnsAreDifferent(col1: ColumnPlan, col2: ColumnPlan): boolean {
+  // Compare column properties to detect changes
+  if (col1.type !== col2.type) return true
+  if (col1.isNullable !== col2.isNullable) return true
+  if (col1.hasDefault !== col2.hasDefault) return true
+  if (col1.defaultValue !== col2.defaultValue) return true
+  if (col1.isUnique !== col2.isUnique) return true
+  
+  // Compare enum values for enum types
+  if (col1.type === 'enum' && col2.type === 'enum') {
+    const enum1 = (col1.enumValues || []).sort().join(',')
+    const enum2 = (col2.enumValues || []).sort().join(',')
+    if (enum1 !== enum2) return true
+  }
+  
+  return false
+}
+
 function mapIndexesByKey(indexes: IndexPlan[]): Record<string, IndexPlan> {
   const map: Record<string, IndexPlan> = {}
   for (const i of indexes) {
@@ -501,7 +519,8 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 6) Existing tables -> full diffs (drops and adds)
+  // 6) Existing tables -> full diffs (drops, adds, and modifications)
+  // Group all changes per table into single migration files
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]
     const curr = nextTables[tableName]
@@ -510,56 +529,86 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
 
     const prevCols = mapColumnsByName(prev.columns)
     const currCols = mapColumnsByName(curr.columns)
-
-    // Drop removed columns first
-    for (const colName of Object.keys(prevCols)) {
-      if (!currCols[colName]) {
-        const dropColumnStatement = driver.dropColumn(curr.table, colName)
-        chunks.push(dropColumnStatement)
-        createMigrationFile(dropColumnStatement, `alter-${curr.table}-drop-${colName}`)
-        console.log(`-- Detected dropped column: ${curr.table}.${colName}`)
-      }
-    }
-
-    // Add new columns (ALTER statements - will execute last)
-    for (const colName of Object.keys(currCols)) {
-      if (!prevCols[colName]) {
-        const c = currCols[colName]
-        const addColumnStatement = driver.addColumn(curr.table, c)
-        chunks.push(addColumnStatement)
-        createMigrationFile(addColumnStatement, `alter-${curr.table}-add-${c.name}`)
-        console.log(`-- Detected new column: ${curr.table}.${c.name}`)
-
-        if (c.references) {
-          const addFkStatement = driver.addForeignKey(curr.table, c.name, c.references.table, c.references.column)
-          chunks.push(addFkStatement)
-          createMigrationFile(addFkStatement, `alter-${curr.table}-${c.name}`)
-        }
-      }
-    }
-
-    // Drop removed indexes first
     const prevIdx = mapIndexesByKey(prev.indexes)
     const currIdx = mapIndexesByKey(curr.indexes)
+
+    // Collect all changes for this table
+    const tableChanges: string[] = []
+    let hasChanges = false
+
+    // Drop removed indexes first (before dropping columns that might be indexed)
     for (const key of Object.keys(prevIdx)) {
       if (!currIdx[key]) {
         const idx = prevIdx[key]
         const dropIndexStatement = driver.dropIndex(curr.table, idx.name)
+        tableChanges.push(dropIndexStatement)
         chunks.push(dropIndexStatement)
-        createMigrationFile(dropIndexStatement, `drop-${idx.name}-index-from-${curr.table}`)
         console.log(`-- Detected dropped index: ${idx.name} from ${curr.table}`)
+        hasChanges = true
       }
     }
 
-    // Add new indexes (CREATE statements - will execute in middle)
+    // Drop removed columns
+    for (const colName of Object.keys(prevCols)) {
+      if (!currCols[colName]) {
+        const dropColumnStatement = driver.dropColumn(curr.table, colName)
+        tableChanges.push(dropColumnStatement)
+        chunks.push(dropColumnStatement)
+        console.log(`-- Detected dropped column: ${curr.table}.${colName}`)
+        hasChanges = true
+      }
+    }
+
+    // Modify changed columns
+    for (const colName of Object.keys(currCols)) {
+      if (prevCols[colName] && currCols[colName]) {
+        const prevCol = prevCols[colName]
+        const currCol = currCols[colName]
+        
+        if (columnsAreDifferent(prevCol, currCol)) {
+          const modifyColumnStatement = driver.modifyColumn(curr.table, currCol)
+          tableChanges.push(modifyColumnStatement)
+          chunks.push(modifyColumnStatement)
+          console.log(`-- Detected column type change: ${curr.table}.${colName} (${prevCol.type} -> ${currCol.type})`)
+          hasChanges = true
+        }
+      }
+    }
+
+    // Add new columns
+    for (const colName of Object.keys(currCols)) {
+      if (!prevCols[colName]) {
+        const c = currCols[colName]
+        const addColumnStatement = driver.addColumn(curr.table, c)
+        tableChanges.push(addColumnStatement)
+        chunks.push(addColumnStatement)
+        console.log(`-- Detected new column: ${curr.table}.${c.name}`)
+        hasChanges = true
+
+        if (c.references) {
+          const addFkStatement = driver.addForeignKey(curr.table, c.name, c.references.table, c.references.column)
+          tableChanges.push(addFkStatement)
+          chunks.push(addFkStatement)
+        }
+      }
+    }
+
+    // Add new indexes
     for (const key of Object.keys(currIdx)) {
       if (!prevIdx[key]) {
         const idx = currIdx[key]
         const createIndexStatement = driver.createIndex(curr.table, idx)
+        tableChanges.push(createIndexStatement)
         chunks.push(createIndexStatement)
-        createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${curr.table}`)
         console.log(`-- Detected new index: ${idx.name} in ${curr.table}`)
+        hasChanges = true
       }
+    }
+
+    // Create a single migration file with all changes for this table
+    if (hasChanges) {
+      const combinedStatement = tableChanges.join('\n\n')
+      createMigrationFile(combinedStatement, `alter-${curr.table}-table`)
     }
   }
 

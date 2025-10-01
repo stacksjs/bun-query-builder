@@ -6,6 +6,7 @@ export interface DialectDriver {
   createIndex: (tableName: string, index: IndexPlan) => string
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
+  modifyColumn: (tableName: string, column: ColumnPlan) => string
   dropTable: (tableName: string) => string
   dropColumn: (tableName: string, columnName: string) => string
   dropIndex: (tableName: string, indexName: string) => string
@@ -111,6 +112,12 @@ export class SQLiteDriver implements DialectDriver {
     }
 
     return `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD COLUMN ${parts.join(' ')};`
+  }
+
+  modifyColumn(tableName: string, column: ColumnPlan): string {
+    // SQLite does not support ALTER COLUMN to change type
+    // This requires recreating the table with the new schema
+    return `-- SQLite does not support ALTER COLUMN. Manual table recreation needed to change ${this.quoteIdentifier(tableName)}.${this.quoteIdentifier(column.name)} type`;
   }
 
   dropTable(tableName: string): string {
