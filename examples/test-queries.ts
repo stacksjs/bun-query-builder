@@ -29,7 +29,7 @@ async function basicSelectQuery() {
 
 async function simpleMigration() {
   // Generate migration and create SQL files
-  await resetDatabase('./models', { dialect: 'postgres' })
+  // await resetDatabase('./models', { dialect: 'postgres' })
 
   await generateMigration('./models', { dialect: 'postgres', full: true })
 

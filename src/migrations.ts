@@ -1,11 +1,12 @@
 import type { ModelRecord } from './schema'
 import type { SupportedDialect } from './types'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getDialectDriver } from './drivers'
 import { buildSchemaMeta } from './meta'
 
 let migrationCounter = 0
+let migrationsCreatedCount = 0
 
 function ensureSqlDirectory(): string {
   const sqlDir = join(__dirname, '..', 'sql')
@@ -16,20 +17,37 @@ function ensureSqlDirectory(): string {
   return sqlDir
 }
 
-function createMigrationFile(statement: string, fileName: string): void {
+function createMigrationFile(statement: string, fileName: string): boolean {
   if (!statement)
-    return
+    return false
+
+  const sqlDir = ensureSqlDirectory()
+  
+  // Check if a migration file with the same semantic name already exists
+  const existingFiles = readdirSync(sqlDir)
+  const matchingFile = existingFiles.find(file => {
+    // Extract the semantic part after the timestamp
+    // Format: timestamp-semantic-name.sql
+    const parts = file.match(/^\d+-(.+)\.sql$/)
+    return parts && parts[1] === fileName
+  })
+
+  if (matchingFile) {
+    // console.log(`-- Migration already exists: ${matchingFile} (skipped)`)
+    return false
+  }
 
   const baseTimestamp = Math.floor(Date.now() / 1000)
   const timestamp = baseTimestamp + migrationCounter
   migrationCounter++
 
   const fullFileName = `${timestamp}-${fileName}.sql`
-  const sqlDir = ensureSqlDirectory()
   const filePath = join(sqlDir, fullFileName)
 
   writeFileSync(filePath, statement)
   console.log(`-- Migration file created: ${fullFileName}`)
+  migrationsCreatedCount++
+  return true
 }
 
 export type PrimitiveDefault = string | number | boolean | bigint | Date
@@ -233,6 +251,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
 export function generateSql(plan: MigrationPlan): string[] {
   // Reset migration counter for proper ordering
   migrationCounter = 0
+  migrationsCreatedCount = 0
 
   const statements: string[] = []
   const driver = getDialectDriver(plan.dialect)
@@ -286,6 +305,14 @@ export function generateSql(plan: MigrationPlan): string[] {
       statements.push(createIndexStatement)
       createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
     }
+  }
+
+  // Show summary message
+  if (migrationsCreatedCount === 0) {
+    console.log('-- Nothing to migrate')
+  }
+  else {
+    console.log(`-- Created ${migrationsCreatedCount} migration file(s)`)
   }
 
   return statements
@@ -363,6 +390,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
 
   // Reset migration counter for proper ordering
   migrationCounter = 0
+  migrationsCreatedCount = 0
 
   const chunks: string[] = []
   const driver = getDialectDriver(next.dialect)
@@ -497,6 +525,14 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${curr.table}`)
       }
     }
+  }
+
+  // Show summary message
+  if (migrationsCreatedCount === 0) {
+    console.log('-- Nothing to migrate')
+  }
+  else {
+    console.log(`-- Created ${migrationsCreatedCount} migration file(s)`)
   }
 
   if (chunks.length === 0)

@@ -3285,6 +3285,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const q = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} RETURNING ${bunSql(String(pk))} as id`
         const [result] = await q.execute()
 
+        console.log('resultId', result)
+
         if (!result?.id) {
           console.error(`create() failed to get insert ID for table ${String(table)}`)
           console.error('Inserted values:', values)

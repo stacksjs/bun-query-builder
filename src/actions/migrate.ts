@@ -2,6 +2,7 @@ import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import process from 'node:process'
 import { config } from '@/config'
 import { bunSql } from '@/db'
 import { getDialectDriver } from '@/drivers'
@@ -16,7 +17,11 @@ function ensureSqlDirectory(): string {
   return sqlDir
 }
 
-export async function generateMigration(dir: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
+export async function generateMigration(dir?: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
+  if (!dir) {
+    dir = join(process.cwd(), 'app/Models')
+  }
+
   const dialect = String(opts.dialect || config.dialect || 'postgres') as SupportedDialect
 
   // Copy model files to generated directory
@@ -81,7 +86,6 @@ export async function executeMigration(): Promise<boolean> {
     throw new Error('No script files found. Run generateMigration first.')
   }
 
-  console.log('database dialect is', dialect)
   console.log(`-- Found ${scriptFiles.length} script files to execute`)
 
   try {
@@ -128,7 +132,11 @@ export async function executeMigration(): Promise<boolean> {
   return true
 }
 
-export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Promise<boolean> {
+export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Promise<boolean> {
+  if (!dir) {
+    dir = join(process.cwd(), 'app/Models')
+  }
+
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
   const driver = getDialectDriver(dialect)
 
@@ -235,7 +243,11 @@ export async function resetDatabase(dir: string, opts: MigrateOptions = {}): Pro
   }
 }
 
-export async function deleteMigrationFiles(dir: string, opts: MigrateOptions = {}): Promise<void> {
+export async function deleteMigrationFiles(dir?: string, opts: MigrateOptions = {}): Promise<void> {
+  if (!dir) {
+    dir = join(process.cwd(), 'app/Models')
+  }
+
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
 
   // Clean up migration state file
@@ -262,7 +274,11 @@ export async function deleteMigrationFiles(dir: string, opts: MigrateOptions = {
   }
 }
 
-export async function copyModelsToGenerated(dir: string): Promise<void> {
+export async function copyModelsToGenerated(dir?: string): Promise<void> {
+  if (!dir) {
+    dir = join(process.cwd(), 'app/Models')
+  }
+
   try {
     // Ensure the generated directory exists at the workspace root
     const generatedDir = join(__dirname, '..', '..', 'generated')
@@ -282,15 +298,12 @@ export async function copyModelsToGenerated(dir: string): Promise<void> {
       return
     }
 
-    console.log(`-- Copying ${modelFiles.length} model files to generated directory`)
-
     // Copy each model file to the generated directory
     for (const file of modelFiles) {
       const sourcePath = join(dir, file)
       const destPath = join(generatedDir, file)
 
       copyFileSync(sourcePath, destPath)
-      console.log(`-- Copied: ${file}`)
     }
 
     console.log('-- Model files copied successfully')
