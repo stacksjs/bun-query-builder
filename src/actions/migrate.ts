@@ -19,7 +19,7 @@ function ensureSqlDirectory(): string {
 
 /**
  * Generate migration files by comparing old models (from generated/) with new models (from source).
- * 
+ *
  * Workflow:
  * 1. Loads previous model state from the 'generated/' directory (old model copies)
  * 2. Loads current models from the source directory
@@ -29,7 +29,7 @@ function ensureSqlDirectory(): string {
  *    - Modified columns (type changes, etc.)
  * 4. Generates SQL migration files for all detected changes
  * 5. Copies current models to 'generated/' for next comparison
- * 
+ *
  * This follows Laravel's migration philosophy where model changes drive schema changes.
  */
 export async function generateMigration(dir?: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
@@ -51,7 +51,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   if (!opts.full) {
     // Try to load previous state from the generated directory (old model copies)
     const generatedDir = join(process.cwd(), 'generated')
-    
+
     if (existsSync(generatedDir)) {
       try {
         const oldModels = await loadModels({ modelsDir: generatedDir })
@@ -59,7 +59,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
         console.log('-- Comparing with models from generated/ directory')
       }
       catch (err) {
-        console.log('-- No previous models found in generated/ directory, checking state file')
+        console.log('-- No previous models found in generated/ directory, checking state file', err)
         // Fallback to state file if generated directory doesn't have models
         if (existsSync(statePath)) {
           try {
@@ -86,7 +86,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   }
 
   const sqlStatements = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
-  
+
   // After generating migrations, copy current models to generated directory
   // This becomes the "old state" for the next migration
   await copyModelsToGenerated(dir)

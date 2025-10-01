@@ -22,10 +22,10 @@ function createMigrationFile(statement: string, fileName: string): boolean {
     return false
 
   const sqlDir = ensureSqlDirectory()
-  
+
   // Check if a migration file with the same semantic name already exists
   const existingFiles = readdirSync(sqlDir)
-  const matchingFile = existingFiles.find(file => {
+  const matchingFile = existingFiles.find((file) => {
     // Extract the semantic part after the timestamp
     // Format: timestamp-semantic-name.sql
     const parts = file.match(/^\d+-(.+)\.sql$/)
@@ -368,19 +368,25 @@ function mapColumnsByName(columns: ColumnPlan[]): Record<string, ColumnPlan> {
 
 function columnsAreDifferent(col1: ColumnPlan, col2: ColumnPlan): boolean {
   // Compare column properties to detect changes
-  if (col1.type !== col2.type) return true
-  if (col1.isNullable !== col2.isNullable) return true
-  if (col1.hasDefault !== col2.hasDefault) return true
-  if (col1.defaultValue !== col2.defaultValue) return true
-  if (col1.isUnique !== col2.isUnique) return true
-  
+  if (col1.type !== col2.type)
+    return true
+  if (col1.isNullable !== col2.isNullable)
+    return true
+  if (col1.hasDefault !== col2.hasDefault)
+    return true
+  if (col1.defaultValue !== col2.defaultValue)
+    return true
+  if (col1.isUnique !== col2.isUnique)
+    return true
+
   // Compare enum values for enum types
   if (col1.type === 'enum' && col2.type === 'enum') {
     const enum1 = (col1.enumValues || []).sort().join(',')
     const enum2 = (col2.enumValues || []).sort().join(',')
-    if (enum1 !== enum2) return true
+    if (enum1 !== enum2)
+      return true
   }
-  
+
   return false
 }
 
@@ -564,7 +570,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       if (prevCols[colName] && currCols[colName]) {
         const prevCol = prevCols[colName]
         const currCol = currCols[colName]
-        
+
         if (columnsAreDifferent(prevCol, currCol)) {
           const modifyColumnStatement = driver.modifyColumn(curr.table, currCol)
           tableChanges.push(modifyColumnStatement)

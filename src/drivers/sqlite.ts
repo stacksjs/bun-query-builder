@@ -117,7 +117,7 @@ export class SQLiteDriver implements DialectDriver {
   modifyColumn(tableName: string, column: ColumnPlan): string {
     // SQLite does not support ALTER COLUMN to change type
     // This requires recreating the table with the new schema
-    return `-- SQLite does not support ALTER COLUMN. Manual table recreation needed to change ${this.quoteIdentifier(tableName)}.${this.quoteIdentifier(column.name)} type`;
+    return `-- SQLite does not support ALTER COLUMN. Manual table recreation needed to change ${this.quoteIdentifier(tableName)}.${this.quoteIdentifier(column.name)} type`
   }
 
   dropTable(tableName: string): string {

@@ -34,7 +34,7 @@ async function simpleMigration() {
   await generateMigration('./models', { dialect: 'postgres', full: true })
 
   // Execute the generated SQL files
-  await executeMigration()
+  // await executeMigration()
 }
 
 export async function freshDatabase() {
