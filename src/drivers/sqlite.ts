@@ -1,6 +1,21 @@
 import type { ColumnPlan, IndexPlan, TablePlan } from '../migrations'
 
-export class SQLiteDriver {
+export interface DialectDriver {
+  createEnumType: (enumTypeName: string, values: string[]) => string
+  createTable: (table: TablePlan) => string
+  createIndex: (tableName: string, index: IndexPlan) => string
+  addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string) => string
+  addColumn: (tableName: string, column: ColumnPlan) => string
+  dropTable: (tableName: string) => string
+  dropColumn: (tableName: string, columnName: string) => string
+  dropIndex: (tableName: string, indexName: string) => string
+  dropEnumType: (enumTypeName: string) => string
+  createMigrationsTable: () => string
+  getExecutedMigrationsQuery: () => string
+  recordMigrationQuery: () => string
+}
+
+export class SQLiteDriver implements DialectDriver {
   private quoteIdentifier(id: string): string {
     return `"${id}"`
   }
@@ -100,6 +115,21 @@ export class SQLiteDriver {
 
   dropTable(tableName: string): string {
     return `DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)}`
+  }
+
+  dropColumn(tableName: string, columnName: string): string {
+    // SQLite supports DROP COLUMN since 3.35.0, but has many limitations:
+    // - Cannot drop PRIMARY KEY columns
+    // - Cannot drop columns with UNIQUE constraints
+    // - Cannot drop indexed columns
+    // - Cannot drop columns used in foreign keys, triggers, views, or CHECK constraints
+    // If the drop fails, you may need to manually recreate the table
+    return `ALTER TABLE ${this.quoteIdentifier(tableName)} DROP COLUMN ${this.quoteIdentifier(columnName)};`
+  }
+
+  dropIndex(tableName: string, indexName: string): string {
+    const fullIndexName = `${tableName}_${indexName}`
+    return `DROP INDEX IF EXISTS ${this.quoteIdentifier(fullIndexName)};`
   }
 
   dropEnumType(_enumTypeName: string): string {

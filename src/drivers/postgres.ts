@@ -7,6 +7,8 @@ export interface DialectDriver {
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
   dropTable: (tableName: string) => string
+  dropColumn: (tableName: string, columnName: string) => string
+  dropIndex: (tableName: string, indexName: string) => string
   dropEnumType: (enumTypeName: string) => string
   createMigrationsTable: () => string
   getExecutedMigrationsQuery: () => string
@@ -114,6 +116,15 @@ export class PostgresDriver implements DialectDriver {
 
   dropTable(tableName: string): string {
     return `DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)} CASCADE`
+  }
+
+  dropColumn(tableName: string, columnName: string): string {
+    return `ALTER TABLE ${this.quoteIdentifier(tableName)} DROP COLUMN ${this.quoteIdentifier(columnName)};`
+  }
+
+  dropIndex(tableName: string, indexName: string): string {
+    const fullIndexName = `${tableName}_${indexName}`
+    return `DROP INDEX IF EXISTS ${this.quoteIdentifier(fullIndexName)};`
   }
 
   dropEnumType(enumTypeName: string): string {

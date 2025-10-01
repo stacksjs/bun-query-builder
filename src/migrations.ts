@@ -376,11 +376,14 @@ function mapIndexesByKey(indexes: IndexPlan[]): Record<string, IndexPlan> {
 }
 
 /**
- * Generate safe, additive-only SQL to migrate from a previous plan to a new plan.
+ * Generate comprehensive SQL to migrate from a previous plan to a new plan.
  * - Creates new tables
- * - Adds new columns (no drops or type/nullable/default changes)
+ * - Drops removed tables
+ * - Adds new columns
+ * - Drops removed columns
+ * - Adds new indexes
+ * - Drops removed indexes
  * - Adds new foreign keys for newly added columns
- * - Adds new indexes and unique indexes
  *
  * If there is no previous plan or the dialect changed, generates full SQL.
  */
@@ -397,6 +400,16 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
 
   const prevTables = mapTablesByName(previous.tables)
   const nextTables = mapTablesByName(next.tables)
+
+  // 0) Drop removed tables first
+  for (const tableName of Object.keys(prevTables)) {
+    if (!nextTables[tableName]) {
+      const dropTableStatement = driver.dropTable(tableName)
+      chunks.push(dropTableStatement)
+      createMigrationFile(dropTableStatement, `drop-${tableName}-table`)
+      console.log(`-- Detected dropped table: ${tableName}`)
+    }
+  }
 
   // 1) Add foreign key constraints for new tables (ALTER statements - will execute last)
   for (const tableName of Object.keys(nextTables)) {
@@ -488,7 +501,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 6) Existing tables -> add-only diffs (ALTER statements first, then CREATE)
+  // 6) Existing tables -> full diffs (drops and adds)
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]
     const curr = nextTables[tableName]
@@ -498,6 +511,16 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     const prevCols = mapColumnsByName(prev.columns)
     const currCols = mapColumnsByName(curr.columns)
 
+    // Drop removed columns first
+    for (const colName of Object.keys(prevCols)) {
+      if (!currCols[colName]) {
+        const dropColumnStatement = driver.dropColumn(curr.table, colName)
+        chunks.push(dropColumnStatement)
+        createMigrationFile(dropColumnStatement, `alter-${curr.table}-drop-${colName}`)
+        console.log(`-- Detected dropped column: ${curr.table}.${colName}`)
+      }
+    }
+
     // Add new columns (ALTER statements - will execute last)
     for (const colName of Object.keys(currCols)) {
       if (!prevCols[colName]) {
@@ -505,6 +528,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         const addColumnStatement = driver.addColumn(curr.table, c)
         chunks.push(addColumnStatement)
         createMigrationFile(addColumnStatement, `alter-${curr.table}-add-${c.name}`)
+        console.log(`-- Detected new column: ${curr.table}.${c.name}`)
 
         if (c.references) {
           const addFkStatement = driver.addForeignKey(curr.table, c.name, c.references.table, c.references.column)
@@ -514,15 +538,27 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       }
     }
 
-    // Add new indexes (CREATE statements - will execute in middle)
+    // Drop removed indexes first
     const prevIdx = mapIndexesByKey(prev.indexes)
     const currIdx = mapIndexesByKey(curr.indexes)
+    for (const key of Object.keys(prevIdx)) {
+      if (!currIdx[key]) {
+        const idx = prevIdx[key]
+        const dropIndexStatement = driver.dropIndex(curr.table, idx.name)
+        chunks.push(dropIndexStatement)
+        createMigrationFile(dropIndexStatement, `drop-${idx.name}-index-from-${curr.table}`)
+        console.log(`-- Detected dropped index: ${idx.name} from ${curr.table}`)
+      }
+    }
+
+    // Add new indexes (CREATE statements - will execute in middle)
     for (const key of Object.keys(currIdx)) {
       if (!prevIdx[key]) {
         const idx = currIdx[key]
         const createIndexStatement = driver.createIndex(curr.table, idx)
         chunks.push(createIndexStatement)
         createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${curr.table}`)
+        console.log(`-- Detected new index: ${idx.name} in ${curr.table}`)
       }
     }
   }

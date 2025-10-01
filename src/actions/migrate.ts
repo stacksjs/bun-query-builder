@@ -17,6 +17,21 @@ function ensureSqlDirectory(): string {
   return sqlDir
 }
 
+/**
+ * Generate migration files by comparing old models (from generated/) with new models (from source).
+ * 
+ * Workflow:
+ * 1. Loads previous model state from the 'generated/' directory (old model copies)
+ * 2. Loads current models from the source directory
+ * 3. Compares both to detect all changes:
+ *    - Dropped tables, columns, indexes
+ *    - New tables, columns, indexes
+ *    - Modified columns (type changes, etc.)
+ * 4. Generates SQL migration files for all detected changes
+ * 5. Copies current models to 'generated/' for next comparison
+ * 
+ * This follows Laravel's migration philosophy where model changes drive schema changes.
+ */
 export async function generateMigration(dir?: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
   if (!dir) {
     dir = join(process.cwd(), 'app/Models')
@@ -24,9 +39,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
 
   const dialect = String(opts.dialect || config.dialect || 'postgres') as SupportedDialect
 
-  // Copy model files to generated directory
-  await copyModelsToGenerated(dir)
-
+  // Load current models from source directory
   const models = await loadModels({ modelsDir: dir })
   const plan = buildMigrationPlan(models, { dialect })
 
@@ -34,18 +47,49 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   const statePath = String(opts.state || defaultStatePath)
 
   let previous: any | undefined
-  if (existsSync(statePath)) {
-    try {
-      const raw = readFileSync(statePath, 'utf8')
-      const parsed = JSON.parse(raw)
-      previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
+
+  if (!opts.full) {
+    // Try to load previous state from the generated directory (old model copies)
+    const generatedDir = join(process.cwd(), 'generated')
+    
+    if (existsSync(generatedDir)) {
+      try {
+        const oldModels = await loadModels({ modelsDir: generatedDir })
+        previous = buildMigrationPlan(oldModels, { dialect })
+        console.log('-- Comparing with models from generated/ directory')
+      }
+      catch (err) {
+        console.log('-- No previous models found in generated/ directory, checking state file')
+        // Fallback to state file if generated directory doesn't have models
+        if (existsSync(statePath)) {
+          try {
+            const raw = readFileSync(statePath, 'utf8')
+            const parsed = JSON.parse(raw)
+            previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
+          }
+          catch {
+            // ignore corrupt state; treat as no previous
+          }
+        }
+      }
     }
-    catch {
-      // ignore corrupt state; treat as no previous
+    else if (existsSync(statePath)) {
+      try {
+        const raw = readFileSync(statePath, 'utf8')
+        const parsed = JSON.parse(raw)
+        previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
+      }
+      catch {
+        // ignore corrupt state; treat as no previous
+      }
     }
   }
 
   const sqlStatements = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
+  
+  // After generating migrations, copy current models to generated directory
+  // This becomes the "old state" for the next migration
+  await copyModelsToGenerated(dir)
   const sql = sqlStatements.join('\n')
 
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
