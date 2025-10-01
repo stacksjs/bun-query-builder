@@ -7,6 +7,7 @@ import { buildSchemaMeta } from './meta'
 
 let migrationCounter = 0
 let migrationsCreatedCount = 0
+let migrationsUpdatedCount = 0
 
 function ensureSqlDirectory(): string {
   const sqlDir = join(__dirname, '..', 'sql')
@@ -33,8 +34,12 @@ function createMigrationFile(statement: string, fileName: string): boolean {
   })
 
   if (matchingFile) {
-    // console.log(`-- Migration already exists: ${matchingFile} (skipped)`)
-    return false
+    // Overwrite the existing migration file with new changes
+    const existingFilePath = join(sqlDir, matchingFile)
+    writeFileSync(existingFilePath, statement)
+    console.log(`-- Migration file updated: ${matchingFile}`)
+    migrationsUpdatedCount++
+    return true
   }
 
   const baseTimestamp = Math.floor(Date.now() / 1000)
@@ -252,6 +257,7 @@ export function generateSql(plan: MigrationPlan): string[] {
   // Reset migration counter for proper ordering
   migrationCounter = 0
   migrationsCreatedCount = 0
+  migrationsUpdatedCount = 0
 
   const statements: string[] = []
   const driver = getDialectDriver(plan.dialect)
@@ -308,11 +314,17 @@ export function generateSql(plan: MigrationPlan): string[] {
   }
 
   // Show summary message
-  if (migrationsCreatedCount === 0) {
+  const totalChanges = migrationsCreatedCount + migrationsUpdatedCount
+  if (totalChanges === 0) {
     console.log('-- Nothing to migrate')
   }
   else {
-    console.log(`-- Created ${migrationsCreatedCount} migration file(s)`)
+    const parts: string[] = []
+    if (migrationsCreatedCount > 0)
+      parts.push(`${migrationsCreatedCount} created`)
+    if (migrationsUpdatedCount > 0)
+      parts.push(`${migrationsUpdatedCount} updated`)
+    console.log(`-- Migration files: ${parts.join(', ')}`)
   }
 
   return statements
@@ -418,6 +430,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   // Reset migration counter for proper ordering
   migrationCounter = 0
   migrationsCreatedCount = 0
+  migrationsUpdatedCount = 0
 
   const chunks: string[] = []
   const driver = getDialectDriver(next.dialect)
@@ -619,11 +632,17 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   }
 
   // Show summary message
-  if (migrationsCreatedCount === 0) {
+  const totalChanges = migrationsCreatedCount + migrationsUpdatedCount
+  if (totalChanges === 0) {
     console.log('-- Nothing to migrate')
   }
   else {
-    console.log(`-- Created ${migrationsCreatedCount} migration file(s)`)
+    const parts: string[] = []
+    if (migrationsCreatedCount > 0)
+      parts.push(`${migrationsCreatedCount} created`)
+    if (migrationsUpdatedCount > 0)
+      parts.push(`${migrationsUpdatedCount} updated`)
+    console.log(`-- Migration files: ${parts.join(', ')}`)
   }
 
   if (chunks.length === 0)
