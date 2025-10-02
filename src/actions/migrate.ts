@@ -89,7 +89,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
 
   // After generating migrations, copy current models to generated directory
   // This becomes the "old state" for the next migration
-  await copyModelsToGenerated(dir)
+ 
   const sql = sqlStatements.join('\n')
 
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
@@ -115,6 +115,8 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
       throw err
     }
   }
+
+  await copyModelsToGenerated(dir)
 
   return { sql, sqlStatements, hasChanges, plan }
 }
@@ -325,7 +327,7 @@ export async function copyModelsToGenerated(dir?: string): Promise<void> {
 
   try {
     // Ensure the generated directory exists at the workspace root
-    const generatedDir = join(__dirname, '..', '..', 'generated')
+    const generatedDir = join(process.cwd(), 'generated')
     if (!existsSync(generatedDir)) {
       mkdirSync(generatedDir, { recursive: true })
       console.log('-- Created generated directory')
@@ -359,7 +361,7 @@ export async function copyModelsToGenerated(dir?: string): Promise<void> {
 }
 
 function getSqlDirectory(): string {
-  return join(__dirname, '..', '..', 'sql')
+  return join(process.cwd(), 'sql')
 }
 
 async function createMigrationsTable(qb: any, dialect: SupportedDialect): Promise<void> {
