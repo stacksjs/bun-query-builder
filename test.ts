@@ -34,11 +34,10 @@ type SelectedOf<T> = T extends SelectQueryBuilder<any, any, infer S, any> ? S : 
 const newUser: Partial<Users> = {
   email: 'alice@example.com',
   name: 'Alice',
-  role: 'admin',
 }
 const sql1 = db.insertInto('users').values(newUser).toSQL()
 // Update with typed where
-db.updateTable('users').set({ role: 'member' }).where({ id: 1 }).toSQL()
+db.updateTable('users').set({ name: 'Updated Name' }).where({ id: 1 }).toSQL()
 
 // Simple typed select (limit to primary key and created_at to match stricter select signature)
 db.select('users', 'id', 'created_at').toSQL()
@@ -86,7 +85,7 @@ const insertUserQ = db.insertInto('users').values(newUser).returning('id', 'emai
 const insertUserHover = insertUserQ.rows
 // const insertedUsersPromise = insertUserQ.execute() // Commented out to prevent DB operations
 
-const updateUserQ = db.updateTable('users').set({ role: 'member' }).where({ id: 1 }).returning('id', 'created_at')
+const updateUserQ = db.updateTable('users').set({ name: 'Updated Name' }).where({ id: 1 }).returning('id', 'created_at')
 const updateUserHover = updateUserQ.rows
 // const updatedUsersPromise = updateUserQ.execute() // Commented out to prevent DB operations
 
@@ -101,7 +100,7 @@ async function typedRows() {
     .orderBy('created_at', 'desc')
     .execute()
   const insertedUsers = await db.insertInto('users').values(newUser).returning('id', 'email').execute()
-  const updatedUsers = await db.updateTable('users').set({ role: 'member' }).where({ id: 1 }).returning('id', 'created_at').execute()
+  const updatedUsers = await db.updateTable('users').set({ name: 'Updated Name' }).where({ id: 1 }).returning('id', 'created_at').execute()
   void usersRows
   void postsJoinRows
   void insertedUsers

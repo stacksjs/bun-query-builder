@@ -15,7 +15,7 @@ let migrationsUpdatedCount = 0
  */
 function findWorkspaceRoot(startPath: string): string {
   let currentPath = startPath
-  
+
   // Traverse up until we find package.json or reach root
   while (currentPath !== dirname(currentPath)) {
     if (existsSync(join(currentPath, 'package.json'))) {
@@ -23,7 +23,7 @@ function findWorkspaceRoot(startPath: string): string {
     }
     currentPath = dirname(currentPath)
   }
-  
+
   // Fallback to process.cwd() if package.json not found
   return process.cwd()
 }

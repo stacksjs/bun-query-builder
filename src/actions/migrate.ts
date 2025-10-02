@@ -13,7 +13,7 @@ import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, h
  */
 function findWorkspaceRoot(startPath: string): string {
   let currentPath = startPath
-  
+
   // Traverse up until we find package.json or reach root
   while (currentPath !== dirname(currentPath)) {
     if (existsSync(join(currentPath, 'package.json'))) {
@@ -21,7 +21,7 @@ function findWorkspaceRoot(startPath: string): string {
     }
     currentPath = dirname(currentPath)
   }
-  
+
   // Fallback to process.cwd() if package.json not found
   return process.cwd()
 }
@@ -56,7 +56,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   }
 
   const dialect = String(opts.dialect || config.dialect || 'postgres') as SupportedDialect
-  
+
   // Find workspace root from the models directory
   const workspaceRoot = findWorkspaceRoot(dir)
 
@@ -110,7 +110,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
 
   // After generating migrations, copy current models to generated directory
   // This becomes the "old state" for the next migration
- 
+
   const sql = sqlStatements.join('\n')
 
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
@@ -150,7 +150,8 @@ export async function executeMigration(): Promise<boolean> {
   const scriptFiles = files.filter(file => file.endsWith('.sql')).sort()
 
   if (scriptFiles.length === 0) {
-    throw new Error('No script files found. Run generateMigration first.')
+    console.log('-- No migration files found to execute')
+    return true
   }
 
   console.log(`-- Found ${scriptFiles.length} script files to execute`)

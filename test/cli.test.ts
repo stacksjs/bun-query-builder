@@ -11,7 +11,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await deleteMigrationFiles('./examples/models', { dialect: 'postgres' })
+  await deleteMigrationFiles('./examples/models', undefined, { dialect: 'postgres' })
 })
 
 function runCli(args: string[]) {
