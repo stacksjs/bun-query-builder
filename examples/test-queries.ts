@@ -28,14 +28,26 @@ async function basicSelectQuery() {
   // console.warn('Results:', rows)
 }
 
-async function simpleMigration() {
-  // Generate migration and create SQL files
+/**
+ * For fresh database setup: drops everything and recreates from current models
+ */
+async function freshMigration() {
   const modelsPath = join(import.meta.dir, 'models')
   await resetDatabase(modelsPath, { dialect: 'postgres' })
+  await generateMigration(modelsPath, { dialect: 'postgres', full: true })
+  await executeMigration()
+}
+
+/**
+ * For incremental migrations: detects changes and generates ALTER/DROP migrations
+ * NOTE: Don't call resetDatabase before this, or tables won't exist!
+ */
+async function simpleMigration() {
+  const modelsPath = join(import.meta.dir, 'models')
+  // Comment out resetDatabase to test incremental migrations
+  // await resetDatabase(modelsPath, { dialect: 'postgres' })
 
   await generateMigration(modelsPath, { dialect: 'postgres' })
-
-  // Execute the generated SQL files
   await executeMigration()
 }
 
@@ -61,6 +73,7 @@ async function simpleInsertQuery() {
 export {
   basicSelectQuery,
   db,
+  freshMigration,
   meta,
   schema,
   simpleInsertQuery,
@@ -68,4 +81,6 @@ export {
   simpleSelectQuery,
 }
 
+// Run fresh migration first to set up database, then switch to simpleMigration for incremental changes
+// freshMigration()
 simpleMigration()
