@@ -82,5 +82,5 @@ export {
 }
 
 // Run fresh migration first to set up database, then switch to simpleMigration for incremental changes
-freshMigration()
-// simpleMigration()
+// freshMigration()
+simpleMigration()
