@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
 import { executeMigration, generateMigration, resetDatabase } from '../src/actions/migrate'
 import User from './models/User'
@@ -17,7 +18,7 @@ async function basicSelectQuery() {
 
   await db
     .selectFrom('users')
-    .where({ role: 'admin' })
+    .where({ email: 'john@example.com' })
     .orderBy('created_at', 'desc')
     .limit(10)
     .get()
@@ -29,16 +30,18 @@ async function basicSelectQuery() {
 
 async function simpleMigration() {
   // Generate migration and create SQL files
-  // await resetDatabase('./models', { dialect: 'postgres' })
+  const modelsPath = join(import.meta.dir, 'models')
+  await resetDatabase(modelsPath, { dialect: 'postgres' })
 
-  await generateMigration('./models', { dialect: 'postgres', full: true })
+  await generateMigration(modelsPath, { dialect: 'postgres' })
 
   // Execute the generated SQL files
   await executeMigration()
 }
 
 export async function freshDatabase() {
-  await resetDatabase('./models', { dialect: 'postgres' })
+  const modelsPath = join(import.meta.dir, 'models')
+  await resetDatabase(modelsPath, { dialect: 'postgres' })
 }
 
 async function simpleSelectQuery() {

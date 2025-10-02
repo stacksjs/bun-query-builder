@@ -1,12 +1,30 @@
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { config } from '@/config'
 import { bunSql } from '@/db'
 import { getDialectDriver } from '@/drivers'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '@/index'
+
+/**
+ * Find workspace root by looking for package.json
+ */
+function findWorkspaceRoot(startPath: string): string {
+  let currentPath = startPath
+  
+  // Traverse up until we find package.json or reach root
+  while (currentPath !== dirname(currentPath)) {
+    if (existsSync(join(currentPath, 'package.json'))) {
+      return currentPath
+    }
+    currentPath = dirname(currentPath)
+  }
+  
+  // Fallback to process.cwd() if package.json not found
+  return process.cwd()
+}
 
 function ensureSqlDirectory(): string {
   const sqlDir = getSqlDirectory()
@@ -38,6 +56,9 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   }
 
   const dialect = String(opts.dialect || config.dialect || 'postgres') as SupportedDialect
+  
+  // Find workspace root from the models directory
+  const workspaceRoot = findWorkspaceRoot(dir)
 
   // Load current models from source directory
   const models = await loadModels({ modelsDir: dir })
@@ -50,7 +71,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
 
   if (!opts.full) {
     // Try to load previous state from the generated directory (old model copies)
-    const generatedDir = join(process.cwd(), 'generated')
+    const generatedDir = join(workspaceRoot, 'generated')
 
     if (existsSync(generatedDir)) {
       try {
@@ -116,7 +137,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
     }
   }
 
-  await copyModelsToGenerated(dir)
+  await copyModelsToGenerated(dir, workspaceRoot)
 
   return { sql, sqlStatements, hasChanges, plan }
 }
@@ -185,6 +206,7 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
 
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
   const driver = getDialectDriver(dialect)
+  const workspaceRoot = findWorkspaceRoot(dir)
 
   try {
     // Drop migrations table first to clear migration history
@@ -272,7 +294,7 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
 
     // Clean up migration files
     try {
-      await deleteMigrationFiles(dir, opts)
+      await deleteMigrationFiles(dir, workspaceRoot, opts)
     }
     catch (err) {
       console.error(err)
@@ -289,9 +311,13 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
   }
 }
 
-export async function deleteMigrationFiles(dir?: string, opts: MigrateOptions = {}): Promise<void> {
+export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string, opts: MigrateOptions = {}): Promise<void> {
   if (!dir) {
     dir = join(process.cwd(), 'app/Models')
+  }
+
+  if (!workspaceRoot) {
+    workspaceRoot = findWorkspaceRoot(dir)
   }
 
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
@@ -306,7 +332,7 @@ export async function deleteMigrationFiles(dir?: string, opts: MigrateOptions = 
   }
 
   // Clean up all files in the sql directory
-  const sqlDir = ensureSqlDirectory()
+  const sqlDir = getSqlDirectory(workspaceRoot)
   if (existsSync(sqlDir)) {
     const sqlFiles = readdirSync(sqlDir)
     const migrationFiles = sqlFiles.filter(file => file.endsWith('.sql'))
@@ -320,14 +346,18 @@ export async function deleteMigrationFiles(dir?: string, opts: MigrateOptions = 
   }
 }
 
-export async function copyModelsToGenerated(dir?: string): Promise<void> {
+export async function copyModelsToGenerated(dir?: string, workspaceRoot?: string): Promise<void> {
   if (!dir) {
     dir = join(process.cwd(), 'app/Models')
   }
 
+  if (!workspaceRoot) {
+    workspaceRoot = findWorkspaceRoot(dir)
+  }
+
   try {
     // Ensure the generated directory exists at the workspace root
-    const generatedDir = join(process.cwd(), 'generated')
+    const generatedDir = join(workspaceRoot, 'generated')
     if (!existsSync(generatedDir)) {
       mkdirSync(generatedDir, { recursive: true })
       console.log('-- Created generated directory')
@@ -360,8 +390,11 @@ export async function copyModelsToGenerated(dir?: string): Promise<void> {
   }
 }
 
-function getSqlDirectory(): string {
-  return join(process.cwd(), 'sql')
+function getSqlDirectory(workspaceRoot?: string): string {
+  if (!workspaceRoot) {
+    workspaceRoot = findWorkspaceRoot(process.cwd())
+  }
+  return join(workspaceRoot, 'sql')
 }
 
 async function createMigrationsTable(qb: any, dialect: SupportedDialect): Promise<void> {

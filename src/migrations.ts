@@ -1,7 +1,8 @@
 import type { ModelRecord } from './schema'
 import type { SupportedDialect } from './types'
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import process from 'node:process'
 import { getDialectDriver } from './drivers'
 import { buildSchemaMeta } from './meta'
 
@@ -9,8 +10,27 @@ let migrationCounter = 0
 let migrationsCreatedCount = 0
 let migrationsUpdatedCount = 0
 
+/**
+ * Find workspace root by looking for package.json
+ */
+function findWorkspaceRoot(startPath: string): string {
+  let currentPath = startPath
+  
+  // Traverse up until we find package.json or reach root
+  while (currentPath !== dirname(currentPath)) {
+    if (existsSync(join(currentPath, 'package.json'))) {
+      return currentPath
+    }
+    currentPath = dirname(currentPath)
+  }
+  
+  // Fallback to process.cwd() if package.json not found
+  return process.cwd()
+}
+
 function ensureSqlDirectory(): string {
-  const sqlDir = join(__dirname, '..', 'sql')
+  const workspaceRoot = findWorkspaceRoot(process.cwd())
+  const sqlDir = join(workspaceRoot, 'sql')
   if (!existsSync(sqlDir)) {
     mkdirSync(sqlDir, { recursive: true })
     console.log(`-- Created SQL directory: ${sqlDir}`)
