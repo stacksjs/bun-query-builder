@@ -44,24 +44,8 @@ function createMigrationFile(statement: string, fileName: string): boolean {
 
   const sqlDir = ensureSqlDirectory()
 
-  // Check if a migration file with the same semantic name already exists
-  const existingFiles = readdirSync(sqlDir)
-  const matchingFile = existingFiles.find((file) => {
-    // Extract the semantic part after the timestamp
-    // Format: timestamp-semantic-name.sql
-    const parts = file.match(/^\d+-(.+)\.sql$/)
-    return parts && parts[1] === fileName
-  })
-
-  if (matchingFile) {
-    // Overwrite the existing migration file with new changes
-    const existingFilePath = join(sqlDir, matchingFile)
-    writeFileSync(existingFilePath, statement)
-    console.log(`-- Migration file updated: ${matchingFile}`)
-    migrationsUpdatedCount++
-    return true
-  }
-
+  // Always create a new migration file with unique timestamp
+  // Each model change should be a separate migration
   const baseTimestamp = Math.floor(Date.now() / 1000)
   const timestamp = baseTimestamp + migrationCounter
   migrationCounter++

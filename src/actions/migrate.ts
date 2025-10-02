@@ -165,24 +165,58 @@ export async function executeMigration(): Promise<boolean> {
     // Get already executed migrations
     const executedMigrations = await getExecutedMigrations(qb, dialect)
 
-    // Filter out already executed migrations
-    const pendingMigrations = scriptFiles.filter(file => !executedMigrations.includes(file))
+    // Separate migrations into permanent (CREATE) and transient (ALTER)
+    const permanentMigrations: string[] = []
+    const transientMigrations: string[] = []
+    
+    for (const file of scriptFiles) {
+      // ALTER TABLE migrations are transient (not tracked)
+      if (file.includes('alter-') && file.includes('-table')) {
+        transientMigrations.push(file)
+      }
+      // Everything else is permanent (CREATE TABLE, CREATE INDEX, etc.)
+      else if (!executedMigrations.includes(file)) {
+        permanentMigrations.push(file)
+      }
+    }
 
-    if (pendingMigrations.length === 0) {
+    const totalPending = permanentMigrations.length + transientMigrations.length
+
+    if (totalPending === 0) {
       console.log('-- No pending migrations to execute')
       return true
     }
 
-    console.log(`-- Executing ${pendingMigrations.length} pending migrations`)
+    console.log(`-- Executing ${totalPending} migrations (${permanentMigrations.length} permanent, ${transientMigrations.length} transient)`)
 
-    for (const file of pendingMigrations) {
+    // Execute permanent migrations first (CREATE TABLE, etc.)
+    for (const file of permanentMigrations) {
       const filePath = join(sqlDir, file)
       console.log(`-- Executing: ${file}`)
 
       try {
         await qb.file(filePath)
         await recordMigration(qb, file, dialect)
-        console.log(`-- ✓ Migration ${file} executed successfully`)
+        console.log(`-- ✓ Migration ${file} executed and recorded`)
+      }
+      catch (err) {
+        console.error(`-- ✗ Migration ${file} failed:`, err)
+        throw err
+      }
+    }
+
+    // Execute transient migrations (ALTER TABLE) but don't record them
+    for (const file of transientMigrations) {
+      const filePath = join(sqlDir, file)
+      console.log(`-- Executing: ${file} (transient)`)
+
+      try {
+        await qb.file(filePath)
+        console.log(`-- ✓ Migration ${file} executed (not recorded)`)
+        
+        // Delete the transient migration file after successful execution
+        unlinkSync(filePath)
+        console.log(`-- 🗑️  Deleted transient migration: ${file}`)
       }
       catch (err) {
         console.error(`-- ✗ Migration ${file} failed:`, err)
