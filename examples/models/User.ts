@@ -9,7 +9,7 @@ const model = defineModel({
     id: { validation: { rule: v.integer() } },
     email: { unique: true, validation: { rule: v.string() } },
     name: { validation: { rule: v.string() } },
-    age: { default: 0, validation: { rule: v.integer() } },
+    age: { default: 0, validation: { rule: v.string() } },
     created_at: { validation: { rule: v.date() } },
     updated_at: { validation: { rule: v.date() } },
   },

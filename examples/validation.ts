@@ -9,9 +9,9 @@ export interface Validator<T> {
   _values?: readonly any[]
 }
 
-function make<T>(): Validator<T> {
+function make<T>(name?: string): Validator<T> {
   const fn = ((): boolean => true) as (value: T) => boolean
-  return { validate: fn, test: fn, getRules: () => [{ test: fn }] }
+  return { validate: fn, test: fn, getRules: () => [{ test: fn }], name }
 }
 
 function makeEnum<T extends string | number>(values: readonly T[]): Validator<T> {
@@ -26,28 +26,28 @@ function makeEnum<T extends string | number>(values: readonly T[]): Validator<T>
 }
 
 export const v = {
-  string: (): Validator<string> => make<string>(),
-  text: (): Validator<string> => make<string>(),
-  number: (): Validator<number> => make<number>(),
-  bigint: (): Validator<bigint> => make<bigint>(),
-  array: <T>(): Validator<T[]> => make<T[]>(),
-  boolean: (): Validator<boolean> => make<boolean>(),
+  string: (): Validator<string> => make<string>('string'),
+  text: (): Validator<string> => make<string>('text'),
+  number: (): Validator<number> => make<number>('number'),
+  bigint: (): Validator<bigint> => make<bigint>('bigint'),
+  array: <T>(): Validator<T[]> => make<T[]>('array'),
+  boolean: (): Validator<boolean> => make<boolean>('boolean'),
   enum: <T extends string | number>(values: readonly T[]): Validator<T> => makeEnum(values),
-  date: (): Validator<Date> => make<Date>(),
-  datetime: (): Validator<Date> => make<Date>(),
-  object: <T extends Record<string, any>>(): Validator<T> => make<T>(),
-  custom: <T>(_fn: (value: T) => boolean, _message: string): Validator<T> => make<T>(),
-  timestamp: (): Validator<number> => make<number>(),
-  timestampTz: (): Validator<number> => make<number>(),
-  unix: (): Validator<number> => make<number>(),
-  password: (): Validator<string> => make<string>(),
-  float: (): Validator<number> => make<number>(),
-  double: (): Validator<number> => make<number>(),
-  decimal: (): Validator<number> => make<number>(),
-  time: (): Validator<string> => make<string>(),
-  smallint: (): Validator<number> => make<number>(),
-  integer: (): Validator<number> => make<number>(),
-  json: (): Validator<unknown> => make<unknown>(),
-  blob: (): Validator<Uint8Array> => make<Uint8Array>(),
-  binary: (): Validator<Uint8Array> => make<Uint8Array>(),
+  date: (): Validator<Date> => make<Date>('date'),
+  datetime: (): Validator<Date> => make<Date>('datetime'),
+  object: <T extends Record<string, any>>(): Validator<T> => make<T>('object'),
+  custom: <T>(_fn: (value: T) => boolean, _message: string): Validator<T> => make<T>('custom'),
+  timestamp: (): Validator<number> => make<number>('timestamp'),
+  timestampTz: (): Validator<number> => make<number>('timestampTz'),
+  unix: (): Validator<number> => make<number>('unix'),
+  password: (): Validator<string> => make<string>('password'),
+  float: (): Validator<number> => make<number>('float'),
+  double: (): Validator<number> => make<number>('double'),
+  decimal: (): Validator<number> => make<number>('decimal'),
+  time: (): Validator<string> => make<string>('time'),
+  smallint: (): Validator<number> => make<number>('integer'),
+  integer: (): Validator<number> => make<number>('integer'),
+  json: (): Validator<unknown> => make<unknown>('json'),
+  blob: (): Validator<Uint8Array> => make<Uint8Array>('blob'),
+  binary: (): Validator<Uint8Array> => make<Uint8Array>('binary'),
 }

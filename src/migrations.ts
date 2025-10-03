@@ -161,6 +161,71 @@ function detectEnumFromValidationRule(rule: unknown): string[] | undefined {
   return undefined
 }
 
+function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | undefined {
+  if (!rule || typeof rule !== 'object')
+    return undefined
+
+  const ruleObj = rule as any
+
+  // Check the name property which often indicates the validation type
+  if (ruleObj.name) {
+    const name = String(ruleObj.name).toLowerCase()
+    
+    switch (name) {
+      case 'string':
+      case 'text':
+        return 'string'
+      case 'integer':
+      case 'int':
+        return 'integer'
+      case 'bigint':
+        return 'bigint'
+      case 'float':
+      case 'number':
+        return 'float'
+      case 'double':
+        return 'double'
+      case 'decimal':
+        return 'decimal'
+      case 'boolean':
+      case 'bool':
+        return 'boolean'
+      case 'date':
+        return 'date'
+      case 'datetime':
+      case 'timestamp':
+        return 'datetime'
+      case 'json':
+        return 'json'
+      case 'enum':
+        return 'enum'
+    }
+  }
+
+  // Check for type property
+  if (ruleObj.type) {
+    const type = String(ruleObj.type).toLowerCase()
+    if (type === 'string' || type === 'text')
+      return 'string'
+    if (type === 'integer' || type === 'int')
+      return 'integer'
+    if (type === 'bigint')
+      return 'bigint'
+    if (type === 'float' || type === 'number')
+      return 'float'
+    if (type === 'boolean')
+      return 'boolean'
+    if (type === 'date')
+      return 'date'
+    if (type === 'datetime')
+      return 'datetime'
+    if (type === 'json')
+      return 'json'
+  }
+
+  return undefined
+}
+
 export interface InferenceOptions {
   dialect: SupportedDialect
 }
@@ -185,17 +250,29 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       const isNullable = true
 
       // Type inference heuristics
-      let inferred: NormalizedColumnType | undefined = guessTypeFromName(attrName)
+      let inferred: NormalizedColumnType | undefined
       let enumValues: string[] | undefined
+      const isPk = attrName === primaryKey
 
-      // Check for enum validation rule first
-      const enumVals = detectEnumFromValidationRule(attr.validation.rule)
-      if (enumVals && enumVals.length > 0) {
-        inferred = 'enum'
-        enumValues = enumVals
+      // Priority 1: Check validation rule for explicit type
+      inferred = detectTypeFromValidationRule(attr.validation.rule)
+
+      // Priority 2: Check for enum validation rule
+      if (!inferred) {
+        const enumVals = detectEnumFromValidationRule(attr.validation.rule)
+        if (enumVals && enumVals.length > 0) {
+          inferred = 'enum'
+          enumValues = enumVals
+        }
       }
-      else if (!inferred) {
-        // Fallback by default value type, if provided
+
+      // Priority 3: Guess from column name patterns
+      if (!inferred) {
+        inferred = guessTypeFromName(attrName)
+      }
+
+      // Priority 4: Infer from default value type
+      if (!inferred) {
         const dv = normalizeDefaultValue(attr.default)
         if (typeof dv === 'string')
           inferred = dv.length > 255 ? 'text' : 'string'
@@ -208,7 +285,6 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         else if (dv instanceof Date)
           inferred = 'datetime'
       }
-      const isPk = attrName === primaryKey
 
       // Final fallback - primary keys should be integers, others default to string
       if (!inferred) {
