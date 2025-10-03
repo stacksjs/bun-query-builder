@@ -30,10 +30,5 @@
     "verbatimModuleSyntax": true,
     "skipDefaultLibCheck": true,
     "skipLibCheck": true
-  },
-  "exclude": [
-    "node_modules",
-    "**/node_modules",
-    "node_modules/@stacksjs/ts-validation"
-  ]
+  }
 }
