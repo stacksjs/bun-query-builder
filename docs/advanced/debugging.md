@@ -58,6 +58,7 @@ const complexExplain = await db
 ```
 
 **Use Cases:**
+
 - `dump()`: Quick debugging without stopping execution
 - `dd()`: Debug and halt (development only)
 - `explain()`: Performance analysis and index optimization

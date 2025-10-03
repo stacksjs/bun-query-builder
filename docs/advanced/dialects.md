@@ -540,7 +540,7 @@ config.sql.sharedLockSyntax = 'FOR SHARE'
 
 - All supported dialects use `LIMIT`/`OFFSET`; performance implications differ
 - For deep pagination, prefer `cursorPaginate`
- - Composite cursors are supported by passing multiple columns (e.g., `['created_at', 'id']`)
+- Composite cursors are supported by passing multiple columns (e.g., `['created_at', 'id']`)
 
 ## Timezones and Types
 

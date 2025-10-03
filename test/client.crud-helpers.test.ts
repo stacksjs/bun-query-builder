@@ -58,3 +58,69 @@ describe('query builder - CRUD-style helpers availability', () => {
     expect(typeof q.execute).toBe('function')
   })
 })
+
+describe('query builder - Batch Operations', () => {
+  it('exposes batch operation methods', () => {
+    const db = qb()
+    expect(typeof db.insertMany).toBe('function')
+    expect(typeof db.updateMany).toBe('function')
+    expect(typeof db.deleteMany).toBe('function')
+  })
+
+  it('insertMany is an alias for createMany', () => {
+    const db = qb()
+    // Both should exist and be functions
+    expect(typeof db.insertMany).toBe('function')
+    expect(typeof db.createMany).toBe('function')
+  })
+
+  it('insertInto().values() works with array of records', () => {
+    const db = qb()
+    const users = [
+      { name: 'Alice', email: 'alice@test.com' },
+      { name: 'Bob', email: 'bob@test.com' },
+    ]
+    const query = db.insertInto('users').values(users)
+    expect(query).toBeDefined()
+    expect(typeof query.toSQL).toBe('function')
+  })
+
+  it('updateTable can be chained with set and where', () => {
+    const db = qb()
+    const qb2 = db.updateTable('users')
+      .set({ name: 'Updated' })
+      .where({ id: 1 })
+
+    expect(qb2).toBeDefined()
+    expect(typeof qb2.toSQL).toBe('function')
+    expect(typeof qb2.execute).toBe('function')
+  })
+
+  it('deleteFrom can be chained with where', () => {
+    const db = qb()
+    const qb2 = db.deleteFrom('users').where({ id: 1 })
+
+    expect(qb2).toBeDefined()
+    expect(typeof qb2.toSQL).toBe('function')
+    expect(typeof qb2.execute).toBe('function')
+  })
+
+  it('batch operations maintain fluent interface', () => {
+    const db = qb()
+
+    // Insert
+    const insertQb = db.insertInto('users').values([{ name: 'Test', email: 'test@test.com' }])
+    expect(typeof insertQb.toSQL).toBe('function')
+    expect(typeof insertQb.execute).toBe('function')
+
+    // Update
+    const updateQb = db.updateTable('users').set({ name: 'Updated' }).where({ id: 1 })
+    expect(typeof updateQb.toSQL).toBe('function')
+    expect(typeof updateQb.execute).toBe('function')
+
+    // Delete
+    const deleteQb = db.deleteFrom('users').where({ id: 1 })
+    expect(typeof deleteQb.toSQL).toBe('function')
+    expect(typeof deleteQb.execute).toBe('function')
+  })
+})

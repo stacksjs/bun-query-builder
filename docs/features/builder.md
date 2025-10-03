@@ -339,6 +339,7 @@ await db
   .selectAllRelations()
   .execute()
 ```
+
 ### Nested relations and many-to-many
 
 ```ts

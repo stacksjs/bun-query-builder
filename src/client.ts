@@ -3,6 +3,52 @@ import type { DatabaseSchema } from './schema'
 import { config } from './config'
 import { bunSql } from './db'
 
+// Simple query cache with TTL support
+interface CacheEntry {
+  data: any
+  expiresAt: number
+}
+
+class QueryCache {
+  private cache = new Map<string, CacheEntry>()
+  private maxSize = 100
+
+  get(key: string): any | null {
+    const entry = this.cache.get(key)
+    if (!entry) return null
+
+    if (Date.now() > entry.expiresAt) {
+      this.cache.delete(key)
+      return null
+    }
+
+    return entry.data
+  }
+
+  set(key: string, data: any, ttlMs: number): void {
+    // Simple LRU: if cache is full, delete oldest entry
+    if (this.cache.size >= this.maxSize) {
+      const firstKey = this.cache.keys().next().value
+      if (firstKey) this.cache.delete(firstKey)
+    }
+
+    this.cache.set(key, {
+      data,
+      expiresAt: Date.now() + ttlMs,
+    })
+  }
+
+  clear(): void {
+    this.cache.clear()
+  }
+
+  setMaxSize(size: number): void {
+    this.maxSize = size
+  }
+}
+
+const queryCache = new QueryCache()
+
 // Where condition helpers
 type Primitive = string | number | boolean | bigint | Date | null | undefined
 type ValueOrRef = Primitive
@@ -665,6 +711,7 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   addSelect: (...columns: (keyof DB[TTable]['columns'] & string | string)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  select?: (columns: (keyof DB[TTable]['columns'] & string | string)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   selectAll?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orderByRaw`
@@ -1139,6 +1186,10 @@ export interface BaseSelectQueryBuilder<
   lazyById: () => AsyncIterable<TSelected>
   pipe: <R>(fn: (qb: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => R) => R
   count: () => Promise<number>
+  avg: (column: keyof DB[TTable]['columns'] & string) => Promise<number>
+  sum: (column: keyof DB[TTable]['columns'] & string) => Promise<number>
+  max: (column: keyof DB[TTable]['columns'] & string) => Promise<any>
+  min: (column: keyof DB[TTable]['columns'] & string) => Promise<any>
   // Type-only convenience properties for IDE hovers; not implemented at runtime
   readonly rows: TSelected[]
   readonly row: TSelected
@@ -1155,6 +1206,8 @@ export interface BaseSelectQueryBuilder<
   scope?: (name: string, value?: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /** Shallow clone of this builder to branch query modifications. */
   clone?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** Enable query result caching with TTL in milliseconds (default 60000ms / 1 minute). */
+  cache?: (ttlMs?: number) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /** Window function helpers */
   rowNumber?: (alias?: string, partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   denseRank?: (alias?: string, partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -1607,6 +1660,37 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
   ) => Promise<void>
 
   /**
+   * # `insertMany(table, rows)`
+   *
+   * Alias for createMany. Inserts multiple rows. Returns void.
+   */
+  insertMany: <TTable extends keyof DB & string>(
+    table: TTable,
+    rows: Partial<DB[TTable]['columns']>[],
+  ) => Promise<void>
+
+  /**
+   * # `updateMany(table, conditions, data)`
+   *
+   * Updates multiple rows matching conditions. Returns count of affected rows.
+   */
+  updateMany: <TTable extends keyof DB & string>(
+    table: TTable,
+    conditions: WhereExpression<DB[TTable]['columns']>,
+    data: Partial<DB[TTable]['columns']>,
+  ) => Promise<number>
+
+  /**
+   * # `deleteMany(table, ids)`
+   *
+   * Deletes multiple rows by IDs. Returns count of deleted rows.
+   */
+  deleteMany: <TTable extends keyof DB & string>(
+    table: TTable,
+    ids: any[],
+  ) => Promise<number>
+
+  /**
    * # `firstOrCreate(table, match, [defaults])`
    *
    * Returns the first matching row, or creates one with defaults merged and returns it.
@@ -1713,6 +1797,14 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
   advisoryLock?: (key: number | string) => Promise<void>
   /** Try to take an advisory lock and return false if unavailable (PostgreSQL only). */
   tryAdvisoryLock?: (key: number | string) => Promise<boolean>
+  /** Get all relationships defined for a table. */
+  getRelationships?: (table: string) => Record<string, any>
+  /** Check if a table has a specific relationship. */
+  hasRelationship?: (table: string, relationName: string) => boolean
+  /** Get the type of a relationship (hasMany, belongsTo, etc.). */
+  getRelationshipType?: (table: string, relationName: string) => string | null
+  /** Get the target model/table of a relationship. */
+  getRelationshipTarget?: (table: string, relationName: string) => string | null
 }
 
 // Typed INSERT builder to expose a structured SQL literal in hovers
@@ -1978,6 +2070,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     let abortSignal: AbortSignal | undefined
     let includeTrashed = false
     let onlyTrashed = false
+    let useCache = false
+    let cacheTtl = 60000
 
     // Build the base API; then wrap with a proxy that exposes dynamic where/orWhere/andWhere methods
 
@@ -2505,13 +2599,93 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
        * Shorthand for whereHas - filter records that have a relationship
        */
       has(relation: string) {
-        return this.whereHas(relation)
+        // Inline implementation to avoid TypeScript `this` issues
+        if (!meta) return this as any
+
+        const parentTable = String(table)
+        const rels = meta.relations?.[parentTable]
+        if (!rels) throw new Error(`[query-builder] No relationships defined for table '${parentTable}'`)
+
+        const relType = Object.entries(rels).find(([_type, relations]) =>
+          relations && typeof relations === 'object' && relation in relations,
+        )
+        if (!relType) throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
+
+        const [type, relMap] = relType
+        const targetModel = (relMap as any)[relation]
+        const targetTable = meta.modelToTable[targetModel] || targetModel
+        const pk = meta.primaryKeys[parentTable] ?? 'id'
+
+        if (type === 'hasMany' || type === 'hasOne') {
+          const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
+          const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
+          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
+          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) } catch {}
+        }
+        else if (type === 'belongsTo') {
+          const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
+          const targetPk = meta.primaryKeys[targetTable] ?? 'id'
+          const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${targetPk} = ${parentTable}.${fk}`
+          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
+          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) } catch {}
+        }
+        else if (type === 'belongsToMany') {
+          const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+          const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+          const pivot = [a, b].sort().join('_')
+          const targetPk = meta.primaryKeys[targetTable] ?? 'id'
+          const subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${b}_id WHERE ${pivot}.${a}_id = ${parentTable}.${pk}`
+          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
+          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) } catch {}
+        }
+
+        return this as any
       },
       /**
        * Shorthand for whereDoesntHave - filter records that don't have a relationship
        */
       doesntHave(relation: string) {
-        return this.whereDoesntHave(relation)
+        // Inline implementation to avoid TypeScript `this` issues
+        if (!meta) return this as any
+
+        const parentTable = String(table)
+        const rels = meta.relations?.[parentTable]
+        if (!rels) throw new Error(`[query-builder] No relationships defined for table '${parentTable}'`)
+
+        const relType = Object.entries(rels).find(([_type, relations]) =>
+          relations && typeof relations === 'object' && relation in relations,
+        )
+        if (!relType) throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
+
+        const [type, relMap] = relType
+        const targetModel = (relMap as any)[relation]
+        const targetTable = meta.modelToTable[targetModel] || targetModel
+        const pk = meta.primaryKeys[parentTable] ?? 'id'
+
+        if (type === 'hasMany' || type === 'hasOne') {
+          const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
+          const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
+          built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
+          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) } catch {}
+        }
+        else if (type === 'belongsTo') {
+          const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
+          const targetPk = meta.primaryKeys[targetTable] ?? 'id'
+          const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${targetPk} = ${parentTable}.${fk}`
+          built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
+          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) } catch {}
+        }
+        else if (type === 'belongsToMany') {
+          const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+          const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+          const pivot = [a, b].sort().join('_')
+          const targetPk = meta.primaryKeys[targetTable] ?? 'id'
+          const subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${b}_id WHERE ${pivot}.${a}_id = ${parentTable}.${pk}`
+          built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
+          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) } catch {}
+        }
+
+        return this as any
       },
       /**
        * Load relationship counts as aggregate columns
@@ -3230,6 +3404,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         console.log(String(built))
         throw new Error('Dump and Die')
       },
+      cache(ttlMs: number = 60000) {
+        cacheTtl = ttlMs
+        useCache = true
+        return this as any
+      },
       async explain() {
         const q = sql`EXPLAIN ${built}`
         return await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
@@ -3251,7 +3430,23 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             addWhereText('WHERE', `${String(col)} IS ${onlyTrashed ? 'NOT ' : ''}NULL`)
           }
         }
-        return await runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
+
+        // Check cache if enabled
+        if (useCache) {
+          const cacheKey = String(built)
+          const cached = queryCache.get(cacheKey)
+          if (cached) return cached
+        }
+
+        const result = await runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
+
+        // Store in cache if enabled
+        if (useCache) {
+          const cacheKey = String(built)
+          queryCache.set(cacheKey, result, cacheTtl)
+        }
+
+        return result
       },
       async executeTakeFirst() {
         const rows = await runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
@@ -3325,6 +3520,30 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.c ?? 0)
+      },
+      async avg(column: string) {
+        const q = sql`SELECT AVG(${sql(column)}) as a FROM (${built}) as sub`
+        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
+        const [row] = rows
+        return Number(row?.a ?? 0)
+      },
+      async sum(column: string) {
+        const q = sql`SELECT SUM(${sql(column)}) as s FROM (${built}) as sub`
+        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
+        const [row] = rows
+        return Number(row?.s ?? 0)
+      },
+      async max(column: string) {
+        const q = sql`SELECT MAX(${sql(column)}) as m FROM (${built}) as sub`
+        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
+        const [row] = rows
+        return row?.m
+      },
+      async min(column: string) {
+        const q = sql`SELECT MIN(${sql(column)}) as m FROM (${built}) as sub`
+        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
+        const [row] = rows
+        return row?.m
       },
       lockForUpdate() {
         built = sql`${built} FOR UPDATE`
@@ -3420,14 +3639,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     id(name: string) {
       if (!/^[A-Z_][\w.]*$/i.test(name))
         throw new Error(`Invalid identifier: ${name}`)
-      return sql(String(name))
+      return _sql(String(name))
     },
     ids(...names: string[]) {
       for (const n of names) {
         if (!/^[A-Z_][\w.]*$/i.test(n))
           throw new Error(`Invalid identifier: ${n}`)
       }
-      return sql(names as any)
+      return _sql(names as any)
     },
     select<TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(
       table: TTable,
@@ -3491,12 +3710,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     updateTable(table) {
       let built = bunSql`UPDATE ${bunSql(String(table))}`
+      let updateData: any = null
+      let whereCondition: any = null
       return {
         set(values) {
+          updateData = values
           built = bunSql`${built} SET ${bunSql(values as any)}`
           return this
         },
         where(expr) {
+          whereCondition = expr
           built = applyWhere(({} as any), built, expr)
           return this
         },
@@ -3517,15 +3740,31 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         toSQL() {
           return makeExecutableQuery(built, computeSqlText(built)) as any
         },
-        execute() {
-          return runWithHooks<number>(built, 'update')
+        async execute() {
+          try {
+            await config.hooks?.beforeUpdate?.({ table: String(table), data: updateData, where: whereCondition })
+          }
+          catch (err) {
+            throw err
+          }
+
+          const result = await runWithHooks<number>(built, 'update')
+
+          try {
+            await config.hooks?.afterUpdate?.({ table: String(table), data: updateData, where: whereCondition, result })
+          }
+          catch {}
+
+          return result
         },
       }
     },
     deleteFrom(table) {
       let built = bunSql`DELETE FROM ${bunSql(String(table))}`
+      let whereCondition: any = null
       return {
         where(expr) {
+          whereCondition = expr
           built = applyWhere(({} as any), built, expr)
           return this
         },
@@ -3546,8 +3785,22 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         toSQL() {
           return makeExecutableQuery(built, computeSqlText(built)) as any
         },
-        execute() {
-          return runWithHooks<number>(built, 'delete')
+        async execute() {
+          try {
+            await config.hooks?.beforeDelete?.({ table: String(table), where: whereCondition })
+          }
+          catch (err) {
+            throw err
+          }
+
+          const result = await runWithHooks<number>(built, 'delete')
+
+          try {
+            await config.hooks?.afterDelete?.({ table: String(table), where: whereCondition, result })
+          }
+          catch {}
+
+          return result
         },
       }
     },
@@ -3831,6 +4084,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     async create(table, values) {
       const pk = meta?.primaryKeys[String(table)] ?? 'id'
 
+      // beforeCreate hook
+      try {
+        await config.hooks?.beforeCreate?.({ table: String(table), data: values })
+      }
+      catch (err) {
+        throw err
+      }
+
       if (config.dialect === 'postgres') {
         // For PostgreSQL, use RETURNING to get the ID, then fetch the full row
         const q = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} RETURNING ${bunSql(String(pk))} as id`
@@ -3851,6 +4112,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           console.error('Inserted values:', values)
           throw new Error(`create() failed to retrieve inserted row for table ${String(table)} with id ${result.id}`)
         }
+
+        // afterCreate hook
+        try {
+          await config.hooks?.afterCreate?.({ table: String(table), data: values, result: row })
+        }
+        catch {}
+
         return row
       }
       else {
@@ -3868,11 +4136,30 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           console.error('Inserted values:', values)
           throw new Error(`create() failed to retrieve inserted row for table ${String(table)} with id ${id}`)
         }
+
+        // afterCreate hook
+        try {
+          await config.hooks?.afterCreate?.({ table: String(table), data: values, result: row })
+        }
+        catch {}
+
         return row
       }
     },
     async createMany(table, rows) {
       await (this as any).insertInto(table).values(rows).execute()
+    },
+    async insertMany(table, rows) {
+      await (this as any).insertInto(table).values(rows).execute()
+    },
+    async updateMany(table, conditions, data) {
+      return await (this as any).updateTable(table).set(data as any).where(conditions as any).execute()
+    },
+    async deleteMany(table, ids) {
+      if (!Array.isArray(ids) || ids.length === 0)
+        return 0
+      const pk = meta?.primaryKeys[String(table)] ?? 'id'
+      return await (this as any).deleteFrom(table).where([pk, 'in', ids] as any).execute()
     },
     async firstOrCreate(table, match, defaults) {
       const existing = await (this as any).selectFrom(table).where(match as any).first()
@@ -3987,4 +4274,32 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
 
   }
+}
+
+/**
+ * # `clearQueryCache()`
+ *
+ * Clears all cached query results.
+ *
+ * @example
+ * ```ts
+ * clearQueryCache()
+ * ```
+ */
+export function clearQueryCache(): void {
+  queryCache.clear()
+}
+
+/**
+ * # `setQueryCacheMaxSize(size)`
+ *
+ * Sets the maximum number of cached queries (default 100).
+ *
+ * @example
+ * ```ts
+ * setQueryCacheMaxSize(500)
+ * ```
+ */
+export function setQueryCacheMaxSize(size: number): void {
+  queryCache.setMaxSize(size)
 }

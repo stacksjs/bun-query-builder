@@ -23,10 +23,10 @@ The migration system automatically generates SQL DDL statements from your model 
 import { generateMigration, executeMigration } from 'bun-query-builder'
 
 // Generate migration from models directory
-const migration = await generateMigration('./models', { 
-  dialect: 'postgres', 
-  apply: true, 
-  full: true 
+const migration = await generateMigration('./models', {
+  dialect: 'postgres',
+  apply: true,
+  full: true
 })
 
 // Execute the migration
@@ -164,7 +164,7 @@ const models = defineModels({
     name: 'Post',
     table: 'posts',
     attributes: {
-      user_id: { 
+      user_id: {
         validation: { rule: {} },
         references: { table: 'users', column: 'id' }
       }
@@ -181,11 +181,11 @@ const models = defineModels({
     name: 'User',
     table: 'users',
     attributes: {
-      email: { 
+      email: {
         validation: { rule: {} },
         unique: true
       },
-      created_at: { 
+      created_at: {
         validation: { rule: {} },
         index: { name: 'created_at_idx' }
       }
@@ -200,11 +200,11 @@ const models = defineModels({
 
 ```ts
 try {
-  const migration = await generateMigration('./models', { 
-    dialect: 'postgres', 
-    apply: true 
+  const migration = await generateMigration('./models', {
+    dialect: 'postgres',
+    apply: true
   })
-  
+
   await executeMigration(migration)
 } catch (err) {
   console.error('Migration failed:', err)
@@ -262,11 +262,11 @@ try {
 ```ts
 // In test setup
 beforeAll(async () => {
-  const result = await generateMigration('./test/models', { 
-    dialect: 'postgres', 
-    full: true 
+  const result = await generateMigration('./test/models', {
+    dialect: 'postgres',
+    full: true
   })
-  
+
   if (result.sqlStatements.length > 0) {
     await executeMigration(result)
   }
@@ -279,7 +279,7 @@ beforeAll(async () => {
 
 ```ts
 function generateMigration(
-  dir: string, 
+  dir: string,
   opts?: MigrateOptions
 ): Promise<GenerateMigrationResult>
 ```

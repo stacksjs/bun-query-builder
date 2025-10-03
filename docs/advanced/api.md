@@ -101,6 +101,7 @@ Key sections: `dialect`, `timestamps`, `pagination`, `aliasing`, `relations`, `t
 ## SelectQueryBuilder
 
 ### Query Construction
+
 - `distinct()` - Remove duplicate rows from results
 - `distinctOn(...columns)` - PostgreSQL-specific distinct on specific columns
 - `select(table, ...columns)` - Select specific columns from a table
@@ -108,6 +109,7 @@ Key sections: `dialect`, `timestamps`, `pagination`, `aliasing`, `relations`, `t
 - `addSelect(...columns)` - Add additional columns to existing selection
 
 ### Filtering and Conditions
+
 - `where(expr)` - Add WHERE conditions using object, tuple, or raw expressions
 - `whereRaw(fragment)` - Add raw WHERE clauses
 - `whereColumn(left, op, right)` - Compare two columns
@@ -127,6 +129,7 @@ Key sections: `dialect`, `timestamps`, `pagination`, `aliasing`, `relations`, `t
 - `orWhere(expr)` - OR condition
 
 ### Ordering and Limiting
+
 - `orderBy(column, dir?)` - Order results by column
 - `orderByDesc(column)` - Order descending
 - `orderByRaw(fragment)` - Raw ORDER BY expressions
@@ -138,6 +141,7 @@ Key sections: `dialect`, `timestamps`, `pagination`, `aliasing`, `relations`, `t
 - `offset(n)` - Skip rows
 
 ### Joins and Relations
+
 - `join(table, onLeft, op, onRight)` - INNER JOIN
 - `joinSub(sub, alias, onLeft, op, onRight)` - JOIN with subquery
 - `innerJoin(...)` - Explicit INNER JOIN
@@ -153,16 +157,19 @@ Key sections: `dialect`, `timestamps`, `pagination`, `aliasing`, `relations`, `t
 - `orWhereHas(relation, where?)` - OR filter by relations
 
 ### Grouping and Aggregation
+
 - `groupBy(...columns)` - GROUP BY columns
 - `groupByRaw(fragment)` - Raw GROUP BY expressions
 - `having(expr)` - HAVING clauses
 - `havingRaw(fragment)` - Raw HAVING expressions
 
 ### Set Operations
+
 - `union(sub)` - UNION with another query
 - `unionAll(sub)` - UNION ALL with duplicates
 
 ### Result Retrieval
+
 - `get()` - Alias for execute()
 - `first()` - Get first result or undefined
 - `firstOrFail()` - Get first result or throw error
@@ -172,17 +179,20 @@ Key sections: `dialect`, `timestamps`, `pagination`, `aliasing`, `relations`, `t
 - `doesntExist()` - Check if no results exist
 
 ### Pagination
+
 - `forPage(page, perPage)` - Simple LIMIT/OFFSET pagination
 - `paginate(perPage, page?)` - Full pagination with counts: `{ data, meta: { total, lastPage, ... } }`
 - `simplePaginate(perPage, page?)` - Lightweight pagination: `{ data, meta: { hasMore, ... } }`
 - `cursorPaginate(perPage, cursor?, column?, dir?)` - Cursor-based pagination: `{ data, meta: { nextCursor, ... } }`
 
 ### Bulk Processing
+
 - `chunk(size, handler)` - Process results in chunks using offset pagination
 - `chunkById(size, column?, handler?)` - Process using cursor pagination
 - `eachById(size, column?, handler?)` - Process individual records with chunking
 
 ### Flow Control and Debugging
+
 - `when(condition, then, otherwise?)` - Conditional query building
 - `tap(fn)` - Side effects without changing query
 - `dump()` - Print SQL and continue
@@ -192,6 +202,7 @@ Key sections: `dialect`, `timestamps`, `pagination`, `aliasing`, `relations`, `t
 - `abort(signal)` - Attach AbortSignal for cancellation
 
 ### Execution and Output
+
 - `toSQL()` - Convert to Bun SQL query object
 - `toText()` - Get SQL string (requires debug.captureText)
 - `execute()` - Execute query and return results

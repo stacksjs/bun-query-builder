@@ -69,6 +69,7 @@ async function transferProjectOwnership(projectId: number, fromUserId: number, t
 ```
 
 **Key Benefits:**
+
 - All operations within the callback run on the same transaction `tx`
 - Automatic rollback if any operation throws an error
 - Type-safe operations with full query builder API

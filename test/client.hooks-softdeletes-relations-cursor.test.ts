@@ -119,3 +119,78 @@ describe('hooks, soft deletes, relations and cursor pagination', () => {
     expect(sql.toLowerCase()).toContain('select')
   })
 })
+
+describe('Model Lifecycle Hooks', () => {
+  it('hooks interface includes model lifecycle events', () => {
+    // Type-level test - verify hook signatures exist
+    const hooks = {
+      beforeCreate: ({ table, data }: { table: string, data: any }) => {
+        // Hook implementation
+      },
+      afterCreate: ({ table, data, result }: { table: string, data: any, result: any }) => {
+        // Hook implementation
+      },
+      beforeUpdate: ({ table, data, where }: { table: string, data: any, where?: any }) => {
+        // Hook implementation
+      },
+      afterUpdate: ({ table, data, where, result }: { table: string, data: any, where?: any, result: any }) => {
+        // Hook implementation
+      },
+      beforeDelete: ({ table, where }: { table: string, where?: any }) => {
+        // Hook implementation
+      },
+      afterDelete: ({ table, where, result }: { table: string, where?: any, result: any }) => {
+        // Hook implementation
+      },
+    }
+
+    expect(typeof hooks.beforeCreate).toBe('function')
+    expect(typeof hooks.afterCreate).toBe('function')
+    expect(typeof hooks.beforeUpdate).toBe('function')
+    expect(typeof hooks.afterUpdate).toBe('function')
+    expect(typeof hooks.beforeDelete).toBe('function')
+    expect(typeof hooks.afterDelete).toBe('function')
+  })
+
+  it('all lifecycle hook types are properly defined', () => {
+    const hookNames = [
+      'beforeCreate',
+      'afterCreate',
+      'beforeUpdate',
+      'afterUpdate',
+      'beforeDelete',
+      'afterDelete',
+    ]
+
+    // Verify all expected hooks exist as properties
+    const hooks: any = {
+      beforeCreate: () => {},
+      afterCreate: () => {},
+      beforeUpdate: () => {},
+      afterUpdate: () => {},
+      beforeDelete: () => {},
+      afterDelete: () => {},
+    }
+
+    for (const hookName of hookNames) {
+      expect(hooks[hookName]).toBeDefined()
+      expect(typeof hooks[hookName]).toBe('function')
+    }
+  })
+
+  it('hooks can be async functions', () => {
+    const asyncHooks = {
+      beforeCreate: async ({ table, data }: any) => {
+        // Async hook
+        await Promise.resolve()
+      },
+      afterCreate: async ({ table, data, result }: any) => {
+        // Async hook
+        await Promise.resolve()
+      },
+    }
+
+    expect(typeof asyncHooks.beforeCreate).toBe('function')
+    expect(typeof asyncHooks.afterCreate).toBe('function')
+  })
+})

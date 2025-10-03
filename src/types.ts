@@ -208,6 +208,18 @@ export interface QueryHooks {
   onQueryError?: (event: { sql: string, params?: any[], error: any, durationMs: number, kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
   /** Optional tracer integration. Return an object with end() to finish a span. */
   startSpan?: (event: { sql: string, params?: any[], kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => { end: (error?: any) => void }
+  /** Called before creating a record. Can modify data or throw to prevent creation. */
+  beforeCreate?: (event: { table: string, data: any }) => void | Promise<void>
+  /** Called after creating a record. */
+  afterCreate?: (event: { table: string, data: any, result: any }) => void | Promise<void>
+  /** Called before updating a record. Can modify data or throw to prevent update. */
+  beforeUpdate?: (event: { table: string, data: any, where?: any }) => void | Promise<void>
+  /** Called after updating a record. */
+  afterUpdate?: (event: { table: string, data: any, where?: any, result: any }) => void | Promise<void>
+  /** Called before deleting a record. Can throw to prevent deletion. */
+  beforeDelete?: (event: { table: string, where?: any }) => void | Promise<void>
+  /** Called after deleting a record. */
+  afterDelete?: (event: { table: string, where?: any, result: any }) => void | Promise<void>
 }
 
 /**
