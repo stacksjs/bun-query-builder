@@ -1,4 +1,4 @@
-import { v } from '@/examples/validation'
+import { v } from '@stacksjs/ts-validation'
 import { defineModel } from '@/index'
 
 const model: {

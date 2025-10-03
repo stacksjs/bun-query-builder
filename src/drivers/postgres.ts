@@ -118,7 +118,8 @@ export class PostgresDriver implements DialectDriver {
   modifyColumn(tableName: string, column: ColumnPlan): string {
     const typeSql = this.getColumnType(column)
     // PostgreSQL requires separate ALTER statements for type, nullability, and default
-    return `ALTER TABLE ${this.quoteIdentifier(tableName)} ALTER COLUMN ${this.quoteIdentifier(column.name)} TYPE ${typeSql};`
+    // Add USING clause to handle type conversions that aren't automatic
+    return `ALTER TABLE ${this.quoteIdentifier(tableName)} ALTER COLUMN ${this.quoteIdentifier(column.name)} TYPE ${typeSql} USING ${this.quoteIdentifier(column.name)}::${typeSql};`
   }
 
   dropTable(tableName: string): string {

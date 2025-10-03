@@ -34,8 +34,8 @@ async function basicSelectQuery() {
 async function freshMigration() {
   const modelsPath = join(import.meta.dir, 'models')
   await resetDatabase(modelsPath, { dialect: 'postgres' })
-  await generateMigration(modelsPath, { dialect: 'postgres', full: true })
-  await executeMigration()
+  // await generateMigration(modelsPath, { dialect: 'postgres', full: true })
+  // await executeMigration()
 }
 
 /**
@@ -82,5 +82,5 @@ export {
 }
 
 // Run fresh migration first to set up database, then switch to simpleMigration for incremental changes
-// freshMigration()
-simpleMigration()
+freshMigration()
+// simpleMigration()
