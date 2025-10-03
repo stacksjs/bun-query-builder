@@ -6,7 +6,7 @@ import process from 'node:process'
 import { config } from '@/config'
 import { bunSql } from '@/db'
 import { getDialectDriver } from '@/drivers'
-import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '@/index'
+import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../index'
 
 /**
  * Find workspace root by looking for package.json

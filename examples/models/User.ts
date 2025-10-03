@@ -1,5 +1,5 @@
 import { v } from '@stacksjs/ts-validation'
-import { defineModel } from '@/index'
+import { defineModel } from '../../src/index'
 
 const model = defineModel({
   name: 'User',

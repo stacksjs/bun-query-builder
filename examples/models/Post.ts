@@ -1,5 +1,5 @@
-import { v } from '@/examples/validation'
-import { defineModel } from '@/index'
+import { v } from '../../examples/validation'
+import { defineModel } from '../../src/index'
 
 const model: {
   readonly name: 'Post'
