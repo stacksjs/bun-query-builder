@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "skipDefaultLibCheck": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/**/*",
+    "examples/**/*",
+    "test/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/node_modules",
+    "node_modules/@stacksjs/ts-validation",
+    "**/@stacksjs/ts-validation/**"
+  ]
+}

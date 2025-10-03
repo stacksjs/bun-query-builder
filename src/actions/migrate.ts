@@ -168,7 +168,7 @@ export async function executeMigration(): Promise<boolean> {
     // Separate migrations into permanent (CREATE) and transient (ALTER)
     const permanentMigrations: string[] = []
     const transientMigrations: string[] = []
-    
+
     for (const file of scriptFiles) {
       // ALTER TABLE migrations are transient (not tracked)
       if (file.includes('alter-') && file.includes('-table')) {
@@ -213,7 +213,7 @@ export async function executeMigration(): Promise<boolean> {
       try {
         await qb.file(filePath)
         console.log(`-- ✓ Migration ${file} executed (not recorded)`)
-        
+
         // Delete the transient migration file after successful execution
         unlinkSync(filePath)
         console.log(`-- 🗑️  Deleted transient migration: ${file}`)

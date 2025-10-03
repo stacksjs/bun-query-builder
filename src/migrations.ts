@@ -1,6 +1,6 @@
 import type { ModelRecord } from './schema'
 import type { SupportedDialect } from './types'
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { getDialectDriver } from './drivers'
@@ -170,7 +170,7 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
   // Check the name property which often indicates the validation type
   if (ruleObj.name) {
     const name = String(ruleObj.name).toLowerCase()
-    
+
     switch (name) {
       case 'string':
       case 'text':

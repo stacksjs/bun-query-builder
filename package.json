@@ -67,7 +67,7 @@
     "dev:docs": "bun --bun vitepress dev docs",
     "build:docs": "bun --bun vitepress build docs",
     "preview:docs": "bun --bun vitepress preview docs",
-    "typecheck": "bun --bun tsc --noEmit"
+    "typecheck": "bun --bun tsc --project tsconfig.typecheck.json"
   },
   "dependencies": {
     "@stacksjs/launchpad": "^0.6.4",
