@@ -25,6 +25,9 @@ export const defaultConfig: QueryBuilderConfig = {
   },
   relations: {
     foreignKeyFormat: 'singularParent_id',
+    maxDepth: 10,
+    maxEagerLoad: 50,
+    detectCycles: true,
   },
   transactionDefaults: {
     retries: 2,
@@ -59,5 +62,6 @@ export const defaultConfig: QueryBuilderConfig = {
 // eslint-disable-next-line antfu/no-top-level-await
 export const config: QueryBuilderConfig = await loadConfig({
   name: 'query-builder',
+  alias: 'qb',
   defaultConfig,
 })

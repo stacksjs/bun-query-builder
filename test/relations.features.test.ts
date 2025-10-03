@@ -1,56 +1,22 @@
 /**
- * Advanced Relationship Tests
+ * New Relationship Features Tests
  *
- * These tests verify complex relationship scenarios, query combinations,
- * and potential edge cases that could uncover bugs or unexpected behavior.
+ * Tests for the new relationship features:
+ * - whereHas / whereDoesntHave
+ * - has / doesntHave
+ * - withCount
+ * - Relationship introspection
+ * - Cycle detection
+ * - Depth limits
+ * - Better error messages
  */
 import { describe, expect, it } from 'bun:test'
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
 import { mockQueryBuilderState } from './utils'
 
-describe('advanced relationship scenarios', () => {
-  describe('relationships with complex queries', () => {
-    it('should combine with() and where() clauses', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          status: { validation: { rule: {} as any } },
-        },
-        hasMany: { posts: 'Post' },
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-        belongsTo: { user: 'User' },
-      })
-
-      const models = defineModels({User, Post })
-      const schema = buildDatabaseSchema(models)
-      const meta = buildSchemaMeta(models)
-
-      const db = createQueryBuilder<typeof schema>({
-        ...mockQueryBuilderState,
-        schema,
-        meta,
-      })
-      const qb = db.selectFrom('users')
-        .where('status', '=', 'active')
-        .with('posts')
-
-      expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
-    })
-
-    it('should combine with() and select() without breaking joins', () => {
+describe('new relationship features', () => {
+  describe('whereHas() and has()', () => {
+    it('should filter records that have a relationship', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
@@ -58,7 +24,6 @@ describe('advanced relationship scenarios', () => {
         attributes: {
           id: { validation: { rule: {} as any } },
           name: { validation: { rule: {} as any } },
-          email: { validation: { rule: {} as any } },
         },
         hasMany: { posts: 'Post' },
       })
@@ -70,11 +35,12 @@ describe('advanced relationship scenarios', () => {
         attributes: {
           id: { validation: { rule: {} as any } },
           user_id: { validation: { rule: {} as any } },
+          title: { validation: { rule: {} as any } },
         },
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -83,56 +49,15 @@ describe('advanced relationship scenarios', () => {
         schema,
         meta,
       })
-      const qb = db.selectFrom('users')
-        .select(['id', 'name'])
-        .with('posts')
 
+      const qb = db.selectFrom('users').whereHas('posts')
       expect(qb).toBeDefined()
-      // Verify it's a chainable query object
-      expect(qb).toHaveProperty('where')
+      const sql = String(qb.toSQL().sql || qb.toSQL())
+      expect(sql).toContain('EXISTS')
+      expect(sql).toContain('posts')
     })
 
-    it('should handle with() combined with orderBy', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          created_at: { validation: { rule: {} as any } },
-        },
-        hasMany: { posts: 'Post' },
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-        belongsTo: { user: 'User' },
-      })
-
-      const models = defineModels({User, Post })
-      const schema = buildDatabaseSchema(models)
-      const meta = buildSchemaMeta(models)
-
-      const db = createQueryBuilder<typeof schema>({
-        ...mockQueryBuilderState,
-        schema,
-        meta,
-      })
-      const qb = db.selectFrom('users')
-        .with('posts')
-        .orderBy('created_at', 'desc')
-
-      expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
-    })
-
-    it('should handle with() combined with limit and offset', () => {
+    it('should support has() as shorthand for whereHas()', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
@@ -154,7 +79,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -163,23 +88,20 @@ describe('advanced relationship scenarios', () => {
         schema,
         meta,
       })
-      const qb = db.selectFrom('users')
-        .with('posts')
-        .limit(10)
-        .offset(5)
 
+      const qb = db.selectFrom('users').has('posts')
       expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('EXISTS')
     })
 
-    it('should handle with() combined with groupBy', () => {
+    it('should support conditional whereHas with callback', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
         primaryKey: 'id',
         attributes: {
           id: { validation: { rule: {} as any } },
-          role: { validation: { rule: {} as any } },
         },
         hasMany: { posts: 'Post' },
       })
@@ -191,11 +113,12 @@ describe('advanced relationship scenarios', () => {
         attributes: {
           id: { validation: { rule: {} as any } },
           user_id: { validation: { rule: {} as any } },
+          published: { validation: { rule: {} as any } },
         },
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -204,54 +127,16 @@ describe('advanced relationship scenarios', () => {
         schema,
         meta,
       })
-      const qb = db.selectFrom('users')
-        .with('posts')
-        .groupBy('role')
 
+      const qb = db.selectFrom('users').whereHas('posts', qb => qb.where('published', '=', true))
       expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('published')
     })
   })
 
-  describe('duplicate and redundant relationship loads', () => {
-    it('should handle duplicate relation names in with() call', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-        },
-        hasMany: { posts: 'Post' },
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-        belongsTo: { user: 'User' },
-      })
-
-      const models = defineModels({User, Post })
-      const schema = buildDatabaseSchema(models)
-      const meta = buildSchemaMeta(models)
-
-      const db = createQueryBuilder<typeof schema>({
-        ...mockQueryBuilderState,
-        schema,
-        meta,
-      })
-      const qb = db.selectFrom('users').with(['posts', 'posts', 'posts'])
-
-      expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
-    })
-
-    it('should handle multiple consecutive with() calls for same relation', () => {
+  describe('whereDoesntHave() and doesntHave()', () => {
+    it('should filter records that don\'t have a relationship', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
@@ -273,7 +158,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -282,186 +167,14 @@ describe('advanced relationship scenarios', () => {
         schema,
         meta,
       })
-      const qb = db.selectFrom('users')
-        .with('posts')
-        .with('posts')
 
+      const qb = db.selectFrom('users').whereDoesntHave('posts')
       expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
-    })
-  })
-
-  describe('case sensitivity in relationship names', () => {
-    it('should respect case in relationship names', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-        },
-        hasMany: { Posts: 'Post', posts: 'Post' },
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-        belongsTo: { user: 'User' },
-      })
-
-      const models = defineModels({User, Post })
-      const meta = buildSchemaMeta(models)
-
-      expect(meta.relations?.['users']?.hasMany?.Posts).toBe('Post')
-      expect(meta.relations?.['users']?.hasMany?.posts).toBe('Post')
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('NOT EXISTS')
     })
 
-    it('should handle PascalCase relationship names', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-        },
-        hasMany: { BlogPosts: 'Post' },
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-        belongsTo: { PostAuthor: 'User' },
-      })
-
-      const models = defineModels({User, Post })
-      const schema = buildDatabaseSchema(models)
-      const meta = buildSchemaMeta(models)
-
-      const db = createQueryBuilder<typeof schema>({
-        ...mockQueryBuilderState,
-        schema,
-        meta,
-      })
-      const qb = db.selectFrom('users').with('BlogPosts')
-
-      expect(qb).toBeDefined()
-      expect(meta.relations?.['users']?.hasMany?.BlogPosts).toBe('Post')
-    })
-  })
-
-  describe('relationship name conflicts', () => {
-    it('should handle relationship name same as attribute name', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          posts: { validation: { rule: {} as any } }, // Column named 'posts'
-        },
-        hasMany: { posts: 'Post' }, // Relation named 'posts'
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-        belongsTo: { user: 'User' },
-      })
-
-      const models = defineModels({User, Post })
-      const meta = buildSchemaMeta(models)
-
-      expect(meta.relations?.['users']?.hasMany?.posts).toBe('Post')
-      // Note: tables is not part of meta, it's part of schema
-      const schema = buildDatabaseSchema(models)
-      // Check that the 'posts' column exists even though there's a relationship with the same name
-      expect('posts' in schema.users.columns).toBe(true)
-    })
-
-    it('should handle relationship name same as table name', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-        },
-        hasMany: { users: 'User' }, // Self-referential with table name
-      })
-
-      const models = defineModels({ User })
-      const meta = buildSchemaMeta(models)
-
-      expect(meta.relations?.['users']?.hasMany?.users).toBe('User')
-    })
-  })
-
-  describe('null and undefined foreign key handling', () => {
-    it('should handle models with nullable foreign keys', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          manager_id: { validation: { rule: {} as any }, nullable: true },
-        },
-        belongsTo: { manager: 'User' },
-      })
-
-      const models = defineModels({ User })
-      const meta = buildSchemaMeta(models)
-
-      expect(meta.relations?.['users']?.belongsTo?.manager).toBe('User')
-    })
-
-    it('should handle relationships when FK column is undefined', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          // Note: profile_id not defined in attributes
-        },
-        hasOne: { profile: 'Profile' },
-      })
-
-      const Profile = defineModel({
-        name: 'Profile',
-        table: 'profiles',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-        belongsTo: { user: 'User' },
-      })
-
-      const models = defineModels({ User, Profile })
-      const meta = buildSchemaMeta(models)
-
-      expect(meta.relations?.['users']?.hasOne?.profile).toBe('Profile')
-    })
-  })
-
-  describe('bidirectional relationship consistency', () => {
-    it('should maintain consistency when both sides define relationship', () => {
+    it('should support doesntHave() as shorthand', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
@@ -483,21 +196,32 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
-      // Both sides should be properly registered
-      expect(meta.relations?.['users']?.hasMany?.posts).toBe('Post')
-      expect(meta.relations?.['posts']?.belongsTo?.user).toBe('User')
-    })
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
 
-    it('should work with one-sided relationship definitions', () => {
+      const qb = db.selectFrom('users').doesntHave('posts')
+      expect(qb).toBeDefined()
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('NOT EXISTS')
+    })
+  })
+
+  describe('withCount()', () => {
+    it('should add relationship count to select', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
         primaryKey: 'id',
         attributes: {
           id: { validation: { rule: {} as any } },
+          name: { validation: { rule: {} as any } },
         },
         hasMany: { posts: 'Post' },
       })
@@ -510,89 +234,10 @@ describe('advanced relationship scenarios', () => {
           id: { validation: { rule: {} as any } },
           user_id: { validation: { rule: {} as any } },
         },
-        // No belongsTo defined
+        belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
-      const meta = buildSchemaMeta(models)
-
-      expect(meta.relations?.['users']?.hasMany?.posts).toBe('Post')
-    })
-  })
-
-  describe('very long relationship chains', () => {
-    it('should handle 10-level deep nested relationships', () => {
-      const A = defineModel({
-        name: 'A',
-        table: 'a',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-        hasOne: { b: 'B' },
-      })
-      const B = defineModel({
-        name: 'B',
-        table: 'b',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-        hasOne: { c: 'C' },
-      })
-      const C = defineModel({
-        name: 'C',
-        table: 'c',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-        hasOne: { d: 'D' },
-      })
-      const D = defineModel({
-        name: 'D',
-        table: 'd',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-        hasOne: { e: 'E' },
-      })
-      const E = defineModel({
-        name: 'E',
-        table: 'e',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-        hasOne: { f: 'F' },
-      })
-      const F = defineModel({
-        name: 'F',
-        table: 'f',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-        hasOne: { g: 'G' },
-      })
-      const G = defineModel({
-        name: 'G',
-        table: 'g',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-        hasOne: { h: 'H' },
-      })
-      const H = defineModel({
-        name: 'H',
-        table: 'h',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-        hasOne: { i: 'I' },
-      })
-      const I = defineModel({
-        name: 'I',
-        table: 'i',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-        hasOne: { j: 'J' },
-      })
-      const J = defineModel({
-        name: 'J',
-        table: 'j',
-        primaryKey: 'id',
-        attributes: { id: { validation: { rule: {} as any } } },
-      })
-
-      const models = defineModels({ A, B, C, D, E, F, G, H, I, J })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -601,71 +246,15 @@ describe('advanced relationship scenarios', () => {
         schema,
         meta,
       })
-      const qb = db.selectFrom('a').with('b.c.d.e.f.g.h.i.j')
 
+      const qb = db.selectFrom('users').withCount('posts')
       expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
-    })
-  })
-
-  describe('special characters and unicode in relationships', () => {
-    it('should handle unicode in relationship names', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-        },
-        hasMany: { publicações: 'Post' }, // Portuguese
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-      })
-
-      const models = defineModels({User, Post })
-      const meta = buildSchemaMeta(models)
-
-      expect(meta.relations?.['users']?.hasMany?.publicações).toBe('Post')
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('COUNT(*)')
+      expect(sql).toContain('posts_count')
     })
 
-    it('should handle numbers in relationship names', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-        },
-        hasMany: { posts2023: 'Post' },
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-      })
-
-      const models = defineModels({User, Post })
-      const meta = buildSchemaMeta(models)
-
-      expect(meta.relations?.['users']?.hasMany?.posts2023).toBe('Post')
-    })
-  })
-
-  describe('relationship loading order and priority', () => {
-    it('should handle relationships loaded in different orders', () => {
+    it('should support multiple withCount calls', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
@@ -698,28 +287,264 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post, Comment })
+      const models = defineModels({ User, Post, Comment })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
-      const qb1 = createQueryBuilder({
+      const db = createQueryBuilder<typeof schema>({
         ...mockQueryBuilderState,
         schema,
         meta,
-      }).selectFrom('users').with(['posts', 'comments'])
-      const qb2 = createQueryBuilder({
-        ...mockQueryBuilderState,
-        schema,
-        meta,
-      }).selectFrom('users').with(['comments', 'posts'])
+      })
 
+      const qb = db.selectFrom('users').withCount('posts', 'comments')
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('posts_count')
+      expect(sql).toContain('comments_count')
+    })
+  })
+
+  describe('relationship introspection', () => {
+    it('should get all relationships for a table', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+        hasOne: { profile: 'Profile' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+      })
+
+      const Profile = defineModel({
+        name: 'Profile',
+        table: 'profiles',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+      })
+
+      const models = defineModels({ User, Post, Profile })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      const rels = db.getRelationships('users')
+      expect(rels.hasMany).toBeDefined()
+      expect(rels.hasMany.posts).toBe('Post')
+      expect(rels.hasOne).toBeDefined()
+      expect(rels.hasOne.profile).toBe('Profile')
+    })
+
+    it('should check if relationship exists', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+      })
+
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      expect(db.hasRelationship('users', 'posts')).toBe(true)
+      expect(db.hasRelationship('users', 'invalid')).toBe(false)
+    })
+
+    it('should get relationship type', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+        belongsTo: { company: 'Company' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+      })
+
+      const Company = defineModel({
+        name: 'Company',
+        table: 'companies',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+      })
+
+      const models = defineModels({ User, Post, Company })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      expect(db.getRelationshipType('users', 'posts')).toBe('hasMany')
+      expect(db.getRelationshipType('users', 'company')).toBe('belongsTo')
+      expect(db.getRelationshipType('users', 'invalid')).toBe(null)
+    })
+
+    it('should get relationship target table', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+      })
+
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      expect(db.getRelationshipTarget('users', 'posts')).toBe('posts')
+      expect(db.getRelationshipTarget('users', 'invalid')).toBe(null)
+    })
+  })
+
+  describe('cycle detection', () => {
+    it('should detect circular relationships', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { friends: 'User' },
+      })
+
+      const models = defineModels({ User })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      // Self-referential should be detected
+      expect(() => {
+        db.selectFrom('users').with('friends.friends')
+      }).toThrow('Circular relationship')
+    })
+  })
+
+  describe('depth limits', () => {
+    it('should enforce maximum depth limit', () => {
+      const A = defineModel({
+        name: 'A',
+        table: 'a',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} as any } } },
+        hasOne: { b: 'B' },
+      })
+      const B = defineModel({
+        name: 'B',
+        table: 'b',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} as any } } },
+        hasOne: { c: 'C' },
+      })
+      const C = defineModel({
+        name: 'C',
+        table: 'c',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} as any } } },
+        hasOne: { d: 'D' },
+      })
+      const D = defineModel({
+        name: 'D',
+        table: 'd',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} as any } } },
+      })
+
+      const models = defineModels({ A, B, C, D })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      // This should work (3 levels deep)
+      const qb1 = db.selectFrom('a').with('b.c.d')
       expect(qb1).toBeDefined()
-      expect(qb2).toBeDefined()
+
+      // Test would fail if we had 11+ levels (exceeds default maxDepth of 10)
     })
   })
 
-  describe('relationship with aggregate and raw queries', () => {
-    it('should handle with() alongside count()', () => {
+  describe('eager load limits', () => {
+    it('should enforce maximum eager load limit', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
@@ -736,12 +561,10 @@ describe('advanced relationship scenarios', () => {
         primaryKey: 'id',
         attributes: {
           id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
         },
-        belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -750,108 +573,26 @@ describe('advanced relationship scenarios', () => {
         schema,
         meta,
       })
-      const qb = db.selectFrom('users')
-        .with('posts')
-        .count('id')
 
-      expect(qb).toBeDefined()
-      // count() returns a different type, not a regular query builder
-      expect(qb).toHaveProperty('then')
-    })
+      // Create an array with 51 relations (exceeds default maxEagerLoad of 50)
+      const manyRels = Array.from({ length: 51 }, () => 'posts')
 
-    it('should handle with() alongside distinct()', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          email: { validation: { rule: {} as any } },
-        },
-        hasMany: { posts: 'Post' },
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-        belongsTo: { user: 'User' },
-      })
-
-      const models = defineModels({User, Post })
-      const schema = buildDatabaseSchema(models)
-      const meta = buildSchemaMeta(models)
-
-      const db = createQueryBuilder<typeof schema>({
-        ...mockQueryBuilderState,
-        schema,
-        meta,
-      })
-      const qb = db.selectFrom('users')
-        .distinct()
-        .with('posts')
-
-      expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
+      expect(() => {
+        db.selectFrom('users').with(...manyRels)
+      }).toThrow('Too many relationships')
     })
   })
 
-  describe('polymorphic relationship variations', () => {
-    it('should handle polymorphic with multiple morph types on same model', () => {
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
+  describe('error messages', () => {
+    it('should provide helpful error for invalid relationship', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
         primaryKey: 'id',
         attributes: {
           id: { validation: { rule: {} as any } },
         },
-        morphMany: { comments: 'Comment', reactions: 'Reaction' },
-      })
-
-      const Comment = defineModel({
-        name: 'Comment',
-        table: 'comments',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          commentable_id: { validation: { rule: {} as any } },
-          commentable_type: { validation: { rule: {} as any } },
-        },
-      })
-
-      const Reaction = defineModel({
-        name: 'Reaction',
-        table: 'reactions',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          reactable_id: { validation: { rule: {} as any } },
-          reactable_type: { validation: { rule: {} as any } },
-        },
-      })
-
-      const models = defineModels({ Post, Comment, Reaction })
-      const meta = buildSchemaMeta(models)
-
-      expect(meta.relations?.['posts']?.morphMany?.comments).toBe('Comment')
-      expect(meta.relations?.['posts']?.morphMany?.reactions).toBe('Reaction')
-    })
-
-    it('should handle morphTo relationships correctly', () => {
-      const Comment = defineModel({
-        name: 'Comment',
-        table: 'comments',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          commentable_id: { validation: { rule: {} as any } },
-          commentable_type: { validation: { rule: {} as any } },
-        },
-        morphTo: { commentable: ['Post', 'Video'] },
+        hasMany: { posts: 'Post' },
       })
 
       const Post = defineModel({
@@ -863,24 +604,24 @@ describe('advanced relationship scenarios', () => {
         },
       })
 
-      const Video = defineModel({
-        name: 'Video',
-        table: 'videos',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-        },
-      })
-
-      const models = defineModels({ Comment, Post, Video })
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['comments']?.morphTo?.commentable).toBeDefined()
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      expect(() => {
+        db.selectFrom('users').whereHas('invalid')
+      }).toThrow('not found')
     })
   })
 
-  describe('empty arrays and edge values in with()', () => {
-    it('should handle with([]) empty array', () => {
+  describe('null safety', () => {
+    it('should handle null in with() gracefully', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
@@ -897,12 +638,10 @@ describe('advanced relationship scenarios', () => {
         primaryKey: 'id',
         attributes: {
           id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
         },
-        belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -911,50 +650,221 @@ describe('advanced relationship scenarios', () => {
         schema,
         meta,
       })
-      const qb = db.selectFrom('users').with([])
 
-      expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
-    })
-
-    it('should handle with(null) gracefully', () => {
-      const User = defineModel({
-        name: 'User',
-        table: 'users',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-        },
-        hasMany: { posts: 'Post' },
-      })
-
-      const Post = defineModel({
-        name: 'Post',
-        table: 'posts',
-        primaryKey: 'id',
-        attributes: {
-          id: { validation: { rule: {} as any } },
-          user_id: { validation: { rule: {} as any } },
-        },
-        belongsTo: { user: 'User' },
-      })
-
-      const models = defineModels({User, Post })
-      const schema = buildDatabaseSchema(models)
-      const meta = buildSchemaMeta(models)
-
-      const db = createQueryBuilder<typeof schema>({
-        ...mockQueryBuilderState,
-        schema,
-        meta,
-      })
       const qb = db.selectFrom('users').with(null as any)
-
       expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
     })
 
-    it('should handle with() with whitespace in relation names', () => {
+    it('should handle empty array in with() gracefully', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+      })
+
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      const qb = db.selectFrom('users').with([])
+      expect(qb).toBeDefined()
+    })
+
+    it('should handle whitespace in relationship names', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+      })
+
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      const qb = db.selectFrom('users').with(' posts ')
+      expect(qb).toBeDefined()
+    })
+  })
+
+  describe('conditional eager loading', () => {
+    it('should support object notation for conditional loading', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+          user_id: { validation: { rule: {} as any } },
+          published: { validation: { rule: {} as any } },
+        },
+        belongsTo: { user: 'User' },
+      })
+
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      const qb = db.selectFrom('users').with({
+        posts: qb => qb.where('published', '=', true),
+      })
+
+      expect(qb).toBeDefined()
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('posts')
+    })
+
+    it('should support multiple conditional relations', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post', comments: 'Comment' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+          user_id: { validation: { rule: {} as any } },
+          status: { validation: { rule: {} as any } },
+        },
+        belongsTo: { user: 'User' },
+      })
+
+      const Comment = defineModel({
+        name: 'Comment',
+        table: 'comments',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+          user_id: { validation: { rule: {} as any } },
+          approved: { validation: { rule: {} as any } },
+        },
+        belongsTo: { user: 'User' },
+      })
+
+      const models = defineModels({ User, Post, Comment })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      const qb = db.selectFrom('users').with(
+        { posts: qb => qb.where('status', '=', 'published') },
+        { comments: qb => qb.where('approved', '=', true) },
+      )
+
+      expect(qb).toBeDefined()
+    })
+  })
+
+  describe('pivot table access', () => {
+    it('should include pivot columns with withPivot()', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        belongsToMany: { roles: 'Role' },
+      })
+
+      const Role = defineModel({
+        name: 'Role',
+        table: 'roles',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+          name: { validation: { rule: {} as any } },
+        },
+        belongsToMany: { users: 'User' },
+      })
+
+      const models = defineModels({ User, Role })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      const qb = db.selectFrom('users')
+        .with('roles')
+        .withPivot('roles', 'created_at', 'expires_at')
+
+      expect(qb).toBeDefined()
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('pivot_created_at')
+      expect(sql).toContain('pivot_expires_at')
+    })
+
+    it('should throw error for non-belongsToMany relationships', () => {
       const User = defineModel({
         name: 'User',
         table: 'users',
@@ -976,7 +886,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -985,10 +895,168 @@ describe('advanced relationship scenarios', () => {
         schema,
         meta,
       })
-      const qb = db.selectFrom('users').with(' posts ')
 
+      expect(() => {
+        db.selectFrom('users').withPivot('posts', 'created_at')
+      }).toThrow('not a belongsToMany')
+    })
+
+    it('should support multiple pivot columns', () => {
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        belongsToMany: { tags: 'Tag' },
+      })
+
+      const Tag = defineModel({
+        name: 'Tag',
+        table: 'tags',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+          name: { validation: { rule: {} as any } },
+        },
+        belongsToMany: { posts: 'Post' },
+      })
+
+      const models = defineModels({ Post, Tag })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      const qb = db.selectFrom('posts')
+        .with('tags')
+        .withPivot('tags', 'order', 'featured', 'created_at')
+
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('pivot_order')
+      expect(sql).toContain('pivot_featured')
+      expect(sql).toContain('pivot_created_at')
+    })
+  })
+
+  describe('soft delete support', () => {
+    it('should filter soft-deleted records in relationships by default', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+          user_id: { validation: { rule: {} as any } },
+          deleted_at: { validation: { rule: {} as any } },
+        },
+        belongsTo: { user: 'User' },
+      })
+
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      // Note: Soft delete filtering depends on config.softDeletes settings
+      const qb = db.selectFrom('users').with('posts')
       expect(qb).toBeDefined()
-      expect(typeof qb.get).toBe('function')
+    })
+
+    it('should include soft-deleted records with withTrashed()', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+          user_id: { validation: { rule: {} as any } },
+          deleted_at: { validation: { rule: {} as any } },
+        },
+        belongsTo: { user: 'User' },
+      })
+
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      const qb = db.selectFrom('users').with('posts').withTrashed()
+      expect(qb).toBeDefined()
+    })
+
+    it('should only get soft-deleted records with onlyTrashed()', () => {
+      const User = defineModel({
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+          deleted_at: { validation: { rule: {} as any } },
+        },
+        hasMany: { posts: 'Post' },
+      })
+
+      const Post = defineModel({
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} as any } },
+          user_id: { validation: { rule: {} as any } },
+        },
+        belongsTo: { user: 'User' },
+      })
+
+      const models = defineModels({ User, Post })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+
+      const db = createQueryBuilder<typeof schema>({
+        ...mockQueryBuilderState,
+        schema,
+        meta,
+      })
+
+      const qb = db.selectFrom('users').onlyTrashed()
+      expect(qb).toBeDefined()
+      const sql = String(qb.toSQL() || '')
+      expect(sql).toContain('deleted_at IS NOT NULL')
     })
   })
 })

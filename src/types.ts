@@ -140,6 +140,21 @@ export interface RelationsConfig {
    * - 'none': Do not singularize
    */
   singularizeStrategy?: 'stripTrailingS' | 'none'
+  /**
+   * Maximum depth for nested relationship loading (e.g., 'posts.comments.author')
+   * Default: 10
+   */
+  maxDepth?: number
+  /**
+   * Maximum number of relationships that can be eager loaded in a single query
+   * Default: 50
+   */
+  maxEagerLoad?: number
+  /**
+   * Enable cycle detection to prevent infinite loops in self-referential relationships
+   * Default: true
+   */
+  detectCycles?: boolean
 }
 
 /**

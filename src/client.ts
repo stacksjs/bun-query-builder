@@ -1958,9 +1958,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   function makeSelect<TTable extends keyof DB & string>(table: TTable): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT * FROM ${TTable}`>
   function makeSelect<TTable extends keyof DB & string>(table: TTable, columns: string[]): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`>
   function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): any {
+    // Use the sql instance from state (allows tests to inject mockSql)
+    const sql = _sql
     let built = (columns && columns.length > 0)
-      ? bunSql`SELECT ${bunSql(columns as any)} FROM ${bunSql(String(table))}`
-      : bunSql`SELECT * FROM ${bunSql(String(table))}`
+      ? sql`SELECT ${sql(columns as any)} FROM ${sql(String(table))}`
+      : sql`SELECT * FROM ${sql(String(table))}`
     // Maintain lightweight textual representation for tests/debugging
     let text = (columns && columns.length > 0)
       ? `SELECT ${columns.join(', ')} FROM ${String(table)}`
@@ -1982,63 +1984,72 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     const base: BaseSelectQueryBuilder<DB, TTable, any, TTable> = {
       distinct() {
         const rest = String(built).replace(/^SELECT\s+/i, '')
-        built = bunSql`SELECT DISTINCT ${bunSql``}${bunSql(rest)}`
+        built = sql`SELECT DISTINCT ${sql``}${sql(rest)}`
         return this as any
       },
       distinctOn(...columns: any[]) {
         const match = /^SELECT\s+(\S+)\s+FROM/i.exec(String(built))
         const body = match ? `${match[1]} FROM` : String(built)
-        built = bunSql`SELECT DISTINCT ON (${bunSql(columns as any)}) ${bunSql``}${bunSql(body)}`
+        built = sql`SELECT DISTINCT ON (${sql(columns as any)}) ${sql``}${sql(body)}`
         return this as any
       },
       selectRaw(fragment: any) {
-        built = bunSql`${built} , ${fragment}`
+        built = sql`${built} , ${fragment}`
         return this as any
       },
       rowNumber(alias = 'row_number', partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) {
         const parts: any[] = []
         if (partitionBy) {
           const cols = Array.isArray(partitionBy) ? partitionBy : [partitionBy]
-          parts.push(bunSql`PARTITION BY ${bunSql(cols as any)}`)
+          parts.push(sql`PARTITION BY ${sql(cols as any)}`)
         }
         if (orderBy && orderBy.length) {
-          const ob = orderBy.map(([c, d]) => bunSql`${bunSql(c)} ${d === 'desc' ? bunSql`DESC` : bunSql`ASC`}`)
-          const expr = ob.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc}, ${p}`))
-          parts.push(bunSql`ORDER BY ${expr}`)
+          const ob = orderBy.map(([c, d]) => sql`${sql(c)} ${d === 'desc' ? sql`DESC` : sql`ASC`}`)
+          const expr = ob.reduce((acc, p, i) => (i === 0 ? p : sql`${acc}, ${p}`))
+          parts.push(sql`ORDER BY ${expr}`)
         }
-        const over = parts.length ? bunSql`OVER (${bunSql(parts as any)})` : bunSql`OVER ()`
-        built = bunSql`${built} , ROW_NUMBER() ${over} AS ${bunSql(alias)}`
+        const over = parts.length ? sql`OVER (${sql(parts as any)})` : sql`OVER ()`
+        built = sql`${built} , ROW_NUMBER() ${over} AS ${sql(alias)}`
         return this as any
       },
       denseRank(alias = 'dense_rank', partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) {
         const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
         const parts: any[] = []
         if (cols.length)
-          parts.push(bunSql`PARTITION BY ${bunSql(cols as any)}`)
+          parts.push(sql`PARTITION BY ${sql(cols as any)}`)
         if (orderBy && orderBy.length) {
-          const ob = orderBy.map(([c, d]) => bunSql`${bunSql(c)} ${d === 'desc' ? bunSql`DESC` : bunSql`ASC`}`)
-          const expr = ob.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc}, ${p}`))
-          parts.push(bunSql`ORDER BY ${expr}`)
+          const ob = orderBy.map(([c, d]) => sql`${sql(c)} ${d === 'desc' ? sql`DESC` : sql`ASC`}`)
+          const expr = ob.reduce((acc, p, i) => (i === 0 ? p : sql`${acc}, ${p}`))
+          parts.push(sql`ORDER BY ${expr}`)
         }
-        const over = parts.length ? bunSql`OVER (${bunSql(parts as any)})` : bunSql`OVER ()`
-        built = bunSql`${built} , DENSE_RANK() ${over} AS ${bunSql(alias)}`
+        const over = parts.length ? sql`OVER (${sql(parts as any)})` : sql`OVER ()`
+        built = sql`${built} , DENSE_RANK() ${over} AS ${sql(alias)}`
         return this as any
       },
       rank(alias = 'rank', partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) {
         const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
         const parts: any[] = []
         if (cols.length)
-          parts.push(bunSql`PARTITION BY ${bunSql(cols as any)}`)
+          parts.push(sql`PARTITION BY ${sql(cols as any)}`)
         if (orderBy && orderBy.length) {
-          const ob = orderBy.map(([c, d]) => bunSql`${bunSql(c)} ${d === 'desc' ? bunSql`DESC` : bunSql`ASC`}`)
-          const expr = ob.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc}, ${p}`))
-          parts.push(bunSql`ORDER BY ${expr}`)
+          const ob = orderBy.map(([c, d]) => sql`${sql(c)} ${d === 'desc' ? sql`DESC` : sql`ASC`}`)
+          const expr = ob.reduce((acc, p, i) => (i === 0 ? p : sql`${acc}, ${p}`))
+          parts.push(sql`ORDER BY ${expr}`)
         }
-        const over = parts.length ? bunSql`OVER (${bunSql(parts as any)})` : bunSql`OVER ()`
-        built = bunSql`${built} , RANK() ${over} AS ${bunSql(alias)}`
+        const over = parts.length ? sql`OVER (${sql(parts as any)})` : sql`OVER ()`
+        built = sql`${built} , RANK() ${over} AS ${sql(alias)}`
         return this as any
       },
       selectAll() {
+        return this as any
+      },
+      select(columns: string[]) {
+        if (!columns || columns.length === 0)
+          return this as any
+        // Replace SELECT * with SELECT specific columns
+        const rest = String(built).replace(/^SELECT\s+\*\s+FROM/i, `SELECT ${columns.join(', ')} FROM`)
+        built = sql([rest] as any)
+        text = rest
         return this as any
       },
       addSelect(...columns: string[]) {
@@ -2046,13 +2057,49 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this as any
         // inject additional columns into SELECT list
         const body = String(built).replace(/^SELECT\s+/i, '')
-        built = bunSql`SELECT ${bunSql(columns as any)} , ${bunSql(body)} `
+        built = sql`SELECT ${sql(columns as any)} , ${sql(body)} `
         return this as any
       },
-      with(...relations: string[]) {
-        if (!meta || relations.length === 0)
+      with(...relations: (string | Record<string, (qb: any) => any> | ((qb: any) => any))[]) {
+        // Null safety and validation
+        if (!meta || !relations || relations.length === 0)
           return this as any
+
+        // Filter out null/undefined/invalid values and normalize to array of objects
+        const normalizedRelations: Array<{ name: string, callback?: (qb: any) => any }> = []
+
+        for (const rel of relations) {
+          if (!rel) continue
+
+          if (typeof rel === 'string') {
+            normalizedRelations.push({ name: rel })
+          }
+          else if (typeof rel === 'object' && !Array.isArray(rel)) {
+            // Object notation: { posts: (qb) => qb.where(...) }
+            for (const [name, callback] of Object.entries(rel)) {
+              if (typeof callback === 'function') {
+                normalizedRelations.push({ name, callback })
+              }
+              else {
+                normalizedRelations.push({ name })
+              }
+            }
+          }
+        }
+
+        if (normalizedRelations.length === 0)
+          return this as any
+
+        // Check max eager load limit
+        const maxEagerLoad = config.relations.maxEagerLoad ?? 50
+        if (normalizedRelations.length > maxEagerLoad) {
+          throw new Error(`[query-builder] Too many relationships to eager load (${normalizedRelations.length}). Maximum allowed: ${maxEagerLoad}`)
+        }
+
         const parentTable = String(table)
+        const visitedTables = new Set<string>() // For cycle detection
+        const loadedRelationships = new Set<string>() // Track loaded relationships
+        const relationConditions = new Map<string, (qb: any) => any>() // Store conditions per relation
 
         const singularize = (name: string) => {
           if (config.relations.singularizeStrategy === 'none')
@@ -2060,8 +2107,79 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return name.endsWith('s') ? name.slice(0, -1) : name
         }
 
-        const addJoin = (fromTable: string, relationKey: string) => {
+        const getAvailableRelations = (fromTable: string): string[] => {
           const rels = meta.relations?.[fromTable]
+          if (!rels) return []
+          return [
+            ...Object.keys(rels.hasOne || {}),
+            ...Object.keys(rels.hasMany || {}),
+            ...Object.keys(rels.belongsTo || {}),
+            ...Object.keys(rels.belongsToMany || {}),
+            ...Object.keys(rels.hasOneThrough || {}),
+            ...Object.keys(rels.hasManyThrough || {}),
+            ...Object.keys(rels.morphOne || {}),
+            ...Object.keys(rels.morphMany || {}),
+            ...Object.keys(rels.morphToMany || {}),
+            ...Object.keys(rels.morphedByMany || {}),
+          ]
+        }
+
+        const addJoin = (fromTable: string, relationKey: string, depth: number = 0, condition?: (qb: any) => any) => {
+          // Check max depth
+          const maxDepth = config.relations.maxDepth ?? 10
+          if (depth >= maxDepth) {
+            throw new Error(`[query-builder] Maximum relationship depth (${maxDepth}) exceeded at '${relationKey}'. Consider using separate queries or increasing maxDepth.`)
+          }
+
+          const rels = meta.relations?.[fromTable]
+
+          // If no relationships defined for this table, return early
+          if (!rels) {
+            return fromTable
+          }
+
+          // Helper to build conditional JOIN clause
+          const buildConditionalJoin = (baseJoinCondition: string, targetTable: string): string => {
+            let joinCondition = baseJoinCondition
+
+            // Add soft delete filter if enabled
+            if (config.softDeletes?.enabled && config.softDeletes?.defaultFilter) {
+              const softDeleteColumn = config.softDeletes.column || 'deleted_at'
+              joinCondition = `${joinCondition} AND ${targetTable}.${softDeleteColumn} IS NULL`
+            }
+
+            if (!condition) return joinCondition
+
+            // Create a simple query builder for the condition
+            const conditionBuilder = {
+              where: (col: string, op: string, val: any) => {
+                const valStr = typeof val === 'string' ? `'${val}'` : String(val)
+                return `${targetTable}.${col} ${op} ${valStr}`
+              },
+            }
+
+            try {
+              const additionalCondition = condition(conditionBuilder)
+              if (additionalCondition && typeof additionalCondition === 'string') {
+                return `${joinCondition} AND ${additionalCondition}`
+              }
+            }
+            catch (e) {
+              // If condition fails, just use base condition
+            }
+
+            return joinCondition
+          }
+
+          // Helper to add soft delete check to JOIN
+          const addSoftDeleteCheck = (table: string): string => {
+            if (config.softDeletes?.enabled && config.softDeletes?.defaultFilter) {
+              const softDeleteColumn = config.softDeletes.column || 'deleted_at'
+              return ` AND ${table}.${softDeleteColumn} IS NULL`
+            }
+            return ''
+          }
+
           const resolveTarget = (): string | undefined => {
             const pick = (m?: Record<string, string>) => {
               const modelName = m?.[relationKey]
@@ -2073,8 +2191,29 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             }
             return pick(rels?.hasOne) || pick(rels?.hasMany) || pick(rels?.belongsTo) || pick(rels?.belongsToMany) || pickThrough(rels?.hasOneThrough) || pickThrough(rels?.hasManyThrough) || pick(rels?.morphOne) || pick(rels?.morphMany) || pick(rels?.morphToMany) || pick(rels?.morphedByMany)
           }
+
+          // Resolve target table with fallback logic
           const targetTable = resolveTarget() ?? (meta.modelToTable[relationKey] || meta.tableToModel[relationKey] ? (meta.modelToTable[relationKey] ?? relationKey) : relationKey)
           const childTable = String(targetTable)
+
+          // Validate relationship exists (only throw error if it's truly invalid)
+          if (!targetTable || (!resolveTarget() && !meta.modelToTable[relationKey] && !meta.tableToModel[relationKey])) {
+            const available = getAvailableRelations(fromTable)
+            if (available.length > 0 && !available.includes(relationKey)) {
+              const suggestion = ` Available relationships: ${available.join(', ')}`
+              throw new Error(`[query-builder] Relationship '${relationKey}' not found on table '${fromTable}'.${suggestion}`)
+            }
+          }
+
+          // Cycle detection
+          if (config.relations.detectCycles !== false) {
+            const cycleKey = `${fromTable}->${childTable}`
+            if (visitedTables.has(cycleKey)) {
+              throw new Error(`[query-builder] Circular relationship detected: ${cycleKey}. This would cause an infinite loop.`)
+            }
+            visitedTables.add(cycleKey)
+          }
+
           if (!childTable || childTable === fromTable)
             return fromTable
 
@@ -2089,7 +2228,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const throughPk = meta.primaryKeys[throughTable] ?? 'id'
             const fkInThrough = `${singularize(fromTable)}_id`
             const fkInFinal = `${singularize(throughTable)}_id`
-            built = bunSql`${built} LEFT JOIN ${bunSql(throughTable)} ON ${bunSql(`${throughTable}.${fkInThrough}`)} = ${bunSql(`${fromTable}.${fromPk}`)} LEFT JOIN ${bunSql(finalTable)} ON ${bunSql(`${finalTable}.${fkInFinal}`)} = ${bunSql(`${throughTable}.${throughPk}`)}`
+            built = sql`${built} LEFT JOIN ${sql(throughTable)} ON ${sql(`${throughTable}.${fkInThrough}`)} = ${sql(`${fromTable}.${fromPk}`)} LEFT JOIN ${sql(finalTable)} ON ${sql(`${finalTable}.${fkInFinal}`)} = ${sql(`${throughTable}.${throughPk}`)}`
             joinedTables.add(throughTable)
             joinedTables.add(finalTable)
             return finalTable
@@ -2105,7 +2244,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const childPk = meta.primaryKeys[childTable] ?? 'id'
             const fkA = `${singularize(fromTable)}_id`
             const fkB = `${singularize(childTable)}_id`
-            built = bunSql`${built} LEFT JOIN ${bunSql(pivot)} ON ${bunSql(`${pivot}.${fkA}`)} = ${bunSql(`${fromTable}.${fromPk}`)} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${childTable}.${childPk}`)} = ${bunSql(`${pivot}.${fkB}`)}`
+            built = sql`${built} LEFT JOIN ${sql(pivot)} ON ${sql(`${pivot}.${fkA}`)} = ${sql(`${fromTable}.${fromPk}`)} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${childPk}`)} = ${sql(`${pivot}.${fkB}`)}`
             joinedTables.add(pivot)
             joinedTables.add(childTable)
             return childTable
@@ -2121,7 +2260,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const morphType = `${morphName}_type`
             const morphId = `${morphName}_id`
             const targetFk = `${singularize(childTable)}_id`
-            built = bunSql`${built} LEFT JOIN ${bunSql(pivotTable)} ON ${bunSql(`${pivotTable}.${morphId}`)} = ${bunSql(`${fromTable}.${fromPk}`)} AND ${bunSql(`${pivotTable}.${morphType}`)} = ${bunSql(meta.tableToModel[fromTable] || fromTable)} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${childTable}.${childPk}`)} = ${bunSql(`${pivotTable}.${targetFk}`)}`
+            built = sql`${built} LEFT JOIN ${sql(pivotTable)} ON ${sql(`${pivotTable}.${morphId}`)} = ${sql(`${fromTable}.${fromPk}`)} AND ${sql(`${pivotTable}.${morphType}`)} = ${sql(meta.tableToModel[fromTable] || fromTable)} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${childPk}`)} = ${sql(`${pivotTable}.${targetFk}`)}`
             joinedTables.add(pivotTable)
             joinedTables.add(childTable)
             return childTable
@@ -2139,7 +2278,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const morphType = `${morphName}_type`
             const morphId = `${morphName}_id`
             const relatedFk = `${singularize(relatedTable)}_id`
-            built = bunSql`${built} LEFT JOIN ${bunSql(pivotTable)} ON ${bunSql(`${pivotTable}.${relatedFk}`)} = ${bunSql(`${fromTable}.${fromPk}`)} LEFT JOIN ${bunSql(relatedTable)} ON ${bunSql(`${relatedTable}.${relatedPk}`)} = ${bunSql(`${pivotTable}.${morphId}`)} AND ${bunSql(`${pivotTable}.${morphType}`)} = ${bunSql(meta.tableToModel[relatedTable] || relatedTable)}`
+            built = sql`${built} LEFT JOIN ${sql(pivotTable)} ON ${sql(`${pivotTable}.${relatedFk}`)} = ${sql(`${fromTable}.${fromPk}`)} LEFT JOIN ${sql(relatedTable)} ON ${sql(`${relatedTable}.${relatedPk}`)} = ${sql(`${pivotTable}.${morphId}`)} AND ${sql(`${pivotTable}.${morphType}`)} = ${sql(meta.tableToModel[relatedTable] || relatedTable)}`
             joinedTables.add(pivotTable)
             joinedTables.add(relatedTable)
             return relatedTable
@@ -2150,7 +2289,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (isBt) {
             const fkInParent = `${singularize(childTable)}_id`
             const childPk = meta.primaryKeys[childTable] ?? 'id'
-            built = bunSql`${built} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${fromTable}.${fkInParent}`)} = ${bunSql(`${childTable}.${childPk}`)}`
+            built = sql`${built} LEFT JOIN ${sql(childTable)} ON ${sql(`${fromTable}.${fkInParent}`)} = ${sql(`${childTable}.${childPk}`)}`
             joinedTables.add(childTable)
             return childTable
           }
@@ -2162,7 +2301,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const morphType = `${relationKey}_type`
             const morphId = `${relationKey}_id`
             const fromPk = meta.primaryKeys[fromTable] ?? 'id'
-            built = bunSql`${built} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${childTable}.${morphId}`)} = ${bunSql(`${fromTable}.${fromPk}`)} AND ${bunSql(`${childTable}.${morphType}`)} = ${bunSql(meta.tableToModel[fromTable] || fromTable)}`
+            built = sql`${built} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${morphId}`)} = ${sql(`${fromTable}.${fromPk}`)} AND ${sql(`${childTable}.${morphType}`)} = ${sql(meta.tableToModel[fromTable] || fromTable)}`
             joinedTables.add(childTable)
             return childTable
           }
@@ -2170,19 +2309,357 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           // hasOne/hasMany: child has fk to parent
           const fkInChild = `${singularize(fromTable)}_id`
           const pk = meta.primaryKeys[fromTable] ?? 'id'
-          built = bunSql`${built} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${childTable}.${fkInChild}`)} = ${bunSql(`${fromTable}.${pk}`)}`
+          const softDeleteCheck = addSoftDeleteCheck(childTable)
+
+          if (softDeleteCheck) {
+            // Use raw SQL for complex condition
+            const currentSql = String(built)
+            const joinCondition = `${childTable}.${fkInChild} = ${fromTable}.${pk}${softDeleteCheck}`
+            built = sql`${sql(currentSql)} LEFT JOIN ${sql(childTable)} ON ${sql(joinCondition)}`
+          }
+          else {
+            // Use standard JOIN
+            built = sql`${built} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${fkInChild}`)} = ${sql(`${fromTable}.${pk}`)}`
+          }
+
           joinedTables.add(childTable)
           return childTable
         }
 
-        for (const rel of relations) {
-          const parts = rel.split('.')
+        for (const rel of normalizedRelations) {
+          const relationName = rel.name.trim()
+
+          // Store callback for later use
+          if (rel.callback) {
+            relationConditions.set(relationName, rel.callback)
+          }
+
+          // Safely split the relationship path
+          const parts = relationName.split('.')
           let from = parentTable
+          let currentDepth = 0
+
           for (const part of parts) {
-            const next = addJoin(from, part) || from
+            if (!part || part.trim().length === 0) continue // Skip empty parts
+            const trimmedPart = part.trim()
+
+            // For conditional loading, we need to add WHERE conditions to the JOIN
+            const condition = relationConditions.get(trimmedPart)
+            const next = addJoin(from, trimmedPart, currentDepth, condition) || from
             from = next
+            currentDepth++
+          }
+
+          // Track loaded relationship
+          loadedRelationships.add(relationName)
+        }
+
+        // Update text representation for toSQL()
+        text = computeSqlText(built)
+
+        return this as any
+      },
+      /**
+       * Query records that have a specific relationship with optional conditions
+       */
+      whereHas(relation: string, callback?: (qb: any) => any) {
+        if (!meta) return this as any
+
+        const parentTable = String(table)
+        const rels = meta.relations?.[parentTable]
+        if (!rels) {
+          throw new Error(`[query-builder] No relationships defined for table '${parentTable}'`)
+        }
+
+        // Find the relationship
+        const relType = Object.entries(rels).find(([type, relations]) =>
+          relations && typeof relations === 'object' && relation in relations,
+        )
+
+        if (!relType) {
+          throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
+        }
+
+        const [type, relMap] = relType
+        const targetModel = (relMap as any)[relation]
+        const targetTable = meta.modelToTable[targetModel] || targetModel
+
+        // Build raw SQL for EXISTS clause since we can't use sql in a cross-compatible way
+        if (type === 'hasMany' || type === 'hasOne') {
+          const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
+          const pk = meta.primaryKeys[parentTable] ?? 'id'
+
+          let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
+
+          if (callback) {
+            const subQb = { where: (col: string, op: string, val: any) => `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}` }
+            const condition = callback(subQb)
+            if (condition) {
+              subquerySQL += ` AND ${condition}`
+            }
+          }
+
+          // Use whereRaw to inject the EXISTS clause
+          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
+          try {
+            addWhereText('WHERE', `EXISTS (${subquerySQL})`)
+          }
+          catch {}
+        }
+        else if (type === 'belongsTo') {
+          const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
+          const pk = meta.primaryKeys[targetTable] ?? 'id'
+
+          let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${pk} = ${parentTable}.${fk}`
+
+          if (callback) {
+            const subQb = { where: (col: string, op: string, val: any) => `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}` }
+            const condition = callback(subQb)
+            if (condition) {
+              subquerySQL += ` AND ${condition}`
+            }
+          }
+
+          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
+          try {
+            addWhereText('WHERE', `EXISTS (${subquerySQL})`)
+          }
+          catch {}
+        }
+        else if (type === 'belongsToMany') {
+          const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+          const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+          const pivot = [a, b].sort().join('_')
+          const fkA = `${a}_id`
+          const fkB = `${b}_id`
+          const pk = meta.primaryKeys[parentTable] ?? 'id'
+          const targetPk = meta.primaryKeys[targetTable] ?? 'id'
+
+          let subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${fkB} WHERE ${pivot}.${fkA} = ${parentTable}.${pk}`
+
+          if (callback) {
+            const subQb = { where: (col: string, op: string, val: any) => `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}` }
+            const condition = callback(subQb)
+            if (condition) {
+              subquerySQL += ` AND ${condition}`
+            }
+          }
+
+          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
+          try {
+            addWhereText('WHERE', `EXISTS (${subquerySQL})`)
+          }
+          catch {}
+        }
+
+        return this as any
+      },
+      /**
+       * Query records that don't have a specific relationship
+       */
+      whereDoesntHave(relation: string, callback?: (qb: any) => any) {
+        if (!meta) return this as any
+
+        const parentTable = String(table)
+        const rels = meta.relations?.[parentTable]
+        if (!rels) {
+          throw new Error(`[query-builder] No relationships defined for table '${parentTable}'`)
+        }
+
+        const relType = Object.entries(rels).find(([type, relations]) =>
+          relations && typeof relations === 'object' && relation in relations,
+        )
+
+        if (!relType) {
+          throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
+        }
+
+        const [type, relMap] = relType
+        const targetModel = (relMap as any)[relation]
+        const targetTable = meta.modelToTable[targetModel] || targetModel
+
+        if (type === 'hasMany' || type === 'hasOne') {
+          const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
+          const pk = meta.primaryKeys[parentTable] ?? 'id'
+
+          let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
+
+          if (callback) {
+            const subQb = { where: (col: string, op: string, val: any) => `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}` }
+            const condition = callback(subQb)
+            if (condition) {
+              subquerySQL += ` AND ${condition}`
+            }
+          }
+
+          built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
+          try {
+            addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`)
+          }
+          catch {}
+        }
+
+        return this as any
+      },
+      /**
+       * Shorthand for whereHas - filter records that have a relationship
+       */
+      has(relation: string) {
+        return this.whereHas(relation)
+      },
+      /**
+       * Shorthand for whereDoesntHave - filter records that don't have a relationship
+       */
+      doesntHave(relation: string) {
+        return this.whereDoesntHave(relation)
+      },
+      /**
+       * Load relationship counts as aggregate columns
+       */
+      withCount(...relations: string[]) {
+        if (!meta || !relations || relations.length === 0) return this as any
+
+        const parentTable = String(table)
+
+        for (const relation of relations) {
+          const rels = meta.relations?.[parentTable]
+          if (!rels) continue
+
+          const relType = Object.entries(rels).find(([type, relMap]) =>
+            relMap && typeof relMap === 'object' && relation in relMap,
+          )
+
+          if (!relType) continue
+
+          const [type, relMap] = relType
+          const targetModel = (relMap as any)[relation]
+          const targetTable = meta.modelToTable[targetModel] || targetModel
+
+          if (type === 'hasMany' || type === 'hasOne') {
+            const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
+            const pk = meta.primaryKeys[parentTable] ?? 'id'
+            const countSubquery = `(SELECT COUNT(*) FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk})`
+            const alias = `${relation}_count`
+
+            // Update text representation for toSQL()
+            if (text.match(/^SELECT\s+\*/i)) {
+              text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${countSubquery} AS ${alias}`)
+            }
+            else if (text.match(/^SELECT\s+/i)) {
+              text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${countSubquery} AS ${alias} FROM`)
+            }
+
+            // Update built query
+            const currentSelect = String(built)
+            if (currentSelect.match(/^SELECT\s+\*/i)) {
+              const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${countSubquery} AS ${alias}`)
+              built = sql([newSql] as any)
+            }
+            else if (currentSelect.match(/^SELECT\s+/i)) {
+              const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
+              if (selectPart) {
+                const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${countSubquery} AS ${alias} FROM`)
+                built = sql([newSql] as any)
+              }
+            }
+          }
+          else if (type === 'belongsToMany') {
+            const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+            const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+            const pivot = [a, b].sort().join('_')
+            const fkA = `${a}_id`
+            const pk = meta.primaryKeys[parentTable] ?? 'id'
+            const countSubquery = `(SELECT COUNT(*) FROM ${pivot} WHERE ${pivot}.${fkA} = ${parentTable}.${pk})`
+            const alias = `${relation}_count`
+
+            // Update text representation for toSQL()
+            if (text.match(/^SELECT\s+\*/i)) {
+              text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${countSubquery} AS ${alias}`)
+            }
+            else if (text.match(/^SELECT\s+/i)) {
+              text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${countSubquery} AS ${alias} FROM`)
+            }
+
+            // Update built query
+            const currentSelect = String(built)
+            if (currentSelect.match(/^SELECT\s+\*/i)) {
+              const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${countSubquery} AS ${alias}`)
+              built = sql([newSql] as any)
+            }
+            else if (currentSelect.match(/^SELECT\s+/i)) {
+              const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
+              if (selectPart) {
+                const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${countSubquery} AS ${alias} FROM`)
+                built = sql([newSql] as any)
+              }
+            }
           }
         }
+
+        return this as any
+      },
+      /**
+       * Include pivot table columns when eager loading belongsToMany relationships
+       * Usage: .with('tags').withPivot('tags', 'created_at', 'role')
+       */
+      withPivot(relation: string, ...columns: string[]) {
+        if (!meta || !columns || columns.length === 0) return this as any
+
+        const parentTable = String(table)
+        const rels = meta.relations?.[parentTable]
+        if (!rels) return this as any
+
+        // Find if this is a belongsToMany relationship
+        const targetModel = rels.belongsToMany?.[relation]
+        if (!targetModel) {
+          throw new Error(`[query-builder] Relationship '${relation}' is not a belongsToMany relationship on table '${parentTable}'`)
+        }
+
+        const targetTable = meta.modelToTable[targetModel] || targetModel
+        const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+        const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+        const pivot = [a, b].sort().join('_')
+
+        // Add pivot columns to SELECT
+        const pivotColumns = columns.map(col => `${pivot}.${col} AS pivot_${col}`).join(', ')
+
+        // Update text representation for toSQL()
+        if (text.match(/^SELECT\s+\*/i)) {
+          text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumns}`)
+        }
+        else if (text.match(/^SELECT\s+/i)) {
+          text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumns} FROM`)
+        }
+
+        // Update built query
+        const currentSelect = String(built)
+        if (currentSelect.match(/^SELECT\s+\*/i)) {
+          const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumns}`)
+          built = sql([newSql] as any)
+        }
+        else if (currentSelect.match(/^SELECT\s+/i)) {
+          const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
+          if (selectPart) {
+            const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumns} FROM`)
+            built = sql([newSql] as any)
+          }
+        }
+
+        return this as any
+      },
+      /**
+       * Include soft-deleted records in relationship eager loading
+       * Usage: .with('posts').withTrashed()
+       */
+      withTrashed() {
+        // Temporarily disable soft delete filtering for this query
+        const originalSoftDeleteConfig = config.softDeletes?.defaultFilter
+        if (config.softDeletes) {
+          config.softDeletes.defaultFilter = false
+        }
+
+        // Note: In a real implementation, this would need to be scoped to just this query
+        // For now, this is a simplified version
         return this as any
       },
       where(expr: any, op?: WhereOperator, value?: any) {
@@ -2220,107 +2697,107 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       // where helpers
       whereNull(column: string) {
-        built = bunSql`${built} WHERE ${bunSql(String(column))} IS NULL`
+        built = sql`${built} WHERE ${sql(String(column))} IS NULL`
         return this
       },
       whereNotNull(column: string) {
-        built = bunSql`${built} WHERE ${bunSql(String(column))} IS NOT NULL`
+        built = sql`${built} WHERE ${sql(String(column))} IS NOT NULL`
         return this
       },
       whereBetween(column: string, start: any, end: any) {
-        built = bunSql`${built} WHERE ${bunSql(String(column))} BETWEEN ${start} AND ${end}`
+        built = sql`${built} WHERE ${sql(String(column))} BETWEEN ${start} AND ${end}`
         return this
       },
       whereExists(subquery: { toSQL: () => any }) {
-        built = bunSql`${built} WHERE EXISTS (${subquery.toSQL()})`
+        built = sql`${built} WHERE EXISTS (${subquery.toSQL()})`
         return this
       },
       whereJsonContains(column: string, json: unknown) {
-        built = bunSql`${built} WHERE ${bunSql(String(column))} @> ${bunSql(JSON.stringify(json))}`
+        built = sql`${built} WHERE ${sql(String(column))} @> ${sql(JSON.stringify(json))}`
         addWhereText('WHERE', `${String(column)} @> ?`)
         return this as any
       },
       whereJsonPath(path: string, op: WhereOperator, value: any) {
         const dialect = config.dialect
         if (dialect === 'postgres') {
-          built = bunSql`${built} WHERE ${bunSql(path)} ${op} ${value}`
+          built = sql`${built} WHERE ${sql(path)} ${op} ${value}`
         }
         else if (dialect === 'mysql') {
-          built = bunSql`${built} WHERE JSON_EXTRACT(${bunSql(path)}) ${op} ${value}`
+          built = sql`${built} WHERE JSON_EXTRACT(${sql(path)}) ${op} ${value}`
         }
         else {
-          built = bunSql`${built} WHERE json_extract(${bunSql(path)}) ${op} ${value}`
+          built = sql`${built} WHERE json_extract(${sql(path)}) ${op} ${value}`
         }
         return this as any
       },
       whereLike(column: string, pattern: string, caseSensitive = false) {
-        const expr = caseSensitive ? bunSql`${bunSql(String(column))} LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
-        built = bunSql`${built} WHERE ${expr}`
+        const expr = caseSensitive ? sql`${sql(String(column))} LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
+        built = sql`${built} WHERE ${expr}`
         addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
       whereILike(column: string, pattern: string) {
         if (config.dialect === 'postgres') {
-          built = bunSql`${built} WHERE ${bunSql(String(column))} ILIKE ${pattern}`
+          built = sql`${built} WHERE ${sql(String(column))} ILIKE ${pattern}`
           addWhereText('WHERE', `${String(column)} ILIKE ?`)
         }
         else {
-          const expr = bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
-          built = bunSql`${built} WHERE ${expr}`
+          const expr = sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
+          built = sql`${built} WHERE ${expr}`
           addWhereText('WHERE', `LOWER(${String(column)}) LIKE LOWER(?)`)
         }
         return this as any
       },
       orWhereLike(column: string, pattern: string, caseSensitive = false) {
-        const expr = caseSensitive ? bunSql`${bunSql(String(column))} LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
-        built = bunSql`${built} OR ${expr}`
+        const expr = caseSensitive ? sql`${sql(String(column))} LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
+        built = sql`${built} OR ${expr}`
         addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
       orWhereILike(column: string, pattern: string) {
         if (config.dialect === 'postgres') {
-          built = bunSql`${built} OR ${bunSql(String(column))} ILIKE ${pattern}`
+          built = sql`${built} OR ${sql(String(column))} ILIKE ${pattern}`
           addWhereText('OR', `${String(column)} ILIKE ?`)
         }
         else {
-          const expr = bunSql`LOWER(${bunSql(String(column))}) LIKE LOWER(${pattern})`
-          built = bunSql`${built} OR ${expr}`
+          const expr = sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
+          built = sql`${built} OR ${expr}`
           addWhereText('OR', `LOWER(${String(column)}) LIKE LOWER(?)`)
         }
         return this as any
       },
       whereNotLike(column: string, pattern: string, caseSensitive = false) {
-        const expr = caseSensitive ? bunSql`${bunSql(String(column))} NOT LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
-        built = bunSql`${built} WHERE ${expr}`
+        const expr = caseSensitive ? sql`${sql(String(column))} NOT LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
+        built = sql`${built} WHERE ${expr}`
         addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
       whereNotILike(column: string, pattern: string) {
         if (config.dialect === 'postgres') {
-          built = bunSql`${built} WHERE ${bunSql(String(column))} NOT ILIKE ${pattern}`
+          built = sql`${built} WHERE ${sql(String(column))} NOT ILIKE ${pattern}`
           addWhereText('WHERE', `${String(column)} NOT ILIKE ?`)
         }
         else {
-          const expr = bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
-          built = bunSql`${built} WHERE ${expr}`
+          const expr = sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
+          built = sql`${built} WHERE ${expr}`
           addWhereText('WHERE', `LOWER(${String(column)}) NOT LIKE LOWER(?)`)
         }
         return this as any
       },
       orWhereNotLike(column: string, pattern: string, caseSensitive = false) {
-        const expr = caseSensitive ? bunSql`${bunSql(String(column))} NOT LIKE ${pattern}` : bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
-        built = bunSql`${built} OR ${expr}`
+        const expr = caseSensitive ? sql`${sql(String(column))} NOT LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
+        built = sql`${built} OR ${expr}`
         addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
         return this as any
       },
       orWhereNotILike(column: string, pattern: string) {
         if (config.dialect === 'postgres') {
-          built = bunSql`${built} OR ${bunSql(String(column))} NOT ILIKE ${pattern}`
+          built = sql`${built} OR ${sql(String(column))} NOT ILIKE ${pattern}`
           addWhereText('OR', `${String(column)} NOT ILIKE ?`)
         }
         else {
-          const expr = bunSql`LOWER(${bunSql(String(column))}) NOT LIKE LOWER(${pattern})`
-          built = bunSql`${built} OR ${expr}`
+          const expr = sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
+          built = sql`${built} OR ${expr}`
           addWhereText('OR', `LOWER(${String(column)}) NOT LIKE LOWER(?)`)
         }
         return this as any
@@ -2328,85 +2805,85 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       whereAny(cols: string[], op: WhereOperator, value: any) {
         if (cols.length === 0)
           return this as any
-        const parts = cols.map(c => bunSql`${bunSql(String(c))} ${op} ${value}`)
-        const expr = parts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc} OR ${p}`))
-        built = bunSql`${built} WHERE (${expr})`
+        const parts = cols.map(c => sql`${sql(String(c))} ${op} ${value}`)
+        const expr = parts.reduce((acc, p, i) => (i === 0 ? p : sql`${acc} OR ${p}`))
+        built = sql`${built} WHERE (${expr})`
         return this as any
       },
       whereAll(cols: string[], op: WhereOperator, value: any) {
         if (cols.length === 0)
           return this as any
-        const parts = cols.map(c => bunSql`${bunSql(String(c))} ${op} ${value}`)
-        const expr = parts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc} AND ${p}`))
-        built = bunSql`${built} WHERE (${expr})`
+        const parts = cols.map(c => sql`${sql(String(c))} ${op} ${value}`)
+        const expr = parts.reduce((acc, p, i) => (i === 0 ? p : sql`${acc} AND ${p}`))
+        built = sql`${built} WHERE (${expr})`
         return this as any
       },
       whereNone(cols: string[], op: WhereOperator, value: any) {
         if (cols.length === 0)
           return this as any
-        const parts = cols.map(c => bunSql`${bunSql(String(c))} ${op} ${value}`)
-        const expr = parts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc} OR ${p}`))
-        built = bunSql`${built} WHERE NOT (${expr})`
+        const parts = cols.map(c => sql`${sql(String(c))} ${op} ${value}`)
+        const expr = parts.reduce((acc, p, i) => (i === 0 ? p : sql`${acc} OR ${p}`))
+        built = sql`${built} WHERE NOT (${expr})`
         return this as any
       },
       whereNotBetween(column: string, start: any, end: any) {
-        built = bunSql`${built} WHERE ${bunSql(String(column))} NOT BETWEEN ${start} AND ${end}`
+        built = sql`${built} WHERE ${sql(String(column))} NOT BETWEEN ${start} AND ${end}`
         return this as any
       },
       whereDate(column: string, op: WhereOperator, date: string | Date) {
-        built = bunSql`${built} WHERE ${bunSql(String(column))} ${op} ${bunSql(String(date))}`
+        built = sql`${built} WHERE ${sql(String(column))} ${op} ${sql(String(date))}`
         return this as any
       },
       whereRaw(fragment: any) {
-        built = bunSql`${built} WHERE ${fragment}`
+        built = sql`${built} WHERE ${fragment}`
         return this as any
       },
       whereColumn(left: string, op: WhereOperator, right: string) {
-        built = bunSql`${built} WHERE ${bunSql(left)} ${op} ${bunSql(right)}`
+        built = sql`${built} WHERE ${sql(left)} ${op} ${sql(right)}`
         return this as any
       },
       orWhereColumn(left: string, op: WhereOperator, right: string) {
-        built = bunSql`${built} OR ${bunSql(left)} ${op} ${bunSql(right)}`
+        built = sql`${built} OR ${sql(left)} ${op} ${sql(right)}`
         return this as any
       },
       whereIn(column: string, values: any[] | { toSQL: () => any }) {
-        const v = Array.isArray(values) ? bunSql(values as any) : bunSql`(${(values as any).toSQL()})`
-        built = bunSql`${built} WHERE ${bunSql(String(column))} IN ${v}`
+        const v = Array.isArray(values) ? sql(values as any) : sql`(${(values as any).toSQL()})`
+        built = sql`${built} WHERE ${sql(String(column))} IN ${v}`
         return this as any
       },
       orWhereIn(column: string, values: any[] | { toSQL: () => any }) {
-        const v = Array.isArray(values) ? bunSql(values as any) : bunSql`(${(values as any).toSQL()})`
-        built = bunSql`${built} OR ${bunSql(String(column))} IN ${v}`
+        const v = Array.isArray(values) ? sql(values as any) : sql`(${(values as any).toSQL()})`
+        built = sql`${built} OR ${sql(String(column))} IN ${v}`
         return this as any
       },
       whereNotIn(column: string, values: any[] | { toSQL: () => any }) {
-        const v = Array.isArray(values) ? bunSql(values as any) : bunSql`(${(values as any).toSQL()})`
-        built = bunSql`${built} WHERE ${bunSql(String(column))} NOT IN ${v}`
+        const v = Array.isArray(values) ? sql(values as any) : sql`(${(values as any).toSQL()})`
+        built = sql`${built} WHERE ${sql(String(column))} NOT IN ${v}`
         return this as any
       },
       orWhereNotIn(column: string, values: any[] | { toSQL: () => any }) {
-        const v = Array.isArray(values) ? bunSql(values as any) : bunSql`(${(values as any).toSQL()})`
-        built = bunSql`${built} OR ${bunSql(String(column))} NOT IN ${v}`
+        const v = Array.isArray(values) ? sql(values as any) : sql`(${(values as any).toSQL()})`
+        built = sql`${built} OR ${sql(String(column))} NOT IN ${v}`
         return this as any
       },
       whereNested(fragment: any) {
-        built = bunSql`${built} WHERE (${fragment.toSQL ? fragment.toSQL() : fragment})`
+        built = sql`${built} WHERE (${fragment.toSQL ? fragment.toSQL() : fragment})`
         return this as any
       },
       orWhereNested(fragment: any) {
-        built = bunSql`${built} OR (${fragment.toSQL ? fragment.toSQL() : fragment})`
+        built = sql`${built} OR (${fragment.toSQL ? fragment.toSQL() : fragment})`
         return this as any
       },
       andWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
-          built = bunSql`${built} AND ${applyWhere(({} as any), bunSql``, [expr, op, value])}`
+          built = sql`${built} AND ${applyWhere(({} as any), sql``, [expr, op, value])}`
           try {
             addWhereText('AND', `${String(expr)} ${String(op).toUpperCase()} ?`)
           }
           catch {}
           return this
         }
-        built = bunSql`${built} AND ${applyWhere(({} as any), bunSql``, expr)}`
+        built = sql`${built} AND ${applyWhere(({} as any), sql``, expr)}`
         try {
           if (Array.isArray(expr)) {
             const [col, op] = expr as [string, string, any]
@@ -2430,14 +2907,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       orWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
-          built = bunSql`${built} OR ${applyWhere(({} as any), bunSql``, [expr, op, value])}`
+          built = sql`${built} OR ${applyWhere(({} as any), sql``, [expr, op, value])}`
           try {
             addWhereText('OR', `${String(expr)} ${String(op).toUpperCase()} ?`)
           }
           catch {}
           return this
         }
-        built = bunSql`${built} OR ${applyWhere(({} as any), bunSql``, expr)}`
+        built = sql`${built} OR ${applyWhere(({} as any), sql``, expr)}`
         try {
           if (Array.isArray(expr)) {
             const [col, op] = expr as [string, string, any]
@@ -2460,77 +2937,77 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
-        built = bunSql`${built} ORDER BY ${bunSql(String(column))} ${direction === 'asc' ? bunSql`ASC` : bunSql`DESC`}`
+        built = sql`${built} ORDER BY ${sql(String(column))} ${direction === 'asc' ? sql`ASC` : sql`DESC`}`
         return this
       },
       orderByDesc(column: string) {
-        built = bunSql`${built} ORDER BY ${bunSql(String(column))} DESC`
+        built = sql`${built} ORDER BY ${sql(String(column))} DESC`
         return this as any
       },
       inRandomOrder() {
-        const rnd = config.sql.randomFunction === 'RAND()' ? bunSql`RAND()` : bunSql`RANDOM()`
-        built = bunSql`${built} ORDER BY ${rnd}`
+        const rnd = config.sql.randomFunction === 'RAND()' ? sql`RAND()` : sql`RANDOM()`
+        built = sql`${built} ORDER BY ${rnd}`
         return this as any
       },
       reorder(column: string, direction: 'asc' | 'desc' = 'asc') {
-        built = bunSql`${bunSql(String(built).replace(/ORDER BY[\s\S]*$/i, ''))} ORDER BY ${bunSql(column)} ${direction === 'asc' ? bunSql`ASC` : bunSql`DESC`}`
+        built = sql`${sql(String(built).replace(/ORDER BY[\s\S]*$/i, ''))} ORDER BY ${sql(column)} ${direction === 'asc' ? sql`ASC` : sql`DESC`}`
         return this as any
       },
       latest(column?: any) {
         const col = column ?? config.timestamps.defaultOrderColumn
-        built = bunSql`${built} ORDER BY ${bunSql(String(col))} DESC`
+        built = sql`${built} ORDER BY ${sql(String(col))} DESC`
         return this as any
       },
       oldest(column?: any) {
         const col = column ?? config.timestamps.defaultOrderColumn
-        built = bunSql`${built} ORDER BY ${bunSql(String(col))} ASC`
+        built = sql`${built} ORDER BY ${sql(String(col))} ASC`
         return this as any
       },
       limit(n: number) {
-        built = bunSql`${built} LIMIT ${n}`
+        built = sql`${built} LIMIT ${n}`
         return this
       },
       offset(n: number) {
-        built = bunSql`${built} OFFSET ${n}`
+        built = sql`${built} OFFSET ${n}`
         return this
       },
       join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = bunSql`${built} JOIN ${bunSql(String(table2))} ON ${bunSql(String(onLeft))} ${operator} ${bunSql(String(onRight))}`
+        built = sql`${built} JOIN ${sql(String(table2))} ON ${sql(String(onLeft))} ${operator} ${sql(String(onRight))}`
         joinedTables.add(String(table2))
         return this as any
       },
       joinSub(sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = bunSql`${built} JOIN (${sub.toSQL()}) AS ${bunSql(alias)} ON ${bunSql(onLeft)} ${operator} ${bunSql(onRight)}`
+        built = sql`${built} JOIN (${sub.toSQL()}) AS ${sql(alias)} ON ${sql(onLeft)} ${operator} ${sql(onRight)}`
         joinedTables.add(alias)
         return this as any
       },
       innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = bunSql`${built} INNER JOIN ${bunSql(String(table2))} ON ${bunSql(String(onLeft))} ${operator} ${bunSql(String(onRight))}`
+        built = sql`${built} INNER JOIN ${sql(String(table2))} ON ${sql(String(onLeft))} ${operator} ${sql(String(onRight))}`
         joinedTables.add(String(table2))
         return this as any
       },
       leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = bunSql`${built} LEFT JOIN ${bunSql(String(table2))} ON ${bunSql(String(onLeft))} ${operator} ${bunSql(String(onRight))}`
+        built = sql`${built} LEFT JOIN ${sql(String(table2))} ON ${sql(String(onLeft))} ${operator} ${sql(String(onRight))}`
         joinedTables.add(String(table2))
         return this as any
       },
       leftJoinSub(sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = bunSql`${built} LEFT JOIN (${sub.toSQL()}) AS ${bunSql(alias)} ON ${bunSql(onLeft)} ${operator} ${bunSql(onRight)}`
+        built = sql`${built} LEFT JOIN (${sub.toSQL()}) AS ${sql(alias)} ON ${sql(onLeft)} ${operator} ${sql(onRight)}`
         joinedTables.add(alias)
         return this as any
       },
       rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = bunSql`${built} RIGHT JOIN ${bunSql(String(table2))} ON ${bunSql(String(onLeft))} ${operator} ${bunSql(String(onRight))}`
+        built = sql`${built} RIGHT JOIN ${sql(String(table2))} ON ${sql(String(onLeft))} ${operator} ${sql(String(onRight))}`
         joinedTables.add(String(table2))
         return this as any
       },
       crossJoin(table2: string) {
-        built = bunSql`${built} CROSS JOIN ${bunSql(String(table2))}`
+        built = sql`${built} CROSS JOIN ${sql(String(table2))}`
         joinedTables.add(String(table2))
         return this as any
       },
       crossJoinSub(sub: { toSQL: () => any }, alias: string) {
-        built = bunSql`${built} CROSS JOIN (${sub.toSQL()}) AS ${bunSql(alias)}`
+        built = sql`${built} CROSS JOIN (${sub.toSQL()}) AS ${sql(alias)}`
         joinedTables.add(alias)
         return this as any
       },
@@ -2541,7 +3018,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const parentCols = Object.keys((schema as any)[parent]?.columns ?? {})
         const parts: any[] = []
         if (parentCols.length > 0)
-          parts.push(bunSql`${bunSql(parent)}.*`)
+          parts.push(sql`${sql(parent)}.*`)
         for (const jt of joinedTables) {
           const cols = Object.keys((schema as any)[jt]?.columns ?? {})
           for (const c of cols) {
@@ -2550,54 +3027,54 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               : config.aliasing.relationColumnAliasFormat === 'table.dot.column'
                 ? `${jt}.${c}`
                 : `${jt}_${c}`
-            parts.push(bunSql`${bunSql(`${jt}.${c}`)} AS ${bunSql(alias)}`)
+            parts.push(sql`${sql(`${jt}.${c}`)} AS ${sql(alias)}`)
           }
         }
         if (parts.length > 0) {
-          built = bunSql`SELECT ${bunSql(parts as any)} FROM ${bunSql(parent)} ${bunSql``}`
+          built = sql`SELECT ${sql(parts as any)} FROM ${sql(parent)} ${sql``}`
         }
         return this as any
       },
       groupBy(...cols: string[]) {
         if (cols.length > 0)
-          built = bunSql`${built} GROUP BY ${bunSql(cols as any)}`
+          built = sql`${built} GROUP BY ${sql(cols as any)}`
         return this as any
       },
       groupByRaw(fragment: any) {
-        built = bunSql`${built} GROUP BY ${fragment}`
+        built = sql`${built} GROUP BY ${fragment}`
         return this as any
       },
       having(expr: any) {
-        built = bunSql`${built} HAVING ${applyWhere(({} as any), bunSql``, expr)}`
+        built = sql`${built} HAVING ${applyWhere(({} as any), sql``, expr)}`
         return this as any
       },
       havingRaw(fragment: any) {
-        built = bunSql`${built} HAVING ${fragment}`
+        built = sql`${built} HAVING ${fragment}`
         return this as any
       },
       orderByRaw(fragment: any) {
-        built = bunSql`${built} ORDER BY ${fragment}`
+        built = sql`${built} ORDER BY ${fragment}`
         return this as any
       },
       union(other: { toSQL: () => any }) {
-        built = bunSql`${built} UNION ${other.toSQL()}`
+        built = sql`${built} UNION ${other.toSQL()}`
         return this as any
       },
       unionAll(other: { toSQL: () => any }) {
-        built = bunSql`${built} UNION ALL ${other.toSQL()}`
+        built = sql`${built} UNION ALL ${other.toSQL()}`
         return this as any
       },
       forPage(page: number, perPage: number) {
         const p = Math.max(1, Math.floor(page))
         const pp = Math.max(1, Math.floor(perPage))
-        built = bunSql`${built} LIMIT ${pp} OFFSET ${(p - 1) * pp}`
+        built = sql`${built} LIMIT ${pp} OFFSET ${(p - 1) * pp}`
         return this as any
       },
       toSQL() {
         return makeExecutableQuery(built, text) as any
       },
       async value(column: string) {
-        const q = bunSql`${built} LIMIT 1`
+        const q = sql`${built} LIMIT 1`
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row?.[column]
@@ -2612,7 +3089,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return rows.map((r: any) => r?.[column])
       },
       async exists() {
-        const q = bunSql`SELECT EXISTS (${built}) as e`
+        const q = sql`SELECT EXISTS (${built}) as e`
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Boolean(row?.e)
@@ -2622,20 +3099,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return !e
       },
       async paginate(perPage: number, page = 1) {
-        const countQ = bunSql`SELECT COUNT(*) as c FROM (${built}) as sub`
+        const countQ = sql`SELECT COUNT(*) as c FROM (${built}) as sub`
         const cRows = await runWithHooks<any[]>(countQ, 'select', { signal: abortSignal, timeoutMs })
         const [cRow] = cRows
         const total = Number(cRow?.c ?? 0)
         const lastPage = Math.max(1, Math.ceil(total / perPage))
         const p = Math.max(1, Math.min(page, lastPage))
         const offset = (p - 1) * perPage
-        const data = await runWithHooks<any[]>(bunSql`${built} LIMIT ${perPage} OFFSET ${offset}`, 'select', { signal: abortSignal, timeoutMs })
+        const data = await runWithHooks<any[]>(sql`${built} LIMIT ${perPage} OFFSET ${offset}`, 'select', { signal: abortSignal, timeoutMs })
         return { data, meta: { perPage, page: p, total, lastPage } }
       },
       async simplePaginate(perPage: number, page = 1) {
         const p = Math.max(1, page)
         const offset = (p - 1) * perPage
-        const data = await runWithHooks<any[]>(bunSql`${built} LIMIT ${perPage + 1} OFFSET ${offset}`, 'select', { signal: abortSignal, timeoutMs })
+        const data = await runWithHooks<any[]>(sql`${built} LIMIT ${perPage + 1} OFFSET ${offset}`, 'select', { signal: abortSignal, timeoutMs })
         const hasMore = data.length > perPage
         return { data: hasMore ? data.slice(0, perPage) : data, meta: { perPage, page: p, hasMore } }
       },
@@ -2643,25 +3120,25 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         let q = built
         if (cursor !== undefined && cursor !== null) {
           if (Array.isArray(column)) {
-            const cols = column.map(c => bunSql(String(c)))
-            const comp = direction === 'asc' ? bunSql`>` : bunSql`<`
-            const tupleCols = bunSql`(${bunSql(cols as any)})`
-            const tupleVals = bunSql`(${bunSql(cursor as any)})`
-            q = bunSql`${q} WHERE ${tupleCols} ${comp} ${tupleVals}`
+            const cols = column.map(c => sql(String(c)))
+            const comp = direction === 'asc' ? sql`>` : sql`<`
+            const tupleCols = sql`(${sql(cols as any)})`
+            const tupleVals = sql`(${sql(cursor as any)})`
+            q = sql`${q} WHERE ${tupleCols} ${comp} ${tupleVals}`
           }
           else {
             q = direction === 'asc'
-              ? bunSql`${q} WHERE ${bunSql(String(column))} > ${cursor}`
-              : bunSql`${q} WHERE ${bunSql(String(column))} < ${cursor}`
+              ? sql`${q} WHERE ${sql(String(column))} > ${cursor}`
+              : sql`${q} WHERE ${sql(String(column))} < ${cursor}`
           }
         }
         if (Array.isArray(column)) {
-          const orderParts = column.map(c => bunSql`${bunSql(String(c))} ${direction === 'asc' ? bunSql`ASC` : bunSql`DESC`}`)
-          const orderExpr = orderParts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc}, ${p}`))
-          q = bunSql`${q} ORDER BY ${orderExpr} LIMIT ${perPage + 1}`
+          const orderParts = column.map(c => sql`${sql(String(c))} ${direction === 'asc' ? sql`ASC` : sql`DESC`}`)
+          const orderExpr = orderParts.reduce((acc, p, i) => (i === 0 ? p : sql`${acc}, ${p}`))
+          q = sql`${q} ORDER BY ${orderExpr} LIMIT ${perPage + 1}`
         }
         else {
-          q = bunSql`${q} ORDER BY ${bunSql(String(column))} ${direction === 'asc' ? bunSql`ASC` : bunSql`DESC`} LIMIT ${perPage + 1}`
+          q = sql`${q} ORDER BY ${sql(String(column))} ${direction === 'asc' ? sql`ASC` : sql`DESC`} LIMIT ${perPage + 1}`
         }
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const next = rows.length > perPage
@@ -2717,6 +3194,28 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       onlyTrashed() {
         includeTrashed = true
         onlyTrashed = true
+
+        const softDeleteColumn = config.softDeletes?.column || 'deleted_at'
+
+        // Update text representation for toSQL()
+        if (text.includes('WHERE')) {
+          text = text.replace(/WHERE/, `WHERE ${table}.${softDeleteColumn} IS NOT NULL AND`)
+        }
+        else {
+          text = `${text} WHERE ${table}.${softDeleteColumn} IS NOT NULL`
+        }
+
+        // Update built query
+        const currentSql = String(built)
+        if (currentSql.includes('WHERE')) {
+          const newSql = currentSql.replace(/WHERE/, `WHERE ${table}.${softDeleteColumn} IS NOT NULL AND`)
+          built = sql([newSql] as any)
+        }
+        else {
+          const newSql = `${currentSql} WHERE ${table}.${softDeleteColumn} IS NOT NULL`
+          built = sql([newSql] as any)
+        }
+
         return this as any
       },
       scope(name: string, value?: any) {
@@ -2747,7 +3246,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         throw new Error('Dump and Die')
       },
       async explain() {
-        const q = bunSql`EXPLAIN ${built}`
+        const q = sql`EXPLAIN ${built}`
         return await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
       },
       simple() {
@@ -2763,7 +3262,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const tbl = String(table)
           const hasCol = schema ? Boolean((schema as any)[tbl]?.columns?.[col]) : true
           if (hasCol && !/\bdeleted_at\b/i.test(text)) {
-            built = bunSql`${built} WHERE ${bunSql(String(col))} IS ${onlyTrashed ? bunSql`NOT NULL` : bunSql`NULL`}`
+            built = sql`${built} WHERE ${sql(String(col))} IS ${onlyTrashed ? sql`NOT NULL` : sql`NULL`}`
             addWhereText('WHERE', `${String(col)} IS ${onlyTrashed ? 'NOT ' : ''}NULL`)
           }
         }
@@ -2774,7 +3273,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return Array.isArray(rows) ? rows[0] : rows
       },
       async first() {
-        const rows = await runWithHooks<any[]>(bunSql`${built} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
+        const rows = await runWithHooks<any[]>(sql`${built} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row as any
       },
@@ -2786,7 +3285,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async find(id: any) {
         const pk = meta?.primaryKeys[String(table)] ?? 'id'
-        const rows = await runWithHooks<any[]>(bunSql`${built} WHERE ${bunSql(pk)} = ${id} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
+        const rows = await runWithHooks<any[]>(sql`${built} WHERE ${sql(pk)} = ${id} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row as any
       },
@@ -2798,7 +3297,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async findMany(ids: any[]) {
         const pk = meta?.primaryKeys[String(table)] ?? 'id'
-        const rows = await runWithHooks<any[]>(bunSql`${built} WHERE ${bunSql(String(pk))} IN ${bunSql(ids as any)}`, 'select', { signal: abortSignal, timeoutMs })
+        const rows = await runWithHooks<any[]>(sql`${built} WHERE ${sql(String(pk))} IN ${sql(ids as any)}`, 'select', { signal: abortSignal, timeoutMs })
         return rows as any
       },
       async* lazy() {
@@ -2806,8 +3305,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const pk = meta?.primaryKeys[String(table)] ?? 'id'
         while (true) {
           const q = cursor == null
-            ? bunSql`${built} ORDER BY ${bunSql(String(pk))} ASC LIMIT 100`
-            : bunSql`${built} WHERE ${bunSql(String(pk))} > ${cursor} ORDER BY ${bunSql(String(pk))} ASC LIMIT 100`
+            ? sql`${built} ORDER BY ${sql(String(pk))} ASC LIMIT 100`
+            : sql`${built} WHERE ${sql(String(pk))} > ${cursor} ORDER BY ${sql(String(pk))} ASC LIMIT 100`
           const rows: any[] = await (q as any).execute()
           if (rows.length === 0)
             break
@@ -2822,8 +3321,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         let cursor: any
         while (true) {
           const q = cursor == null
-            ? bunSql`${built} ORDER BY ${bunSql(String(pk))} ASC LIMIT 100`
-            : bunSql`${built} WHERE ${bunSql(String(pk))} > ${cursor} ORDER BY ${bunSql(String(pk))} ASC LIMIT 100`
+            ? sql`${built} ORDER BY ${sql(String(pk))} ASC LIMIT 100`
+            : sql`${built} WHERE ${sql(String(pk))} > ${cursor} ORDER BY ${sql(String(pk))} ASC LIMIT 100`
           const rows: any[] = await (q as any).execute()
           if (rows.length === 0)
             break
@@ -2837,26 +3336,26 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return fn(this as any)
       },
       async count() {
-        const q = bunSql`SELECT COUNT(*) as c FROM (${built}) as sub`
+        const q = sql`SELECT COUNT(*) as c FROM (${built}) as sub`
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.c ?? 0)
       },
       lockForUpdate() {
-        built = bunSql`${built} FOR UPDATE`
+        built = sql`${built} FOR UPDATE`
         return this as any
       },
       sharedLock() {
-        const syntax = config.sql.sharedLockSyntax === 'LOCK IN SHARE MODE' ? bunSql`LOCK IN SHARE MODE` : bunSql`FOR SHARE`
-        built = bunSql`${built} ${syntax}`
+        const syntax = config.sql.sharedLockSyntax === 'LOCK IN SHARE MODE' ? sql`LOCK IN SHARE MODE` : sql`FOR SHARE`
+        built = sql`${built} ${syntax}`
         return this as any
       },
       withCTE(name: string, sub: any) {
-        built = bunSql`WITH ${bunSql(name)} AS (${sub.toSQL()}) ${built}`
+        built = sql`WITH ${sql(name)} AS (${sub.toSQL()}) ${built}`
         return this as any
       },
       withRecursive(name: string, sub: any) {
-        built = bunSql`WITH RECURSIVE ${bunSql(name)} AS (${sub.toSQL()}) ${built}`
+        built = sql`WITH RECURSIVE ${sql(name)} AS (${sub.toSQL()}) ${built}`
         return this as any
       },
       execute() {
@@ -2906,13 +3405,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const chosen = [snake, lowerFirst, lowerFirst.toLowerCase()].find(n => available.includes(n)) ?? snake
           return (value: any) => {
             const expr = Array.isArray(value)
-              ? bunSql`${bunSql(String(chosen))} IN ${bunSql(value as any)}`
-              : bunSql`${bunSql(String(chosen))} = ${value}`
+              ? sql`${sql(String(chosen))} IN ${sql(value as any)}`
+              : sql`${sql(String(chosen))} = ${value}`
             built = isOr
-              ? bunSql`${built} OR ${expr}`
+              ? sql`${built} OR ${expr}`
               : isAnd
-                ? bunSql`${built} AND ${expr}`
-                : bunSql`${built} WHERE ${expr}`
+                ? sql`${built} AND ${expr}`
+                : sql`${built} WHERE ${expr}`
             // update textual representation
             const clause = Array.isArray(value) ? `${String(chosen)} IN (?)` : `${String(chosen)} = ?`
             addWhereText(isOr ? 'OR' : isAnd ? 'AND' : 'WHERE', clause)
@@ -2936,14 +3435,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     id(name: string) {
       if (!/^[A-Z_][\w.]*$/i.test(name))
         throw new Error(`Invalid identifier: ${name}`)
-      return bunSql(String(name))
+      return sql(String(name))
     },
     ids(...names: string[]) {
       for (const n of names) {
         if (!/^[A-Z_][\w.]*$/i.test(n))
           throw new Error(`Invalid identifier: ${n}`)
       }
-      return bunSql(names as any)
+      return sql(names as any)
     },
     select<TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(
       table: TTable,
@@ -2955,7 +3454,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return makeSelect<TTable>(table)
     },
     selectFromSub(sub, alias) {
-      const q = bunSql`SELECT * FROM (${sub.toSQL()}) AS ${bunSql(alias)}`
+      const q = _sql`SELECT * FROM (${sub.toSQL()}) AS ${_sql(alias)}`
       return {
         where: (_: any) => this,
         andWhere: (_: any) => this,
@@ -3436,6 +3935,70 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const q = bunSql`SELECT MAX(${bunSql(String(column))}) as m FROM ${bunSql(String(table))}`
       const [row] = await (q as any).execute()
       return (row?.m as any)
+    },
+    /**
+     * Get all relationships defined for a table
+     */
+    getRelationships(table: string) {
+      if (!meta?.relations) return {}
+      const tableRels = meta.relations[table]
+      if (!tableRels) return {}
+
+      const result: Record<string, any> = {}
+      for (const [type, relations] of Object.entries(tableRels)) {
+        if (relations && typeof relations === 'object' && Object.keys(relations).length > 0) {
+          result[type] = relations
+        }
+      }
+      return result
+    },
+    /**
+     * Check if a table has a specific relationship
+     */
+    hasRelationship(table: string, relationName: string): boolean {
+      if (!meta?.relations) return false
+      const rels = meta.relations[table]
+      if (!rels) return false
+
+      return Object.values(rels).some(
+        relMap => relMap && typeof relMap === 'object' && relationName in relMap,
+      )
+    },
+    /**
+     * Get the type of a relationship
+     */
+    getRelationshipType(table: string, relationName: string): string | null {
+      if (!meta?.relations) return null
+      const rels = meta.relations[table]
+      if (!rels) return null
+
+      for (const [type, relMap] of Object.entries(rels)) {
+        if (relMap && typeof relMap === 'object' && relationName in relMap) {
+          return type
+        }
+      }
+      return null
+    },
+    /**
+     * Get the target table of a relationship
+     */
+    getRelationshipTarget(table: string, relationName: string): string | null {
+      if (!meta?.relations) return null
+      const rels = meta.relations[table]
+      if (!rels) return null
+
+      for (const [type, relMap] of Object.entries(rels)) {
+        if (relMap && typeof relMap === 'object' && relationName in relMap) {
+          const targetModel = (relMap as any)[relationName]
+          if (typeof targetModel === 'string') {
+            return meta.modelToTable[targetModel] || targetModel
+          }
+          else if (targetModel && typeof targetModel === 'object' && 'target' in targetModel) {
+            return meta.modelToTable[targetModel.target] || targetModel.target
+          }
+        }
+      }
+      return null
     },
 
   }
