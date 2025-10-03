@@ -79,10 +79,13 @@ export type HasOne<T extends string> = Record<string, T>
 export type HasMany<T extends string> = Record<string, T>
 export type BelongsTo<T extends string> = Record<string, T>
 export type BelongsToMany<T extends string> = Record<string, T>
-export type HasOneThrough<T extends string> = Record<string, T>
+export type HasOneThrough<T extends string> = Record<string, { through: T, target: T }>
+export type HasManyThrough<T extends string> = Record<string, { through: T, target: T }>
 export type MorphOne<T extends string> = Record<string, T>
 export type MorphMany<T extends string> = Record<string, T>
 export type MorphTo = Record<string, unknown>
+export type MorphToMany<T extends string> = Record<string, T>
+export type MorphedByMany<T extends string> = Record<string, T>
 
 /**
  * # `ModelOptions`
@@ -116,10 +119,13 @@ export interface ModelOptions extends Base {
   hasMany?: HasMany<ModelNames> | ModelNames[]
   belongsTo?: BelongsTo<ModelNames> | ModelNames[]
   belongsToMany?: BelongsToMany<ModelNames> | ModelNames[]
-  hasOneThrough?: HasOneThrough<ModelNames> | ModelNames[]
-  morphOne?: MorphOne<ModelNames> | ModelNames
-  morphMany?: MorphMany<ModelNames>[] | ModelNames[]
+  hasOneThrough?: HasOneThrough<ModelNames>
+  hasManyThrough?: HasManyThrough<ModelNames>
+  morphOne?: MorphOne<ModelNames>
+  morphMany?: MorphMany<ModelNames>
   morphTo?: MorphTo
+  morphToMany?: MorphToMany<ModelNames>
+  morphedByMany?: MorphedByMany<ModelNames>
   scopes?: {
     [key: string]: (value: any) => any
   }

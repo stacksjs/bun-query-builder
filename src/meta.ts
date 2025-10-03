@@ -9,6 +9,13 @@ export interface SchemaMeta {
     hasMany?: Record<string, string>
     belongsTo?: Record<string, string>
     belongsToMany?: Record<string, string>
+    hasOneThrough?: Record<string, { through: string, target: string }>
+    hasManyThrough?: Record<string, { through: string, target: string }>
+    morphOne?: Record<string, string>
+    morphMany?: Record<string, string>
+    morphTo?: Record<string, unknown>
+    morphToMany?: Record<string, string>
+    morphedByMany?: Record<string, string>
   }>
   scopes?: Record<string, Record<string, (qb: any, value?: any) => any>>
 }
@@ -38,11 +45,23 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
       }
       return v as Record<string, string>
     }
+    const toThroughRecord = (v: any): Record<string, { through: string, target: string }> => {
+      if (!v)
+        return {}
+      return v as Record<string, { through: string, target: string }>
+    }
     relations[table] = {
       hasOne: toRecord(m.hasOne),
       hasMany: toRecord(m.hasMany),
       belongsTo: toRecord(m.belongsTo),
       belongsToMany: toRecord(m.belongsToMany),
+      hasOneThrough: toThroughRecord(m.hasOneThrough),
+      hasManyThrough: toThroughRecord(m.hasManyThrough),
+      morphOne: toRecord(m.morphOne),
+      morphMany: toRecord(m.morphMany),
+      morphTo: m.morphTo,
+      morphToMany: toRecord(m.morphToMany),
+      morphedByMany: toRecord(m.morphedByMany),
     }
 
     // Scopes

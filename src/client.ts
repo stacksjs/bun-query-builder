@@ -2067,12 +2067,33 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               const modelName = m?.[relationKey]
               return modelName ? meta.modelToTable[modelName] : undefined
             }
-            return pick(rels?.hasOne) || pick(rels?.hasMany) || pick(rels?.belongsTo) || pick(rels?.belongsToMany)
+            const pickThrough = (m?: Record<string, { through: string, target: string }>) => {
+              const rel = m?.[relationKey]
+              return rel?.target ? meta.modelToTable[rel.target] : undefined
+            }
+            return pick(rels?.hasOne) || pick(rels?.hasMany) || pick(rels?.belongsTo) || pick(rels?.belongsToMany) || pickThrough(rels?.hasOneThrough) || pickThrough(rels?.hasManyThrough) || pick(rels?.morphOne) || pick(rels?.morphMany) || pick(rels?.morphToMany) || pick(rels?.morphedByMany)
           }
           const targetTable = resolveTarget() ?? (meta.modelToTable[relationKey] || meta.tableToModel[relationKey] ? (meta.modelToTable[relationKey] ?? relationKey) : relationKey)
           const childTable = String(targetTable)
           if (!childTable || childTable === fromTable)
             return fromTable
+
+          // hasOneThrough / hasManyThrough: access through intermediate table
+          const throughRel = rels?.hasOneThrough?.[relationKey] || rels?.hasManyThrough?.[relationKey]
+          if (throughRel) {
+            const throughModel = throughRel.through
+            const targetModel = throughRel.target
+            const throughTable = meta.modelToTable[throughModel] || throughModel
+            const finalTable = meta.modelToTable[targetModel] || targetModel
+            const fromPk = meta.primaryKeys[fromTable] ?? 'id'
+            const throughPk = meta.primaryKeys[throughTable] ?? 'id'
+            const fkInThrough = `${singularize(fromTable)}_id`
+            const fkInFinal = `${singularize(throughTable)}_id`
+            built = bunSql`${built} LEFT JOIN ${bunSql(throughTable)} ON ${bunSql(`${throughTable}.${fkInThrough}`)} = ${bunSql(`${fromTable}.${fromPk}`)} LEFT JOIN ${bunSql(finalTable)} ON ${bunSql(`${finalTable}.${fkInFinal}`)} = ${bunSql(`${throughTable}.${throughPk}`)}`
+            joinedTables.add(throughTable)
+            joinedTables.add(finalTable)
+            return finalTable
+          }
 
           // belongsToMany: join through pivot
           const isBtm = Boolean(rels?.belongsToMany?.[relationKey])
@@ -2090,12 +2111,58 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             return childTable
           }
 
+          // morphToMany: polymorphic many-to-many through pivot
+          const isMtm = Boolean(rels?.morphToMany?.[relationKey])
+          if (isMtm) {
+            const morphName = relationKey
+            const pivotTable = `${singularize(childTable)}_${morphName}`
+            const fromPk = meta.primaryKeys[fromTable] ?? 'id'
+            const childPk = meta.primaryKeys[childTable] ?? 'id'
+            const morphType = `${morphName}_type`
+            const morphId = `${morphName}_id`
+            const targetFk = `${singularize(childTable)}_id`
+            built = bunSql`${built} LEFT JOIN ${bunSql(pivotTable)} ON ${bunSql(`${pivotTable}.${morphId}`)} = ${bunSql(`${fromTable}.${fromPk}`)} AND ${bunSql(`${pivotTable}.${morphType}`)} = ${bunSql(meta.tableToModel[fromTable] || fromTable)} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${childTable}.${childPk}`)} = ${bunSql(`${pivotTable}.${targetFk}`)}`
+            joinedTables.add(pivotTable)
+            joinedTables.add(childTable)
+            return childTable
+          }
+
+          // morphedByMany: inverse of morphToMany
+          const isMbm = Boolean(rels?.morphedByMany?.[relationKey])
+          if (isMbm) {
+            const relatedModel = rels.morphedByMany?.[relationKey] || relationKey
+            const relatedTable = meta.modelToTable[relatedModel] || relatedModel
+            const morphName = singularize(fromTable)
+            const pivotTable = `${singularize(relatedTable)}_${morphName}`
+            const fromPk = meta.primaryKeys[fromTable] ?? 'id'
+            const relatedPk = meta.primaryKeys[relatedTable] ?? 'id'
+            const morphType = `${morphName}_type`
+            const morphId = `${morphName}_id`
+            const relatedFk = `${singularize(relatedTable)}_id`
+            built = bunSql`${built} LEFT JOIN ${bunSql(pivotTable)} ON ${bunSql(`${pivotTable}.${relatedFk}`)} = ${bunSql(`${fromTable}.${fromPk}`)} LEFT JOIN ${bunSql(relatedTable)} ON ${bunSql(`${relatedTable}.${relatedPk}`)} = ${bunSql(`${pivotTable}.${morphId}`)} AND ${bunSql(`${pivotTable}.${morphType}`)} = ${bunSql(meta.tableToModel[relatedTable] || relatedTable)}`
+            joinedTables.add(pivotTable)
+            joinedTables.add(relatedTable)
+            return relatedTable
+          }
+
           // belongsTo: parent has fk to child
           const isBt = Boolean(rels?.belongsTo?.[relationKey])
           if (isBt) {
             const fkInParent = `${singularize(childTable)}_id`
             const childPk = meta.primaryKeys[childTable] ?? 'id'
             built = bunSql`${built} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${fromTable}.${fkInParent}`)} = ${bunSql(`${childTable}.${childPk}`)}`
+            joinedTables.add(childTable)
+            return childTable
+          }
+
+          // morphOne / morphMany: polymorphic one/many
+          const isMorphOne = Boolean(rels?.morphOne?.[relationKey])
+          const isMorphMany = Boolean(rels?.morphMany?.[relationKey])
+          if (isMorphOne || isMorphMany) {
+            const morphType = `${relationKey}_type`
+            const morphId = `${relationKey}_id`
+            const fromPk = meta.primaryKeys[fromTable] ?? 'id'
+            built = bunSql`${built} LEFT JOIN ${bunSql(childTable)} ON ${bunSql(`${childTable}.${morphId}`)} = ${bunSql(`${fromTable}.${fromPk}`)} AND ${bunSql(`${childTable}.${morphType}`)} = ${bunSql(meta.tableToModel[fromTable] || fromTable)}`
             joinedTables.add(childTable)
             return childTable
           }

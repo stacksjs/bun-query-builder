@@ -8,11 +8,6 @@
     "moduleResolution": "bundler",
     "paths": {
       "@/*": ["./src/*"],
-      "@/actions/*": ["./src/actions/*"],
-      "@/types": ["./src/types"],
-      "@/config": ["./src/config"],
-      "@/db": ["./src/db"],
-      "@/client": ["./src/client"],
       "@/examples/*": ["./examples/*"]
     },
     "resolveJsonModule": true,
