@@ -1,4 +1,4 @@
-import { v } from '../../examples/validation'
+import { v } from '@/examples/validation'
 import { defineModel } from '../../src/index'
 
 const model: {

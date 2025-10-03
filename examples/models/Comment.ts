@@ -1,5 +1,5 @@
 import { v } from '@stacksjs/ts-validation'
-import { defineModel } from '../../src/index'
+import { defineModel } from '@/index'
 
 const model: {
   readonly name: 'Comment'
