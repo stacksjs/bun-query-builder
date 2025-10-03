@@ -2647,21 +2647,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         return this as any
       },
-      /**
-       * Include soft-deleted records in relationship eager loading
-       * Usage: .with('posts').withTrashed()
-       */
-      withTrashed() {
-        // Temporarily disable soft delete filtering for this query
-        const originalSoftDeleteConfig = config.softDeletes?.defaultFilter
-        if (config.softDeletes) {
-          config.softDeletes.defaultFilter = false
-        }
-
-        // Note: In a real implementation, this would need to be scoped to just this query
-        // For now, this is a simplified version
-        return this as any
-      },
       where(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
           built = applyWhere(({} as any), built, [expr, op, value])
