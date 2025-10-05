@@ -71,7 +71,8 @@
   },
   "dependencies": {
     "@stacksjs/launchpad": "^0.6.4",
-    "@stacksjs/ts-validation": "^0.4.7"
+    "@stacksjs/ts-validation": "^0.4.7",
+    "ts-mocker": "^0.1.2"
   },
   "devDependencies": {
     "@stacksjs/bumpx": "^0.1.84",

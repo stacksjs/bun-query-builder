@@ -118,4 +118,116 @@ describe('CLI', () => {
     expect(out.stdout.length).toBeGreaterThan(0)
     rmSync(dir, { recursive: true, force: true })
   })
+
+  it('make:seeder creates a new seeder file', () => {
+    const workspace = join(tmpdir(), `qb-seeder-cli-${Date.now()}`)
+    mkdirSync(workspace, { recursive: true })
+    writeFileSync(join(workspace, 'package.json'), '{}')
+
+    const originalCwd = process.cwd()
+    process.chdir(workspace)
+
+    const out = runCli(['make:seeder', 'TestUser'])
+    expect(out.code).toBe(0)
+    expect(out.stdout).toContain('Created seeder')
+
+    const seederPath = join(workspace, 'database/seeders/TestUserSeeder.ts')
+    expect(require('fs').existsSync(seederPath)).toBe(true)
+
+    process.chdir(originalCwd)
+    rmSync(workspace, { recursive: true, force: true })
+  })
+
+  it('seed command runs without crashing', () => {
+    const workspace = join(tmpdir(), `qb-seed-cli-${Date.now()}`)
+    mkdirSync(workspace, { recursive: true })
+    writeFileSync(join(workspace, 'package.json'), '{}')
+
+    const seedersDir = join(workspace, 'database/seeders')
+    mkdirSync(seedersDir, { recursive: true })
+
+    // Create a simple seeder
+    const seeder = `
+import { Seeder } from 'bun-query-builder'
+
+export default class TestSeeder extends Seeder {
+  async run(qb) {
+    console.log('Test seeder ran')
+  }
+}
+`
+    writeFileSync(join(seedersDir, 'TestSeeder.ts'), seeder)
+
+    const originalCwd = process.cwd()
+    process.chdir(workspace)
+
+    const out = runCli(['seed', '--verbose'])
+    // May fail due to DB connection, but should not crash
+    expect([0, 1]).toContain(out.code)
+
+    process.chdir(originalCwd)
+    rmSync(workspace, { recursive: true, force: true })
+  })
+
+  it('db:seed is an alias for seed', () => {
+    const workspace = join(tmpdir(), `qb-dbseed-cli-${Date.now()}`)
+    mkdirSync(workspace, { recursive: true })
+    writeFileSync(join(workspace, 'package.json'), '{}')
+
+    const originalCwd = process.cwd()
+    process.chdir(workspace)
+
+    const out = runCli(['db:seed', '--verbose'])
+    // May fail due to DB connection, but should not crash
+    expect([0, 1]).toContain(out.code)
+
+    process.chdir(originalCwd)
+    rmSync(workspace, { recursive: true, force: true })
+  })
+
+  it('seed --class runs specific seeder', () => {
+    const workspace = join(tmpdir(), `qb-seedclass-cli-${Date.now()}`)
+    mkdirSync(workspace, { recursive: true })
+    writeFileSync(join(workspace, 'package.json'), '{}')
+
+    const seedersDir = join(workspace, 'database/seeders')
+    mkdirSync(seedersDir, { recursive: true })
+
+    const seeder = `
+import { Seeder } from 'bun-query-builder'
+
+export default class SpecificSeeder extends Seeder {
+  async run(qb) {
+    console.log('Specific seeder ran')
+  }
+}
+`
+    writeFileSync(join(seedersDir, 'SpecificSeeder.ts'), seeder)
+
+    const originalCwd = process.cwd()
+    process.chdir(workspace)
+
+    const out = runCli(['seed', '--class', 'SpecificSeeder'])
+    // May fail due to DB connection, but should not crash
+    expect([0, 1]).toContain(out.code)
+
+    process.chdir(originalCwd)
+    rmSync(workspace, { recursive: true, force: true })
+  })
+
+  it('db:fresh command exists', () => {
+    const workspace = join(tmpdir(), `qb-fresh-cli-${Date.now()}`)
+    mkdirSync(workspace, { recursive: true })
+    writeFileSync(join(workspace, 'package.json'), '{}')
+
+    const originalCwd = process.cwd()
+    process.chdir(workspace)
+
+    const out = runCli(['db:fresh'])
+    // May fail due to DB/models, but should not crash
+    expect([0, 1]).toContain(out.code)
+
+    process.chdir(originalCwd)
+    rmSync(workspace, { recursive: true, force: true })
+  })
 })

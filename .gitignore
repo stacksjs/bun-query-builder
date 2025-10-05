@@ -15,3 +15,4 @@ docs/.vitepress/cache
 examples/models/.qb-migrations.postgres.json
 generated/
 .vscode
+bin/query-builder

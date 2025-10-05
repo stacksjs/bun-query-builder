@@ -3,6 +3,7 @@ import { CAC } from 'cac'
 import { version } from '../package.json'
 import { explain, file, introspect, ping, sql, unsafe, waitReady } from '../src/actions'
 import { executeMigration, generateMigration, resetDatabase } from '../src/actions/migrate'
+import { freshDatabase, makeSeeder, runSeeder, runSeeders } from '../src/actions/seed'
 
 const cli = new CAC('query-builder')
 
@@ -138,6 +139,90 @@ cli
     }
     catch (err) {
       console.error('-- Reset failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('seed', 'Run database seeders')
+  .option('--dir <path>', 'Path to seeders directory (defaults to database/seeders)')
+  .option('--class <name>', 'Run a specific seeder class')
+  .option('--verbose', 'Enable verbose logging')
+  .example('query-builder seed')
+  .example('query-builder seed --class UserSeeder')
+  .example('query-builder seed --dir ./database/seeders')
+  .action(async (opts: any) => {
+    try {
+      if (opts.class) {
+        await runSeeder(opts.class, { verbose: opts.verbose })
+      }
+      else {
+        await runSeeders({ seedersDir: opts.dir, verbose: opts.verbose })
+      }
+    }
+    catch (err) {
+      console.error('-- Seeding failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('db:seed', 'Run database seeders (alias for seed)')
+  .option('--dir <path>', 'Path to seeders directory (defaults to database/seeders)')
+  .option('--class <name>', 'Run a specific seeder class')
+  .option('--verbose', 'Enable verbose logging')
+  .example('query-builder db:seed')
+  .example('query-builder db:seed --class UserSeeder')
+  .action(async (opts: any) => {
+    try {
+      if (opts.class) {
+        await runSeeder(opts.class, { verbose: opts.verbose })
+      }
+      else {
+        await runSeeders({ seedersDir: opts.dir, verbose: opts.verbose })
+      }
+    }
+    catch (err) {
+      console.error('-- Seeding failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('make:seeder <name>', 'Create a new seeder file')
+  .example('query-builder make:seeder User')
+  .example('query-builder make:seeder UserSeeder')
+  .action(async (name: string) => {
+    try {
+      await makeSeeder(name)
+    }
+    catch (err) {
+      console.error('-- Failed to create seeder:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('db:fresh', 'Drop all tables, re-run migrations and seed the database')
+  .option('--models <path>', 'Path to models directory (defaults to app/Models)')
+  .option('--seeders <path>', 'Path to seeders directory (defaults to database/seeders)')
+  .option('--verbose', 'Enable verbose logging')
+  .example('query-builder db:fresh')
+  .example('query-builder db:fresh --models ./app/Models --seeders ./database/seeders')
+  .action(async (opts: any) => {
+    try {
+      await freshDatabase({
+        modelsDir: opts.models,
+        seedersDir: opts.seeders,
+        verbose: opts.verbose,
+      })
+    }
+    catch (err) {
+      console.error('-- Database fresh failed:', err)
       const proc = await import('node:process')
       proc.default.exitCode = 1
     }

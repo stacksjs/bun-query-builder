@@ -34,6 +34,7 @@ Define your data model once and get a type-safe query experience _(a la Kysely/L
 ### Database Operations
 - **Transactions**: `transaction` with retries/backoff/isolation/onRetry/afterCommit; `savepoint`; distributed tx helpers.
 - **Migrations**: Generate and execute migrations from models with full diff support.
+- **Seeders**: Database seeding with fake data generation via `ts-mocker` (faker alternative).
 - **Raw Queries**: Tagged templates and parameterized queries with `raw()` and `unsafe()`.
 
 ### Configuration & Integration
@@ -213,14 +214,84 @@ Generate and execute migrations from your models:
 import { generateMigration, executeMigration } from 'bun-query-builder'
 
 // Generate migration from models directory
-const migration = await generateMigration('./models', { 
-  dialect: 'postgres', 
-  apply: true, 
-  full: true 
+const migration = await generateMigration('./models', {
+  dialect: 'postgres',
+  apply: true,
+  full: true
 })
 
 // Execute the migration
 await executeMigration(migration)
+```
+
+## Database Seeding
+
+Populate your database with test data using seeders powered by [ts-mocker](https://github.com/stacksjs/ts-mocker):
+
+### Creating a Seeder
+
+```bash
+# Generate a new seeder
+bun qb make:seeder User
+
+# This creates database/seeders/UserSeeder.ts
+```
+
+### Writing a Seeder
+
+```ts
+import { Seeder } from 'bun-query-builder'
+import { faker } from 'ts-mocker'
+
+export default class UserSeeder extends Seeder {
+  async run(qb: any): Promise<void> {
+    // Generate 50 users with realistic fake data
+    const users = Array.from({ length: 50 }, () => ({
+      name: faker.person.fullName(),
+      email: faker.internet.email(),
+      age: faker.number.int(18, 80),
+      role: faker.helpers.arrayElement(['admin', 'user', 'moderator']),
+      created_at: new Date(),
+      updated_at: new Date(),
+    }))
+
+    await qb.table('users').insert(users).execute()
+  }
+
+  // Control execution order (lower runs first)
+  get order(): number {
+    return 10 // Default is 100
+  }
+}
+```
+
+### Running Seeders
+
+```bash
+# Run all seeders
+bun qb seed
+bun qb db:seed
+
+# Run a specific seeder
+bun qb seed --class UserSeeder
+
+# Drop all tables, re-run migrations and seed
+bun qb db:fresh
+```
+
+### Programmatic Usage
+
+```ts
+import { runSeeders, runSeeder } from 'bun-query-builder'
+
+// Run all seeders
+await runSeeders({
+  seedersDir: './database/seeders',
+  verbose: true
+})
+
+// Run specific seeder
+await runSeeder('UserSeeder', { verbose: true })
 ```
 
 ### CLI
@@ -231,6 +302,17 @@ query-builder introspect ./app/Models --verbose
 
 # Print a sample SQL (text) for a table
 query-builder sql ./app/Models users --limit 5
+
+# Migrations
+query-builder migrate ./app/Models --dialect postgres
+query-builder migrate:fresh ./app/Models
+query-builder reset ./app/Models
+
+# Seeders
+query-builder make:seeder User
+query-builder seed
+query-builder db:seed --class UserSeeder
+query-builder db:fresh
 
 # Connectivity:
 query-builder ping

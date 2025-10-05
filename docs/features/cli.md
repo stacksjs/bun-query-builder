@@ -81,12 +81,117 @@ Run EXPLAIN on a SQL statement and print the plan.
 query-builder explain <sql>
 ```
 
+### migrate
+
+Generate SQL migrations from your models.
+
+```
+query-builder migrate <dir> [--dialect <d>] [--apply] [--full]
+```
+
+Options:
+
+- `--dialect <d>` - Database dialect (postgres|mysql|sqlite), default: postgres
+- `--apply` - Execute the generated SQL immediately
+- `--full` - Force full migration SQL instead of incremental diff
+- `--state <path>` - Path to migration state file
+
+Examples:
+
+```bash
+query-builder migrate ./app/Models --dialect postgres
+query-builder migrate ./app/Models --apply
+query-builder migrate ./app/Models --full
+```
+
+### migrate:fresh
+
+Reset database and run all migrations.
+
+```
+query-builder migrate:fresh <dir> [--dialect <d>]
+```
+
+### reset
+
+Drop all tables and reset database.
+
+```
+query-builder reset <dir> [--dialect <d>]
+```
+
+### make:seeder
+
+Create a new seeder file.
+
+```
+query-builder make:seeder <name>
+```
+
+Examples:
+
+```bash
+query-builder make:seeder User
+query-builder make:seeder UserSeeder  # "Seeder" suffix is optional
+```
+
+### seed
+
+Run database seeders.
+
+```
+query-builder seed [--dir <path>] [--class <name>] [--verbose]
+```
+
+Options:
+
+- `--dir <path>` - Path to seeders directory (default: database/seeders)
+- `--class <name>` - Run a specific seeder class
+- `--verbose` - Enable verbose logging
+
+Examples:
+
+```bash
+query-builder seed
+query-builder seed --class UserSeeder
+query-builder seed --dir ./custom/seeders
+```
+
+### db:seed
+
+Alias for the `seed` command.
+
+```
+query-builder db:seed [--class <name>]
+```
+
+### db:fresh
+
+Drop all tables, re-run migrations, and seed the database.
+
+```
+query-builder db:fresh [--models <path>] [--seeders <path>]
+```
+
+Options:
+
+- `--models <path>` - Path to models directory (default: app/Models)
+- `--seeders <path>` - Path to seeders directory (default: database/seeders)
+- `--verbose` - Enable verbose logging
+
+Example:
+
+```bash
+query-builder db:fresh
+query-builder db:fresh --models ./app/Models --seeders ./database/seeders
+```
+
 ## Examples
 
 ### Development and Debugging
 
 ```bash
-# Introspect Chris's model directory
+# Introspect model directory
 query-builder introspect ./app/Models --json
 
 # Generate sample SQL for user queries
@@ -96,6 +201,28 @@ query-builder sql ./app/Models projects --where '{"owner":"Chris","status":"acti
 # Debug with different table scenarios
 query-builder sql ./app/Models posts --where '{"author":"Avery","published":true}' --limit 10
 query-builder sql ./app/Models teams --where '{"lead":"Buddy"}'
+```
+
+### Migrations and Seeding
+
+```bash
+# Generate migrations
+query-builder migrate ./app/Models --dialect postgres
+
+# Apply migrations immediately
+query-builder migrate ./app/Models --apply
+
+# Create a new seeder
+query-builder make:seeder User
+
+# Run all seeders
+query-builder seed
+
+# Run specific seeder
+query-builder seed --class UserSeeder
+
+# Fresh database with migrations and seeds
+query-builder db:fresh
 ```
 
 ### Database Connectivity
