@@ -284,14 +284,50 @@ await db
   .execute()
 ```
 
-Aggregate helpers are available on the root builder:
+### Aggregate Methods
+
+Aggregation methods are available on the query builder for convenient calculations:
 
 ```ts
-await db.count('users')
-await db.sum('orders', 'total')
-await db.avg('orders', 'total')
-await db.min('orders', 'total')
-await db.max('orders', 'total')
+// Count records
+const userCount = await db.selectFrom('users').count()
+const activeUserCount = await db.selectFrom('users')
+  .where({ active: true })
+  .count()
+
+// Average calculations
+const avgAge = await db.selectFrom('users').avg('age')
+const avgOrderTotal = await db.selectFrom('orders')
+  .where({ status: 'completed' })
+  .avg('total')
+
+// Sum calculations
+const totalRevenue = await db.selectFrom('orders')
+  .where({ status: 'paid' })
+  .sum('amount')
+
+// Min and Max values
+const youngestAge = await db.selectFrom('users').min('age')
+const oldestAge = await db.selectFrom('users').max('age')
+const highestScore = await db.selectFrom('games').max('score')
+const lowestScore = await db.selectFrom('games').min('score')
+```
+
+These methods work seamlessly with filtering and other query builders:
+
+```ts
+// Complex aggregation with conditions
+const stats = {
+  avgActiveUserAge: await db.selectFrom('users')
+    .where({ active: true })
+    .avg('age'),
+  maxInactiveUserAge: await db.selectFrom('users')
+    .where({ active: false })
+    .max('age'),
+  totalPremiumRevenue: await db.selectFrom('subscriptions')
+    .where({ tier: 'premium' })
+    .sum('monthly_price')
+}
 ```
 
 ## Ordering, Limiting, Paging
@@ -353,9 +389,6 @@ await db
 
 ```ts
 // 1) Per-query timeout
-// 3) Query hooks
-import { config } from '@/config'
-
 await db.selectFrom('users').withTimeout(250).get()
 
 // 2) AbortSignal
@@ -363,12 +396,108 @@ const ac = new AbortController()
 const p = db.selectFrom('users').abort(ac.signal).get()
 ac.abort()
 await p
+```
+
+### Query Hooks
+
+Query hooks provide observability into query execution:
+
+```ts
+import { config } from 'bun-query-builder'
+
 config.hooks = {
-  onQueryStart: ({ sql }) => logger.debug({ sql }),
-  onQueryEnd: ({ durationMs }) => logger.info({ durationMs }),
-  onQueryError: ({ error }) => logger.error(error),
+  onQueryStart: ({ sql, params, kind }) => {
+    logger.debug({ sql, params, kind })
+  },
+  onQueryEnd: ({ sql, durationMs, rowCount, kind }) => {
+    logger.info({ sql, durationMs, rowCount, kind })
+  },
+  onQueryError: ({ sql, error, durationMs, kind }) => {
+    logger.error({ sql, error, durationMs, kind })
+  },
+  startSpan: ({ sql, kind }) => {
+    const span = tracer.startSpan('db.query', { sql, kind })
+    return {
+      end: (error?: any) => span.end(error)
+    }
+  }
 }
 ```
+
+### Model Lifecycle Hooks
+
+Model hooks allow you to intercept and react to CRUD operations:
+
+```ts
+import { createQueryBuilder } from 'bun-query-builder'
+
+const db = createQueryBuilder({
+  schema,
+  meta,
+  hooks: {
+    // CREATE hooks
+    beforeCreate: async ({ table, data }) => {
+      console.log(`Creating ${table}:`, data)
+      // Modify data, validate, or throw to prevent creation
+      if (table === 'users' && !data.email) {
+        throw new Error('Email is required')
+      }
+    },
+    afterCreate: async ({ table, data, result }) => {
+      console.log(`Created ${table}:`, result)
+      // Trigger notifications, update caches, send webhooks, etc.
+      if (table === 'users') {
+        await sendWelcomeEmail(result.email)
+      }
+    },
+
+    // UPDATE hooks
+    beforeUpdate: async ({ table, data, where }) => {
+      console.log(`Updating ${table}:`, { data, where })
+      // Audit logging, validation, etc.
+      await auditLog.record('update', table, data)
+    },
+    afterUpdate: async ({ table, data, where, result }) => {
+      console.log(`Updated ${table}:`, result)
+      // Clear related caches, send webhooks, etc.
+      await cache.invalidate(`${table}:*`)
+    },
+
+    // DELETE hooks
+    beforeDelete: async ({ table, where }) => {
+      console.log(`Deleting from ${table}:`, where)
+      // Prevent deletion, check constraints, etc.
+      if (table === 'users') {
+        const hasActiveOrders = await checkActiveOrders(where)
+        if (hasActiveOrders) {
+          throw new Error('Cannot delete user with active orders')
+        }
+      }
+    },
+    afterDelete: async ({ table, where, result }) => {
+      console.log(`Deleted from ${table}:`, result)
+      // Clean up related data, update aggregates, etc.
+      await cleanupRelatedData(table, where)
+    },
+  }
+})
+```
+
+**Hook Use Cases:**
+- **Validation**: Enforce business rules before operations
+- **Audit Logging**: Track all data changes
+- **Cache Invalidation**: Clear caches when data changes
+- **Webhooks**: Trigger external integrations
+- **Notifications**: Send emails, push notifications, etc.
+- **Cascade Operations**: Clean up or update related records
+- **Analytics**: Track usage patterns and metrics
+
+**Best Practices:**
+- Keep hooks fast to avoid slowing down queries
+- Use async hooks for I/O operations
+- Throw errors in before* hooks to prevent operations
+- Never throw in after* hooks (log errors instead)
+- Be mindful of infinite loops (hook triggering another query)
 
 ## Soft deletes
 
@@ -391,6 +520,81 @@ await db.selectFrom('users').onlyTrashed?.().get()
 ```
 
 Configure alias formats via `config.aliasing.relationColumnAliasFormat`.
+
+## Query Caching
+
+The query builder includes a built-in LRU cache with TTL support for frequently-run queries:
+
+```ts
+// Cache results for 60 seconds (default TTL)
+const users = await db.selectFrom('users')
+  .where({ active: true })
+  .cache()
+  .get()
+
+// Custom cache TTL (5 seconds)
+const recentPosts = await db.selectFrom('posts')
+  .orderBy('created_at', 'desc')
+  .limit(10)
+  .cache(5000)
+  .get()
+
+// Cache with complex queries
+const stats = await db.selectFrom('analytics')
+  .where(['date', '>=', startDate])
+  .where(['date', '<=', endDate])
+  .groupBy('category')
+  .cache(300000) // 5 minutes
+  .get()
+```
+
+### Cache Management
+
+```ts
+import { clearQueryCache, setQueryCacheMaxSize } from 'bun-query-builder'
+
+// Clear all cached queries
+clearQueryCache()
+
+// Configure cache size (default: 100 entries)
+setQueryCacheMaxSize(500)
+```
+
+**Best Practices:**
+- Use caching for expensive queries that don't change frequently
+- Set appropriate TTL based on data freshness requirements
+- Clear cache when underlying data changes
+- Consider cache size based on available memory
+- Cache works transparently - query results are cached automatically
+
+## Batch Operations
+
+Efficient batch operations for inserting, updating, and deleting multiple records:
+
+```ts
+// Insert multiple records at once
+await db.insertMany('users', [
+  { name: 'Alice', email: 'alice@example.com', role: 'user' },
+  { name: 'Bob', email: 'bob@example.com', role: 'user' },
+  { name: 'Charlie', email: 'charlie@example.com', role: 'admin' },
+])
+
+// Update multiple records matching conditions
+const affectedRows = await db.updateMany(
+  'users',
+  { verified: false }, // conditions
+  { status: 'pending', verification_sent: new Date() } // updates
+)
+
+// Delete multiple records by IDs
+const deletedCount = await db.deleteMany('old_sessions', [1, 2, 3, 4, 5])
+```
+
+**Performance Tips:**
+- `insertMany()` is more efficient than multiple individual inserts
+- Use `updateMany()` for bulk updates with conditions
+- `deleteMany()` uses `WHERE id IN (...)` for efficient bulk deletion
+- Consider transaction boundaries for large batch operations
 
 ## DML: Insert / Update / Delete
 
@@ -1002,16 +1206,21 @@ Use `selectRaw`, `whereRaw`, `groupByRaw`, or `havingRaw` and pass a Bun `sql` f
 
 ## Quick Reference
 
-- Selection: `selectFrom`, `select`, `selectRaw`
-- Filters: `where`, `andWhere`, `orWhere`, `whereNull`, `whereBetween`, `whereColumn`, `whereDate`, `whereJsonContains`, `whereNested`
-- Joins: `join`, `innerJoin`, `leftJoin`, `rightJoin`, `crossJoin`, `joinSub`, `leftJoinSub`, `crossJoinSub`
-- Grouping: `groupBy`, `groupByRaw`, `having`, `havingRaw`
-- Unions: `union`, `unionAll`
-- Modifiers: `distinct`, `distinctOn`
-- Order/Paging: `orderBy`, `orderByDesc`, `latest`, `oldest`, `inRandomOrder`, `reorder`, `limit`, `offset`, `forPage`
-- Results: `value`, `pluck`, `exists`, `doesntExist`
-- Pagination: `paginate`, `simplePaginate`, `cursorPaginate`, `chunk`, `chunkById`, `eachById`
-- DML: `insertInto`, `updateTable`, `deleteFrom`, `returning`
-- Flow: `when`, `tap`, `dump`, `dd`, `explain`
-- CTEs: `withCTE`, `withRecursive`
-- Locks: `lockForUpdate`, `sharedLock`
+- **Selection**: `selectFrom`, `select`, `selectRaw`
+- **Filters**: `where`, `andWhere`, `orWhere`, `whereNull`, `whereBetween`, `whereColumn`, `whereDate`, `whereJsonContains`, `whereNested`
+- **Joins**: `join`, `innerJoin`, `leftJoin`, `rightJoin`, `crossJoin`, `joinSub`, `leftJoinSub`, `crossJoinSub`
+- **Grouping**: `groupBy`, `groupByRaw`, `having`, `havingRaw`
+- **Aggregations**: `count()`, `avg(column)`, `sum(column)`, `max(column)`, `min(column)`
+- **Unions**: `union`, `unionAll`
+- **Modifiers**: `distinct`, `distinctOn`
+- **Order/Paging**: `orderBy`, `orderByDesc`, `latest`, `oldest`, `inRandomOrder`, `reorder`, `limit`, `offset`, `forPage`
+- **Results**: `value`, `pluck`, `exists`, `doesntExist`
+- **Pagination**: `paginate`, `simplePaginate`, `cursorPaginate`, `chunk`, `chunkById`, `eachById`
+- **DML**: `insertInto`, `updateTable`, `deleteFrom`, `returning`
+- **Batch Operations**: `insertMany(table, records[])`, `updateMany(table, conditions, data)`, `deleteMany(table, ids[])`
+- **Caching**: `cache(ttlMs?)`, `clearQueryCache()`, `setQueryCacheMaxSize(size)`
+- **Flow**: `when`, `tap`, `dump`, `dd`, `explain`
+- **CTEs**: `withCTE`, `withRecursive`
+- **Locks**: `lockForUpdate`, `sharedLock`
+- **Relations**: `with()`, `withCount()`, `whereHas()`, `has()`, `doesntHave()`
+- **Soft Deletes**: `withTrashed()`, `onlyTrashed()`

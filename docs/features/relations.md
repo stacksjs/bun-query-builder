@@ -216,6 +216,101 @@ const averyActiveTeam = await db
   .execute()
 ```
 
+## has() / doesntHave(): Simple Existence Checks
+
+Convenience methods for checking relationship existence without additional conditions:
+
+```ts
+// Find users who have at least one project (any status)
+const usersWithProjects = await db
+  .selectFrom('users')
+  .has('projects')
+  .execute()
+
+// Find users who don't have any posts yet
+const usersWithoutPosts = await db
+  .selectFrom('users')
+  .doesntHave('posts')
+  .execute()
+
+// Combine with other conditions
+const inactiveUsersWithProjects = await db
+  .selectFrom('users')
+  .where({ active: false })
+  .has('projects')
+  .execute()
+
+// Chris's mentees who haven't completed any projects yet
+const chrisMenteesWithoutCompletions = await db
+  .selectFrom('users')
+  .where({ mentor: 'Chris' })
+  .doesntHave('completedProjects')
+  .execute()
+```
+
+**When to use**:
+- Use `has()` when you only care about existence, not specific conditions
+- Use `whereHas()` when you need to filter by specific criteria on the related records
+- Use `doesntHave()` to find records without any related data
+
+## Constraint Callbacks with with()
+
+Apply query constraints when eager loading relations using callback functions:
+
+```ts
+// Load only published posts with users
+const usersWithPublishedPosts = await db
+  .selectFrom('users')
+  .with({
+    posts: (qb) => qb
+      .where('published', '=', true)
+      .orderBy('created_at', 'desc')
+      .limit(5)
+  })
+  .execute()
+
+// Load multiple relations with different constraints
+const usersWithFilteredRelations = await db
+  .selectFrom('users')
+  .with({
+    posts: (qb) => qb.where('published', '=', true),
+    comments: (qb) => qb.where('approved', '=', true).orderBy('created_at', 'desc'),
+    projects: (qb) => qb.where('status', 'in', ['active', 'completed'])
+  })
+  .execute()
+
+// Complex constraints with multiple conditions
+const teamData = await db
+  .selectFrom('teams')
+  .with({
+    members: (qb) => qb
+      .where('active', '=', true)
+      .where(['joined_at', '>', new Date('2024-01-01')])
+      .orderBy('role', 'asc')
+  })
+  .execute()
+
+// Chris's projects with recent activity
+const chrisActiveProjects = await db
+  .selectFrom('users')
+  .where({ name: 'Chris' })
+  .with({
+    projects: (qb) => qb
+      .where('status', '=', 'active')
+      .where(['last_activity', '>', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)])
+      .orderBy('priority', 'desc')
+  })
+  .first()
+```
+
+**Use Cases**:
+- Load only specific related records (e.g., published posts, active projects)
+- Sort related records (e.g., most recent comments first)
+- Limit the number of related records loaded
+- Apply complex filtering logic to related data
+
+**Note**: Constraint callbacks provide more flexibility than simple array-based filters in `withCount()` and `whereHas()`.
+
 ## Picking Columns vs Selecting All
 
 - Use `selectAllRelations()` for quick exploration and admin UIs

@@ -14,12 +14,29 @@ Define your data model once and get a type-safe query experience _(a la Kysely/L
 
 ## Features
 
+### Core Query Building
 - **Typed from Models**: Infer tables/columns/PKs from your model files; `selectFrom('users')` and `where({ active: true })` are typed.
 - **Fluent Builder**: `select/insert/update/delete`, `where/andWhere/orWhere`, `join/leftJoin/rightJoin/crossJoin`, `groupBy/having`, `union/unionAll`.
-- **Relations**: `with(...)`, `withCount(...)`, `whereHas(...)`, `selectAllRelations()` with configurable aliasing.
+- **Aggregations**: `count()`, `avg()`, `sum()`, `max()`, `min()` with full type safety.
+- **Batch Operations**: `insertMany()`, `updateMany()`, `deleteMany()` for efficient bulk operations.
+
+### Advanced Features
+- **Relations**: `with(...)`, `withCount(...)`, `whereHas(...)`, `has()`, `doesntHave()`, `selectAllRelations()` with configurable aliasing and constraint callbacks.
+- **Query Scopes**: Define reusable query constraints on models for cleaner, more maintainable code.
+- **Query Caching**: Built-in LRU cache with TTL support via `cache(ttlMs)`, `clearQueryCache()`, `setQueryCacheMaxSize()`.
+- **Model Hooks**: Lifecycle events - `beforeCreate`, `afterCreate`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`.
+
+### Utilities & Helpers
 - **Utilities**: `distinct/distinctOn`, `orderByDesc/latest/oldest/inRandomOrder`, `whereColumn/whereRaw/groupByRaw/havingRaw`, JSON/date helpers.
 - **Pagination**: `paginate`, `simplePaginate`, `cursorPaginate`, plus `chunk/chunkById/eachById`.
+- **Soft Deletes**: `withTrashed()`, `onlyTrashed()` for logical deletion support.
+
+### Database Operations
 - **Transactions**: `transaction` with retries/backoff/isolation/onRetry/afterCommit; `savepoint`; distributed tx helpers.
+- **Migrations**: Generate and execute migrations from models with full diff support.
+- **Raw Queries**: Tagged templates and parameterized queries with `raw()` and `unsafe()`.
+
+### Configuration & Integration
 - **Configurable**: Dialect hints, timestamps, alias strategies, relation FK formats, JSON mode, random function, shared lock syntax.
 - **Bun API passthroughs**: `unsafe`, `file`, `simple`, pool `reserve/release`, `close`, `ping/waitForReady`.
 - **CLI**: Introspection, query printing, connectivity checks, file/unsafe execution, explain.
@@ -56,6 +73,136 @@ const q = db
   .limit(10)
 
 const rows = await q.execute()
+```
+
+### Aggregations
+
+```ts
+// Get average age of active users
+const avgAge = await db.selectFrom('users')
+  .where({ active: true })
+  .avg('age')
+
+// Count total posts
+const totalPosts = await db.selectFrom('posts').count()
+
+// Get max and min scores
+const maxScore = await db.selectFrom('users').max('score')
+const minScore = await db.selectFrom('users').min('score')
+```
+
+### Batch Operations
+
+```ts
+// Insert multiple records at once
+await db.insertMany('users', [
+  { name: 'Alice', email: 'alice@example.com' },
+  { name: 'Bob', email: 'bob@example.com' },
+  { name: 'Charlie', email: 'charlie@example.com' },
+])
+
+// Update multiple records matching conditions
+await db.updateMany('users', { verified: false }, { status: 'pending' })
+
+// Delete multiple records by IDs
+await db.deleteMany('users', [1, 2, 3, 4, 5])
+```
+
+### Query Caching
+
+```ts
+// Cache query results for 60 seconds (default)
+const users = await db.selectFrom('users')
+  .where({ active: true })
+  .cache()
+  .get()
+
+// Custom cache TTL (5 seconds)
+const posts = await db.selectFrom('posts')
+  .orderBy('created_at', 'desc')
+  .limit(10)
+  .cache(5000)
+  .get()
+
+// Clear all cached queries
+clearQueryCache()
+
+// Configure cache size
+setQueryCacheMaxSize(500)
+```
+
+### Model Hooks
+
+```ts
+const db = createQueryBuilder<typeof schema>({
+  schema,
+  meta,
+  hooks: {
+    beforeCreate: async ({ table, data }) => {
+      console.log(`Creating ${table}:`, data)
+      // Modify data, validate, or throw to prevent creation
+    },
+    afterCreate: async ({ table, data, result }) => {
+      console.log(`Created ${table}:`, result)
+      // Trigger notifications, update caches, etc.
+    },
+    beforeUpdate: async ({ table, data, where }) => {
+      // Audit logging, validation, etc.
+    },
+    afterUpdate: async ({ table, data, where, result }) => {
+      // Clear related caches, send webhooks, etc.
+    },
+    beforeDelete: async ({ table, where }) => {
+      // Prevent deletion, check constraints, etc.
+    },
+    afterDelete: async ({ table, where, result }) => {
+      // Clean up related data, update aggregates, etc.
+    },
+  }
+})
+```
+
+### Query Scopes
+
+```ts
+// Define scopes on your models
+const User = {
+  name: 'User',
+  table: 'users',
+  scopes: {
+    active: (qb) => qb.where({ status: 'active' }),
+    verified: (qb) => qb.where({ email_verified_at: ['IS NOT', null] }),
+    premium: (qb) => qb.where({ subscription: 'premium' }),
+  },
+  // ... other model properties
+}
+
+// Use scopes in queries
+const activeUsers = await db.selectFrom('users')
+  .scope('active')
+  .scope('verified')
+  .get()
+```
+
+### Relations with Constraints
+
+```ts
+// Eager load with constraints
+const users = await db.selectFrom('users')
+  .with({
+    posts: (qb) => qb.where('published', '=', true).orderBy('created_at', 'desc')
+  })
+  .get()
+
+// Check for related records
+const usersWithPosts = await db.selectFrom('users')
+  .has('posts')
+  .get()
+
+// Query by relationship existence
+const activeAuthors = await db.selectFrom('users')
+  .whereHas('posts', (qb) => qb.where('published', '=', true))
+  .get()
 ```
 
 ## Migrations
