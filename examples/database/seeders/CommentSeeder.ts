@@ -1,5 +1,5 @@
-import { Seeder } from '../../../src/seeder'
 import { faker } from 'ts-mocker'
+import { Seeder } from '../../../src/seeder'
 
 export default class CommentSeeder extends Seeder {
   /**
@@ -9,8 +9,8 @@ export default class CommentSeeder extends Seeder {
     console.log('Seeding comments...')
 
     // Get all post IDs and user IDs
-    const posts = await qb.table('posts').select(['id']).execute()
-    const users = await qb.table('users').select(['id']).execute()
+    const posts = await qb.selectFrom('posts').execute()
+    const users = await qb.selectFrom('users').execute()
 
     if (posts.length === 0 || users.length === 0) {
       console.log('⚠ No posts or users found, skipping comment seeding')
@@ -20,11 +20,11 @@ export default class CommentSeeder extends Seeder {
     // Generate 0-10 comments per post
     const comments = []
     for (const post of posts) {
-      const commentCount = faker.number.int(0, 10)
+      const commentCount = faker.number.int({ min: 0, max: 10 })
 
       for (let i = 0; i < commentCount; i++) {
         // Pick a random user to be the author
-        const randomUser = users[faker.number.int(0, users.length - 1)] as any
+        const randomUser = users[faker.number.int({ min: 0, max: users.length - 1 })] as any
 
         comments.push({
           post_id: post.id,
@@ -40,7 +40,7 @@ export default class CommentSeeder extends Seeder {
     const batchSize = 100
     for (let i = 0; i < comments.length; i += batchSize) {
       const batch = comments.slice(i, i + batchSize)
-      await qb.table('comments').insert(batch).execute()
+      await qb.insertInto('comments').values(batch).execute()
     }
 
     console.log(`✓ Seeded ${comments.length} comments`)

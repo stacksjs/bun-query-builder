@@ -124,22 +124,22 @@ describe('Model Lifecycle Hooks', () => {
   it('hooks interface includes model lifecycle events', () => {
     // Type-level test - verify hook signatures exist
     const hooks = {
-      beforeCreate: ({ table, data }: { table: string, data: any }) => {
+      beforeCreate: ({ table: _table, data: _data }: { table: string, data: any }) => {
         // Hook implementation
       },
-      afterCreate: ({ table, data, result }: { table: string, data: any, result: any }) => {
+      afterCreate: ({ table: _table, data: _data, result: _result }: { table: string, data: any, result: any }) => {
         // Hook implementation
       },
-      beforeUpdate: ({ table, data, where }: { table: string, data: any, where?: any }) => {
+      beforeUpdate: ({ table: _table, data: _data, where: _where }: { table: string, data: any, where?: any }) => {
         // Hook implementation
       },
-      afterUpdate: ({ table, data, where, result }: { table: string, data: any, where?: any, result: any }) => {
+      afterUpdate: ({ table: _table, data: _data, where: _where, result: _result }: { table: string, data: any, where?: any, result: any }) => {
         // Hook implementation
       },
-      beforeDelete: ({ table, where }: { table: string, where?: any }) => {
+      beforeDelete: ({ table: _table, where: _where }: { table: string, where?: any }) => {
         // Hook implementation
       },
-      afterDelete: ({ table, where, result }: { table: string, where?: any, result: any }) => {
+      afterDelete: ({ table: _table, where: _where, result: _result }: { table: string, where?: any, result: any }) => {
         // Hook implementation
       },
     }
@@ -180,11 +180,11 @@ describe('Model Lifecycle Hooks', () => {
 
   it('hooks can be async functions', () => {
     const asyncHooks = {
-      beforeCreate: async ({ table, data }: any) => {
+      beforeCreate: async ({ table: _table, data: _data }: any) => {
         // Async hook
         await Promise.resolve()
       },
-      afterCreate: async ({ table, data, result }: any) => {
+      afterCreate: async ({ table: _table, data: _data, result: _result }: any) => {
         // Async hook
         await Promise.resolve()
       },

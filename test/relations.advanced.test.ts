@@ -33,7 +33,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -74,7 +74,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -115,7 +115,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -154,7 +154,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -195,7 +195,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -236,7 +236,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -273,7 +273,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -314,11 +314,11 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['users']?.hasMany?.Posts).toBe('Post')
-      expect(meta.relations?.['users']?.hasMany?.posts).toBe('Post')
+      expect(meta.relations?.users?.hasMany?.Posts).toBe('Post')
+      expect(meta.relations?.users?.hasMany?.posts).toBe('Post')
     })
 
     it('should handle PascalCase relationship names', () => {
@@ -343,7 +343,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { PostAuthor: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -355,7 +355,7 @@ describe('advanced relationship scenarios', () => {
       const qb = db.selectFrom('users').with('BlogPosts')
 
       expect(qb).toBeDefined()
-      expect(meta.relations?.['users']?.hasMany?.BlogPosts).toBe('Post')
+      expect(meta.relations?.users?.hasMany?.BlogPosts).toBe('Post')
     })
   })
 
@@ -383,10 +383,10 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['users']?.hasMany?.posts).toBe('Post')
+      expect(meta.relations?.users?.hasMany?.posts).toBe('Post')
       // Note: tables is not part of meta, it's part of schema
       const schema = buildDatabaseSchema(models)
       // Check that the 'posts' column exists even though there's a relationship with the same name
@@ -407,7 +407,7 @@ describe('advanced relationship scenarios', () => {
       const models = defineModels({ User })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['users']?.hasMany?.users).toBe('User')
+      expect(meta.relations?.users?.hasMany?.users).toBe('User')
     })
   })
 
@@ -427,7 +427,7 @@ describe('advanced relationship scenarios', () => {
       const models = defineModels({ User })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['users']?.belongsTo?.manager).toBe('User')
+      expect(meta.relations?.users?.belongsTo?.manager).toBe('User')
     })
 
     it('should handle relationships when FK column is undefined', () => {
@@ -456,7 +456,7 @@ describe('advanced relationship scenarios', () => {
       const models = defineModels({ User, Profile })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['users']?.hasOne?.profile).toBe('Profile')
+      expect(meta.relations?.users?.hasOne?.profile).toBe('Profile')
     })
   })
 
@@ -483,12 +483,12 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const meta = buildSchemaMeta(models)
 
       // Both sides should be properly registered
-      expect(meta.relations?.['users']?.hasMany?.posts).toBe('Post')
-      expect(meta.relations?.['posts']?.belongsTo?.user).toBe('User')
+      expect(meta.relations?.users?.hasMany?.posts).toBe('Post')
+      expect(meta.relations?.posts?.belongsTo?.user).toBe('User')
     })
 
     it('should work with one-sided relationship definitions', () => {
@@ -513,10 +513,10 @@ describe('advanced relationship scenarios', () => {
         // No belongsTo defined
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['users']?.hasMany?.posts).toBe('Post')
+      expect(meta.relations?.users?.hasMany?.posts).toBe('Post')
     })
   })
 
@@ -630,10 +630,10 @@ describe('advanced relationship scenarios', () => {
         },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['users']?.hasMany?.publicações).toBe('Post')
+      expect(meta.relations?.users?.hasMany?.publicações).toBe('Post')
     })
 
     it('should handle numbers in relationship names', () => {
@@ -657,10 +657,10 @@ describe('advanced relationship scenarios', () => {
         },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['users']?.hasMany?.posts2023).toBe('Post')
+      expect(meta.relations?.users?.hasMany?.posts2023).toBe('Post')
     })
   })
 
@@ -698,7 +698,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post, Comment })
+      const models = defineModels({ User, Post, Comment })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -741,7 +741,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -782,7 +782,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -837,8 +837,8 @@ describe('advanced relationship scenarios', () => {
       const models = defineModels({ Post, Comment, Reaction })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['posts']?.morphMany?.comments).toBe('Comment')
-      expect(meta.relations?.['posts']?.morphMany?.reactions).toBe('Reaction')
+      expect(meta.relations?.posts?.morphMany?.comments).toBe('Comment')
+      expect(meta.relations?.posts?.morphMany?.reactions).toBe('Reaction')
     })
 
     it('should handle morphTo relationships correctly', () => {
@@ -875,7 +875,7 @@ describe('advanced relationship scenarios', () => {
       const models = defineModels({ Comment, Post, Video })
       const meta = buildSchemaMeta(models)
 
-      expect(meta.relations?.['comments']?.morphTo?.commentable).toBeDefined()
+      expect(meta.relations?.comments?.morphTo?.commentable).toBeDefined()
     })
   })
 
@@ -902,7 +902,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -939,7 +939,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 
@@ -976,7 +976,7 @@ describe('advanced relationship scenarios', () => {
         belongsTo: { user: 'User' },
       })
 
-      const models = defineModels({User, Post })
+      const models = defineModels({ User, Post })
       const schema = buildDatabaseSchema(models)
       const meta = buildSchemaMeta(models)
 

@@ -1,3 +1,6 @@
+/* eslint-disable regexp/no-super-linear-backtracking */
+/* eslint-disable style/max-statements-per-line */
+/* eslint-disable no-useless-catch */
 import type { SchemaMeta } from './meta'
 import type { DatabaseSchema } from './schema'
 import { config } from './config'
@@ -15,7 +18,8 @@ class QueryCache {
 
   get(key: string): any | null {
     const entry = this.cache.get(key)
-    if (!entry) return null
+    if (!entry)
+      return null
 
     if (Date.now() > entry.expiresAt) {
       this.cache.delete(key)
@@ -29,7 +33,8 @@ class QueryCache {
     // Simple LRU: if cache is full, delete oldest entry
     if (this.cache.size >= this.maxSize) {
       const firstKey = this.cache.keys().next().value
-      if (firstKey) this.cache.delete(firstKey)
+      if (firstKey)
+        this.cache.delete(firstKey)
     }
 
     this.cache.set(key, {
@@ -2163,7 +2168,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const normalizedRelations: Array<{ name: string, callback?: (qb: any) => any }> = []
 
         for (const rel of relations) {
-          if (!rel) continue
+          if (!rel)
+            continue
 
           if (typeof rel === 'string') {
             normalizedRelations.push({ name: rel })
@@ -2203,7 +2209,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         const getAvailableRelations = (fromTable: string): string[] => {
           const rels = meta.relations?.[fromTable]
-          if (!rels) return []
+          if (!rels)
+            return []
           return [
             ...Object.keys(rels.hasOne || {}),
             ...Object.keys(rels.hasMany || {}),
@@ -2233,7 +2240,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
 
           // Helper to build conditional JOIN clause
-          const buildConditionalJoin = (baseJoinCondition: string, targetTable: string): string => {
+          const _buildConditionalJoin = (baseJoinCondition: string, targetTable: string): string => {
             let joinCondition = baseJoinCondition
 
             // Add soft delete filter if enabled
@@ -2242,7 +2249,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               joinCondition = `${joinCondition} AND ${targetTable}.${softDeleteColumn} IS NULL`
             }
 
-            if (!condition) return joinCondition
+            if (!condition)
+              return joinCondition
 
             // Create a simple query builder for the condition
             const conditionBuilder = {
@@ -2258,7 +2266,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
                 return `${joinCondition} AND ${additionalCondition}`
               }
             }
-            catch (e) {
+            catch {
               // If condition fails, just use base condition
             }
 
@@ -2434,7 +2442,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           let currentDepth = 0
 
           for (const part of parts) {
-            if (!part || part.trim().length === 0) continue // Skip empty parts
+            if (!part || part.trim().length === 0)
+              continue // Skip empty parts
             const trimmedPart = part.trim()
 
             // For conditional loading, we need to add WHERE conditions to the JOIN
@@ -2457,7 +2466,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
        * Query records that have a specific relationship with optional conditions
        */
       whereHas(relation: string, callback?: (qb: any) => any) {
-        if (!meta) return this as any
+        if (!meta)
+          return this as any
 
         const parentTable = String(table)
         const rels = meta.relations?.[parentTable]
@@ -2466,7 +2476,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
 
         // Find the relationship
-        const relType = Object.entries(rels).find(([type, relations]) =>
+        const relType = Object.entries(rels).find(([_type, relations]) =>
           relations && typeof relations === 'object' && relation in relations,
         )
 
@@ -2552,7 +2562,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
        * Query records that don't have a specific relationship
        */
       whereDoesntHave(relation: string, callback?: (qb: any) => any) {
-        if (!meta) return this as any
+        if (!meta)
+          return this as any
 
         const parentTable = String(table)
         const rels = meta.relations?.[parentTable]
@@ -2560,7 +2571,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           throw new Error(`[query-builder] No relationships defined for table '${parentTable}'`)
         }
 
-        const relType = Object.entries(rels).find(([type, relations]) =>
+        const relType = Object.entries(rels).find(([_type, relations]) =>
           relations && typeof relations === 'object' && relation in relations,
         )
 
@@ -2600,16 +2611,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
        */
       has(relation: string) {
         // Inline implementation to avoid TypeScript `this` issues
-        if (!meta) return this as any
+        if (!meta)
+          return this as any
 
         const parentTable = String(table)
         const rels = meta.relations?.[parentTable]
-        if (!rels) throw new Error(`[query-builder] No relationships defined for table '${parentTable}'`)
+        if (!rels)
+          throw new Error(`[query-builder] No relationships defined for table '${parentTable}'`)
 
         const relType = Object.entries(rels).find(([_type, relations]) =>
           relations && typeof relations === 'object' && relation in relations,
         )
-        if (!relType) throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
+        if (!relType)
+          throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
 
         const [type, relMap] = relType
         const targetModel = (relMap as any)[relation]
@@ -2620,14 +2634,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
           const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
           built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) } catch {}
+          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) }
+          catch {}
         }
         else if (type === 'belongsTo') {
           const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
           const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${targetPk} = ${parentTable}.${fk}`
           built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) } catch {}
+          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) }
+          catch {}
         }
         else if (type === 'belongsToMany') {
           const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
@@ -2636,7 +2652,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
           const subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${b}_id WHERE ${pivot}.${a}_id = ${parentTable}.${pk}`
           built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) } catch {}
+          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) }
+          catch {}
         }
 
         return this as any
@@ -2646,16 +2663,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
        */
       doesntHave(relation: string) {
         // Inline implementation to avoid TypeScript `this` issues
-        if (!meta) return this as any
+        if (!meta)
+          return this as any
 
         const parentTable = String(table)
         const rels = meta.relations?.[parentTable]
-        if (!rels) throw new Error(`[query-builder] No relationships defined for table '${parentTable}'`)
+        if (!rels)
+          throw new Error(`[query-builder] No relationships defined for table '${parentTable}'`)
 
         const relType = Object.entries(rels).find(([_type, relations]) =>
           relations && typeof relations === 'object' && relation in relations,
         )
-        if (!relType) throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
+        if (!relType)
+          throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
 
         const [type, relMap] = relType
         const targetModel = (relMap as any)[relation]
@@ -2666,14 +2686,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
           const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
           built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) } catch {}
+          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) }
+          catch {}
         }
         else if (type === 'belongsTo') {
           const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
           const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${targetPk} = ${parentTable}.${fk}`
           built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) } catch {}
+          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) }
+          catch {}
         }
         else if (type === 'belongsToMany') {
           const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
@@ -2682,7 +2704,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
           const subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${b}_id WHERE ${pivot}.${a}_id = ${parentTable}.${pk}`
           built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) } catch {}
+          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) }
+          catch {}
         }
 
         return this as any
@@ -2691,19 +2714,22 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
        * Load relationship counts as aggregate columns
        */
       withCount(...relations: string[]) {
-        if (!meta || !relations || relations.length === 0) return this as any
+        if (!meta || !relations || relations.length === 0)
+          return this as any
 
         const parentTable = String(table)
 
         for (const relation of relations) {
           const rels = meta.relations?.[parentTable]
-          if (!rels) continue
+          if (!rels)
+            continue
 
-          const relType = Object.entries(rels).find(([type, relMap]) =>
+          const relType = Object.entries(rels).find(([_type, relMap]) =>
             relMap && typeof relMap === 'object' && relation in relMap,
           )
 
-          if (!relType) continue
+          if (!relType)
+            continue
 
           const [type, relMap] = relType
           const targetModel = (relMap as any)[relation]
@@ -2777,11 +2803,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
        * Usage: .with('tags').withPivot('tags', 'created_at', 'role')
        */
       withPivot(relation: string, ...columns: string[]) {
-        if (!meta || !columns || columns.length === 0) return this as any
+        if (!meta || !columns || columns.length === 0)
+          return this as any
 
         const parentTable = String(table)
         const rels = meta.relations?.[parentTable]
-        if (!rels) return this as any
+        if (!rels)
+          return this as any
 
         // Find if this is a belongsToMany relationship
         const targetModel = rels.belongsToMany?.[relation]
@@ -3435,7 +3463,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (useCache) {
           const cacheKey = String(built)
           const cached = queryCache.get(cacheKey)
-          if (cached) return cached
+          if (cached)
+            return cached
         }
 
         const result = await runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
@@ -4212,9 +4241,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
      * Get all relationships defined for a table
      */
     getRelationships(table: string) {
-      if (!meta?.relations) return {}
+      if (!meta?.relations)
+        return {}
       const tableRels = meta.relations[table]
-      if (!tableRels) return {}
+      if (!tableRels)
+        return {}
 
       const result: Record<string, any> = {}
       for (const [type, relations] of Object.entries(tableRels)) {
@@ -4228,9 +4259,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
      * Check if a table has a specific relationship
      */
     hasRelationship(table: string, relationName: string): boolean {
-      if (!meta?.relations) return false
+      if (!meta?.relations)
+        return false
       const rels = meta.relations[table]
-      if (!rels) return false
+      if (!rels)
+        return false
 
       return Object.values(rels).some(
         relMap => relMap && typeof relMap === 'object' && relationName in relMap,
@@ -4240,11 +4273,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
      * Get the type of a relationship
      */
     getRelationshipType(table: string, relationName: string): string | null {
-      if (!meta?.relations) return null
+      if (!meta?.relations)
+        return null
       const rels = meta.relations[table]
-      if (!rels) return null
+      if (!rels)
+        return null
 
-      for (const [type, relMap] of Object.entries(rels)) {
+      for (const [_type, relMap] of Object.entries(rels)) {
         if (relMap && typeof relMap === 'object' && relationName in relMap) {
           return type
         }
@@ -4255,11 +4290,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
      * Get the target table of a relationship
      */
     getRelationshipTarget(table: string, relationName: string): string | null {
-      if (!meta?.relations) return null
+      if (!meta?.relations)
+        return null
       const rels = meta.relations[table]
-      if (!rels) return null
+      if (!rels)
+        return null
 
-      for (const [type, relMap] of Object.entries(rels)) {
+      for (const [_type, relMap] of Object.entries(rels)) {
         if (relMap && typeof relMap === 'object' && relationName in relMap) {
           const targetModel = (relMap as any)[relationName]
           if (typeof targetModel === 'string') {

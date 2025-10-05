@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deleteMigrationFiles } from '@/actions/migrate'
@@ -132,7 +132,8 @@ describe('CLI', () => {
     expect(out.stdout).toContain('Created seeder')
 
     const seederPath = join(workspace, 'database/seeders/TestUserSeeder.ts')
-    expect(require('fs').existsSync(seederPath)).toBe(true)
+    // eslint-disable-next-line ts/no-require-imports
+    expect(require('node:fs').existsSync(seederPath)).toBe(true)
 
     process.chdir(originalCwd)
     rmSync(workspace, { recursive: true, force: true })

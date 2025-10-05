@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { freshDatabase, makeSeeder, runSeeders } from '../src/actions/seed'
 import { resetDatabase } from '../src/actions/migrate'
+import { makeSeeder, runSeeders } from '../src/actions/seed'
 import { config } from '../src/config'
 import { createQueryBuilder } from '../src/index'
 import { setupDatabase } from './setup'
@@ -59,13 +59,13 @@ export default class UserSeeder extends Seeder {
     const users = Array.from({ length: 10 }, () => ({
       name: faker.person.fullName(),
       email: faker.internet.email(),
-      age: faker.number.int(18, 80),
+      age: faker.number.int({ min: 18, max: 80 }),
       role: 'user',
       created_at: new Date(),
       updated_at: new Date(),
     }))
 
-    await qb.table('users').insert(users).execute()
+    await qb.insertInto('users').values(users).execute()
   }
 
   get order(): number {
@@ -82,7 +82,7 @@ export default class UserSeeder extends Seeder {
     })
 
     // Step 4: Verify data was inserted
-    const users = await qb.table('users').select(['*']).execute()
+    const users = await qb.selectFrom('users').execute()
     expect(users.length).toBeGreaterThanOrEqual(10)
 
     // Step 5: Verify data structure
@@ -102,9 +102,9 @@ export default class UserSeeder extends Seeder {
 
     // Clean up first
     try {
-      await qb.table('comments').delete().execute()
-      await qb.table('posts').delete().execute()
-      await qb.table('users').delete().execute()
+      await qb.deleteFrom('comments').execute()
+      await qb.deleteFrom('posts').execute()
+      await qb.deleteFrom('users').execute()
     }
     catch {
       // Tables might not exist
@@ -129,7 +129,7 @@ export default class UserSeeder extends Seeder {
       updated_at: new Date(),
     }))
 
-    await qb.table('users').insert(users).execute()
+    await qb.insertInto('users').values(users).execute()
   }
 
   get order(): number {
@@ -145,7 +145,7 @@ import { faker } from 'ts-mocker'
 
 export default class PostSeeder extends Seeder {
   async run(qb: any): Promise<void> {
-    const users = await qb.table('users').select(['id']).execute()
+    const users = await qb.selectFrom('users').execute()
 
     if (users.length === 0) {
       console.log('No users found, skipping posts')
@@ -166,7 +166,7 @@ export default class PostSeeder extends Seeder {
       }
     }
 
-    await qb.table('posts').insert(posts).execute()
+    await qb.insertInto('posts').values(posts).execute()
   }
 
   get order(): number {
@@ -182,8 +182,8 @@ import { faker } from 'ts-mocker'
 
 export default class CommentSeeder extends Seeder {
   async run(qb: any): Promise<void> {
-    const posts = await qb.table('posts').select(['id']).execute()
-    const users = await qb.table('users').select(['id']).execute()
+    const posts = await qb.selectFrom('posts').execute()
+    const users = await qb.selectFrom('users').execute()
 
     if (posts.length === 0 || users.length === 0) {
       console.log('No posts or users found, skipping comments')
@@ -202,7 +202,7 @@ export default class CommentSeeder extends Seeder {
       })
     }
 
-    await qb.table('comments').insert(comments).execute()
+    await qb.insertInto('comments').values(comments).execute()
   }
 
   get order(): number {
@@ -222,9 +222,9 @@ export default class CommentSeeder extends Seeder {
     })
 
     // Verify all data exists
-    const users = await qb.table('users').select(['*']).execute()
-    const posts = await qb.table('posts').select(['*']).execute()
-    const comments = await qb.table('comments').select(['*']).execute()
+    const users = await qb.selectFrom('users').execute()
+    const posts = await qb.selectFrom('posts').execute()
+    const comments = await qb.selectFrom('comments').execute()
 
     expect(users.length).toBeGreaterThanOrEqual(5)
     expect(posts.length).toBeGreaterThanOrEqual(10) // 5 users * 2 posts
@@ -236,7 +236,7 @@ export default class CommentSeeder extends Seeder {
 
     // Clean up
     try {
-      await qb.table('users').delete().execute()
+      await qb.deleteFrom('users').execute()
     }
     catch {
       // Table might not exist
@@ -254,13 +254,13 @@ export default class FakerTestSeeder extends Seeder {
     const users = Array.from({ length: 3 }, () => ({
       name: faker.person.fullName(),
       email: faker.internet.email(),
-      age: faker.number.int(18, 80),
+      age: faker.number.int({ min: 18, max: 80 }),
       role: faker.helpers.arrayElement(['admin', 'user', 'moderator']),
       created_at: faker.date.past(),
       updated_at: new Date(),
     }))
 
-    await qb.table('users').insert(users).execute()
+    await qb.insertInto('users').values(users).execute()
   }
 }
 `
@@ -272,7 +272,7 @@ export default class FakerTestSeeder extends Seeder {
       verbose: false,
     })
 
-    const users = await qb.table('users').select(['*']).execute()
+    const users = await qb.selectFrom('users').execute()
     expect(users.length).toBeGreaterThanOrEqual(3)
 
     // Verify realistic data
@@ -281,7 +281,7 @@ export default class FakerTestSeeder extends Seeder {
       expect(user.name).toBeTruthy()
       expect(user.email).toContain('@')
       expect(user.age).toBeGreaterThan(0)
-      expect(['admin', 'user', 'moderator']).toContain(user.role)
+      expect(['admin', 'user', 'moderator']).toContain(user.role as string)
     }
   })
 
@@ -290,7 +290,7 @@ export default class FakerTestSeeder extends Seeder {
 
     // Clean up
     try {
-      await qb.table('users').delete().execute()
+      await qb.deleteFrom('users').execute()
     }
     catch {
       // Table might not exist
@@ -312,13 +312,13 @@ export default class LargeDataSeeder extends Seeder {
       const users = Array.from({ length: batchSize }, () => ({
         name: faker.person.fullName(),
         email: faker.internet.email(),
-        age: faker.number.int(18, 80),
+        age: faker.number.int({ min: 18, max: 80 }),
         role: 'user',
         created_at: new Date(),
         updated_at: new Date(),
       }))
 
-      await qb.table('users').insert(users).execute()
+      await qb.insertInto('users').values(users).execute()
     }
   }
 }
@@ -333,7 +333,7 @@ export default class LargeDataSeeder extends Seeder {
     })
     const duration = Date.now() - startTime
 
-    const users = await qb.table('users').select(['*']).execute()
+    const users = await qb.selectFrom('users').execute()
     expect(users.length).toBeGreaterThanOrEqual(50)
     expect(duration).toBeLessThan(10000) // Should complete in under 10 seconds
   })

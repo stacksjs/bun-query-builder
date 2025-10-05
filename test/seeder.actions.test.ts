@@ -2,10 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeSeeder, runSeeder, runSeeders } from '../src/actions/seed'
 import { resetDatabase } from '../src/actions/migrate'
+import { makeSeeder, runSeeder, runSeeders } from '../src/actions/seed'
 import { config } from '../src/config'
-import { createQueryBuilder } from '../src/index'
 import { setupDatabase } from './setup'
 
 let testSeedersDir: string

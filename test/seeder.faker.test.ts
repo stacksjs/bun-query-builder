@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { faker } from '../node_modules/ts-mocker/dist/index.js'
+import { faker } from 'ts-mocker'
 
 describe('Faker Integration', () => {
   it('generates person data', () => {
@@ -17,7 +17,7 @@ describe('Faker Integration', () => {
 
   it('generates internet data', () => {
     const email = faker.internet.email()
-    const username = faker.internet.userName()
+    const username = faker.internet.username()
 
     expect(typeof email).toBe('string')
     expect(email).toContain('@')
@@ -26,8 +26,8 @@ describe('Faker Integration', () => {
   })
 
   it('generates numbers', () => {
-    const int1 = faker.number.int(1, 100)
-    const int2 = faker.number.int(1, 100)
+    const int1 = faker.number.int({ min: 1, max: 100 })
+    const int2 = faker.number.int({ min: 1, max: 100 })
 
     expect(typeof int1).toBe('number')
     expect(int1).toBeGreaterThanOrEqual(1)
@@ -86,8 +86,8 @@ describe('Faker Integration', () => {
   })
 
   it('generates location data', () => {
-    const city = faker.location.city()
-    const country = faker.location.country()
+    const city = faker.address.city()
+    const country = faker.address.country()
 
     expect(typeof city).toBe('string')
     expect(city.length).toBeGreaterThan(0)
@@ -108,7 +108,7 @@ describe('Faker Integration', () => {
     const records = Array.from({ length: 1000 }, () => ({
       name: faker.person.fullName(),
       email: faker.internet.email(),
-      age: faker.number.int(18, 80),
+      age: faker.number.int({ min: 18, max: 80 }),
     }))
     const duration = Date.now() - startTime
 
@@ -133,7 +133,7 @@ describe('Faker Integration', () => {
     const user = {
       name: faker.person.fullName(),
       email: faker.internet.email(),
-      age: faker.number.int(18, 80),
+      age: faker.number.int({ min: 18, max: 80 }),
       role: faker.helpers.arrayElement(['admin', 'user', 'moderator']),
       bio: faker.lorem.paragraph(2),
       created_at: faker.date.past(),
@@ -154,7 +154,7 @@ describe('Faker Integration', () => {
 describe('Seeder Data Generation Patterns', () => {
   it('generates hierarchical data (users -> posts -> comments)', () => {
     const users = Array.from({ length: 5 }, () => ({
-      id: faker.number.int(1, 1000),
+      id: faker.number.int({ min: 1, max: 1000 }),
       name: faker.person.fullName(),
       email: faker.internet.email(),
     }))
@@ -163,7 +163,7 @@ describe('Seeder Data Generation Patterns', () => {
 
     const posts = users.flatMap(user =>
       Array.from({ length: 3 }, () => ({
-        id: faker.number.int(1, 1000),
+        id: faker.number.int({ min: 1, max: 1000 }),
         user_id: user.id,
         title: faker.lorem.sentence(5),
         body: faker.lorem.paragraphs(2),
@@ -174,7 +174,7 @@ describe('Seeder Data Generation Patterns', () => {
 
     const comments = posts.flatMap(post =>
       Array.from({ length: 2 }, () => ({
-        id: faker.number.int(1, 1000),
+        id: faker.number.int({ min: 1, max: 1000 }),
         post_id: post.id,
         user_id: users[0].id,
         content: faker.lorem.paragraph(1),
@@ -193,8 +193,8 @@ describe('Seeder Data Generation Patterns', () => {
     const products = Array.from({ length: 20 }, (_, i) => ({
       id: i + 1,
       name: faker.commerce.productName(),
-      category_id: categories[faker.number.int(0, categories.length - 1)].id,
-      price: Number.parseFloat(faker.commerce.price(10, 1000)),
+      category_id: categories[faker.number.int({ min: 0, max: categories.length - 1 })].id,
+      price: Number.parseFloat(faker.commerce.price({ min: 10, max: 1000 })),
     }))
 
     expect(products.length).toBe(20)
@@ -251,7 +251,7 @@ describe('Seeder Data Generation Patterns', () => {
       const lastName = faker.person.lastName()
       return {
         full_name: `${firstName} ${lastName}`,
-        display_name: `@${firstName.toLowerCase()}${faker.number.int(1, 999)}`,
+        display_name: `@${firstName.toLowerCase()}${faker.number.int({ min: 1, max: 999 })}`,
         email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@example.com`,
       }
     })

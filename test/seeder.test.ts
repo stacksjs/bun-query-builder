@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { Seeder, defineSeeder } from '../src/seeder'
+import { defineSeeder, Seeder } from '../src/seeder'
 
 describe('Seeder Base Class', () => {
   it('creates a seeder with default order of 100', () => {

@@ -1,3 +1,4 @@
+/* eslint-disable ts/no-use-before-define */
 // Mock SQL function for testing that doesn't require database connections
 export function mockSql(strings: TemplateStringsArray | string[], ...values: any[]): any {
   // Build query string by interpolating values
@@ -24,7 +25,7 @@ export function mockSql(strings: TemplateStringsArray | string[], ...values: any
   query = query.replace(/\s+/g, ' ').trim()
 
   // Create a function as the target so apply trap works
-  const fn: any = function(...args: any[]) {
+  const fn: any = function (...args: any[]) {
     // When called as a regular function
     if (args.length === 1) {
       const val = args[0]

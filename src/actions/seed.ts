@@ -191,7 +191,7 @@ export default class ${className} extends Seeder {
     //   updated_at: new Date(),
     // }))
     //
-    // await qb.table('table_name').insert(records).execute()
+    // await qb.insertInto('table_name').values(records).execute()
 
     console.log('Seeder: ${className}')
   }

@@ -15,7 +15,7 @@ describe('relationship edge cases', () => {
         table: 'users',
         attributes: {
           id: { validation: { rule: { validate: (v: number) => typeof v === 'number' } as any } },
-          parent_id: { validation: { rule: { validate: (v: number | null) => true } as any } },
+          parent_id: { validation: { rule: { validate: (_v: number | null) => true } as any } },
         },
         hasMany: { children: 'User' },
         belongsTo: { parent: 'User' },
@@ -51,7 +51,7 @@ describe('relationship edge cases', () => {
         table: 'categories',
         attributes: {
           id: { validation: { rule: { validate: (v: number) => typeof v === 'number' } as any } },
-          parent_id: { validation: { rule: { validate: (v: number | null) => true } as any } },
+          parent_id: { validation: { rule: { validate: (_v: number | null) => true } as any } },
         },
         hasMany: { subcategories: 'Category' },
         belongsTo: { parent: 'Category' },

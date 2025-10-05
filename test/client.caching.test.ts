@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, test } from 'bun:test'
 import type { DatabaseSchema } from '../src/schema'
-import { defineModels } from '../src/schema'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import { clearQueryCache, createQueryBuilder, setQueryCacheMaxSize } from '../src/client'
+import { defineModels } from '../src/schema'
 
 // Mock SQL implementation
 function createMockSql() {
@@ -10,9 +10,7 @@ function createMockSql() {
   function mockSql(strings: TemplateStringsArray | any, ...values: any[]): any {
     if (Array.isArray(strings) && strings.raw) {
       const query = strings.reduce((acc, str, i) =>
-        acc + str + (values[i] !== undefined ? `$${i + 1}` : ''),
-        ''
-      )
+        acc + str + (values[i] !== undefined ? `$${i + 1}` : ''), '')
       const result = {
         query,
         values,
@@ -26,7 +24,9 @@ function createMockSql() {
   }
 
   mockSql.queries = queries
-  mockSql.clearQueries = () => { queries.length = 0 }
+  mockSql.clearQueries = () => {
+    queries.length = 0
+  }
 
   return mockSql
 }
@@ -44,8 +44,8 @@ const User = {
   },
 }
 
-const models = defineModels({ User })
-type DB = DatabaseSchema<typeof models>
+const _models = defineModels({ User })
+type DB = DatabaseSchema<typeof _models>
 
 describe('Query Caching', () => {
   let mockSql: any

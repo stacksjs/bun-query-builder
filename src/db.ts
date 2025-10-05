@@ -1,5 +1,6 @@
 import type { DatabaseConfig, SupportedDialect } from './types'
 import { SQL } from 'bun'
+import process from 'node:process'
 import { config } from './config'
 
 /**
@@ -53,7 +54,7 @@ export function getBunSql(): SQL {
 
     return sql
   }
-  catch (error) {
+  catch {
     // If connection fails (e.g., database doesn't exist), use in-memory SQLite
     // This allows tests to import modules without requiring a database
     try {
@@ -96,7 +97,7 @@ if (typeof process !== 'undefined' && process.on) {
           || reason.code === '3D000')
       ) {
         // Suppress these errors - they're expected when database isn't available
-        return
+
       }
     }
     Object.defineProperty(sqlConnectionErrorHandler, 'name', { value: 'sqlConnectionErrorHandler' })

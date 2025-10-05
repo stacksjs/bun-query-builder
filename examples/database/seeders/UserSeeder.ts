@@ -1,5 +1,5 @@
-import { Seeder } from '../../../src/seeder'
 import { faker } from 'ts-mocker'
+import { Seeder } from '../../../src/seeder'
 
 export default class UserSeeder extends Seeder {
   /**
@@ -19,7 +19,7 @@ export default class UserSeeder extends Seeder {
     }))
 
     // Insert users into database
-    await qb.table('users').insert(users).execute()
+    await qb.insertInto('users').values(users).execute()
 
     console.log(`✓ Seeded ${users.length} users`)
   }
