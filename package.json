@@ -1,5 +1,6 @@
 {
   "name": "bun-query-builder",
+  "private": true,
   "type": "module",
   "version": "0.1.2",
   "description": "A simple yet performant query builder for TypeScript. Built with Bun.",
@@ -70,7 +71,6 @@
     "typecheck": "bun --bun tsc"
   },
   "dependencies": {
-    "@stacksjs/launchpad": "^0.6.4",
     "@stacksjs/ts-validation": "^0.4.7",
     "ts-mocker": "^0.1.2"
   },
@@ -79,6 +79,7 @@
     "@stacksjs/docs": "^0.70.23",
     "@stacksjs/eslint-config": "^4.14.0-beta.3",
     "@stacksjs/gitlint": "^0.1.5",
+    "@stacksjs/launchpad": "^0.6.4",
     "@stacksjs/logsmith": "^0.1.18",
     "@types/bun": "^1.2.21",
     "buddy-bot": "^0.9.4",
@@ -97,5 +98,8 @@
       }
     },
     "commit-msg": "bunx gitlint --edit .git/COMMIT_EDITMSG"
-  }
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }

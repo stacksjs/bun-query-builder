@@ -2,7 +2,7 @@
 // Dummy typed showcase for bun-query-builder
 // This file is not meant to run database operations. It demonstrates types.
 
-import type { SelectQueryBuilder } from './src'
+import type { SelectQueryBuilder } from './packages/bun-query-builder/src'
 // Import example models
 import Comment from './examples/models/Comment'
 import Post from './examples/models/Post'

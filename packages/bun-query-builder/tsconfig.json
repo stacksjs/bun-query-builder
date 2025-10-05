@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "bun"
+    ],
+    "noEmit": true,
+    "isolatedDeclarations": true
+  },
+  "include": [
+    "src",
+    "bin",
+    "test"
+  ],
+  "exclude": [
+    "test/outputs"
+  ]
+}

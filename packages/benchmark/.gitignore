@@ -1,0 +1,6 @@
+node_modules/
+benchmark.db
+benchmark.db-journal
+.DS_Store
+dist/
+*.log
