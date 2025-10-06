@@ -3980,25 +3980,35 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const totalParams = rowCount * colCount
           params.length = totalParams
 
-          // Build columns list once
+          // Build SQL - optimize for single row case
           const columnList = keys.join(',')
 
-          // Build VALUES for all rows using array join
-          const valueClauses: string[] = new Array(rowCount)
-          let pidx = 0
-          for (let r = 0; r < rowCount; r++) {
-            const row = rows[r]
-            let rowClause = '('
+          if (rowCount === 1) {
+            // Fast path for single row
+            sqlText = 'INSERT INTO ' + table + '(' + columnList + ')VALUES('
             for (let c = 0; c < colCount; c++) {
-              if (c > 0) rowClause += ','
-              rowClause += '$' + (pidx + 1)
-              params[pidx++] = row[keys[c]]
+              if (c > 0) sqlText += ','
+              sqlText += '$' + (c + 1)
+              params[c] = firstRow[keys[c]]
             }
-            rowClause += ')'
-            valueClauses[r] = rowClause
+            sqlText += ')'
           }
+          else {
+            // Multi-row path
+            sqlText = 'INSERT INTO ' + table + '(' + columnList + ')VALUES'
+            let pidx = 0
+            for (let r = 0; r < rowCount; r++) {
+              const row = rows[r]
+              sqlText += r === 0 ? '(' : '),('
 
-          sqlText = 'INSERT INTO ' + table + '(' + columnList + ')VALUES' + valueClauses.join(',')
+              for (let c = 0; c < colCount; c++) {
+                if (c > 0) sqlText += ','
+                sqlText += '$' + (pidx + 1)
+                params[pidx++] = row[keys[c]]
+              }
+            }
+            sqlText += ')'
+          }
 
           built = (_sql as any).unsafe(sqlText, params)
           return this
@@ -4478,31 +4488,27 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const keys = Object.keys(firstRow)
       const colCount = keys.length
       const rowCount = rows.length
-      const params = new Array(rowCount * colCount)
+      const totalParams = rowCount * colCount
+      const params = new Array(totalParams)
 
-      // Pre-build placeholder template for one row
-      const placeholders: string[] = new Array(colCount)
-      for (let c = 0; c < colCount; c++) {
-        placeholders[c] = '$'
-      }
-      const rowTemplate = '(' + placeholders.join(',') + ')'
+      // Pre-calculate column list
+      const columnList = keys.join(',')
 
-      // Build row values using array operations
-      const valueClauses: string[] = new Array(rowCount)
+      // Build VALUES placeholders and populate params
+      let sql = 'INSERT INTO ' + table + '(' + columnList + ')VALUES'
       let pidx = 0
+
       for (let r = 0; r < rowCount; r++) {
         const row = rows[r]
-        let rowClause = '('
+        sql += r === 0 ? '(' : '),('
+
         for (let c = 0; c < colCount; c++) {
-          if (c > 0) rowClause += ','
-          rowClause += '$' + (pidx + 1)
+          if (c > 0) sql += ','
+          sql += '$' + (pidx + 1)
           params[pidx++] = row[keys[c]]
         }
-        rowClause += ')'
-        valueClauses[r] = rowClause
       }
-
-      const sql = 'INSERT INTO ' + table + '(' + keys.join(',') + ')VALUES' + valueClauses.join(',')
+      sql += ')'
 
       return (_sql as any).unsafe(sql, params).execute()
     },
@@ -4513,31 +4519,27 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const keys = Object.keys(firstRow)
       const colCount = keys.length
       const rowCount = rows.length
-      const params = new Array(rowCount * colCount)
+      const totalParams = rowCount * colCount
+      const params = new Array(totalParams)
 
-      // Pre-build placeholder template for one row
-      const placeholders: string[] = new Array(colCount)
-      for (let c = 0; c < colCount; c++) {
-        placeholders[c] = '$'
-      }
-      const rowTemplate = '(' + placeholders.join(',') + ')'
+      // Pre-calculate column list
+      const columnList = keys.join(',')
 
-      // Build row values using array operations
-      const valueClauses: string[] = new Array(rowCount)
+      // Build VALUES placeholders and populate params
+      let sql = 'INSERT INTO ' + table + '(' + columnList + ')VALUES'
       let pidx = 0
+
       for (let r = 0; r < rowCount; r++) {
         const row = rows[r]
-        let rowClause = '('
+        sql += r === 0 ? '(' : '),('
+
         for (let c = 0; c < colCount; c++) {
-          if (c > 0) rowClause += ','
-          rowClause += '$' + (pidx + 1)
+          if (c > 0) sql += ','
+          sql += '$' + (pidx + 1)
           params[pidx++] = row[keys[c]]
         }
-        rowClause += ')'
-        valueClauses[r] = rowClause
       }
-
-      const sql = 'INSERT INTO ' + table + '(' + keys.join(',') + ')VALUES' + valueClauses.join(',')
+      sql += ')'
 
       return (_sql as any).unsafe(sql, params).execute()
     },
