@@ -125,12 +125,12 @@ group('INSERT: Single user', () => {
 
   bench('bun-query-builder', async () => {
     counter++
-    await bunQB.insert('users', {
+    await bunQB.insertInto('users').values({
       name: `Benchmark User ${counter}`,
       email: `bench${counter}@example.com`,
       age: 25,
       active: true,
-    })
+    }).execute()
   })
 
   bench('Kysely', async () => {
@@ -180,7 +180,7 @@ group('INSERT: Single user', () => {
 
 group('UPDATE: Single user', () => {
   bench('bun-query-builder', async () => {
-    await bunQB.update('users', { age: 30 }).where({ id: 100 })
+    await bunQB.updateTable('users').set({ age: 30 }).where({ id: 100 }).execute()
   })
 
   bench('Kysely', async () => {
@@ -207,7 +207,7 @@ group('UPDATE: Single user', () => {
 
 group('DELETE: Single user', () => {
   bench('bun-query-builder', async () => {
-    await bunQB.delete('users').where({ id: 999 })
+    await bunQB.deleteFrom('users').where({ id: 999 }).execute()
   })
 
   bench('Kysely', async () => {

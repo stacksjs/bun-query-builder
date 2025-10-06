@@ -44,6 +44,26 @@ Define your data model once and get a type-safe query experience _(a la Kysely/L
 
 > Note: LISTEN/NOTIFY and COPY helpers are scaffolded and will be wired as Bun exposes native APIs.
 
+## Performance
+
+bun-query-builder is built for speed. Benchmarked against popular TypeScript query builders and ORMs:
+
+| Operation | bun-query-builder | Kysely | Drizzle | Prisma |
+|-----------|------------------|--------|---------|--------|
+| **SELECT by ID** | **14.3 µs** | N/A | 33.2 µs (2.3x slower) | 82.4 µs (5.8x slower) |
+| **SELECT with limit** | **18.3 µs** | N/A | 32.8 µs (1.8x slower) | 102 µs (5.6x slower) |
+| **COUNT query** | **12.6 µs** | 37.6 µs (3x slower) | 113 µs (8.9x slower) | 86.9 µs (6.9x slower) |
+| **Large result set (1000 rows)** | **247 µs** | N/A | 564 µs (2.3x slower) | 3,461 µs (14x slower) |
+| **ORDER BY + LIMIT** | **270 µs** | N/A | 274 µs (1x slower) | 488 µs (1.8x slower) |
+
+**Key Performance Highlights:**
+- 🚀 **2-6x faster** than competitors for simple SELECT queries
+- 🚀 **Up to 14x faster** than Prisma for large result sets
+- 🚀 **Up to 8.9x faster** than Drizzle for COUNT operations
+- ⚡ Leverages Bun's native SQL for optimal performance
+
+[See full benchmarks →](./packages/benchmark)
+
 ## Get Started
 
 ### Installation

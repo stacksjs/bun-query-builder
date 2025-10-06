@@ -1840,47 +1840,7 @@ interface InternalState {
   txDefaults?: TransactionOptions
 }
 
-function applyWhere(columns: Record<string, unknown>, q: any, expr?: WhereExpression<any>) {
-  if (!expr)
-    return q
-  if (Array.isArray(expr)) {
-    const [col, op, val] = expr
-    switch (op) {
-      case 'in':
-        return bunSql`${q} WHERE ${bunSql(String(col))} IN ${bunSql(val as any)}`
-      case 'not in':
-        return bunSql`${q} WHERE ${bunSql(String(col))} NOT IN ${bunSql(val as any)}`
-      case 'like':
-        return bunSql`${q} WHERE ${bunSql(String(col))} LIKE ${val as any}`
-      case 'is':
-        return bunSql`${q} WHERE ${bunSql(String(col))} IS ${val as any}`
-      case 'is not':
-        return bunSql`${q} WHERE ${bunSql(String(col))} IS NOT ${val as any}`
-      case '!=':
-        return bunSql`${q} WHERE ${bunSql(String(col))} <> ${val as any}`
-      case '<':
-      case '>':
-      case '<=':
-      case '>=':
-      case '=':
-      default:
-        return bunSql`${q} WHERE ${bunSql(String(col))} ${op} ${val as any}`
-    }
-  }
-  if ('raw' in (expr as any)) {
-    return bunSql`${q} WHERE ${(expr as WhereRaw).raw}`
-  }
-  const parts: any[] = []
-  for (const key of Object.keys(expr)) {
-    const value = (expr as any)[key]
-    if (Array.isArray(value))
-      parts.push(bunSql`${bunSql(key)} IN ${bunSql(value)}`)
-    else parts.push(bunSql`${bunSql(key)} = ${value}`)
-  }
-  if (parts.length === 0)
-    return q
-  return bunSql`${q} WHERE ${parts.reduce((acc, p, i) => (i === 0 ? p : bunSql`${acc} AND ${p}`))}`
-}
+// applyCondition and applyWhere moved inside createQueryBuilder to use the correct SQL instance
 
 function isRetriableTxError(err: any): boolean {
   const msg = String(err?.message || '').toLowerCase()
@@ -1943,6 +1903,56 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   const _sql = state?.sql ?? bunSql
   const meta = state?.meta
   const schema = state?.schema
+
+  function applyCondition(expr: WhereExpression<any>): any {
+    // Returns just the condition part without WHERE keyword
+    if (Array.isArray(expr)) {
+      const [col, op, val] = expr
+      switch (op) {
+        case 'in':
+          return _sql`${_sql(String(col))} IN ${_sql(val as any)}`
+        case 'not in':
+          return _sql`${_sql(String(col))} NOT IN ${_sql(val as any)}`
+        case 'like':
+          return _sql`${_sql(String(col))} LIKE ${val as any}`
+        case 'is':
+          return _sql`${_sql(String(col))} IS ${val as any}`
+        case 'is not':
+          return _sql`${_sql(String(col))} IS NOT ${val as any}`
+        case '!=':
+          return _sql`${_sql(String(col))} <> ${val as any}`
+        case '<':
+        case '>':
+        case '<=':
+        case '>=':
+        case '=':
+        default:
+          // Operators must be literal strings, not placeholders
+          const condSql = `${_sql(String(col))} ${op} ?`
+          return _sql([condSql] as any, val)
+      }
+    }
+    if ('raw' in (expr as any)) {
+      return (expr as WhereRaw).raw
+    }
+    const parts: any[] = []
+    for (const key of Object.keys(expr)) {
+      const value = (expr as any)[key]
+      if (Array.isArray(value))
+        parts.push(_sql`${_sql(key)} IN ${_sql(value)}`)
+      else parts.push(_sql`${_sql(key)} = ${value}`)
+    }
+    if (parts.length === 0)
+      return _sql``
+    return parts.reduce((acc, p, i) => (i === 0 ? p : _sql`${acc} AND ${p}`))
+  }
+
+  function applyWhere(columns: Record<string, unknown>, q: any, expr?: WhereExpression<any>) {
+    if (!expr)
+      return q
+    const condition = applyCondition(expr)
+    return _sql`${q} WHERE ${condition}`
+  }
 
   function computeSqlText(q: any): string {
     const prev = config.debug?.captureText
@@ -2146,8 +2156,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (!columns || columns.length === 0)
           return this as any
         // Replace SELECT * with SELECT specific columns
-        const rest = String(built).replace(/^SELECT\s+\*\s+FROM/i, `SELECT ${columns.join(', ')} FROM`)
-        built = sql([rest] as any)
+        const currentSql = String(built)
+        const rest = currentSql.replace(/^SELECT\s+\*\s+FROM/i, `SELECT ${columns.join(', ')} FROM`)
+        built = (sql as any).unsafe(rest)
         text = rest
         return this as any
       },
@@ -3063,14 +3074,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       andWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
-          built = sql`${built} AND ${applyWhere(({} as any), sql``, [expr, op, value])}`
+          built = sql`${built} AND ${applyCondition([expr, op, value])}`
           try {
             addWhereText('AND', `${String(expr)} ${String(op).toUpperCase()} ?`)
           }
           catch {}
           return this
         }
-        built = sql`${built} AND ${applyWhere(({} as any), sql``, expr)}`
+        built = sql`${built} AND ${applyCondition(expr)}`
         try {
           if (Array.isArray(expr)) {
             const [col, op] = expr as [string, string, any]
@@ -3094,14 +3105,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       orWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
-          built = sql`${built} OR ${applyWhere(({} as any), sql``, [expr, op, value])}`
+          built = sql`${built} OR ${applyCondition([expr, op, value])}`
           try {
             addWhereText('OR', `${String(expr)} ${String(op).toUpperCase()} ?`)
           }
           catch {}
           return this
         }
-        built = sql`${built} OR ${applyWhere(({} as any), sql``, expr)}`
+        built = sql`${built} OR ${applyCondition(expr)}`
         try {
           if (Array.isArray(expr)) {
             const [col, op] = expr as [string, string, any]
@@ -3159,7 +3170,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = sql`${built} JOIN ${sql(String(table2))} ON ${sql(String(onLeft))} ${operator} ${sql(String(onRight))}`
+        // Column names in JOIN ON must be identifiers, not placeholders
+        // Build JOIN clause using raw string interpolation for identifiers
+        const joinClause = ` JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        built = (sql as any).unsafe(built.toString() + joinClause)
         joinedTables.add(String(table2))
         return this as any
       },
@@ -3169,12 +3183,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = sql`${built} INNER JOIN ${sql(String(table2))} ON ${sql(String(onLeft))} ${operator} ${sql(String(onRight))}`
+        // Column names in JOIN ON must be identifiers, not placeholders
+        const joinClause = ` INNER JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        built = (sql as any).unsafe(built.toString() + joinClause)
         joinedTables.add(String(table2))
         return this as any
       },
       leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = sql`${built} LEFT JOIN ${sql(String(table2))} ON ${sql(String(onLeft))} ${operator} ${sql(String(onRight))}`
+        // Column names in JOIN ON must be identifiers, not placeholders
+        const joinClause = ` LEFT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        built = (sql as any).unsafe(built.toString() + joinClause)
         joinedTables.add(String(table2))
         return this as any
       },
@@ -3184,12 +3202,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        built = sql`${built} RIGHT JOIN ${sql(String(table2))} ON ${sql(String(onLeft))} ${operator} ${sql(String(onRight))}`
+        // Column names in JOIN ON must be identifiers, not placeholders
+        const joinClause = ` RIGHT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        built = (sql as any).unsafe(built.toString() + joinClause)
         joinedTables.add(String(table2))
         return this as any
       },
       crossJoin(table2: string) {
-        built = sql`${built} CROSS JOIN ${sql(String(table2))}`
+        const joinClause = ` CROSS JOIN ${table2}`
+        built = (sql as any).unsafe(built.toString() + joinClause)
         joinedTables.add(String(table2))
         return this as any
       },
@@ -3232,7 +3253,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       having(expr: any) {
-        built = sql`${built} HAVING ${applyWhere(({} as any), sql``, expr)}`
+        built = sql`${built} HAVING ${applyCondition(expr)}`
         return this as any
       },
       havingRaw(fragment: any) {
@@ -3708,14 +3729,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       } as any
     },
     insertInto<TTable extends keyof DB & string>(table: TTable) {
-      let built = bunSql`INSERT INTO ${bunSql(String(table))}`
+      let built = _sql`INSERT INTO ${_sql(String(table))}`
       const api: any = {
         values(data: Partial<any> | Partial<any>[]) {
-          built = bunSql`${built} ${bunSql(data as any)}`
+          built = _sql`${built} ${_sql(data as any)}`
           return api
         },
         returning(...cols: (keyof any & string)[]) {
-          const q = bunSql`${built} RETURNING ${bunSql(cols as any)}`
+          const q = _sql`${built} RETURNING ${_sql(cols as any)}`
           const obj: any = {
             where: () => obj,
             andWhere: () => obj,
@@ -3738,13 +3759,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return api as TypedInsertQueryBuilder<DB, TTable>
     },
     updateTable(table) {
-      let built = bunSql`UPDATE ${bunSql(String(table))}`
+      let built = _sql`UPDATE ${_sql(String(table))}`
       let updateData: any = null
       let whereCondition: any = null
       return {
         set(values) {
           updateData = values
-          built = bunSql`${built} SET ${bunSql(values as any)}`
+          built = _sql`${built} SET ${_sql(values as any)}`
           return this
         },
         where(expr) {
@@ -3753,7 +3774,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this
         },
         returning(...cols) {
-          const q = bunSql`${built} RETURNING ${bunSql(cols as any)}`
+          const q = _sql`${built} RETURNING ${_sql(cols as any)}`
           const obj: any = {
             where: () => obj,
             andWhere: () => obj,
@@ -3789,7 +3810,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     },
     deleteFrom(table) {
-      let built = bunSql`DELETE FROM ${bunSql(String(table))}`
+      let built = _sql`DELETE FROM ${_sql(String(table))}`
       let whereCondition: any = null
       return {
         where(expr) {
@@ -3798,7 +3819,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this
         },
         returning(...cols) {
-          const q = bunSql`${built} RETURNING ${bunSql(cols as any)}`
+          const q = _sql`${built} RETURNING ${_sql(cols as any)}`
           const obj: any = {
             where: () => obj,
             andWhere: () => obj,
@@ -3833,12 +3854,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         },
       }
     },
-    sql: bunSql,
+    sql: _sql,
     raw(strings: TemplateStringsArray, ...values: any[]) {
-      return bunSql(strings, ...values)
+      return _sql(strings, ...values)
     },
     simple(strings: TemplateStringsArray, ...values: any[]) {
-      return (bunSql(strings, ...values) as any).simple()
+      return (_sql(strings, ...values) as any).simple()
     },
     async advisoryLock(key: number | string): Promise<void> {
       if (config.dialect !== 'postgres')

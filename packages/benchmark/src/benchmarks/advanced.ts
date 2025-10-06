@@ -20,8 +20,8 @@ console.log('Starting advanced query benchmarks...\n')
 group('JOIN: Users with their posts', () => {
   bench('bun-query-builder', async () => {
     await bunQB.selectFrom('users')
-      .join('posts', 'users.id', '=', 'posts.user_id')
-      .select(['users.*', 'posts.title'])
+      .innerJoin('posts', 'users.id', '=', 'posts.user_id')
+      .select(['users.id', 'users.name', 'posts.title'])
       .limit(100)
       .get()
   })
@@ -89,8 +89,8 @@ group('WHERE: Complex conditions', () => {
   bench('bun-query-builder', async () => {
     await bunQB.selectFrom('users')
       .where({ active: true })
-      .andWhere('age', '>', 25)
-      .andWhere('age', '<', 40)
+      .andWhere(['age', '>', 25])
+      .andWhere(['age', '<', 40])
       .get()
   })
 
@@ -154,10 +154,9 @@ group('ORDER BY + LIMIT', () => {
 group('GROUP BY + HAVING', () => {
   bench('bun-query-builder', async () => {
     await bunQB.selectFrom('posts')
-      .select(['user_id'])
-      .count('id as post_count')
+      .select(['user_id', 'COUNT(id) as post_count'])
       .groupBy('user_id')
-      .having('post_count', '>', 3)
+      .having(['COUNT(id)', '>', 3])
       .get()
   })
 

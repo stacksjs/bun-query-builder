@@ -66,8 +66,10 @@ group('INSERT MANY: 100 users', () => {
 
 group('UPDATE MANY: Batch update by age range', () => {
   bench('bun-query-builder', async () => {
-    await bunQB.update('users', { active: false })
-      .where('age', '>', 60)
+    await bunQB.updateTable('users')
+      .set({ active: false })
+      .where(['age', '>', 60])
+      .execute()
   })
 
   bench('Kysely', async () => {
