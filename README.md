@@ -297,16 +297,31 @@ await runSeeder('UserSeeder', { verbose: true })
 ### CLI
 
 ```bash
-# Print inferred schema from model dir
-query-builder introspect ./app/Models --verbose
+# Model Generation
+query-builder make:model User
+query-builder make:model Post --table=blog_posts
 
-# Print a sample SQL (text) for a table
+# Schema Introspection
+query-builder introspect ./app/Models --verbose
 query-builder sql ./app/Models users --limit 5
 
 # Migrations
 query-builder migrate ./app/Models --dialect postgres
+query-builder migrate:status                    # Show migration status
+query-builder migrate:list                      # List all migrations
+query-builder migrate:rollback --steps 2        # Rollback migrations
 query-builder migrate:fresh ./app/Models
 query-builder reset ./app/Models
+
+# Database Info
+query-builder db:info                           # Show database statistics
+query-builder db:stats                          # Alias for db:info
+query-builder inspect users                     # Inspect table structure
+query-builder table:info users                  # Alias for inspect
+
+# Interactive Console
+query-builder console                           # Start REPL
+query-builder tinker                            # Alias for console
 
 # Seeders
 query-builder make:seeder User
@@ -314,15 +329,32 @@ query-builder seed
 query-builder db:seed --class UserSeeder
 query-builder db:fresh
 
-# Connectivity:
+# Data Management
+query-builder export users --format json
+query-builder export users --format csv --output users.csv
+query-builder import users users.json --truncate
+query-builder dump --tables users,posts
+
+# Cache Management
+query-builder cache:clear
+query-builder cache:stats
+query-builder cache:config --size 500
+
+# Performance
+query-builder benchmark --iterations 1000
+query-builder benchmark --operations select,insert
+
+# Schema Validation
+query-builder validate:schema ./app/Models
+query-builder check                             # Alias for validate:schema
+
+# Connectivity
 query-builder ping
 query-builder wait-ready --attempts 30 --delay 250
 
-# Execute a file or unsafe string (be careful!)
+# Execute SQL
 query-builder file ./migrations/seed.sql
 query-builder unsafe "SELECT * FROM users WHERE id = $1" --params "[1]"
-
-# Explain a query
 query-builder explain "SELECT * FROM users WHERE active = true"
 ```
 
