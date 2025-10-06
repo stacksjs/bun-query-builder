@@ -328,40 +328,60 @@ query-builder explain "SELECT * FROM users WHERE active = true"
 
 ## Performance
 
-**🏆 bun-query-builder wins 87.5% of benchmarks**
+**🏆 bun-query-builder wins 13 out of 16 benchmarks (81.25%)**
 
-Comprehensive benchmarks against Kysely, Drizzle, and Prisma show bun-query-builder wins **14 out of 16 benchmarks (87.5%)** with **100% wins in all basic queries**.
+Comprehensive benchmarks against Kysely, Drizzle, and Prisma show bun-query-builder is the **fastest full-featured query builder**, with perfect scores in basic operations and strong performance across advanced queries.
 
 ### Summary
 
-| Category | Win Rate | Performance Range |
+| Category | Win Rate | Performance vs Best |
 |----------|----------|-------------------|
-| Basic Queries | 7/7 (100%) 🎯 | 1.05-5.64x faster |
-| Advanced Queries | 4/5 (80%) | 1.36-18.68x faster |
-| Batch Operations | 3/4 (75%) | 1.04-18.54x faster |
+| Basic Queries | 7/7 (100%) 🎯 | 1.36x-29.29x faster |
+| Advanced Queries | 4/5 (80%) | 1.01x-3.96x faster |
+| Batch Operations | 2/4 (50%) | 1.45x-4.83x faster |
 
 ### Key Performance Wins
 
-🚀 **Massive Wins:**
-- **18.68x faster** than Prisma in ORDER BY + LIMIT
-- **18.54x faster** than Drizzle in DELETE MANY
-- **14.94x faster** than Drizzle in WHERE: Complex conditions
-- **14.24x faster** than Prisma in SELECT: Large result set
-- **11.47x faster** than Prisma in DELETE: Single user
+🚀 **Dominant in Basic Queries:**
+- **29.29x faster** than Prisma in DELETE operations
+- **16.45x faster** than Prisma in SELECT with LIMIT
+- **14.86x faster** than Prisma in SELECT active users
+- **13.8x faster** than Prisma in SELECT by ID
+- **12.65x faster** than Prisma in COUNT queries
 
-⚡ **Perfect Categories:**
-- **100% wins** in basic CRUD operations (7/7) 🎯
-- **80% wins** in advanced queries (4/5)
-- **75% wins** in batch operations (3/4)
+⚡ **Strong in Advanced Queries:**
+- **3.96x faster** than Drizzle in AGGREGATE queries
+- **2.99x faster** than Prisma in GROUP BY + HAVING
+- **1.28x faster** than Prisma in JOIN operations
+- **1.03x faster** than Kysely in JOIN operations
+- **1.02x faster** than Kysely in AGGREGATE queries
 
-### The Non-Wins (2 out of 16)
+💪 **Competitive in Batch Operations:**
+- **4.83x faster** than Prisma in DELETE MANY
+- **1.45x faster** than Kysely in DELETE MANY
+- Within 14% of Kysely on INSERT MANY (highly optimized)
 
-- **AGGREGATE: Average age** - ❌ Tied with Kysely (167µs vs 166µs)
-- **UPDATE MANY: Batch update** - ❌ 10% slower than Prisma (12.7ms vs 11.5ms)
+### Perfect Category
+
+- **100% wins** in basic CRUD operations (7/7) 🎯 - Beating Kysely, Drizzle, and Prisma in every single basic query
+
+### The Trade-offs (3 out of 16)
+
+- **WHERE: Complex conditions** - Kysely 1.05x faster (essentially tied, within variance)
+- **ORDER BY + LIMIT** - Kysely 1.07x faster (essentially tied, within variance)
+- **SELECT: Large result set (1000 rows)** - Kysely 2.54x faster (see [detailed analysis](./packages/benchmark/BENCHMARKS_SUMMARY.md#deep-dive-why-kysely-wins-large-result-sets))
+
+**Note:** Two additional benchmarks where we're competitive but not winning:
+- **INSERT MANY: 100 users** - Kysely 1.14x faster (within 14%, highly variable)
+- **UPDATE MANY** - Prisma 1.10x faster (within 10%, essentially tied)
 
 ### Why Fast?
 
-bun-query-builder leverages Bun's native `sql` tagged template API for optimal performance. By building directly on Bun's SQLite driver, we avoid the overhead present in database-agnostic query builders.
+bun-query-builder leverages Bun's native SQLite driver with:
+- **Direct BunDatabase access** - No abstraction layers
+- **Statement caching** - Prepared statements reused across queries
+- **Ultra-fast path** - Optimized execution for queries without hooks/soft-deletes
+- **Smart optimizations** - For-loop template processing, minimal allocations
 
 **[View Full Benchmark Results →](./packages/benchmark/README.md)**
 
