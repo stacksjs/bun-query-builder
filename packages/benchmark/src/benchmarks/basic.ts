@@ -121,33 +121,34 @@ group('SELECT: Count users', () => {
 })
 
 group('INSERT: Single user', () => {
-  let counter = 10000
-
   bench('bun-query-builder', async () => {
-    counter++
+    const timestamp = Date.now()
+    const random = Math.random().toString(36).substring(7)
     await bunQB.insertInto('users').values({
-      name: `Benchmark User ${counter}`,
-      email: `bench${counter}@example.com`,
+      name: `Benchmark User ${timestamp}`,
+      email: `bench${timestamp}${random}@example.com`,
       age: 25,
       active: true,
     }).execute()
   })
 
   bench('Kysely', async () => {
-    counter++
+    const timestamp = Date.now()
+    const random = Math.random().toString(36).substring(7)
     await kysely.insertInto('users').values({
-      name: `Benchmark User ${counter}`,
-      email: `bench${counter}@example.com`,
+      name: `Benchmark User ${timestamp}`,
+      email: `bench${timestamp}${random}@example.com`,
       age: 25,
       active: true,
     }).execute()
   })
 
   bench('Drizzle', async () => {
-    counter++
+    const timestamp = Date.now()
+    const random = Math.random().toString(36).substring(7)
     await drizzle.insert(users).values({
-      name: `Benchmark User ${counter}`,
-      email: `bench${counter}@example.com`,
+      name: `Benchmark User ${timestamp}`,
+      email: `bench${timestamp}${random}@example.com`,
       age: 25,
       active: true,
     })
@@ -155,10 +156,11 @@ group('INSERT: Single user', () => {
 
   if (hasTypeORM) {
     bench('TypeORM', async () => {
-      counter++
+      const timestamp = Date.now()
+      const random = Math.random().toString(36).substring(7)
       await typeorm!.getRepository(TypeORMUser).save({
-        name: `Benchmark User ${counter}`,
-        email: `bench${counter}@example.com`,
+        name: `Benchmark User ${timestamp}`,
+        email: `bench${timestamp}${random}@example.com`,
         age: 25,
         active: true,
       })
@@ -166,11 +168,12 @@ group('INSERT: Single user', () => {
   }
 
   bench('Prisma', async () => {
-    counter++
+    const timestamp = Date.now()
+    const random = Math.random().toString(36).substring(7)
     await prisma.user.create({
       data: {
-        name: `Benchmark User ${counter}`,
-        email: `bench${counter}@example.com`,
+        name: `Benchmark User ${timestamp}`,
+        email: `bench${timestamp}${random}@example.com`,
         age: 25,
         active: true,
       },

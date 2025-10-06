@@ -17,49 +17,47 @@ const prisma = createPrismaClient()
 console.log('Starting batch operation benchmarks...\n')
 
 group('INSERT MANY: 100 users', () => {
-  let counter = 20000
-
   bench('bun-query-builder', async () => {
+    const baseId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
     const data = Array.from({ length: 100 }, (_, i) => ({
-      name: `Batch User ${counter + i}`,
-      email: `batch${counter + i}@example.com`,
+      name: `Batch User ${baseId}_${i}`,
+      email: `batch_${baseId}_${i}@example.com`,
       age: 25 + (i % 30),
       active: true,
     }))
-    counter += 100
     await bunQB.insertMany('users', data)
   })
 
   bench('Kysely', async () => {
+    const baseId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
     const data = Array.from({ length: 100 }, (_, i) => ({
-      name: `Batch User ${counter + i}`,
-      email: `batch${counter + i}@example.com`,
+      name: `Batch User ${baseId}_${i}`,
+      email: `batch_${baseId}_${i}@example.com`,
       age: 25 + (i % 30),
       active: true,
     }))
-    counter += 100
     await kysely.insertInto('users').values(data).execute()
   })
 
   bench('Drizzle', async () => {
+    const baseId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
     const data = Array.from({ length: 100 }, (_, i) => ({
-      name: `Batch User ${counter + i}`,
-      email: `batch${counter + i}@example.com`,
+      name: `Batch User ${baseId}_${i}`,
+      email: `batch_${baseId}_${i}@example.com`,
       age: 25 + (i % 30),
       active: true,
     }))
-    counter += 100
     await drizzle.insert(users).values(data)
   })
 
   bench('Prisma', async () => {
+    const baseId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
     const data = Array.from({ length: 100 }, (_, i) => ({
-      name: `Batch User ${counter + i}`,
-      email: `batch${counter + i}@example.com`,
+      name: `Batch User ${baseId}_${i}`,
+      email: `batch_${baseId}_${i}@example.com`,
       age: 25 + (i % 30),
       active: true,
     }))
-    counter += 100
     await prisma.user.createMany({ data })
   })
 })
