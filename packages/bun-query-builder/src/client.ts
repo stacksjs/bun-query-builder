@@ -2179,8 +2179,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       select(columns: string[]) {
         if (!columns || columns.length === 0)
           return this as any
-        // Replace SELECT * with SELECT specific columns, preserving everything after FROM
-        text = text.replace(/^SELECT\s+\*(?=\s+FROM)/i, `SELECT ${columns.join(', ')}`)
+        // Replace SELECT * with SELECT specific columns, preserving FROM and JOINs
+        const colList = columns.join(', ')
+        const fromIndex = text.indexOf(' FROM ')
+        if (fromIndex !== -1) {
+          text = `SELECT ${colList}${text.substring(fromIndex)}`
+        } else {
+          text = `SELECT ${colList} FROM ${String(table)}`
+        }
         built = whereParams.length > 0
           ? (_sql as any).unsafe(text, whereParams)
           : (_sql as any).unsafe(text)
@@ -4006,19 +4012,23 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return makeExecutableQuery(built, computeSqlText(built)) as any
         },
         async execute() {
-          try {
-            await config.hooks?.beforeUpdate?.({ table: String(table), data: updateData, where: whereCondition })
-          }
-          catch (err) {
-            throw err
+          if (config.hooks?.beforeUpdate) {
+            try {
+              await config.hooks.beforeUpdate({ table: String(table), data: updateData, where: whereCondition })
+            }
+            catch (err) {
+              throw err
+            }
           }
 
           const result = await runWithHooks<number>(built, 'update')
 
-          try {
-            await config.hooks?.afterUpdate?.({ table: String(table), data: updateData, where: whereCondition, result })
+          if (config.hooks?.afterUpdate) {
+            try {
+              await config.hooks.afterUpdate({ table: String(table), data: updateData, where: whereCondition, result })
+            }
+            catch {}
           }
-          catch {}
 
           return result
         },
