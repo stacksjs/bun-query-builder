@@ -1906,45 +1906,65 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
   function applyCondition(expr: WhereExpression<any>): any {
     // Returns just the condition part without WHERE keyword
+    // Avoid using _sql(column) as it creates "helpers" that Bun restricts
     if (Array.isArray(expr)) {
       const [col, op, val] = expr
+      const colName = String(col)
       switch (op) {
         case 'in':
-          return _sql`${_sql(String(col))} IN ${_sql(val as any)}`
+          if (Array.isArray(val)) {
+            const placeholders = val.map((_, i) => `$${i + 1}`).join(', ')
+            return (_sql as any).unsafe(`${colName} IN (${placeholders})`, val)
+          }
+          return (_sql as any).unsafe(`${colName} IN ($1)`, [val])
         case 'not in':
-          return _sql`${_sql(String(col))} NOT IN ${_sql(val as any)}`
+          if (Array.isArray(val)) {
+            const placeholders = val.map((_, i) => `$${i + 1}`).join(', ')
+            return (_sql as any).unsafe(`${colName} NOT IN (${placeholders})`, val)
+          }
+          return (_sql as any).unsafe(`${colName} NOT IN ($1)`, [val])
         case 'like':
-          return _sql`${_sql(String(col))} LIKE ${val as any}`
+          return (_sql as any).unsafe(`${colName} LIKE $1`, [val])
         case 'is':
-          return _sql`${_sql(String(col))} IS ${val as any}`
+          return (_sql as any).unsafe(`${colName} IS ${val}`)
         case 'is not':
-          return _sql`${_sql(String(col))} IS NOT ${val as any}`
+          return (_sql as any).unsafe(`${colName} IS NOT ${val}`)
         case '!=':
-          return _sql`${_sql(String(col))} <> ${val as any}`
+          return (_sql as any).unsafe(`${colName} <> $1`, [val])
         case '<':
         case '>':
         case '<=':
         case '>=':
         case '=':
         default:
-          // Operators must be literal strings, not placeholders
-          const condSql = `${_sql(String(col))} ${op} ?`
-          return _sql([condSql] as any, val)
+          return (_sql as any).unsafe(`${colName} ${op} $1`, [val])
       }
     }
     if ('raw' in (expr as any)) {
       return (expr as WhereRaw).raw
     }
-    const parts: any[] = []
-    for (const key of Object.keys(expr)) {
+    // Object notation: {name: 'Alice', age: 25}
+    const keys = Object.keys(expr)
+    if (keys.length === 0)
+      return (_sql as any).unsafe('')
+
+    const conditions: string[] = []
+    const allParams: any[] = []
+    let paramIndex = 1
+
+    for (const key of keys) {
       const value = (expr as any)[key]
-      if (Array.isArray(value))
-        parts.push(_sql`${_sql(key)} IN ${_sql(value)}`)
-      else parts.push(_sql`${_sql(key)} = ${value}`)
+      if (Array.isArray(value)) {
+        const placeholders = value.map(() => `$${paramIndex++}`).join(', ')
+        conditions.push(`${key} IN (${placeholders})`)
+        allParams.push(...value)
+      } else {
+        conditions.push(`${key} = $${paramIndex++}`)
+        allParams.push(value)
+      }
     }
-    if (parts.length === 0)
-      return _sql``
-    return parts.reduce((acc, p, i) => (i === 0 ? p : _sql`${acc} AND ${p}`))
+
+    return (_sql as any).unsafe(conditions.join(' AND '), allParams)
   }
 
   function applyWhere(columns: Record<string, unknown>, q: any, expr?: WhereExpression<any>) {
@@ -2088,6 +2108,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     let useCache = false
     let cacheTtl = 60000
 
+    // Track WHERE conditions and parameters for proper merging
+    const whereConditions: string[] = []
+    const whereParams: any[] = []
+
     // Build the base API; then wrap with a proxy that exposes dynamic where/orWhere/andWhere methods
 
     const base: BaseSelectQueryBuilder<DB, TTable, any, TTable> = {
@@ -2155,11 +2179,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       select(columns: string[]) {
         if (!columns || columns.length === 0)
           return this as any
-        // Replace SELECT * with SELECT specific columns
-        const currentSql = String(built)
-        const rest = currentSql.replace(/^SELECT\s+\*\s+FROM/i, `SELECT ${columns.join(', ')} FROM`)
-        built = (sql as any).unsafe(rest)
-        text = rest
+        // Replace SELECT * with SELECT specific columns, preserving everything after FROM
+        text = text.replace(/^SELECT\s+\*(?=\s+FROM)/i, `SELECT ${columns.join(', ')}`)
+        built = (sql as any).unsafe(text)
         return this as any
       },
       addSelect(...columns: string[]) {
@@ -2862,35 +2884,60 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       where(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
-          built = applyWhere(({} as any), built, [expr, op, value])
-          try {
-            addWhereText('WHERE', `${String(expr)} ${String(op).toUpperCase()} ?`)
-          }
-          catch {}
+          const paramIndex = whereParams.length + 1
+          whereConditions.push(`${String(expr)} ${String(op)} $${paramIndex}`)
+          whereParams.push(value)
           return this
         }
-        built = applyWhere(({} as any), built, expr)
-        // best-effort textual representation for common shapes
-        try {
-          if (Array.isArray(expr)) {
-            const [col, op] = expr as [string, string, any]
-            const opText = String(op).toUpperCase().replace('NOT IN', 'NOT IN').replace('IN', 'IN')
-            addWhereText('WHERE', `${String(col)} ${opText} ?`)
+
+        // Handle array format: ['column', 'op', value]
+        if (Array.isArray(expr)) {
+          const [col, op, val] = expr
+          const colName = String(col)
+          const operator = String(op)
+
+          if (operator === 'in' || operator === 'not in') {
+            const values = Array.isArray(val) ? val : [val]
+            const placeholders = values.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+            whereConditions.push(`${colName} ${operator.toUpperCase()} (${placeholders})`)
+            whereParams.push(...values)
           }
-          else if (expr && typeof expr === 'object' && !('raw' in expr)) {
-            const parts: string[] = []
-            for (const k of Object.keys(expr)) {
-              const v: any = (expr as any)[k]
-              parts.push(Array.isArray(v) ? `${k} IN (?)` : `${k} = ?`)
-            }
-            if (parts.length)
-              addWhereText('WHERE', parts.join(' AND '))
+          else {
+            const paramIndex = whereParams.length + 1
+            whereConditions.push(`${colName} ${operator} $${paramIndex}`)
+            whereParams.push(val)
           }
-          else if (expr && typeof (expr as any).raw !== 'undefined') {
-            addWhereText('WHERE', '[raw]')
-          }
+
+          return this
         }
-        catch {}
+
+        // Handle object format: { name: 'Alice', age: 25 }
+        if (expr && typeof expr === 'object' && !('raw' in expr)) {
+          const keys = Object.keys(expr)
+
+          for (const key of keys) {
+            const value = (expr as any)[key]
+            if (Array.isArray(value)) {
+              const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+              whereConditions.push(`${key} IN (${placeholders})`)
+              whereParams.push(...value)
+            }
+            else {
+              const paramIndex = whereParams.length + 1
+              whereConditions.push(`${key} = $${paramIndex}`)
+              whereParams.push(value)
+            }
+          }
+
+          return this
+        }
+
+        // Handle raw expressions
+        if (expr && typeof (expr as any).raw !== 'undefined') {
+          whereConditions.push((expr as any).raw)
+          return this
+        }
+
         return this
       },
       // where helpers
@@ -3074,64 +3121,118 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       andWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
-          built = sql`${built} AND ${applyCondition([expr, op, value])}`
-          try {
-            addWhereText('AND', `${String(expr)} ${String(op).toUpperCase()} ?`)
-          }
-          catch {}
+          const paramIndex = whereParams.length + 1
+          whereConditions.push(`${String(expr)} ${String(op)} $${paramIndex}`)
+          whereParams.push(value)
           return this
         }
-        built = sql`${built} AND ${applyCondition(expr)}`
-        try {
-          if (Array.isArray(expr)) {
-            const [col, op] = expr as [string, string, any]
-            addWhereText('AND', `${String(col)} ${String(op).toUpperCase()} ?`)
+
+        // Handle array format: ['column', 'op', value]
+        if (Array.isArray(expr)) {
+          const [col, op, val] = expr
+          const colName = String(col)
+          const operator = String(op)
+
+          if (operator === 'in' || operator === 'not in') {
+            const values = Array.isArray(val) ? val : [val]
+            const placeholders = values.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+            whereConditions.push(`${colName} ${operator.toUpperCase()} (${placeholders})`)
+            whereParams.push(...values)
           }
-          else if (expr && typeof expr === 'object' && !('raw' in expr)) {
-            const parts: string[] = []
-            for (const k of Object.keys(expr)) {
-              const v: any = (expr as any)[k]
-              parts.push(Array.isArray(v) ? `${k} IN (?)` : `${k} = ?`)
-            }
-            if (parts.length)
-              addWhereText('AND', parts.join(' AND '))
+          else {
+            const paramIndex = whereParams.length + 1
+            whereConditions.push(`${colName} ${operator} $${paramIndex}`)
+            whereParams.push(val)
           }
-          else if (expr && typeof (expr as any).raw !== 'undefined') {
-            addWhereText('AND', '[raw]')
-          }
+
+          return this
         }
-        catch {}
+
+        // Handle object format: { name: 'Alice', age: 25 }
+        if (expr && typeof expr === 'object' && !('raw' in expr)) {
+          const keys = Object.keys(expr)
+
+          for (const key of keys) {
+            const value = (expr as any)[key]
+            if (Array.isArray(value)) {
+              const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+              whereConditions.push(`${key} IN (${placeholders})`)
+              whereParams.push(...value)
+            }
+            else {
+              const paramIndex = whereParams.length + 1
+              whereConditions.push(`${key} = $${paramIndex}`)
+              whereParams.push(value)
+            }
+          }
+
+          return this
+        }
+
+        // Handle raw expressions
+        if (expr && typeof (expr as any).raw !== 'undefined') {
+          whereConditions.push((expr as any).raw)
+          return this
+        }
+
         return this
       },
       orWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
-          built = sql`${built} OR ${applyCondition([expr, op, value])}`
-          try {
-            addWhereText('OR', `${String(expr)} ${String(op).toUpperCase()} ?`)
-          }
-          catch {}
+          const paramIndex = whereParams.length + 1
+          whereConditions.push(`OR ${String(expr)} ${String(op)} $${paramIndex}`)
+          whereParams.push(value)
           return this
         }
-        built = sql`${built} OR ${applyCondition(expr)}`
-        try {
-          if (Array.isArray(expr)) {
-            const [col, op] = expr as [string, string, any]
-            addWhereText('OR', `${String(col)} ${String(op).toUpperCase()} ?`)
+
+        // Handle array format: ['column', 'op', value]
+        if (Array.isArray(expr)) {
+          const [col, op, val] = expr
+          const colName = String(col)
+          const operator = String(op)
+
+          if (operator === 'in' || operator === 'not in') {
+            const values = Array.isArray(val) ? val : [val]
+            const placeholders = values.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+            whereConditions.push(`OR ${colName} ${operator.toUpperCase()} (${placeholders})`)
+            whereParams.push(...values)
           }
-          else if (expr && typeof expr === 'object' && !('raw' in expr)) {
-            const parts: string[] = []
-            for (const k of Object.keys(expr)) {
-              const v: any = (expr as any)[k]
-              parts.push(Array.isArray(v) ? `${k} IN (?)` : `${k} = ?`)
-            }
-            if (parts.length)
-              addWhereText('OR', parts.join(' AND '))
+          else {
+            const paramIndex = whereParams.length + 1
+            whereConditions.push(`OR ${colName} ${operator} $${paramIndex}`)
+            whereParams.push(val)
           }
-          else if (expr && typeof (expr as any).raw !== 'undefined') {
-            addWhereText('OR', '[raw]')
-          }
+
+          return this
         }
-        catch {}
+
+        // Handle object format: { name: 'Alice', age: 25 }
+        if (expr && typeof expr === 'object' && !('raw' in expr)) {
+          const keys = Object.keys(expr)
+
+          for (const key of keys) {
+            const value = (expr as any)[key]
+            if (Array.isArray(value)) {
+              const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+              whereConditions.push(`OR ${key} IN (${placeholders})`)
+              whereParams.push(...value)
+            }
+            else {
+              const paramIndex = whereParams.length + 1
+              whereConditions.push(`OR ${key} = $${paramIndex}`)
+              whereParams.push(value)
+            }
+          }
+
+          return this
+        }
+
+        // Handle raw expressions
+        if (expr && typeof (expr as any).raw !== 'undefined') {
+          whereConditions.push(`OR ${(expr as any).raw}`)
+          return this
+        }
+
         return this
       },
       orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
@@ -3171,9 +3272,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         // Column names in JOIN ON must be identifiers, not placeholders
-        // Build JOIN clause using raw string interpolation for identifiers
         const joinClause = ` JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        built = (sql as any).unsafe(built.toString() + joinClause)
+        text += joinClause
+        built = (sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
@@ -3185,14 +3286,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         // Column names in JOIN ON must be identifiers, not placeholders
         const joinClause = ` INNER JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        built = (sql as any).unsafe(built.toString() + joinClause)
+        text += joinClause
+        built = (sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
       leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         // Column names in JOIN ON must be identifiers, not placeholders
         const joinClause = ` LEFT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        built = (sql as any).unsafe(built.toString() + joinClause)
+        text += joinClause
+        built = (sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
@@ -3204,13 +3307,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         // Column names in JOIN ON must be identifiers, not placeholders
         const joinClause = ` RIGHT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        built = (sql as any).unsafe(built.toString() + joinClause)
+        text += joinClause
+        built = (sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
       crossJoin(table2: string) {
         const joinClause = ` CROSS JOIN ${table2}`
-        built = (sql as any).unsafe(built.toString() + joinClause)
+        text += joinClause
+        built = (sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
@@ -3244,8 +3349,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       groupBy(...cols: string[]) {
-        if (cols.length > 0)
-          built = sql`${built} GROUP BY ${sql(cols as any)}`
+        if (cols.length > 0) {
+          text = `${text} GROUP BY ${cols.join(', ')}`
+          built = (_sql as any).unsafe(text)
+        }
         return this as any
       },
       groupByRaw(fragment: any) {
@@ -3253,7 +3360,36 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       having(expr: any) {
-        built = sql`${built} HAVING ${applyCondition(expr)}`
+        // Handle array format: ['COUNT(id)', '>', 3]
+        if (Array.isArray(expr)) {
+          const [col, op, val] = expr
+          const colName = String(col)
+          const operator = String(op)
+          const paramIndex = whereParams.length + 1
+          text = `${text} HAVING ${colName} ${operator} $${paramIndex}`
+          whereParams.push(val)
+          built = (_sql as any).unsafe(text, whereParams)
+        }
+        // Handle object format
+        else if (expr && typeof expr === 'object' && !('raw' in expr)) {
+          const keys = Object.keys(expr)
+          const conditions: string[] = []
+          for (const key of keys) {
+            const value = (expr as any)[key]
+            const paramIndex = whereParams.length + 1
+            conditions.push(`${key} = $${paramIndex}`)
+            whereParams.push(value)
+          }
+          if (conditions.length > 0) {
+            text = `${text} HAVING ${conditions.join(' AND ')}`
+            built = (_sql as any).unsafe(text, whereParams)
+          }
+        }
+        // Handle raw expressions
+        else if (expr && typeof (expr as any).raw !== 'undefined') {
+          text = `${text} HAVING ${(expr as any).raw}`
+          built = (_sql as any).unsafe(text)
+        }
         return this as any
       },
       havingRaw(fragment: any) {
@@ -3469,6 +3605,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return text
       },
       async get() {
+        // Build final WHERE clause from accumulated conditions
+        if (whereConditions.length > 0) {
+          const whereClause = whereConditions.join(' AND ').replace(/\bAND OR\b/g, 'OR').replace(/^AND\s+/, '')
+          text = `${text} WHERE ${whereClause}`
+          built = (_sql as any).unsafe(text, whereParams)
+        }
+
         // Apply soft-deletes default filter if enabled and table has the column
         if (config.softDeletes?.enabled && config.softDeletes.defaultFilter && !includeTrashed) {
           const col = config.softDeletes.column
