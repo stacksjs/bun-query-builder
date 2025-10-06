@@ -63,6 +63,11 @@ export function mockSql(strings: TemplateStringsArray | string[], ...values: any
   return new Proxy(fn, handler)
 }
 
+// Add unsafe as a static method on mockSql (after function is defined)
+(mockSql as any).unsafe = (query: string, params?: any[]) => {
+  return mockSql([query], ...(params || []))
+}
+
 // Mock query builder state for testing
 export const mockQueryBuilderState = {
   sql: mockSql,

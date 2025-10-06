@@ -28,7 +28,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database
-  await resetDatabase('./examples/models', { dialect: config.dialect })
+  await resetDatabase('../../examples/models', { dialect: config.dialect })
 
   // Clean up workspace
   if (existsSync(testWorkspace)) {

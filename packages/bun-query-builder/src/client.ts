@@ -3298,7 +3298,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
-        built = sql`${built} ORDER BY ${sql(String(column))} ${direction === 'asc' ? sql`ASC` : sql`DESC`}`
+        text += ' ORDER BY ' + column + ' ' + (direction === 'asc' ? 'ASC' : 'DESC')
+        built = whereParams.length > 0
+          ? (_sql as any).unsafe(text, whereParams)
+          : (_sql as any).unsafe(text)
         return this
       },
       orderByDesc(column: string) {
@@ -3325,14 +3328,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       limit(n: number) {
-        text = `${text} LIMIT ${n}`
+        text += ' LIMIT ' + n
         built = whereParams.length > 0
           ? (_sql as any).unsafe(text, whereParams)
           : (_sql as any).unsafe(text)
         return this
       },
       offset(n: number) {
-        text = `${text} OFFSET ${n}`
+        text += ' OFFSET ' + n
         built = whereParams.length > 0
           ? (_sql as any).unsafe(text, whereParams)
           : (_sql as any).unsafe(text)

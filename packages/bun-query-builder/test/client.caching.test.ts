@@ -27,6 +27,17 @@ function createMockSql() {
   mockSql.clearQueries = () => {
     queries.length = 0
   }
+  mockSql.unsafe = (query: string, params?: any[]) => {
+    const result = {
+      query,
+      values: params || [],
+      toString: () => query,
+      execute: async () => [],
+      raw: () => query,
+    }
+    queries.push(result)
+    return result
+  }
 
   return mockSql
 }

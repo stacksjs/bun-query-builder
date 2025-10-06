@@ -33,7 +33,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after tests
-  await resetDatabase('./examples/models', { dialect: config.dialect })
+  await resetDatabase('../../examples/models', { dialect: config.dialect })
 
   // Clean up temporary directories
   if (existsSync(testWorkspaceRoot)) {
