@@ -2181,7 +2181,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this as any
         // Replace SELECT * with SELECT specific columns, preserving everything after FROM
         text = text.replace(/^SELECT\s+\*(?=\s+FROM)/i, `SELECT ${columns.join(', ')}`)
-        built = (sql as any).unsafe(text)
+        built = whereParams.length > 0
+          ? (_sql as any).unsafe(text, whereParams)
+          : (_sql as any).unsafe(text)
         return this as any
       },
       addSelect(...columns: string[]) {
@@ -2887,6 +2889,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const paramIndex = whereParams.length + 1
           whereConditions.push(`${String(expr)} ${String(op)} $${paramIndex}`)
           whereParams.push(value)
+          // Update built and text immediately
+          text = `${text} WHERE ${String(expr)} ${String(op)} $${paramIndex}`
+          built = (_sql as any).unsafe(text, whereParams)
           return this
         }
 
@@ -2901,11 +2906,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const placeholders = values.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
             whereConditions.push(`${colName} ${operator.toUpperCase()} (${placeholders})`)
             whereParams.push(...values)
+            text = `${text} WHERE ${colName} ${operator.toUpperCase()} (${placeholders})`
+            built = (_sql as any).unsafe(text, whereParams)
           }
           else {
             const paramIndex = whereParams.length + 1
             whereConditions.push(`${colName} ${operator} $${paramIndex}`)
             whereParams.push(val)
+            text = `${text} WHERE ${colName} ${operator} $${paramIndex}`
+            built = (_sql as any).unsafe(text, whereParams)
           }
 
           return this
@@ -2914,27 +2923,36 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Handle object format: { name: 'Alice', age: 25 }
         if (expr && typeof expr === 'object' && !('raw' in expr)) {
           const keys = Object.keys(expr)
+          const conditions: string[] = []
 
           for (const key of keys) {
             const value = (expr as any)[key]
             if (Array.isArray(value)) {
               const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+              conditions.push(`${key} IN (${placeholders})`)
               whereConditions.push(`${key} IN (${placeholders})`)
               whereParams.push(...value)
             }
             else {
               const paramIndex = whereParams.length + 1
+              conditions.push(`${key} = $${paramIndex}`)
               whereConditions.push(`${key} = $${paramIndex}`)
               whereParams.push(value)
             }
           }
 
+          if (conditions.length > 0) {
+            text = `${text} WHERE ${conditions.join(' AND ')}`
+            built = (_sql as any).unsafe(text, whereParams)
+          }
           return this
         }
 
         // Handle raw expressions
         if (expr && typeof (expr as any).raw !== 'undefined') {
           whereConditions.push((expr as any).raw)
+          text = `${text} WHERE ${(expr as any).raw}`
+          built = (_sql as any).unsafe(text)
           return this
         }
 
@@ -3124,6 +3142,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const paramIndex = whereParams.length + 1
           whereConditions.push(`${String(expr)} ${String(op)} $${paramIndex}`)
           whereParams.push(value)
+          text = `${text} AND ${String(expr)} ${String(op)} $${paramIndex}`
+          built = (_sql as any).unsafe(text, whereParams)
           return this
         }
 
@@ -3138,11 +3158,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const placeholders = values.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
             whereConditions.push(`${colName} ${operator.toUpperCase()} (${placeholders})`)
             whereParams.push(...values)
+            text = `${text} AND ${colName} ${operator.toUpperCase()} (${placeholders})`
+            built = (_sql as any).unsafe(text, whereParams)
           }
           else {
             const paramIndex = whereParams.length + 1
             whereConditions.push(`${colName} ${operator} $${paramIndex}`)
             whereParams.push(val)
+            text = `${text} AND ${colName} ${operator} $${paramIndex}`
+            built = (_sql as any).unsafe(text, whereParams)
           }
 
           return this
@@ -3151,27 +3175,36 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Handle object format: { name: 'Alice', age: 25 }
         if (expr && typeof expr === 'object' && !('raw' in expr)) {
           const keys = Object.keys(expr)
+          const conditions: string[] = []
 
           for (const key of keys) {
             const value = (expr as any)[key]
             if (Array.isArray(value)) {
               const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+              conditions.push(`${key} IN (${placeholders})`)
               whereConditions.push(`${key} IN (${placeholders})`)
               whereParams.push(...value)
             }
             else {
               const paramIndex = whereParams.length + 1
+              conditions.push(`${key} = $${paramIndex}`)
               whereConditions.push(`${key} = $${paramIndex}`)
               whereParams.push(value)
             }
           }
 
+          if (conditions.length > 0) {
+            text = `${text} AND ${conditions.join(' AND ')}`
+            built = (_sql as any).unsafe(text, whereParams)
+          }
           return this
         }
 
         // Handle raw expressions
         if (expr && typeof (expr as any).raw !== 'undefined') {
           whereConditions.push((expr as any).raw)
+          text = `${text} AND ${(expr as any).raw}`
+          built = (_sql as any).unsafe(text)
           return this
         }
 
@@ -3182,6 +3215,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const paramIndex = whereParams.length + 1
           whereConditions.push(`OR ${String(expr)} ${String(op)} $${paramIndex}`)
           whereParams.push(value)
+          text = `${text} OR ${String(expr)} ${String(op)} $${paramIndex}`
+          built = (_sql as any).unsafe(text, whereParams)
           return this
         }
 
@@ -3196,11 +3231,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const placeholders = values.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
             whereConditions.push(`OR ${colName} ${operator.toUpperCase()} (${placeholders})`)
             whereParams.push(...values)
+            text = `${text} OR ${colName} ${operator.toUpperCase()} (${placeholders})`
+            built = (_sql as any).unsafe(text, whereParams)
           }
           else {
             const paramIndex = whereParams.length + 1
             whereConditions.push(`OR ${colName} ${operator} $${paramIndex}`)
             whereParams.push(val)
+            text = `${text} OR ${colName} ${operator} $${paramIndex}`
+            built = (_sql as any).unsafe(text, whereParams)
           }
 
           return this
@@ -3209,27 +3248,36 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Handle object format: { name: 'Alice', age: 25 }
         if (expr && typeof expr === 'object' && !('raw' in expr)) {
           const keys = Object.keys(expr)
+          const conditions: string[] = []
 
           for (const key of keys) {
             const value = (expr as any)[key]
             if (Array.isArray(value)) {
               const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+              conditions.push(`${key} IN (${placeholders})`)
               whereConditions.push(`OR ${key} IN (${placeholders})`)
               whereParams.push(...value)
             }
             else {
               const paramIndex = whereParams.length + 1
+              conditions.push(`${key} = $${paramIndex}`)
               whereConditions.push(`OR ${key} = $${paramIndex}`)
               whereParams.push(value)
             }
           }
 
+          if (conditions.length > 0) {
+            text = `${text} OR ${conditions.join(' AND ')}`
+            built = (_sql as any).unsafe(text, whereParams)
+          }
           return this
         }
 
         // Handle raw expressions
         if (expr && typeof (expr as any).raw !== 'undefined') {
           whereConditions.push(`OR ${(expr as any).raw}`)
+          text = `${text} OR ${(expr as any).raw}`
+          built = (_sql as any).unsafe(text)
           return this
         }
 
@@ -3271,10 +3319,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        // Column names in JOIN ON must be identifiers, not placeholders
-        const joinClause = ` JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        text += joinClause
-        built = (sql as any).unsafe(text)
+        text = `${text} JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        built = (_sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
@@ -3284,18 +3330,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        // Column names in JOIN ON must be identifiers, not placeholders
-        const joinClause = ` INNER JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        text += joinClause
-        built = (sql as any).unsafe(text)
+        text = `${text} INNER JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        built = (_sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
       leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        // Column names in JOIN ON must be identifiers, not placeholders
-        const joinClause = ` LEFT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        text += joinClause
-        built = (sql as any).unsafe(text)
+        text = `${text} LEFT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        built = (_sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
@@ -3305,17 +3347,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        // Column names in JOIN ON must be identifiers, not placeholders
-        const joinClause = ` RIGHT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        text += joinClause
-        built = (sql as any).unsafe(text)
+        text = `${text} RIGHT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        built = (_sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
       crossJoin(table2: string) {
-        const joinClause = ` CROSS JOIN ${table2}`
-        text += joinClause
-        built = (sql as any).unsafe(text)
+        text = `${text} CROSS JOIN ${table2}`
+        built = (_sql as any).unsafe(text)
         joinedTables.add(String(table2))
         return this as any
       },
@@ -3351,7 +3390,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       groupBy(...cols: string[]) {
         if (cols.length > 0) {
           text = `${text} GROUP BY ${cols.join(', ')}`
-          built = (_sql as any).unsafe(text)
+          built = whereParams.length > 0
+            ? (_sql as any).unsafe(text, whereParams)
+            : (_sql as any).unsafe(text)
         }
         return this as any
       },
@@ -3605,13 +3646,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return text
       },
       async get() {
-        // Build final WHERE clause from accumulated conditions
-        if (whereConditions.length > 0) {
-          const whereClause = whereConditions.join(' AND ').replace(/\bAND OR\b/g, 'OR').replace(/^AND\s+/, '')
-          text = `${text} WHERE ${whereClause}`
-          built = (_sql as any).unsafe(text, whereParams)
-        }
-
         // Apply soft-deletes default filter if enabled and table has the column
         if (config.softDeletes?.enabled && config.softDeletes.defaultFilter && !includeTrashed) {
           const col = config.softDeletes.column
@@ -3709,31 +3743,48 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return fn(this as any)
       },
       async count() {
-        const q = sql`SELECT COUNT(*) as c FROM (${built}) as sub`
+        // Build optimized COUNT query without subquery
+        const countText = text.replace(/^SELECT\s+.*?\s+FROM/i, 'SELECT COUNT(*) as c FROM')
+        const q = whereParams.length > 0
+          ? (_sql as any).unsafe(countText, whereParams)
+          : (_sql as any).unsafe(countText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.c ?? 0)
       },
       async avg(column: string) {
-        const q = sql`SELECT AVG(${sql(column)}) as a FROM (${built}) as sub`
+        // Build optimized AVG query without subquery or helpers
+        const avgText = text.replace(/^SELECT\s+.*?\s+FROM/i, `SELECT AVG(${column}) as a FROM`)
+        const q = whereParams.length > 0
+          ? (_sql as any).unsafe(avgText, whereParams)
+          : (_sql as any).unsafe(avgText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.a ?? 0)
       },
       async sum(column: string) {
-        const q = sql`SELECT SUM(${sql(column)}) as s FROM (${built}) as sub`
+        const sumText = text.replace(/^SELECT\s+.*?\s+FROM/i, `SELECT SUM(${column}) as s FROM`)
+        const q = whereParams.length > 0
+          ? (_sql as any).unsafe(sumText, whereParams)
+          : (_sql as any).unsafe(sumText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.s ?? 0)
       },
       async max(column: string) {
-        const q = sql`SELECT MAX(${sql(column)}) as m FROM (${built}) as sub`
+        const maxText = text.replace(/^SELECT\s+.*?\s+FROM/i, `SELECT MAX(${column}) as m FROM`)
+        const q = whereParams.length > 0
+          ? (_sql as any).unsafe(maxText, whereParams)
+          : (_sql as any).unsafe(maxText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row?.m
       },
       async min(column: string) {
-        const q = sql`SELECT MIN(${sql(column)}) as m FROM (${built}) as sub`
+        const minText = text.replace(/^SELECT\s+.*?\s+FROM/i, `SELECT MIN(${column}) as m FROM`)
+        const q = whereParams.length > 0
+          ? (_sql as any).unsafe(minText, whereParams)
+          : (_sql as any).unsafe(minText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row?.m
@@ -3902,18 +3953,39 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return api as TypedInsertQueryBuilder<DB, TTable>
     },
     updateTable(table) {
-      let built = _sql`UPDATE ${_sql(String(table))}`
+      let built: any
+      let sqlText = `UPDATE ${String(table)}`
+      const params: any[] = []
       let updateData: any = null
       let whereCondition: any = null
+
       return {
         set(values) {
           updateData = values
-          built = _sql`${built} SET ${_sql(values as any)}`
+          const keys = Object.keys(values)
+          const setClauses = keys.map((key, idx) => `${key} = $${idx + 1}`)
+          sqlText = `${sqlText} SET ${setClauses.join(', ')}`
+          params.push(...keys.map(k => (values as any)[k]))
+          built = (_sql as any).unsafe(sqlText, params)
           return this
         },
         where(expr) {
           whereCondition = expr
-          built = applyWhere(({} as any), built, expr)
+          // Handle WHERE using the new optimized approach
+          if (Array.isArray(expr)) {
+            const [col, op, val] = expr
+            const paramIndex = params.length + 1
+            sqlText = `${sqlText} WHERE ${String(col)} ${String(op)} $${paramIndex}`
+            params.push(val)
+            built = (_sql as any).unsafe(sqlText, params)
+          }
+          else if (expr && typeof expr === 'object' && !('raw' in expr)) {
+            const keys = Object.keys(expr)
+            const conditions = keys.map((key, idx) => `${key} = $${params.length + idx + 1}`)
+            sqlText = `${sqlText} WHERE ${conditions.join(' AND ')}`
+            params.push(...keys.map(k => (expr as any)[k]))
+            built = (_sql as any).unsafe(sqlText, params)
+          }
           return this
         },
         returning(...cols) {

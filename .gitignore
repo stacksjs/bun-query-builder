@@ -16,3 +16,4 @@ examples/models/.qb-migrations.postgres.json
 generated/
 .vscode
 bin/query-builder
+packages/bun-query-builder/bin/query-builder
