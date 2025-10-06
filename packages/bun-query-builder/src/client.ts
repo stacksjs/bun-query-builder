@@ -3345,7 +3345,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        text = `${text} JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        text = text + ' JOIN ' + table2 + ' ON ' + onLeft + ' ' + operator + ' ' + onRight
         built = (_sql as any).unsafe(text)
         joinedTables.add(table2)
         return this as any
@@ -3356,13 +3356,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        text = `${text} INNER JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        text = text + ' INNER JOIN ' + table2 + ' ON ' + onLeft + ' ' + operator + ' ' + onRight
         built = (_sql as any).unsafe(text)
         joinedTables.add(table2)
         return this as any
       },
       leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        text = `${text} LEFT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        text = text + ' LEFT JOIN ' + table2 + ' ON ' + onLeft + ' ' + operator + ' ' + onRight
         built = (_sql as any).unsafe(text)
         joinedTables.add(table2)
         return this as any
@@ -3373,13 +3373,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        text = `${text} RIGHT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        text = text + ' RIGHT JOIN ' + table2 + ' ON ' + onLeft + ' ' + operator + ' ' + onRight
         built = (_sql as any).unsafe(text)
         joinedTables.add(table2)
         return this as any
       },
       crossJoin(table2: string) {
-        text = `${text} CROSS JOIN ${table2}`
+        text = text + ' CROSS JOIN ' + table2
         built = (_sql as any).unsafe(text)
         joinedTables.add(table2)
         return this as any
@@ -3428,7 +3428,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Handle array format: ['COUNT(id)', '>', 3]
         if (Array.isArray(expr)) {
           const paramIdx = whereParams.length + 1
-          text += ' HAVING ' + expr[0] + ' ' + expr[1] + ' $' + paramIdx
+          text = text + ' HAVING ' + expr[0] + ' ' + expr[1] + ' $' + paramIdx
           whereParams.push(expr[2])
           built = (_sql as any).unsafe(text, whereParams)
         }
@@ -3440,10 +3440,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const baseIdx = whereParams.length
             const conditions: string[] = new Array(len)
             for (let i = 0; i < len; i++) {
-              conditions[i] = keys[i] + ' = $' + (baseIdx + i + 1)
-              whereParams.push(expr[keys[i]])
+              const key = keys[i]
+              conditions[i] = key + ' = $' + (baseIdx + i + 1)
+              whereParams.push(expr[key])
             }
-            text += ' HAVING ' + conditions.join(' AND ')
+            text = text + ' HAVING ' + conditions.join(' AND ')
             built = (_sql as any).unsafe(text, whereParams)
           }
         }
@@ -3999,7 +4000,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             let pidx = 0
             for (let r = 0; r < rowCount; r++) {
               const row = rows[r]
-              sqlText += r === 0 ? '(' : '),('
+              if (r === 0) {
+                sqlText += '('
+              }
+              else {
+                sqlText += '),('
+              }
 
               for (let c = 0; c < colCount; c++) {
                 if (c > 0) sqlText += ','
@@ -4488,27 +4494,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const keys = Object.keys(firstRow)
       const colCount = keys.length
       const rowCount = rows.length
-      const totalParams = rowCount * colCount
-      const params = new Array(totalParams)
+      const params = new Array(rowCount * colCount)
 
-      // Pre-calculate column list
-      const columnList = keys.join(',')
-
-      // Build VALUES placeholders and populate params
-      let sql = 'INSERT INTO ' + table + '(' + columnList + ')VALUES'
+      let sql = 'INSERT INTO ' + table + '(' + keys.join(',') + ')VALUES'
       let pidx = 0
-
       for (let r = 0; r < rowCount; r++) {
+        if (r > 0) sql += ','
+        sql += '('
         const row = rows[r]
-        sql += r === 0 ? '(' : '),('
-
         for (let c = 0; c < colCount; c++) {
           if (c > 0) sql += ','
           sql += '$' + (pidx + 1)
           params[pidx++] = row[keys[c]]
         }
+        sql += ')'
       }
-      sql += ')'
 
       return (_sql as any).unsafe(sql, params).execute()
     },
@@ -4519,22 +4519,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const keys = Object.keys(firstRow)
       const colCount = keys.length
       const rowCount = rows.length
-      const totalParams = rowCount * colCount
-      const params = new Array(totalParams)
+      const params = new Array(rowCount * colCount)
 
-      // Pre-calculate column list
-      const columnList = keys.join(',')
-
-      // Build VALUES placeholders and populate params
-      let sql = 'INSERT INTO ' + table + '(' + columnList + ')VALUES'
+      // Build SQL
+      let sql = 'INSERT INTO ' + table + '(' + keys.join(',') + ')VALUES'
       let pidx = 0
-
       for (let r = 0; r < rowCount; r++) {
         const row = rows[r]
-        sql += r === 0 ? '(' : '),('
-
+        sql += r ? '),(' : '('
         for (let c = 0; c < colCount; c++) {
-          if (c > 0) sql += ','
+          if (c) sql += ','
           sql += '$' + (pidx + 1)
           params[pidx++] = row[keys[c]]
         }
