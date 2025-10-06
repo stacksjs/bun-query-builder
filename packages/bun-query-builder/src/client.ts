@@ -3665,7 +3665,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return text
       },
       async get() {
-        // Fast path: no soft-deletes, no cache, no timeout, no signal
+        // Ultra-fast path: no soft-deletes, no cache, no timeout, no signal, no hooks
+        if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !config.hooks) {
+          return (built as any).execute()
+        }
+
+        // Fast path: no soft-deletes, no cache, no timeout, no signal (but may have hooks)
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal) {
           return runWithHooks<any[]>(built, 'select')
         }

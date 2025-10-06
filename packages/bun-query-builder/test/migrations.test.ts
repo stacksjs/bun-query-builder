@@ -3,7 +3,7 @@ import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
 import { buildMigrationPlan, generateSql } from '../src/migrations'
 import { defineModels } from '../src/schema'
-import { setupDatabase } from './setup'
+import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 
 const models = defineModels({
   User: {
@@ -41,7 +41,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after migration tests
-  await resetDatabase('../../examples/models', { dialect: 'postgres' })
+  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: 'postgres' })
 })
 
 describe('migration planner', () => {

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { resetDatabase } from '../src/actions/migrate'
 import { makeSeeder, runSeeder, runSeeders } from '../src/actions/seed'
 import { config } from '../src/config'
-import { setupDatabase } from './setup'
+import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 
 let testSeedersDir: string
 let testWorkspaceRoot: string
@@ -33,7 +33,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after tests
-  await resetDatabase('../../examples/models', { dialect: config.dialect })
+  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
 
   // Clean up temporary directories
   if (existsSync(testWorkspaceRoot)) {

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
 import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
-import { setupDatabase } from './setup'
+import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 import { mockQueryBuilderState } from './utils'
 
 function qb() {
@@ -61,7 +61,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after client tests
-  await resetDatabase('../../examples/models', { dialect: 'postgres' })
+  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: 'postgres' })
 })
 
 describe('query builder - basics', () => {

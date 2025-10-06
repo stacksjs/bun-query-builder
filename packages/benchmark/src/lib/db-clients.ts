@@ -45,40 +45,39 @@ export function createBunQBClient() {
       }
       return { [SQL_FRAGMENT]: true, value: String(strings) }
     }
-    // Handle template tag
+    // Handle template tag - use for loop instead of reduce for better performance
     const params: any[] = []
-    const query = strings.reduce((acc: string, str: string, i: number) => {
-      if (i < values.length) {
-        const val = values[i]
-        // Check if it's a SQL fragment (identifier)
-        if (val && typeof val === 'object' && val[SQL_FRAGMENT]) {
-          return acc + str + val.value
-        }
-        // Check if it's a query object (result of unsafe() or another template tag)
-        else if (val && typeof val === 'object' && (typeof val.toString === 'function' || typeof val.raw === 'function') && typeof val.values === 'function') {
-          // Use raw() if available, otherwise toString()
-          const subQuery = typeof val.raw === 'function' ? val.raw() : String(val.toString())
-          const subParams = val.values()
-          // Renumber the placeholders in the subquery
-          let renumberedQuery = subQuery
-          if (subParams && subParams.length > 0) {
-            // Replace placeholders from highest to lowest to avoid issues with $10 vs $1
-            for (let j = subParams.length; j >= 1; j--) {
-              const oldPlaceholder = `$${j}`
-              const newPlaceholder = `$${params.length + j}`
-              renumberedQuery = renumberedQuery.replaceAll(oldPlaceholder, newPlaceholder)
-            }
-            params.push(...subParams)
-          }
-          return acc + str + renumberedQuery
-        }
-        else {
-          params.push(val)
-          return acc + str + `$${params.length}`
-        }
+    let query = strings[0]
+    for (let i = 0; i < values.length; i++) {
+      const val = values[i]
+      // Check if it's a SQL fragment (identifier)
+      if (val && typeof val === 'object' && val[SQL_FRAGMENT]) {
+        query += val.value
       }
-      return acc + str
-    }, '')
+      // Check if it's a query object (result of unsafe() or another template tag)
+      else if (val && typeof val === 'object' && (typeof val.toString === 'function' || typeof val.raw === 'function') && typeof val.values === 'function') {
+        // Use raw() if available, otherwise toString()
+        const subQuery = typeof val.raw === 'function' ? val.raw() : String(val.toString())
+        const subParams = val.values()
+        // Renumber the placeholders in the subquery
+        let renumberedQuery = subQuery
+        if (subParams && subParams.length > 0) {
+          // Replace placeholders from highest to lowest to avoid issues with $10 vs $1
+          for (let j = subParams.length; j >= 1; j--) {
+            const oldPlaceholder = `$${j}`
+            const newPlaceholder = `$${params.length + j}`
+            renumberedQuery = renumberedQuery.replaceAll(oldPlaceholder, newPlaceholder)
+          }
+          params.push(...subParams)
+        }
+        query += renumberedQuery
+      }
+      else {
+        params.push(val)
+        query += `$${params.length}`
+      }
+      query += strings[i + 1]
+    }
     const sqliteQuery = convertPlaceholders(query)
     // Only prepare complete statements, not fragments
     let stmt: any = null
@@ -91,10 +90,15 @@ export function createBunQBClient() {
       }
     }
 
+    // Optimize execute by avoiding closure overhead
+    const executeFunc = stmt
+      ? (params.length > 0 ? () => stmt.all(...params) : () => stmt.all())
+      : (params.length > 0
+          ? () => db.query(sqliteQuery).all(...params)
+          : () => db.query(sqliteQuery).all())
+
     return {
-      execute: stmt
-        ? (params.length > 0 ? () => stmt.all(...params) : () => stmt.all())
-        : (params.length > 0 ? () => db.query(sqliteQuery).all(...params) : () => db.query(sqliteQuery).all()),
+      execute: executeFunc,
       values: () => params,
       raw: () => query,
       toString: () => query,
@@ -114,10 +118,15 @@ export function createBunQBClient() {
     }
 
     const hasParams = params && params.length > 0
+    // Optimize execute by avoiding closure overhead
+    const executeFunc = stmt
+      ? (hasParams ? () => stmt.all(...params!) : () => stmt.all())
+      : (hasParams
+          ? () => db.query(sqliteQuery).all(...params!)
+          : () => db.query(sqliteQuery).all())
+
     return {
-      execute: stmt
-        ? (hasParams ? () => stmt.all(...params) : () => stmt.all())
-        : (hasParams ? () => db.query(sqliteQuery).all(...params) : () => db.query(sqliteQuery).all()),
+      execute: executeFunc,
       values: () => params || [],
       raw: () => query,
       toString: () => query,

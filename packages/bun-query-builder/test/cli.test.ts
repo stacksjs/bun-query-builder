@@ -1,22 +1,26 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { deleteMigrationFiles } from '@/actions/migrate'
 import pkg from '../package.json'
-import { setupDatabase } from './setup'
+import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
+
+// Store the test directory root for CLI path resolution
+const TEST_ROOT = resolve(__dirname, '..')
+const CLI_PATH = join(TEST_ROOT, 'bin/cli.ts')
 
 beforeAll(async () => {
   await setupDatabase()
 })
 
 afterAll(async () => {
-  await deleteMigrationFiles('../../examples/models', undefined, { dialect: 'postgres' })
+  await deleteMigrationFiles(EXAMPLES_MODELS_PATH, undefined, { dialect: 'postgres' })
 })
 
 function runCli(args: string[]) {
   const proc = Bun.spawnSync({
-    cmd: ['bun', 'bin/cli.ts', ...args],
+    cmd: ['bun', CLI_PATH, ...args],
     stdout: 'pipe',
     stderr: 'pipe',
     cwd: process.cwd(),

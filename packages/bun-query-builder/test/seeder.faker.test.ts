@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { faker } from 'ts-mocker'
+import { faker } from '../../../node_modules/ts-mocker/dist/src'
 
 describe('Faker Integration', () => {
   it('generates person data', () => {

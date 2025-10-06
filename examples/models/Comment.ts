@@ -1,5 +1,5 @@
 import { v } from '@stacksjs/ts-validation'
-import { defineModel } from '@/index'
+import { defineModel } from 'bun-query-builder'
 
 const model: {
   readonly name: 'Comment'
