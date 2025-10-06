@@ -1958,7 +1958,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const placeholders = value.map(() => `$${paramIndex++}`).join(', ')
         conditions.push(`${key} IN (${placeholders})`)
         allParams.push(...value)
-      } else {
+      }
+      else {
         conditions.push(`${key} = $${paramIndex++}`)
         allParams.push(value)
       }
@@ -2183,7 +2184,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const fromIndex = text.indexOf(' FROM ')
         if (fromIndex !== -1) {
           text = `SELECT ${columns.join(', ')}${text.substring(fromIndex)}`
-        } else {
+        }
+        else {
           text = `SELECT ${columns.join(', ')} FROM ${table}`
         }
         built = whereParams.length > 0
@@ -3316,14 +3318,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       limit(n: number) {
-        text = text + ' LIMIT ' + n
+        text = `${text} LIMIT ${n}`
         built = whereParams.length > 0
           ? (_sql as any).unsafe(text, whereParams)
           : (_sql as any).unsafe(text)
         return this
       },
       offset(n: number) {
-        text = text + ' OFFSET ' + n
+        text = `${text} OFFSET ${n}`
         built = whereParams.length > 0
           ? (_sql as any).unsafe(text, whereParams)
           : (_sql as any).unsafe(text)
@@ -3400,7 +3402,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       groupBy(...cols: string[]) {
         if (cols.length) {
-          text += ' GROUP BY ' + cols.join(', ')
+          text += ` GROUP BY ${cols.join(', ')}`
           built = (_sql as any).unsafe(text, whereParams)
         }
         return this as any
@@ -3413,7 +3415,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Handle array format: ['COUNT(id)', '>', 3]
         if (Array.isArray(expr)) {
           const paramIdx = whereParams.length + 1
-          text += ' HAVING ' + expr[0] + ' ' + expr[1] + ' $' + paramIdx
+          text += ` HAVING ${expr[0]} ${expr[1]} $${paramIdx}`
           whereParams.push(expr[2])
           built = (_sql as any).unsafe(text, whereParams)
         }
@@ -3423,18 +3425,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const len = keys.length
           if (len) {
             let baseIdx = whereParams.length
+            // eslint-disable-next-line unicorn/no-new-array
             const conditions: string[] = new Array(len)
             for (let i = 0; i < len; i++) {
-              conditions[i] = keys[i] + ' = $' + (++baseIdx)
+              conditions[i] = `${keys[i]} = $${++baseIdx}`
               whereParams.push(expr[keys[i]])
             }
-            text += ' HAVING ' + conditions.join(' AND ')
+            text += ` HAVING ${conditions.join(' AND ')}`
             built = (_sql as any).unsafe(text, whereParams)
           }
         }
         // Handle raw expressions
         else if (expr && typeof (expr as any).raw !== 'undefined') {
-          text += ' HAVING ' + (expr as any).raw
+          text += ` HAVING ${(expr as any).raw}`
           built = (_sql as any).unsafe(text)
         }
         return this as any
@@ -3956,15 +3959,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       let built: any
       let sqlText = `UPDATE ${String(table)}`
       const params: any[] = []
-      let updateData: any = null
-      let whereCondition: any = null
 
       return {
         set(values) {
-          updateData = values
           const keys = Object.keys(values)
           const len = keys.length
-          const setClauses: string[] = new Array(len)
+          const setClauses: string[] = Array.from({ length: len })
           for (let i = 0; i < len; i++) {
             const key = keys[i]
             setClauses[i] = `${key} = $${i + 1}`
@@ -3975,7 +3975,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this
         },
         where(expr) {
-          whereCondition = expr
           // Handle WHERE using the new optimized approach
           if (Array.isArray(expr)) {
             const [col, op, val] = expr
@@ -4508,7 +4507,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
       for (const [_type, relMap] of Object.entries(rels)) {
         if (relMap && typeof relMap === 'object' && relationName in relMap) {
-          return type
+          return _type
         }
       }
       return null

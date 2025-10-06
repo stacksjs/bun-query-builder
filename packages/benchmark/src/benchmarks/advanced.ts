@@ -1,13 +1,13 @@
-import { bench, run, group } from 'mitata'
 import { eq } from 'drizzle-orm'
+import { bench, group, run } from 'mitata'
 import {
-  createBunQBClient,
-  createKyselyClient,
-  createDrizzleClient,
-  createPrismaClient,
   closeAll,
+  createBunQBClient,
+  createDrizzleClient,
+  createKyselyClient,
+  createPrismaClient,
 } from '../lib/db-clients'
-import { users, posts } from '../schemas/drizzle'
+import { posts, users } from '../schemas/drizzle'
 
 console.log('Initializing clients...')
 const bunQB = createBunQBClient()
@@ -19,11 +19,7 @@ console.log('Starting advanced query benchmarks...\n')
 
 group('JOIN: Users with their posts', () => {
   bench('bun-query-builder', async () => {
-    await bunQB.selectFrom('users')
-      .innerJoin('posts', 'users.id', '=', 'posts.user_id')
-      .select(['users.id', 'users.name', 'posts.title'])
-      .limit(100)
-      .get()
+    await (bunQB as any).selectFrom('users').innerJoin('posts', 'users.id', '=', 'posts.user_id').select(['users.id', 'users.name', 'posts.title']).limit(100).get()
   })
 
   bench('Kysely', async () => {
@@ -96,7 +92,7 @@ group('WHERE: Complex conditions', () => {
 
   bench('Kysely', async () => {
     await kysely.selectFrom('users')
-      .where('active', '=', 1)
+      .where('active', '=', 1 as any)
       .where('age', '>', 25)
       .where('age', '<', 40)
       .execute()
@@ -153,11 +149,7 @@ group('ORDER BY + LIMIT', () => {
 
 group('GROUP BY + HAVING', () => {
   bench('bun-query-builder', async () => {
-    await bunQB.selectFrom('posts')
-      .select(['user_id', 'COUNT(id) as post_count'])
-      .groupBy('user_id')
-      .having(['COUNT(id)', '>', 3])
-      .get()
+    await (bunQB as any).selectFrom('posts').select(['user_id', 'COUNT(id) as post_count']).groupBy('user_id').having(['COUNT(id)', '>', 3]).get()
   })
 
   bench('Kysely', async () => {
@@ -194,6 +186,7 @@ group('GROUP BY + HAVING', () => {
   })
 })
 
+// eslint-disable-next-line antfu/no-top-level-await
 await run()
 
 closeAll([bunQB, kysely, drizzle, prisma])

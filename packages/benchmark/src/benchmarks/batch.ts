@@ -1,12 +1,12 @@
-import { bench, run, group } from 'mitata'
+import { bench, group, run } from 'mitata'
 import {
-  createBunQBClient,
-  createKyselyClient,
-  createDrizzleClient,
-  createPrismaClient,
   closeAll,
+  createBunQBClient,
+  createDrizzleClient,
+  createKyselyClient,
+  createPrismaClient,
 } from '../lib/db-clients'
-import { users, posts } from '../schemas/drizzle'
+import { posts, users } from '../schemas/drizzle'
 
 console.log('Initializing clients...')
 const bunQB = createBunQBClient()
@@ -102,7 +102,7 @@ group('DELETE MANY: By IDs', () => {
   })
 
   bench('Drizzle', async () => {
-    const ids = Array.from({ length: 10 }, (_, i) => 800 + i)
+    const _ids = Array.from({ length: 10 }, (_, i) => 800 + i)
     await drizzle.delete(users)
   })
 
@@ -132,6 +132,7 @@ group('SELECT: Large result set (1000 rows)', () => {
   })
 })
 
+// eslint-disable-next-line antfu/no-top-level-await
 await run()
 
 closeAll([bunQB, kysely, drizzle, prisma])

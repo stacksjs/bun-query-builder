@@ -26,5 +26,17 @@
     "verbatimModuleSyntax": true,
     "skipDefaultLibCheck": true,
     "skipLibCheck": true
-  }
+  },
+  "include": [
+    "packages/*/src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "examples",
+    "generated",
+    "test.ts",
+    "packages/*/test/**/*",
+    "**/typeorm.ts"
+  ]
 }

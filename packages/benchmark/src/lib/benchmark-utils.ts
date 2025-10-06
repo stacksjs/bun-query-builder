@@ -1,5 +1,5 @@
-import Table from 'cli-table3'
 import chalk from 'chalk'
+import Table from 'cli-table3'
 
 export interface BenchmarkResult {
   name: string

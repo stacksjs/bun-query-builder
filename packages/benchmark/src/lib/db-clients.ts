@@ -1,14 +1,14 @@
-import { Database as BunDatabase } from 'bun:sqlite'
-import { SQL } from 'bun'
-import { Kysely, SqliteDialect } from 'kysely'
-import { drizzle } from 'drizzle-orm/bun-sqlite'
-import { DataSource } from 'typeorm'
-import { PrismaClient } from '@prisma/client'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../../../bun-query-builder/src/index'
 import type { Database } from '../schemas/kysely'
-import * as drizzleSchema from '../schemas/drizzle'
-import { User as TypeORMUser, Post as TypeORMPost } from '../schemas/typeorm'
+import { SQL } from 'bun'
+import { Database as BunDatabase } from 'bun:sqlite'
+import { PrismaClient } from '@prisma/client'
+import { drizzle } from 'drizzle-orm/bun-sqlite'
+import { Kysely, SqliteDialect } from 'kysely'
+import { DataSource } from 'typeorm'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../../../bun-query-builder/src/index'
 import { models } from '../schemas/bun-qb'
+import * as drizzleSchema from '../schemas/drizzle'
+import { Post as TypeORMPost, User as TypeORMUser } from '../schemas/typeorm'
 
 const DB_PATH = './benchmark.db'
 
@@ -25,7 +25,7 @@ export function createBunQBClient() {
 
 export function createKyselyClient() {
   const dialect = new SqliteDialect({
-    database: new BunDatabase(DB_PATH),
+    database: new BunDatabase(DB_PATH) as any,
   })
 
   return new Kysely<Database>({
@@ -50,7 +50,7 @@ export async function createTypeORMClient() {
     await dataSource.initialize()
     return dataSource
   }
-  catch (error) {
+  catch {
     console.warn('⚠️  TypeORM skipped (better-sqlite3 native module not available)')
     return null
   }
@@ -63,9 +63,12 @@ export function createPrismaClient() {
 export function closeAll(clients: any[]) {
   for (const client of clients) {
     try {
-      if (client?.destroy) client.destroy()
-      if (client?.$disconnect) client.$disconnect()
-      if (client?.close) client.close()
+      if (client?.destroy)
+        client.destroy()
+      if (client?.$disconnect)
+        client.$disconnect()
+      if (client?.close)
+        client.close()
     }
     catch {
       // ignore

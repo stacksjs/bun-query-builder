@@ -1,20 +1,21 @@
-import { bench, run, group } from 'mitata'
 import { eq } from 'drizzle-orm'
+import { bench, group, run } from 'mitata'
 import {
-  createBunQBClient,
-  createKyselyClient,
-  createDrizzleClient,
-  createTypeORMClient,
-  createPrismaClient,
   closeAll,
+  createBunQBClient,
+  createDrizzleClient,
+  createKyselyClient,
+  createPrismaClient,
+  createTypeORMClient,
 } from '../lib/db-clients'
-import { users, posts } from '../schemas/drizzle'
-import { User as TypeORMUser, Post as TypeORMPost } from '../schemas/typeorm'
+import { users } from '../schemas/drizzle'
+import { User as TypeORMUser } from '../schemas/typeorm'
 
 console.log('Initializing clients...')
 const bunQB = createBunQBClient()
 const kysely = createKyselyClient()
 const drizzle = createDrizzleClient()
+// eslint-disable-next-line antfu/no-top-level-await
 const typeorm = await createTypeORMClient()
 const prisma = createPrismaClient()
 
@@ -51,7 +52,7 @@ group('SELECT: Get all active users', () => {
   })
 
   bench('Kysely', async () => {
-    await kysely.selectFrom('users').where('active', '=', 1).execute()
+    await kysely.selectFrom('users').where('active', '=', 1 as any).execute()
   })
 
   bench('Drizzle', async () => {
@@ -232,6 +233,7 @@ group('DELETE: Single user', () => {
   })
 })
 
+// eslint-disable-next-line antfu/no-top-level-await
 await run()
 
 closeAll([bunQB, kysely, drizzle, typeorm, prisma])
