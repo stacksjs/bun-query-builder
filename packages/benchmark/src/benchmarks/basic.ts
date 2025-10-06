@@ -28,7 +28,7 @@ group('SELECT: Find user by ID', () => {
   })
 
   bench('Kysely', async () => {
-    await kysely.selectFrom('users').where('id', '=', 500).executeTakeFirst()
+    await kysely.selectFrom('users').selectAll().where('id', '=', 500).executeTakeFirst()
   })
 
   bench('Drizzle', async () => {
@@ -52,7 +52,7 @@ group('SELECT: Get all active users', () => {
   })
 
   bench('Kysely', async () => {
-    await kysely.selectFrom('users').where('active', '=', 1 as any).execute()
+    await kysely.selectFrom('users').selectAll().where('active', '=', 1 as any).execute()
   })
 
   bench('Drizzle', async () => {
@@ -76,7 +76,7 @@ group('SELECT: Get users with limit', () => {
   })
 
   bench('Kysely', async () => {
-    await kysely.selectFrom('users').limit(10).execute()
+    await kysely.selectFrom('users').selectAll().limit(10).execute()
   })
 
   bench('Drizzle', async () => {

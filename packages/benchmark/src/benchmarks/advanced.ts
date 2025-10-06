@@ -92,6 +92,7 @@ group('WHERE: Complex conditions', () => {
 
   bench('Kysely', async () => {
     await kysely.selectFrom('users')
+      .selectAll()
       .where('active', '=', 1 as any)
       .where('age', '>', 25)
       .where('age', '<', 40)
@@ -127,6 +128,7 @@ group('ORDER BY + LIMIT', () => {
 
   bench('Kysely', async () => {
     await kysely.selectFrom('posts')
+      .selectAll()
       .orderBy('created_at', 'desc')
       .limit(50)
       .execute()

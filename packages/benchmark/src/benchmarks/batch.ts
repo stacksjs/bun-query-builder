@@ -120,7 +120,7 @@ group('SELECT: Large result set (1000 rows)', () => {
   })
 
   bench('Kysely', async () => {
-    await kysely.selectFrom('posts').limit(1000).execute()
+    await kysely.selectFrom('posts').selectAll().limit(1000).execute()
   })
 
   bench('Drizzle', async () => {

@@ -108,13 +108,7 @@ _Platform: Apple M3 Pro, Bun 1.2.24_
 
 ### Summary
 
-Comparative performance results across 16 common database operations:
-
-| Category | Benchmarks | Performance Range |
-|----------|----------|-------------------|
-| Basic Queries | 7 tests | 1.05-5.76x vs competitors |
-| Advanced Queries | 5 tests | 1.02-18.62x vs competitors |
-| Batch Operations | 4 tests | 1.08-17.65x vs competitors |
+Comparative performance results across 16 common database operations showing competitive performance with other popular query builders and ORMs.
 
 ### Detailed Results
 
@@ -122,53 +116,54 @@ Comparative performance results across 16 common database operations:
 
 | Benchmark | bun-query-builder | Kysely | Drizzle | Prisma |
 |-----------|-------------------|---------|---------|---------|
-| SELECT: Find user by ID | 15.0 µs | error | 34.7 µs | 80.2 µs |
-| _vs best_ | _baseline_ | _-_ | _+132% slower_ | _+436% slower_ |
-| SELECT: Get all active users | 14.1 µs | error | 27.9 µs | 75.9 µs |
-| _vs best_ | _baseline_ | _-_ | _+98% slower_ | _+438% slower_ |
-| SELECT: Get users with limit | 13.2 µs | error | 29.2 µs | 63.7 µs |
-| _vs best_ | _baseline_ | _-_ | _+121% slower_ | _+382% slower_ |
-| SELECT: Count users | 10.8 µs | 14.7 µs | 13.0 µs | 60.2 µs |
-| _vs best_ | _baseline_ | _+36% slower_ | _+20% slower_ | _+455% slower_ |
-| INSERT: Single user | 418 µs | 417 µs | 432 µs | 474 µs |
-| _vs best_ | _+0.2% slower_ | _baseline_ | _+3.6% slower_ | _+13.7% slower_ |
-| UPDATE: Single user | 11.7 µs | 13.9 µs | 18.5 µs | error |
-| _vs best_ | _baseline_ | _+18% slower_ | _+57% slower_ | _-_ |
-| DELETE: Single user | 10.7 µs | 12.7 µs | 14.2 µs | 127 µs |
-| _vs best_ | _baseline_ | _+19% slower_ | _+33% slower_ | _+1092% slower_ |
+| SELECT: Find user by ID | 14.0 µs | 13.8 µs | 33.3 µs | 79.6 µs |
+| _vs best_ | _+1% slower_ | _baseline_ | _+141% slower_ | _+476% slower_ |
+| SELECT: Get all active users | 14.2 µs | 13.8 µs | 27.8 µs | 71.5 µs |
+| _vs best_ | _+3% slower_ | _baseline_ | _+102% slower_ | _+419% slower_ |
+| SELECT: Get users with limit | 12.4 µs | 16.1 µs | 30.1 µs | 61.8 µs |
+| _vs best_ | _baseline_ | _+30% slower_ | _+143% slower_ | _+398% slower_ |
+| SELECT: Count users | 10.8 µs | 13.6 µs | 12.3 µs | 50.6 µs |
+| _vs best_ | _baseline_ | _+26% slower_ | _+13% slower_ | _+367% slower_ |
+| INSERT: Single user | 377 µs | 397 µs | 388 µs | 459 µs |
+| _vs best_ | _baseline_ | _+5% slower_ | _+3% slower_ | _+22% slower_ |
+| UPDATE: Single user | 10.6 µs | 13.1 µs | 17.7 µs | error |
+| _vs best_ | _baseline_ | _+23% slower_ | _+67% slower_ | _-_ |
+| DELETE: Single user | 10.2 µs | 13.2 µs | 15.0 µs | 136 µs |
+| _vs best_ | _baseline_ | _+29% slower_ | _+47% slower_ | _+1234% slower_ |
 
 #### Advanced Queries
 
 | Benchmark | bun-query-builder | Kysely | Drizzle | Prisma |
 |-----------|-------------------|---------|---------|---------|
-| JOIN: Users with their posts | 500 µs | 493 µs | 503 µs | 892 µs |
-| _vs best_ | _+1.4% slower_ | _baseline_ | _+2.0% slower_ | _+81% slower_ |
-| AGGREGATE: Average age | 165 µs | 168 µs | 681 µs | 301 µs |
-| _vs best_ | _baseline_ | _+1.8% slower_ | _+313% slower_ | _+82% slower_ |
-| WHERE: Complex conditions | 224 µs | error | 3,173 µs | 294 µs |
-| _vs best_ | _baseline_ | _-_ | _+1316% slower_ | _+31% slower_ |
-| ORDER BY + LIMIT | 28.0 µs | error | 293 µs | 514 µs |
-| _vs best_ | _baseline_ | _-_ | _+947% slower_ | _+1738% slower_ |
-| GROUP BY + HAVING | 662 µs | 642 µs | 666 µs | 1,912 µs |
-| _vs best_ | _+3.1% slower_ | _baseline_ | _+3.7% slower_ | _+198% slower_ |
+| JOIN: Users with their posts | 488 µs | 503 µs | 493 µs | 856 µs |
+| _vs best_ | _baseline_ | _+3% slower_ | _+1% slower_ | _+75% slower_ |
+| AGGREGATE: Average age | 167 µs | 170 µs | 650 µs | 289 µs |
+| _vs best_ | _baseline_ | _+2% slower_ | _+289% slower_ | _+73% slower_ |
+| WHERE: Complex conditions | 224 µs | 217 µs | 3,205 µs | 331 µs |
+| _vs best_ | _+3% slower_ | _baseline_ | _+1376% slower_ | _+53% slower_ |
+| ORDER BY + LIMIT | 26.3 µs | 267 µs | 276 µs | 492 µs |
+| _vs best_ | _baseline_ | _+916% slower_ | _+950% slower_ | _+1770% slower_ |
+| GROUP BY + HAVING | 640 µs | 616 µs | 633 µs | 1,832 µs |
+| _vs best_ | _+4% slower_ | _baseline_ | _+3% slower_ | _+197% slower_ |
 
 #### Batch Operations
 
 | Benchmark | bun-query-builder | Kysely | Drizzle | Prisma |
 |-----------|-------------------|---------|---------|---------|
-| INSERT MANY: 100 users | 1,102 µs | 972 µs | 1,326 µs | 1,773 µs |
-| _vs best_ | _+13.4% slower_ | _baseline_ | _+36% slower_ | _+82% slower_ |
-| UPDATE MANY: Batch update | 11.3 ms | 11.0 ms | 37.1 ms | 10.3 ms |
-| _vs best_ | _+9.7% slower_ | _+6.8% slower_ | _+260% slower_ | _baseline_ |
-| DELETE MANY: By IDs | 22.5 µs | 22.9 µs | 398 µs | 69.8 µs |
-| _vs best_ | _baseline_ | _+1.8% slower_ | _+1669% slower_ | _+210% slower_ |
-| SELECT: Large result set | 254 µs | error | 574 µs | 3,670 µs |
-| _vs best_ | _baseline_ | _-_ | _+126% slower_ | _+1345% slower_ |
+| INSERT MANY: 100 users | 1,276 µs | 1,055 µs | 1,289 µs | 1,716 µs |
+| _vs best_ | _+21% slower_ | _baseline_ | _+22% slower_ | _+63% slower_ |
+| UPDATE MANY: Batch update | 10.3 ms | 10.2 ms | 35.7 ms | 9.5 ms |
+| _vs best_ | _+8% slower_ | _+7% slower_ | _+276% slower_ | _baseline_ |
+| DELETE MANY: By IDs | 20.3 µs | 22.1 µs | 350 µs | 67.5 µs |
+| _vs best_ | _baseline_ | _+9% slower_ | _+1624% slower_ | _+232% slower_ |
+| SELECT: Large result set (1000 rows) | 250 µs | 93.6 µs | 553 µs | 3,503 µs |
+| _vs best_ | _+167% slower_ | _baseline_ | _+490% slower_ | _+3642% slower_ |
 
 ### Notes on Benchmark Results
 
 - All times shown are average execution time (lower is better)
-- Some Kysely benchmarks error due to SQL syntax issues with the test setup
+- Percentages show performance relative to the best (fastest) result for each benchmark
+- Results vary between runs due to normal system variance at the microsecond level
 - Prisma UPDATE benchmark fails due to record not found issues
 - TypeORM is excluded due to native module compatibility issues with Bun
 - Performance varies by system and workload; these results reflect testing on Apple M3 Pro

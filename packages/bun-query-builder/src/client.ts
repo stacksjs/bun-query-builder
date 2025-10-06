@@ -1985,32 +1985,30 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     return s
   }
 
-  function runWithHooks<T = any>(q: any, kind: 'select' | 'insert' | 'update' | 'delete' | 'raw', opts?: { signal?: AbortSignal, timeoutMs?: number }) {
+  function runWithHooks<T = any>(q: any, kind: 'select' | 'insert' | 'update' | 'delete' | 'raw', opts?: { signal?: AbortSignal, timeoutMs?: number }): Promise<T> {
     const hooks = config.hooks
     const hasHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan)
     const hasTimeoutOrSignal = (opts?.timeoutMs && opts.timeoutMs > 0) || opts?.signal
 
-    // Fast path: no hooks, no timeout, no signal
+    // Fast path: no hooks, no timeout, no signal - direct execute
     if (!hasHooks && !hasTimeoutOrSignal) {
-      return (q as any).execute() as Promise<T>
+      return (q as any).execute()
     }
 
-    const text = hasHooks ? computeSqlText(q) : ''
-    const startAt = hasHooks ? Date.now() : 0
+    const text = computeSqlText(q)
+    const startAt = Date.now()
     let span: { end: (error?: any) => void } | undefined
 
-    if (hasHooks) {
-      try {
-        hooks?.onQueryStart?.({ sql: text, kind })
-        if (hooks?.startSpan)
-          span = hooks.startSpan({ sql: text, kind })
-      }
-      catch {}
+    try {
+      hooks?.onQueryStart?.({ sql: text, kind })
+      if (hooks?.startSpan)
+        span = hooks.startSpan({ sql: text, kind })
     }
+    catch {}
 
     let finished = false
     const finish = (err?: any, rowCount?: number) => {
-      if (!hasHooks || finished)
+      if (finished)
         return
       finished = true
       const durationMs = Date.now() - startAt
@@ -2029,7 +2027,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       catch {}
     }
 
-    const execPromise = (q as any).execute() as Promise<any>
+    const execPromise = (q as any).execute()
 
     // Handle timeout/abort by canceling the query if driver supports it
     const promises: Promise<any>[] = [execPromise]
@@ -2074,11 +2072,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     return Promise.race(promises)
       .then((rows) => {
         clearTimeout(timeoutId)
-        if (hasHooks) {
-          const rc = Array.isArray(rows) ? rows.length : (typeof rows === 'number' ? rows : undefined)
-          finish(undefined, rc)
-        }
-        return rows as T
+        const rc = Array.isArray(rows) ? rows.length : (typeof rows === 'number' ? rows : undefined)
+        finish(undefined, rc)
+        return rows
       })
       .catch((err) => {
         clearTimeout(timeoutId)
@@ -2101,13 +2097,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): any {
     // Use the sql instance from state (allows tests to inject mockSql)
     const sql = _sql
-    let built = (columns && columns.length > 0)
-      ? sql`SELECT ${sql(columns as any)} FROM ${sql(String(table))}`
-      : sql`SELECT * FROM ${sql(String(table))}`
-    // Maintain lightweight textual representation for tests/debugging
+    // Build query using unsafe for better performance
     let text = (columns && columns.length > 0)
       ? `SELECT ${columns.join(', ')} FROM ${String(table)}`
       : `SELECT * FROM ${String(table)}`
+    let built = (_sql as any).unsafe(text)
     const addWhereText = (prefix: 'WHERE' | 'AND' | 'OR', clause: string) => {
       const hasWhere = /\bWHERE\b/i.test(text)
       const p = hasWhere ? prefix : 'WHERE'
@@ -3668,6 +3662,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return text
       },
       async get() {
+        // Fast path: no soft-deletes, no cache, no timeout, no signal
+        if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal) {
+          return runWithHooks<any[]>(built, 'select')
+        }
+
         // Apply soft-deletes default filter if enabled and table has the column
         if (config.softDeletes?.enabled && config.softDeletes.defaultFilter && !includeTrashed) {
           const col = config.softDeletes.column
@@ -4526,10 +4525,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       let pidx = 0
       for (let r = 0; r < rowCount; r++) {
         const row = rows[r]
-        sql += r ? '),(' : '('
+        sql += r > 0 ? '),(' : '('
         for (let c = 0; c < colCount; c++) {
-          if (c) sql += ','
-          sql += '$' + (pidx + 1)
+          sql += c > 0 ? ',$' : '$'
+          sql += pidx + 1
           params[pidx++] = row[keys[c]]
         }
       }
