@@ -29,7 +29,7 @@ describe('dynamic whereX/orWhereX/andWhereX methods', () => {
 
   afterAll(async () => {
     // Clean up database after dynamic where tests
-    await resetDatabase('./examples/models', { dialect: 'postgres' })
+    await resetDatabase('../../examples/models', { dialect: 'postgres' })
   })
   const models = defineModels({ User })
   const schema = buildDatabaseSchema(models)

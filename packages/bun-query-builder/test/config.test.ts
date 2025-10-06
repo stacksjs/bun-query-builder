@@ -11,7 +11,7 @@ describe('test configuration', () => {
 
   afterAll(async () => {
     // Clean up database after config tests
-    await resetDatabase('./examples/models', { dialect: 'postgres' })
+    await resetDatabase('../../examples/models', { dialect: 'postgres' })
   })
 
   it('should have MySQL dialect configured', () => {

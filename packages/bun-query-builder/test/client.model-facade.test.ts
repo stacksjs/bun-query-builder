@@ -9,7 +9,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after model facade tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await resetDatabase('../../examples/models', { dialect: 'postgres' })
 })
 
 describe('model-like facade usage examples (typed only)', () => {

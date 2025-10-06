@@ -41,7 +41,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after migration tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await resetDatabase('../../examples/models', { dialect: 'postgres' })
 })
 
 describe('migration planner', () => {

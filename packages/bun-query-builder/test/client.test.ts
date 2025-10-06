@@ -61,7 +61,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after client tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await resetDatabase('../../examples/models', { dialect: 'postgres' })
 })
 
 describe('query builder - basics', () => {

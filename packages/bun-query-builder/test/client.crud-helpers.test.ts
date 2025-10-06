@@ -11,7 +11,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after CRUD helper tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await resetDatabase('../../examples/models', { dialect: 'postgres' })
 })
 
 function qb() {

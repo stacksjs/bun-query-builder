@@ -10,7 +10,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after transaction tests
-  await resetDatabase('./examples/models', { dialect: 'postgres' })
+  await resetDatabase('../../examples/models', { dialect: 'postgres' })
 })
 
 const models = {

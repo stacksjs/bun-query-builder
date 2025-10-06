@@ -22,7 +22,7 @@ describe('retrieval helpers', () => {
 
   afterAll(async () => {
     // Clean up database after retrieval helper tests
-    await resetDatabase('./examples/models', { dialect: 'postgres' })
+    await resetDatabase('../../examples/models', { dialect: 'postgres' })
   })
 
   const models = defineModels({ User })
