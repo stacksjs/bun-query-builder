@@ -103,67 +103,78 @@ bun run clean
 
 ## Latest Benchmark Results
 
+_Last updated: 2025-10-05_
+_Platform: Apple M3 Pro, Bun 1.2.21_
+
 ### Summary
 
 **bun-query-builder wins 14 out of 16 benchmarks (87.5%)**
 
 | Category | Win Rate | Performance Range |
 |----------|----------|-------------------|
-| Basic Queries | 6/7 (86%) | 1.14-9.26x faster |
-| Advanced Queries | 4/6 (67%) | 1.02-50.2x faster |
-| Batch Operations | 4/4 (100%) | 1.09-17.88x faster |
+| Basic Queries | 7/7 (100%) | 1.05-5.64x faster |
+| Advanced Queries | 4/5 (80%) | 1.36-18.68x faster |
+| Batch Operations | 3/4 (75%) | 1.04-18.54x faster |
 
 ### Detailed Results
 
-#### Basic Queries ✅ 6/7 Wins
+#### Basic Queries ✅ 7/7 Wins (Perfect!)
 
-| Benchmark | bun-query-builder | vs Best Competitor |
-|-----------|-------------------|-------------------|
-| SELECT: Find user by ID | **14.4 µs** | ✅ 2.41x faster than Drizzle |
-| SELECT: Get all active users | **221 µs** | ✅ 2.09x faster than Drizzle |
-| SELECT: Get users with limit | **15.1 µs** | ✅ 2.12x faster than Drizzle |
-| SELECT: Count users | **10.7 µs** | ✅ 2.83x faster than Kysely |
-| INSERT: Single user | **423 µs** | ❌ 2% behind Kysely |
-| UPDATE: Single user | **10.7 µs** | ✅ 1.29x faster than Kysely |
-| DELETE: Single user | **10.9 µs** | ✅ 1.14x faster than Kysely |
+| Benchmark | bun-query-builder | Kysely | Drizzle | Prisma | Result |
+|-----------|-------------------|---------|---------|---------|---------|
+| SELECT: Find user by ID | **13.3 µs** | error | 31.9 µs | 74.9 µs | ✅ 2.4x faster than Drizzle, 5.64x faster than Prisma |
+| SELECT: Get all active users | **13.1 µs** | error | 26.8 µs | 69.1 µs | ✅ 2.05x faster than Drizzle, 5.29x faster than Prisma |
+| SELECT: Get users with limit | **12.2 µs** | error | 28.1 µs | 60.0 µs | ✅ 2.3x faster than Drizzle, 4.91x faster than Prisma |
+| SELECT: Count users | **10.5 µs** | 13.5 µs | 12.1 µs | 48.7 µs | ✅ 1.15x faster than Drizzle, 1.29x faster than Kysely |
+| INSERT: Single user | **390 µs** | 431 µs | 410 µs | 499 µs | ✅ 1.05x faster than Drizzle, 1.1x faster than Kysely |
+| UPDATE: Single user | **10.8 µs** | 13.0 µs | 17.2 µs | error | ✅ 1.2x faster than Kysely, 1.59x faster than Drizzle |
+| DELETE: Single user | **10.1 µs** | 11.8 µs | 13.7 µs | 116 µs | ✅ 1.17x faster than Kysely, 1.36x faster than Drizzle |
 
-#### Advanced Queries ✅ 4/6 Wins
+#### Advanced Queries ✅ 4/5 Wins
 
-| Benchmark | bun-query-builder | vs Best Competitor |
-|-----------|-------------------|-------------------|
-| JOIN: Users with their posts | **30.3 µs** | ✅ 1.07x faster than Kysely |
-| AGGREGATE: Average age | **191 µs** | ✅ 1.02x faster than Kysely |
-| WHERE: Complex conditions | **309 µs** | ✅ 3.89x faster than Prisma |
-| ORDER BY + LIMIT | **25.3 µs** | ✅ 10.57x faster than Drizzle |
-| GROUP BY + HAVING | **632 µs** | ❌ 4% behind Kysely |
+| Benchmark | bun-query-builder | Kysely | Drizzle | Prisma | Result |
+|-----------|-------------------|---------|---------|---------|---------|
+| JOIN: Users with their posts | **437 µs** | 459 µs | 452 µs | 801 µs | ✅ 1.04x faster than Drizzle, 1.05x faster than Kysely |
+| AGGREGATE: Average age | 167 µs | **166 µs** | 626 µs | 291 µs | ❌ Tied with Kysely (1.0x) |
+| WHERE: Complex conditions | **209 µs** | error | 3'119 µs | 283 µs | ✅ 1.36x faster than Prisma, 14.94x faster than Drizzle |
+| ORDER BY + LIMIT | **25.7 µs** | error | 269 µs | 481 µs | ✅ 10.45x faster than Drizzle, 18.68x faster than Prisma |
+| GROUP BY + HAVING | **620 µs** | 621 µs | 676 µs | 1'811 µs | ✅ 1.09x faster than Drizzle (tied with Kysely) |
 
-#### Batch Operations ✅ 4/4 Wins (Perfect!)
+#### Batch Operations ✅ 3/4 Wins
 
-| Benchmark | bun-query-builder | vs Best Competitor |
-|-----------|-------------------|-------------------|
-| INSERT MANY: 100 users | **611 µs** | ✅ 1.09x faster than Kysely |
-| UPDATE MANY: Batch update | **14.0 ms** | ✅ 1.0x faster than Kysely (tied) |
-| DELETE MANY: By IDs | **18.8 µs** | ✅ 1.12x faster than Kysely |
-| SELECT: Large result set | **247 µs** | ✅ 2.24x faster than Drizzle |
+| Benchmark | bun-query-builder | Kysely | Drizzle | Prisma | Result |
+|-----------|-------------------|---------|---------|---------|---------|
+| INSERT MANY: 100 users | **792 µs** | 823 µs | 1'157 µs | 1'571 µs | ✅ 1.04x faster than Kysely, 1.46x faster than Drizzle |
+| UPDATE MANY: Batch update | 12.7 ms | 12.4 ms | 43.1 ms | **11.5 ms** | ❌ 10% slower than Prisma |
+| DELETE MANY: By IDs | **19.7 µs** | 21.8 µs | 365 µs | 66.5 µs | ✅ 1.11x faster than Kysely, 18.54x faster than Drizzle |
+| SELECT: Large result set | **242 µs** | error | 549 µs | 3'439 µs | ✅ 2.27x faster than Drizzle, 14.24x faster than Prisma |
 
 ### Performance Highlights
 
 🚀 **Massive Wins:**
-- **50.2x faster** than Prisma in JOIN operations
-- **18.87x faster** than Prisma in ORDER BY + LIMIT
-- **17.88x faster** than Drizzle in DELETE MANY
-- **14.69x faster** than Prisma in UPDATE operations
-- **14.22x faster** than Prisma in SELECT all active users
+- **18.68x faster** than Prisma in ORDER BY + LIMIT
+- **18.54x faster** than Drizzle in DELETE MANY
+- **14.94x faster** than Drizzle in WHERE: Complex conditions
+- **14.24x faster** than Prisma in SELECT: Large result set
+- **11.47x faster** than Prisma in DELETE: Single user
+- **10.45x faster** than Drizzle in ORDER BY + LIMIT
 
-⚡ **Consistent Speed:**
-- **100% wins** in all batch operations
-- **86% wins** in basic CRUD operations
-- **67% wins** in complex queries
+⚡ **Perfect Categories:**
+- **100% wins** in basic CRUD operations (7/7) 🎯
+- **80% wins** in advanced queries (4/5)
+- **75% wins** in batch operations (3/4)
 
-💯 **Near Perfection:**
+💪 **Exceptional Performance:**
 - 14 out of 16 wins (87.5%)
-- Only 2 benchmarks not winning (both within 2-4%)
+- Only 2 non-wins (1 tied, 1 within 10%)
 - Leverages Bun's native SQL for optimal performance
+
+### Notes on Benchmark Results
+
+- Some Kysely benchmarks show errors due to SQL syntax issues with the test setup
+- Prisma UPDATE benchmark failed due to record not found issues
+- TypeORM is excluded (native module compatibility issues with Bun)
+- All times shown are average execution times (lower is better)
 
 ## Results Interpretation
 

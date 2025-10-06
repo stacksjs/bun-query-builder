@@ -1986,20 +1986,31 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   }
 
   function runWithHooks<T = any>(q: any, kind: 'select' | 'insert' | 'update' | 'delete' | 'raw', opts?: { signal?: AbortSignal, timeoutMs?: number }) {
-    const text = computeSqlText(q)
     const hooks = config.hooks
-    const startAt = Date.now()
-    let span: { end: (error?: any) => void } | undefined
-    try {
-      hooks?.onQueryStart?.({ sql: text, kind })
-      if (hooks?.startSpan)
-        span = hooks.startSpan({ sql: text, kind })
+    const hasHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan)
+    const hasTimeoutOrSignal = (opts?.timeoutMs && opts.timeoutMs > 0) || opts?.signal
+
+    // Fast path: no hooks, no timeout, no signal
+    if (!hasHooks && !hasTimeoutOrSignal) {
+      return (q as any).execute() as Promise<T>
     }
-    catch {}
+
+    const text = hasHooks ? computeSqlText(q) : ''
+    const startAt = hasHooks ? Date.now() : 0
+    let span: { end: (error?: any) => void } | undefined
+
+    if (hasHooks) {
+      try {
+        hooks?.onQueryStart?.({ sql: text, kind })
+        if (hooks?.startSpan)
+          span = hooks.startSpan({ sql: text, kind })
+      }
+      catch {}
+    }
 
     let finished = false
     const finish = (err?: any, rowCount?: number) => {
-      if (finished)
+      if (!hasHooks || finished)
         return
       finished = true
       const durationMs = Date.now() - startAt
@@ -2063,8 +2074,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     return Promise.race(promises)
       .then((rows) => {
         clearTimeout(timeoutId)
-        const rc = Array.isArray(rows) ? rows.length : (typeof rows === 'number' ? rows : undefined)
-        finish(undefined, rc)
+        if (hasHooks) {
+          const rc = Array.isArray(rows) ? rows.length : (typeof rows === 'number' ? rows : undefined)
+          finish(undefined, rc)
+        }
         return rows as T
       })
       .catch((err) => {
@@ -3415,7 +3428,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Handle array format: ['COUNT(id)', '>', 3]
         if (Array.isArray(expr)) {
           const paramIdx = whereParams.length + 1
-          text += ` HAVING ${expr[0]} ${expr[1]} $${paramIdx}`
+          text += ' HAVING ' + expr[0] + ' ' + expr[1] + ' $' + paramIdx
           whereParams.push(expr[2])
           built = (_sql as any).unsafe(text, whereParams)
         }
@@ -3424,20 +3437,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const keys = Object.keys(expr)
           const len = keys.length
           if (len) {
-            let baseIdx = whereParams.length
-            // eslint-disable-next-line unicorn/no-new-array
+            const baseIdx = whereParams.length
             const conditions: string[] = new Array(len)
             for (let i = 0; i < len; i++) {
-              conditions[i] = `${keys[i]} = $${++baseIdx}`
+              conditions[i] = keys[i] + ' = $' + (baseIdx + i + 1)
               whereParams.push(expr[keys[i]])
             }
-            text += ` HAVING ${conditions.join(' AND ')}`
+            text += ' HAVING ' + conditions.join(' AND ')
             built = (_sql as any).unsafe(text, whereParams)
           }
         }
         // Handle raw expressions
         else if (expr && typeof (expr as any).raw !== 'undefined') {
-          text += ` HAVING ${(expr as any).raw}`
+          text += ' HAVING ' + (expr as any).raw
           built = (_sql as any).unsafe(text)
         }
         return this as any
@@ -3753,7 +3765,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async count() {
         // Build optimized COUNT query without subquery
-        const countText = text.replace(/^SELECT\s+.*?\s+FROM/i, 'SELECT COUNT(*) as c FROM')
+        const fromIdx = text.indexOf(' FROM ')
+        const countText = fromIdx !== -1
+          ? `SELECT COUNT(*) as c${text.substring(fromIdx)}`
+          : `SELECT COUNT(*) as c FROM ${table}`
         const q = whereParams.length > 0
           ? (_sql as any).unsafe(countText, whereParams)
           : (_sql as any).unsafe(countText)
@@ -3763,7 +3778,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async avg(column: string) {
         // Build optimized AVG query without subquery or helpers
-        const avgText = text.replace(/^SELECT\s+.*?\s+FROM/i, `SELECT AVG(${column}) as a FROM`)
+        const fromIdx = text.indexOf(' FROM ')
+        const avgText = fromIdx !== -1
+          ? `SELECT AVG(${column}) as a${text.substring(fromIdx)}`
+          : `SELECT AVG(${column}) as a FROM ${table}`
         const q = whereParams.length > 0
           ? (_sql as any).unsafe(avgText, whereParams)
           : (_sql as any).unsafe(avgText)
@@ -3772,7 +3790,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return Number(row?.a ?? 0)
       },
       async sum(column: string) {
-        const sumText = text.replace(/^SELECT\s+.*?\s+FROM/i, `SELECT SUM(${column}) as s FROM`)
+        const fromIdx = text.indexOf(' FROM ')
+        const sumText = fromIdx !== -1
+          ? `SELECT SUM(${column}) as s${text.substring(fromIdx)}`
+          : `SELECT SUM(${column}) as s FROM ${table}`
         const q = whereParams.length > 0
           ? (_sql as any).unsafe(sumText, whereParams)
           : (_sql as any).unsafe(sumText)
@@ -3781,7 +3802,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return Number(row?.s ?? 0)
       },
       async max(column: string) {
-        const maxText = text.replace(/^SELECT\s+.*?\s+FROM/i, `SELECT MAX(${column}) as m FROM`)
+        const fromIdx = text.indexOf(' FROM ')
+        const maxText = fromIdx !== -1
+          ? `SELECT MAX(${column}) as m${text.substring(fromIdx)}`
+          : `SELECT MAX(${column}) as m FROM ${table}`
         const q = whereParams.length > 0
           ? (_sql as any).unsafe(maxText, whereParams)
           : (_sql as any).unsafe(maxText)
@@ -3790,7 +3814,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return row?.m
       },
       async min(column: string) {
-        const minText = text.replace(/^SELECT\s+.*?\s+FROM/i, `SELECT MIN(${column}) as m FROM`)
+        const fromIdx = text.indexOf(' FROM ')
+        const minText = fromIdx !== -1
+          ? `SELECT MIN(${column}) as m${text.substring(fromIdx)}`
+          : `SELECT MIN(${column}) as m FROM ${table}`
         const q = whereParams.length > 0
           ? (_sql as any).unsafe(minText, whereParams)
           : (_sql as any).unsafe(minText)
@@ -3933,9 +3960,47 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     insertInto<TTable extends keyof DB & string>(table: TTable) {
       let built: any
+      let sqlText = ''
+      const params: any[] = []
+
       return {
         values(data: Partial<any> | Partial<any>[]) {
-          built = _sql`INSERT INTO ${_sql(table)} ${_sql(data as any)}`
+          const rows = Array.isArray(data) ? data : [data]
+          const rowCount = rows.length
+          if (rowCount === 0) {
+            built = (_sql as any).unsafe('SELECT 1')
+            return this
+          }
+
+          const firstRow = rows[0]
+          const keys = Object.keys(firstRow)
+          const colCount = keys.length
+
+          // Pre-allocate params array
+          const totalParams = rowCount * colCount
+          params.length = totalParams
+
+          // Build columns list once
+          const columnList = keys.join(',')
+
+          // Build VALUES for all rows using array join
+          const valueClauses: string[] = new Array(rowCount)
+          let pidx = 0
+          for (let r = 0; r < rowCount; r++) {
+            const row = rows[r]
+            let rowClause = '('
+            for (let c = 0; c < colCount; c++) {
+              if (c > 0) rowClause += ','
+              rowClause += '$' + (pidx + 1)
+              params[pidx++] = row[keys[c]]
+            }
+            rowClause += ')'
+            valueClauses[r] = rowClause
+          }
+
+          sqlText = 'INSERT INTO ' + table + '(' + columnList + ')VALUES' + valueClauses.join(',')
+
+          built = (_sql as any).unsafe(sqlText, params)
           return this
         },
         returning(...cols: (keyof any & string)[]) {
@@ -3951,8 +4016,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             execute: () => runWithHooks<any[]>(q, 'insert'),
           }
         },
-        toSQL: () => makeExecutableQuery(built, computeSqlText(built)) as any,
-        execute: () => built.execute(),
+        toSQL: () => makeExecutableQuery(built, sqlText) as any,
+        execute: () => runWithHooks(built, 'insert'),
       } as any as TypedInsertQueryBuilder<DB, TTable>
     },
     updateTable(table) {
@@ -3985,9 +4050,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
           else if (expr && typeof expr === 'object' && !('raw' in expr)) {
             const keys = Object.keys(expr)
-            const conditions = keys.map((key, idx) => `${key} = $${params.length + idx + 1}`)
+            const len = keys.length
+            const baseIdx = params.length
+            const conditions: string[] = Array.from({ length: len })
+            for (let i = 0; i < len; i++) {
+              conditions[i] = `${keys[i]} = $${baseIdx + i + 1}`
+              params.push((expr as any)[keys[i]])
+            }
             sqlText = `${sqlText} WHERE ${conditions.join(' AND ')}`
-            params.push(...keys.map(k => (expr as any)[k]))
             built = (_sql as any).unsafe(sqlText, params)
           }
           return this
@@ -4007,7 +4077,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return obj
         },
         toSQL() {
-          return makeExecutableQuery(built, computeSqlText(built)) as any
+          return makeExecutableQuery(built, sqlText) as any
         },
         execute() {
           return runWithHooks<number>(built, 'update')
@@ -4402,13 +4472,112 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     },
     async createMany(table, rows) {
-      await (this as any).insertInto(table).values(rows).execute()
+      if (!rows?.length) return
+
+      const firstRow = rows[0]
+      const keys = Object.keys(firstRow)
+      const colCount = keys.length
+      const rowCount = rows.length
+      const params = new Array(rowCount * colCount)
+
+      // Pre-build placeholder template for one row
+      const placeholders: string[] = new Array(colCount)
+      for (let c = 0; c < colCount; c++) {
+        placeholders[c] = '$'
+      }
+      const rowTemplate = '(' + placeholders.join(',') + ')'
+
+      // Build row values using array operations
+      const valueClauses: string[] = new Array(rowCount)
+      let pidx = 0
+      for (let r = 0; r < rowCount; r++) {
+        const row = rows[r]
+        let rowClause = '('
+        for (let c = 0; c < colCount; c++) {
+          if (c > 0) rowClause += ','
+          rowClause += '$' + (pidx + 1)
+          params[pidx++] = row[keys[c]]
+        }
+        rowClause += ')'
+        valueClauses[r] = rowClause
+      }
+
+      const sql = 'INSERT INTO ' + table + '(' + keys.join(',') + ')VALUES' + valueClauses.join(',')
+
+      return (_sql as any).unsafe(sql, params).execute()
     },
     async insertMany(table, rows) {
-      await (this as any).insertInto(table).values(rows).execute()
+      if (!rows?.length) return
+
+      const firstRow = rows[0]
+      const keys = Object.keys(firstRow)
+      const colCount = keys.length
+      const rowCount = rows.length
+      const params = new Array(rowCount * colCount)
+
+      // Pre-build placeholder template for one row
+      const placeholders: string[] = new Array(colCount)
+      for (let c = 0; c < colCount; c++) {
+        placeholders[c] = '$'
+      }
+      const rowTemplate = '(' + placeholders.join(',') + ')'
+
+      // Build row values using array operations
+      const valueClauses: string[] = new Array(rowCount)
+      let pidx = 0
+      for (let r = 0; r < rowCount; r++) {
+        const row = rows[r]
+        let rowClause = '('
+        for (let c = 0; c < colCount; c++) {
+          if (c > 0) rowClause += ','
+          rowClause += '$' + (pidx + 1)
+          params[pidx++] = row[keys[c]]
+        }
+        rowClause += ')'
+        valueClauses[r] = rowClause
+      }
+
+      const sql = 'INSERT INTO ' + table + '(' + keys.join(',') + ')VALUES' + valueClauses.join(',')
+
+      return (_sql as any).unsafe(sql, params).execute()
     },
     async updateMany(table, conditions, data) {
-      return await (this as any).updateTable(table).set(data as any).where(conditions as any).execute()
+      // Ultra-optimized direct SQL construction
+      const dataKeys = Object.keys(data)
+      const dataLen = dataKeys.length
+      if (dataLen === 0) return 0
+
+      const params: any[] = []
+
+      // Build SET clause using array join
+      const setClauses: string[] = new Array(dataLen)
+      for (let i = 0; i < dataLen; i++) {
+        setClauses[i] = dataKeys[i] + '=$' + (i + 1)
+        params.push((data as any)[dataKeys[i]])
+      }
+
+      let sql = 'UPDATE ' + table + ' SET ' + setClauses.join(',')
+
+      // Build WHERE clause
+      if (Array.isArray(conditions)) {
+        sql += ' WHERE ' + conditions[0] + conditions[1] + '$' + (params.length + 1)
+        params.push(conditions[2])
+      }
+      else if (conditions && typeof conditions === 'object' && !('raw' in conditions)) {
+        const condKeys = Object.keys(conditions)
+        const condLen = condKeys.length
+        if (condLen > 0) {
+          const baseIdx = params.length
+          const whereClauses: string[] = new Array(condLen)
+          for (let i = 0; i < condLen; i++) {
+            whereClauses[i] = condKeys[i] + '=$' + (baseIdx + i + 1)
+            params.push((conditions as any)[condKeys[i]])
+          }
+          sql += ' WHERE ' + whereClauses.join(' AND ')
+        }
+      }
+
+      return (_sql as any).unsafe(sql, params).execute()
     },
     async deleteMany(table, ids) {
       if (!Array.isArray(ids) || ids.length === 0)
