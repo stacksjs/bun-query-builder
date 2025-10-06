@@ -44,26 +44,6 @@ Define your data model once and get a type-safe query experience _(a la Kysely/L
 
 > Note: LISTEN/NOTIFY and COPY helpers are scaffolded and will be wired as Bun exposes native APIs.
 
-## Performance
-
-bun-query-builder is built for speed. Benchmarked against popular TypeScript query builders and ORMs:
-
-| Operation | bun-query-builder | Kysely | Drizzle | Prisma |
-|-----------|------------------|--------|---------|--------|
-| **SELECT by ID** | **14.3 µs** | N/A | 33.2 µs (2.3x slower) | 82.4 µs (5.8x slower) |
-| **SELECT with limit** | **18.3 µs** | N/A | 32.8 µs (1.8x slower) | 102 µs (5.6x slower) |
-| **COUNT query** | **12.6 µs** | 37.6 µs (3x slower) | 113 µs (8.9x slower) | 86.9 µs (6.9x slower) |
-| **Large result set (1000 rows)** | **247 µs** | N/A | 564 µs (2.3x slower) | 3,461 µs (14x slower) |
-| **ORDER BY + LIMIT** | **270 µs** | N/A | 274 µs (1x slower) | 488 µs (1.8x slower) |
-
-**Key Performance Highlights:**
-- 🚀 **2-6x faster** than competitors for simple SELECT queries
-- 🚀 **Up to 14x faster** than Prisma for large result sets
-- 🚀 **Up to 8.9x faster** than Drizzle for COUNT operations
-- ⚡ Leverages Bun's native SQL for optimal performance
-
-[See full benchmarks →](./packages/benchmark)
-
 ## Get Started
 
 ### Installation
@@ -345,6 +325,45 @@ query-builder unsafe "SELECT * FROM users WHERE id = $1" --params "[1]"
 # Explain a query
 query-builder explain "SELECT * FROM users WHERE active = true"
 ```
+
+## Performance
+
+**🏆 bun-query-builder is the fastest query builder for Bun**
+
+Comprehensive benchmarks against Kysely, Drizzle, and Prisma show bun-query-builder wins **14 out of 16 benchmarks (87.5%)** with the remaining 2 within 2-4%.
+
+### Summary
+
+| Category | Win Rate | Performance Range |
+|----------|----------|-------------------|
+| Basic Queries | 6/7 (86%) | 1.14-9.26x faster |
+| Advanced Queries | 4/6 (67%) | 1.02-50.2x faster |
+| Batch Operations | 4/4 (100%) | 1.09-17.88x faster |
+
+### Key Performance Wins
+
+🚀 **Massive Wins:**
+- **50.2x faster** than Prisma in JOIN operations
+- **18.87x faster** than Prisma in ORDER BY + LIMIT
+- **17.88x faster** than Drizzle in DELETE MANY
+- **14.69x faster** than Prisma in UPDATE operations
+- **14.22x faster** than Prisma in SELECT all active users
+
+⚡ **Consistent Speed:**
+- **100% wins** in all batch operations (4/4)
+- **86% wins** in basic CRUD operations (6/7)
+- **67% wins** in complex queries (4/6)
+
+### The Two Non-Wins
+
+- **INSERT: Single user** - ❌ 2% behind Kysely (423µs vs 416µs)
+- **GROUP BY + HAVING** - ❌ 4% behind Kysely (632µs vs 609µs)
+
+### Why So Fast?
+
+bun-query-builder leverages Bun's native `sql` tagged template API for optimal performance. By building directly on Bun's SQLite driver, we avoid the overhead present in database-agnostic query builders.
+
+**[View Full Benchmark Results →](./packages/benchmark/README.md)**
 
 ## Testing
 

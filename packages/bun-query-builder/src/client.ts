@@ -3948,12 +3948,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             execute: () => runWithHooks<any[]>(q, 'insert'),
           }
         },
-        toSQL() {
-          return makeExecutableQuery(built, computeSqlText(built)) as any
-        },
-        execute() {
-          return built.execute()
-        },
+        toSQL: () => makeExecutableQuery(built, computeSqlText(built)) as any,
+        execute: () => built.execute(),
       } as any as TypedInsertQueryBuilder<DB, TTable>
     },
     updateTable(table) {
