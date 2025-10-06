@@ -46,7 +46,7 @@ Tips:
   const executeQuery = async (code: string) => {
     try {
       // Create an async function that has access to qb
-      const AsyncFunction = async function () {}.constructor
+      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
       const fn = new AsyncFunction('qb', `return (${code})`)
       const result = await fn(qb)
 
@@ -93,7 +93,7 @@ Tips:
             WHERE type = 'table'
             AND name NOT LIKE 'sqlite_%'
             ORDER BY name
-          `).execute()
+          `)
 
           if (tables.length > 0) {
             console.log('Tables:')

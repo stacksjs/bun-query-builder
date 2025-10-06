@@ -44,7 +44,7 @@ export async function dbInfo(): Promise<DatabaseInfo> {
         WHERE table_schema = 'public'
         AND table_type = 'BASE TABLE'
         ORDER BY table_name
-      `).execute()
+      `)
       tableNames = result.map((r: any) => r.table_name)
     }
     else if (dialect === 'mysql') {
@@ -54,7 +54,7 @@ export async function dbInfo(): Promise<DatabaseInfo> {
         WHERE table_schema = DATABASE()
         AND table_type = 'BASE TABLE'
         ORDER BY table_name
-      `).execute()
+      `)
       tableNames = result.map((r: any) => r.table_name)
     }
     else if (dialect === 'sqlite') {
@@ -64,7 +64,7 @@ export async function dbInfo(): Promise<DatabaseInfo> {
         WHERE type = 'table'
         AND name NOT LIKE 'sqlite_%'
         ORDER BY name
-      `).execute()
+      `)
       tableNames = result.map((r: any) => r.name)
     }
 
@@ -72,7 +72,7 @@ export async function dbInfo(): Promise<DatabaseInfo> {
     for (const tableName of tableNames) {
       try {
         // Get row count
-        const countResult = await qb.unsafe(`SELECT COUNT(*) as count FROM ${tableName}`).execute()
+        const countResult = await qb.unsafe(`SELECT COUNT(*) as count FROM ${tableName}`)
         const rowCount = Number(countResult[0]?.count || 0)
 
         // Get column count
@@ -84,14 +84,14 @@ export async function dbInfo(): Promise<DatabaseInfo> {
             SELECT COUNT(*) as count
             FROM information_schema.columns
             WHERE table_name = $1
-          `, [tableName]).execute()
+          `, [tableName])
           columnCount = Number(colResult[0]?.count || 0)
 
           const idxResult = await qb.unsafe(`
             SELECT COUNT(*) as count
             FROM pg_indexes
             WHERE tablename = $1
-          `, [tableName]).execute()
+          `, [tableName])
           indexCount = Number(idxResult[0]?.count || 0)
         }
         else if (dialect === 'mysql') {
@@ -100,7 +100,7 @@ export async function dbInfo(): Promise<DatabaseInfo> {
             FROM information_schema.columns
             WHERE table_name = ?
             AND table_schema = DATABASE()
-          `, [tableName]).execute()
+          `, [tableName])
           columnCount = Number(colResult[0]?.count || 0)
 
           const idxResult = await qb.unsafe(`
@@ -108,14 +108,14 @@ export async function dbInfo(): Promise<DatabaseInfo> {
             FROM information_schema.statistics
             WHERE table_name = ?
             AND table_schema = DATABASE()
-          `, [tableName]).execute()
+          `, [tableName])
           indexCount = Number(idxResult[0]?.count || 0)
         }
         else if (dialect === 'sqlite') {
-          const colResult = await qb.unsafe(`PRAGMA table_info(${tableName})`).execute()
+          const colResult = await qb.unsafe(`PRAGMA table_info(${tableName})`)
           columnCount = colResult.length
 
-          const idxResult = await qb.unsafe(`PRAGMA index_list(${tableName})`).execute()
+          const idxResult = await qb.unsafe(`PRAGMA index_list(${tableName})`)
           indexCount = idxResult.length
         }
 

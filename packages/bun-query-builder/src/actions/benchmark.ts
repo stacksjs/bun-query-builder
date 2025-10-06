@@ -146,7 +146,7 @@ export async function runBenchmark(options: BenchmarkOptions = {}): Promise<void
 
     for (let i = 0; i < iterations; i++) {
       const start = performance.now()
-      await qb.update('bench_users').set({ active: 0 }).where({ id: 1 }).execute()
+      await qb.updateTable('bench_users').set({ active: 0 }).where({ id: 1 }).execute()
       times.push(performance.now() - start)
     }
 
@@ -166,12 +166,12 @@ export async function runBenchmark(options: BenchmarkOptions = {}): Promise<void
     // Create records to delete
     const idsToDelete: number[] = []
     for (let i = 0; i < iterations; i++) {
-      const result = await qb.insertInto('bench_users').values({
+      const result: any = await qb.insertInto('bench_users').values({
         name: 'To Delete',
         email: `delete${i}@example.com`,
         created_at: new Date().toISOString(),
       }).execute()
-      idsToDelete.push(result.lastInsertRowid as number)
+      idsToDelete.push(result)
     }
 
     for (let i = 0; i < iterations; i++) {

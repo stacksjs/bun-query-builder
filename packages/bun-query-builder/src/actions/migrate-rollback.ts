@@ -62,7 +62,7 @@ export async function migrateRollback(options: RollbackOptions = {}): Promise<vo
         FROM migrations
         ORDER BY executed_at DESC, migration DESC
       `
-      executedMigrations = await qb.unsafe(query).execute()
+      executedMigrations = await qb.unsafe(query)
     }
     catch (err) {
       console.log('-- Migrations table not found. Nothing to rollback.')
@@ -89,7 +89,7 @@ export async function migrateRollback(options: RollbackOptions = {}): Promise<vo
     for (const migration of migrationsToRollback) {
       try {
         const deleteSql = `DELETE FROM migrations WHERE migration = $1`
-        await qb.unsafe(deleteSql, [migration.migration]).execute()
+        await qb.unsafe(deleteSql, [migration.migration])
         console.log(`-- ✓ Removed migration record: ${migration.migration}`)
 
         // Optionally delete the migration file

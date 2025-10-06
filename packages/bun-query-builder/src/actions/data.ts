@@ -243,7 +243,7 @@ export async function dumpDatabase(options: DumpOptions = {}): Promise<void> {
         WHERE type = 'table'
         AND name NOT LIKE 'sqlite_%'
         ORDER BY name
-      `).execute()
+      `)
       tables = result.map((r: any) => r.name)
     }
     else if (dialect === 'postgres') {
@@ -253,7 +253,7 @@ export async function dumpDatabase(options: DumpOptions = {}): Promise<void> {
         WHERE table_schema = 'public'
         AND table_type = 'BASE TABLE'
         ORDER BY table_name
-      `).execute()
+      `)
       tables = result.map((r: any) => r.table_name)
     }
     else if (dialect === 'mysql') {
@@ -263,7 +263,7 @@ export async function dumpDatabase(options: DumpOptions = {}): Promise<void> {
         WHERE table_schema = DATABASE()
         AND table_type = 'BASE TABLE'
         ORDER BY table_name
-      `).execute()
+      `)
       tables = result.map((r: any) => r.table_name)
     }
 

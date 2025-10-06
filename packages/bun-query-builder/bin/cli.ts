@@ -4,6 +4,16 @@ import { version } from '../package.json'
 import { explain, file, introspect, ping, sql, unsafe, waitReady } from '../src/actions'
 import { executeMigration, generateMigration, resetDatabase } from '../src/actions/migrate'
 import { freshDatabase, makeSeeder, runSeeder, runSeeders } from '../src/actions/seed'
+import { makeModel } from '../src/actions/make-model'
+import { migrateList, migrateStatus } from '../src/actions/migrate-status'
+import { migrateRollback } from '../src/actions/migrate-rollback'
+import { dbInfo, dbStats } from '../src/actions/db-info'
+import { startConsole, tinker } from '../src/actions/console'
+import { inspectTable, tableInfo } from '../src/actions/inspect'
+import { cacheClear, cacheConfig, cacheStats } from '../src/actions/cache'
+import { runBenchmark } from '../src/actions/benchmark'
+import { checkSchema, validateSchema } from '../src/actions/validate'
+import { dumpDatabase, exportData, importData } from '../src/actions/data'
 
 const cli = new CAC('query-builder')
 
@@ -223,6 +233,323 @@ cli
     }
     catch (err) {
       console.error('-- Database fresh failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+// Make commands
+cli
+  .command('make:model <name>', 'Create a new model file')
+  .option('--table <name>', 'Table name (defaults to plural of model name)')
+  .option('--dir <path>', 'Models directory (defaults to app/Models)')
+  .option('--timestamps', 'Include timestamp fields (default: true)')
+  .example('query-builder make:model User')
+  .example('query-builder make:model Post --table=blog_posts')
+  .action(async (name: string, opts: any) => {
+    try {
+      await makeModel(name, {
+        table: opts.table,
+        dir: opts.dir,
+        timestamps: opts.timestamps,
+      })
+    }
+    catch (err) {
+      console.error('-- Failed to create model:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+// Migration management commands
+cli
+  .command('migrate:status', 'Show migration status')
+  .example('query-builder migrate:status')
+  .action(async () => {
+    try {
+      await migrateStatus()
+    }
+    catch (err) {
+      console.error('-- Failed to get migration status:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('migrate:list', 'List all migrations (alias for migrate:status)')
+  .example('query-builder migrate:list')
+  .action(async () => {
+    try {
+      await migrateList()
+    }
+    catch (err) {
+      console.error('-- Failed to list migrations:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('migrate:rollback', 'Rollback migrations')
+  .option('--steps <n>', 'Number of migrations to rollback', { default: 1 })
+  .example('query-builder migrate:rollback')
+  .example('query-builder migrate:rollback --steps 2')
+  .action(async (opts: any) => {
+    try {
+      await migrateRollback({ steps: Number(opts.steps) })
+    }
+    catch (err) {
+      console.error('-- Rollback failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+// Database info commands
+cli
+  .command('db:info', 'Show database information and statistics')
+  .example('query-builder db:info')
+  .action(async () => {
+    try {
+      await dbInfo()
+    }
+    catch (err) {
+      console.error('-- Failed to get database info:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('db:stats', 'Show database statistics (alias for db:info)')
+  .example('query-builder db:stats')
+  .action(async () => {
+    try {
+      await dbStats()
+    }
+    catch (err) {
+      console.error('-- Failed to get database stats:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+// Console/REPL commands
+cli
+  .command('console', 'Start interactive query console')
+  .example('query-builder console')
+  .action(async () => {
+    try {
+      await startConsole()
+    }
+    catch (err) {
+      console.error('-- Console failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('tinker', 'Start interactive query console (alias for console)')
+  .example('query-builder tinker')
+  .action(async () => {
+    try {
+      await tinker()
+    }
+    catch (err) {
+      console.error('-- Tinker failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+// Table inspection commands
+cli
+  .command('inspect <table>', 'Inspect a table structure')
+  .option('--verbose', 'Enable verbose output', { default: true })
+  .example('query-builder inspect users')
+  .action(async (table: string, opts: any) => {
+    try {
+      await inspectTable(table, { verbose: opts.verbose })
+    }
+    catch (err) {
+      console.error('-- Failed to inspect table:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('table:info <table>', 'Show table information (alias for inspect)')
+  .option('--verbose', 'Enable verbose output', { default: true })
+  .example('query-builder table:info users')
+  .action(async (table: string, opts: any) => {
+    try {
+      await tableInfo(table, { verbose: opts.verbose })
+    }
+    catch (err) {
+      console.error('-- Failed to get table info:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+// Cache management commands
+cli
+  .command('cache:clear', 'Clear the query cache')
+  .example('query-builder cache:clear')
+  .action(async () => {
+    try {
+      await cacheClear()
+    }
+    catch (err) {
+      console.error('-- Failed to clear cache:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('cache:stats', 'Show cache statistics')
+  .example('query-builder cache:stats')
+  .action(async () => {
+    try {
+      await cacheStats()
+    }
+    catch (err) {
+      console.error('-- Failed to get cache stats:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('cache:config', 'Configure cache settings')
+  .option('--size <n>', 'Set maximum cache size')
+  .example('query-builder cache:config --size 500')
+  .action(async (opts: any) => {
+    try {
+      await cacheConfig({ size: opts.size })
+    }
+    catch (err) {
+      console.error('-- Failed to configure cache:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+// Benchmark command
+cli
+  .command('benchmark', 'Run performance benchmarks')
+  .option('--operations <ops>', 'Comma-separated list of operations (select,insert,update,delete,count)')
+  .option('--iterations <n>', 'Number of iterations per operation', { default: 1000 })
+  .example('query-builder benchmark')
+  .example('query-builder benchmark --operations select,insert --iterations 5000')
+  .action(async (opts: any) => {
+    try {
+      await runBenchmark({
+        operations: opts.operations,
+        iterations: opts.iterations ? Number(opts.iterations) : undefined,
+      })
+    }
+    catch (err) {
+      console.error('-- Benchmark failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+// Schema validation commands
+cli
+  .command('validate:schema [dir]', 'Validate models against database schema')
+  .example('query-builder validate:schema')
+  .example('query-builder validate:schema ./app/Models')
+  .action(async (dir?: string) => {
+    try {
+      await validateSchema(dir)
+    }
+    catch (err) {
+      console.error('-- Validation failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('check [dir]', 'Validate schema (alias for validate:schema)')
+  .example('query-builder check')
+  .action(async (dir?: string) => {
+    try {
+      await checkSchema(dir)
+    }
+    catch (err) {
+      console.error('-- Check failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+// Data export/import commands
+cli
+  .command('export <table>', 'Export data from a table')
+  .option('--format <fmt>', 'Export format (json|csv|sql)', { default: 'json' })
+  .option('--output <path>', 'Output file path')
+  .option('--limit <n>', 'Limit number of rows')
+  .example('query-builder export users')
+  .example('query-builder export users --format csv --output users.csv')
+  .example('query-builder export users --format sql --limit 100')
+  .action(async (table: string, opts: any) => {
+    try {
+      await exportData(table, {
+        format: opts.format,
+        output: opts.output,
+        limit: opts.limit ? Number(opts.limit) : undefined,
+      })
+    }
+    catch (err) {
+      console.error('-- Export failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('import <table> <file>', 'Import data into a table')
+  .option('--format <fmt>', 'Import format (json|csv)')
+  .option('--truncate', 'Truncate table before import')
+  .example('query-builder import users users.json')
+  .example('query-builder import users users.csv --truncate')
+  .action(async (table: string, file: string, opts: any) => {
+    try {
+      await importData(table, file, {
+        format: opts.format,
+        truncate: opts.truncate,
+      })
+    }
+    catch (err) {
+      console.error('-- Import failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('dump', 'Dump database to SQL file')
+  .option('--tables <tables>', 'Comma-separated list of tables to dump')
+  .option('--output <path>', 'Output file path')
+  .example('query-builder dump')
+  .example('query-builder dump --tables users,posts')
+  .example('query-builder dump --output backup.sql')
+  .action(async (opts: any) => {
+    try {
+      await dumpDatabase({
+        tables: opts.tables,
+        output: opts.output,
+      })
+    }
+    catch (err) {
+      console.error('-- Dump failed:', err)
       const proc = await import('node:process')
       proc.default.exitCode = 1
     }

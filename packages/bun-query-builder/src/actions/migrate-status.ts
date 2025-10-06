@@ -67,7 +67,7 @@ export async function migrateStatus(): Promise<MigrationStatus[]> {
     // Get executed migrations from database
     let executedMigrations: Array<{ migration: string, executed_at?: string }> = []
     try {
-      const result = await qb.unsafe(driver.getExecutedMigrationsQuery()).execute()
+      const result = await qb.unsafe(driver.getExecutedMigrationsQuery())
       executedMigrations = result
     }
     catch (err) {

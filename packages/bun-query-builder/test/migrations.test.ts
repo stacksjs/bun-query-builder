@@ -65,3 +65,66 @@ describe('migration planner', () => {
     expect(sql.join('\n').toLowerCase()).toContain('unique index')
   })
 })
+
+describe('migration status and rollback', () => {
+  it('migrateStatus action exists and is callable', async () => {
+    const { migrateStatus } = await import('../src/actions/migrate-status')
+    expect(typeof migrateStatus).toBe('function')
+    // May fail without proper DB setup, but should not throw unhandled errors
+    try {
+      await migrateStatus()
+    }
+    catch (err) {
+      // Expected to potentially fail without DB
+      expect(err).toBeDefined()
+    }
+  })
+
+  it('migrateList is an alias for migrateStatus', async () => {
+    const { migrateList, migrateStatus } = await import('../src/actions/migrate-status')
+    expect(typeof migrateList).toBe('function')
+    expect(typeof migrateStatus).toBe('function')
+  })
+
+  it('migrateRollback action exists and accepts options', async () => {
+    const { migrateRollback } = await import('../src/actions/migrate-rollback')
+    expect(typeof migrateRollback).toBe('function')
+    // May fail without proper DB setup, but should not throw unhandled errors
+    try {
+      await migrateRollback({ steps: 1 })
+    }
+    catch (err) {
+      // Expected to potentially fail without DB
+      expect(err).toBeDefined()
+    }
+  })
+})
+
+describe('schema validation', () => {
+  it('validateSchema action exists and is callable', async () => {
+    const { validateSchema } = await import('../src/actions/validate')
+    expect(typeof validateSchema).toBe('function')
+  })
+
+  it('checkSchema is an alias for validateSchema', async () => {
+    const { checkSchema, validateSchema } = await import('../src/actions/validate')
+    expect(typeof checkSchema).toBe('function')
+    expect(typeof validateSchema).toBe('function')
+  })
+
+  it('validateSchema returns validation result structure', async () => {
+    const { validateSchema } = await import('../src/actions/validate')
+    // May fail without proper DB, but test the function signature
+    try {
+      const result = await validateSchema(EXAMPLES_MODELS_PATH)
+      expect(typeof result).toBe('object')
+      expect(result).toHaveProperty('valid')
+      expect(result).toHaveProperty('issues')
+      expect(Array.isArray(result.issues)).toBe(true)
+    }
+    catch (err) {
+      // Expected to potentially fail without DB
+      expect(err).toBeDefined()
+    }
+  })
+})

@@ -47,7 +47,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
     const indexes: IndexInfo[] = []
 
     // Get row count
-    const countResult = await qb.unsafe(`SELECT COUNT(*) as count FROM ${tableName}`).execute()
+    const countResult = await qb.unsafe(`SELECT COUNT(*) as count FROM ${tableName}`)
     const rowCount = Number(countResult[0]?.count || 0)
 
     // Get columns based on dialect
@@ -85,7 +85,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
         ) fk ON c.column_name = fk.column_name
         WHERE c.table_name = $1
         ORDER BY c.ordinal_position
-      `, [tableName]).execute()
+      `, [tableName])
 
       for (const col of colsResult) {
         columns.push({
@@ -108,7 +108,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
         JOIN pg_class c ON c.relname = i.indexname
         JOIN pg_index ix ON ix.indexrelid = c.oid
         WHERE i.tablename = $1
-      `, [tableName]).execute()
+      `, [tableName])
 
       for (const idx of idxResult) {
         // Parse columns from indexdef
@@ -135,7 +135,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
         WHERE TABLE_NAME = ?
         AND TABLE_SCHEMA = DATABASE()
         ORDER BY ORDINAL_POSITION
-      `, [tableName]).execute()
+      `, [tableName])
 
       for (const col of colsResult) {
         columns.push({
@@ -151,7 +151,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       // Get indexes
       const idxResult = await qb.unsafe(`
         SHOW INDEXES FROM ${tableName}
-      `).execute()
+      `)
 
       const indexMap = new Map<string, { columns: string[], unique: boolean }>()
 
@@ -175,7 +175,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       }
     }
     else if (dialect === 'sqlite') {
-      const colsResult = await qb.unsafe(`PRAGMA table_info(${tableName})`).execute()
+      const colsResult = await qb.unsafe(`PRAGMA table_info(${tableName})`)
 
       for (const col of colsResult) {
         columns.push({
@@ -188,10 +188,10 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       }
 
       // Get indexes
-      const idxResult = await qb.unsafe(`PRAGMA index_list(${tableName})`).execute()
+      const idxResult = await qb.unsafe(`PRAGMA index_list(${tableName})`)
 
       for (const idx of idxResult) {
-        const idxInfo = await qb.unsafe(`PRAGMA index_info(${idx.name})`).execute()
+        const idxInfo = await qb.unsafe(`PRAGMA index_info(${idx.name})`)
         indexes.push({
           name: idx.name,
           columns: idxInfo.map((i: any) => i.name),

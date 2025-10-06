@@ -69,7 +69,7 @@ export async function validateSchema(dir?: string): Promise<ValidationResult> {
         WHERE type = 'table'
         AND name NOT LIKE 'sqlite_%'
         AND name != 'migrations'
-      `).execute()
+      `)
       actualTables = result.map((r: any) => r.name)
     }
     else if (dialect === 'postgres') {
@@ -79,7 +79,7 @@ export async function validateSchema(dir?: string): Promise<ValidationResult> {
         WHERE table_schema = 'public'
         AND table_type = 'BASE TABLE'
         AND table_name != 'migrations'
-      `).execute()
+      `)
       actualTables = result.map((r: any) => r.table_name)
     }
     else if (dialect === 'mysql') {
@@ -89,7 +89,7 @@ export async function validateSchema(dir?: string): Promise<ValidationResult> {
         WHERE table_schema = DATABASE()
         AND table_type = 'BASE TABLE'
         AND table_name != 'migrations'
-      `).execute()
+      `)
       actualTables = result.map((r: any) => r.table_name)
     }
 
@@ -129,7 +129,7 @@ export async function validateSchema(dir?: string): Promise<ValidationResult> {
       let actualColumns: Array<{ name: string, type: string }> = []
 
       if (dialect === 'sqlite') {
-        const result = await qb.unsafe(`PRAGMA table_info(${modelTable.table})`).execute()
+        const result = await qb.unsafe(`PRAGMA table_info(${modelTable.table})`)
         actualColumns = result.map((r: any) => ({
           name: r.name,
           type: r.type.toLowerCase(),
@@ -140,7 +140,7 @@ export async function validateSchema(dir?: string): Promise<ValidationResult> {
           SELECT column_name, data_type
           FROM information_schema.columns
           WHERE table_name = $1
-        `, [modelTable.table]).execute()
+        `, [modelTable.table])
         actualColumns = result.map((r: any) => ({
           name: r.column_name,
           type: r.data_type.toLowerCase(),
@@ -152,7 +152,7 @@ export async function validateSchema(dir?: string): Promise<ValidationResult> {
           FROM information_schema.columns
           WHERE table_name = ?
           AND table_schema = DATABASE()
-        `, [modelTable.table]).execute()
+        `, [modelTable.table])
         actualColumns = result.map((r: any) => ({
           name: r.column_name,
           type: r.data_type.toLowerCase(),
