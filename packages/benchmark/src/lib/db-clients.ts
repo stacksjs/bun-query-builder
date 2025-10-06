@@ -22,8 +22,32 @@ export function createBunQBClient() {
   const statementCache = new Map<string, any>()
 
   // Convert $1, $2, $3 placeholders to ? for SQLite
+  // Optimized to avoid regex for better performance on queries with many placeholders
   function convertPlaceholders(query: string): string {
-    return query.replace(/\$\d+/g, '?')
+    // Quick check - if no $, return as-is
+    if (!query.includes('$')) return query
+
+    // Use manual replacement for better performance
+    let result = ''
+    let i = 0
+    while (i < query.length) {
+      if (query[i] === '$' && i + 1 < query.length) {
+        // Check if next char is a digit
+        const charCode = query.charCodeAt(i + 1)
+        if (charCode >= 48 && charCode <= 57) { // '0' to '9'
+          // Skip $ and all following digits
+          i++ // skip $
+          while (i < query.length && query.charCodeAt(i) >= 48 && query.charCodeAt(i) <= 57) {
+            i++
+          }
+          result += '?'
+          continue
+        }
+      }
+      result += query[i]
+      i++
+    }
+    return result
   }
 
   // Check if this is a complete SQL statement (vs a fragment like "id = ?")
@@ -31,6 +55,11 @@ export function createBunQBClient() {
     const trimmed = query.trim().toUpperCase()
     return trimmed.startsWith('SELECT') || trimmed.startsWith('INSERT') ||
            trimmed.startsWith('UPDATE') || trimmed.startsWith('DELETE')
+  }
+
+  // Check if query is SELECT (returns rows) vs mutation (INSERT/UPDATE/DELETE)
+  function isSelectQuery(query: string): boolean {
+    return query.trim().toUpperCase().startsWith('SELECT')
   }
 
   // Marker for SQL identifiers/fragments
@@ -90,18 +119,30 @@ export function createBunQBClient() {
       }
     }
 
-    // Optimize execute by avoiding closure overhead
+    // Use .run() for mutations (INSERT/UPDATE/DELETE), .all() for SELECT
+    // This is much faster for mutations since .run() doesn't try to return rows
+    const isSelect = isSelectQuery(query)
     const executeFunc = stmt
-      ? (params.length > 0 ? () => stmt.all(...params) : () => stmt.all())
-      : (params.length > 0
-          ? () => db.query(sqliteQuery).all(...params)
-          : () => db.query(sqliteQuery).all())
+      ? (isSelect
+          ? (params.length > 0 ? () => stmt.all(...params) : () => stmt.all())
+          : (params.length > 0 ? () => stmt.run(...params) : () => stmt.run()))
+      : (isSelect
+          ? (params.length > 0
+              ? () => db.query(sqliteQuery).all(...params)
+              : () => db.query(sqliteQuery).all())
+          : (params.length > 0
+              ? () => db.query(sqliteQuery).run(...params)
+              : () => db.query(sqliteQuery).run()))
 
     return {
       execute: executeFunc,
       values: () => params,
       raw: () => query,
       toString: () => query,
+      // Direct statement access for ultra-fast path (bypasses execute function overhead)
+      _stmt: stmt,
+      _params: params,
+      _sqliteQuery: sqliteQuery,
     }
   }
   sql.unsafe = (query: string, params?: any[]) => {
@@ -118,18 +159,29 @@ export function createBunQBClient() {
     }
 
     const hasParams = params && params.length > 0
-    // Optimize execute by avoiding closure overhead
+    // Use .run() for mutations (INSERT/UPDATE/DELETE), .all() for SELECT
+    const isSelect = isSelectQuery(query)
     const executeFunc = stmt
-      ? (hasParams ? () => stmt.all(...params!) : () => stmt.all())
-      : (hasParams
-          ? () => db.query(sqliteQuery).all(...params!)
-          : () => db.query(sqliteQuery).all())
+      ? (isSelect
+          ? (hasParams ? () => stmt.all(...params!) : () => stmt.all())
+          : (hasParams ? () => stmt.run(...params!) : () => stmt.run()))
+      : (isSelect
+          ? (hasParams
+              ? () => db.query(sqliteQuery).all(...params!)
+              : () => db.query(sqliteQuery).all())
+          : (hasParams
+              ? () => db.query(sqliteQuery).run(...params!)
+              : () => db.query(sqliteQuery).run()))
 
     return {
       execute: executeFunc,
       values: () => params || [],
       raw: () => query,
       toString: () => query,
+      // Direct statement access for ultra-fast path (bypasses execute function overhead)
+      _stmt: stmt,
+      _params: params || [],
+      _sqliteQuery: sqliteQuery,
     }
   }
   return createQueryBuilder<typeof schema>({

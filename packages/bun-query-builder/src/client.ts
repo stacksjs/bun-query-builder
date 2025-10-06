@@ -2101,7 +2101,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     let text = (columns && columns.length > 0)
       ? `SELECT ${columns.join(', ')} FROM ${String(table)}`
       : `SELECT * FROM ${String(table)}`
-    let built = (_sql as any).unsafe(text)
+
+    // Lazy building: don't prepare statement until execution
+    let built: any = null
+
     const addWhereText = (prefix: 'WHERE' | 'AND' | 'OR', clause: string) => {
       const hasWhere = /\bWHERE\b/i.test(text)
       const p = hasWhere ? prefix : 'WHERE'
@@ -2195,9 +2198,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         else {
           text = `SELECT ${columns.join(', ')} FROM ${table}`
         }
-        built = whereParams.length > 0
-          ? (_sql as any).unsafe(text, whereParams)
-          : (_sql as any).unsafe(text)
         return this as any
       },
       addSelect(...columns: string[]) {
@@ -3329,21 +3329,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       limit(n: number) {
         text += ' LIMIT ' + n
-        built = whereParams.length > 0
-          ? (_sql as any).unsafe(text, whereParams)
-          : (_sql as any).unsafe(text)
         return this
       },
       offset(n: number) {
         text += ' OFFSET ' + n
-        built = whereParams.length > 0
-          ? (_sql as any).unsafe(text, whereParams)
-          : (_sql as any).unsafe(text)
         return this
       },
       join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         text = text + ' JOIN ' + table2 + ' ON ' + onLeft + ' ' + operator + ' ' + onRight
-        built = (_sql as any).unsafe(text)
         joinedTables.add(table2)
         return this as any
       },
@@ -3665,9 +3658,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return text
       },
       async get() {
+        // Build query at execution time (statement will be cached by db-clients.ts)
+        built = whereParams.length > 0
+          ? (_sql as any).unsafe(text, whereParams)
+          : (_sql as any).unsafe(text)
+
         // Ultra-fast path: no soft-deletes, no cache, no timeout, no signal, no hooks
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !config.hooks) {
-          return (built as any).execute()
+          // Direct statement execution for maximum performance (bypasses all overhead)
+          const stmt = built._stmt
+          const params = built._params
+          if (stmt) {
+            // Call statement directly with params (avoid any wrapper overhead)
+            return params && params.length > 0 ? stmt.all(...params) : stmt.all()
+          }
+          return built.execute()
         }
 
         // Fast path: no soft-deletes, no cache, no timeout, no signal (but may have hooks)
@@ -3676,29 +3681,30 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
 
         // Apply soft-deletes default filter if enabled and table has the column
+        let finalQuery = built
         if (config.softDeletes?.enabled && config.softDeletes.defaultFilter && !includeTrashed) {
           const col = config.softDeletes.column
           const tbl = String(table)
           const hasCol = schema ? Boolean((schema as any)[tbl]?.columns?.[col]) : true
           if (hasCol && !/\bdeleted_at\b/i.test(text)) {
-            built = sql`${built} WHERE ${sql(String(col))} IS ${onlyTrashed ? sql`NOT NULL` : sql`NULL`}`
+            finalQuery = sql`${built} WHERE ${sql(String(col))} IS ${onlyTrashed ? sql`NOT NULL` : sql`NULL`}`
             addWhereText('WHERE', `${String(col)} IS ${onlyTrashed ? 'NOT ' : ''}NULL`)
           }
         }
 
         // Check cache if enabled
         if (useCache) {
-          const cacheKey = String(built)
+          const cacheKey = String(finalQuery)
           const cached = queryCache.get(cacheKey)
           if (cached)
             return cached
         }
 
-        const result = await runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
+        const result = await runWithHooks<any[]>(finalQuery, 'select', { signal: abortSignal, timeoutMs })
 
         // Store in cache if enabled
         if (useCache) {
-          const cacheKey = String(built)
+          const cacheKey = String(finalQuery)
           queryCache.set(cacheKey, result, cacheTtl)
         }
 
