@@ -1,7 +1,5 @@
 import type { SupportedDialect } from '@/types'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import process from 'node:process'
 import { config } from '@/config'
 import { createQueryBuilder } from '../client'
 
@@ -99,7 +97,7 @@ export async function exportData(tableName: string, options: ExportOptions = {})
           if (typeof value === 'number') {
             return String(value)
           }
-          return `'${String(value).replace(/'/g, "''")}'`
+          return `'${String(value).replace(/'/g, '\'\'')}'`
         })
 
         sqlLines.push(
@@ -151,7 +149,7 @@ export async function importData(tableName: string, filePath: string, options: I
     if (format === 'json') {
       data = JSON.parse(fileContent)
       if (!Array.isArray(data)) {
-        throw new Error('JSON file must contain an array of objects')
+        throw new TypeError('JSON file must contain an array of objects')
       }
     }
     else if (format === 'csv') {
@@ -305,7 +303,7 @@ export async function dumpDatabase(options: DumpOptions = {}): Promise<void> {
           if (typeof value === 'number') {
             return String(value)
           }
-          return `'${String(value).replace(/'/g, "''")}'`
+          return `'${String(value).replace(/'/g, '\'\'')}'`
         })
 
         sqlLines.push(

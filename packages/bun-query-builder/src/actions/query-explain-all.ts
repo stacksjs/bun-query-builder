@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import { bunSql } from '@/db'
 

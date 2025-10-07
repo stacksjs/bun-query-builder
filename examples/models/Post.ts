@@ -1,5 +1,5 @@
-import { v } from '@/examples/validation'
 import { defineModel } from 'bun-query-builder'
+import { v } from '../../examples/validation'
 
 const model: {
   readonly name: 'Post'

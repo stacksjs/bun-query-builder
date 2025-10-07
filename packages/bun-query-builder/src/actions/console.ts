@@ -1,5 +1,5 @@
-import { createInterface } from 'node:readline'
 import process from 'node:process'
+import { createInterface } from 'node:readline'
 import { createQueryBuilder } from '../index'
 
 /**
@@ -46,7 +46,7 @@ Tips:
   const executeQuery = async (code: string) => {
     try {
       // Create an async function that has access to qb
-      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+      const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
       const fn = new AsyncFunction('qb', `return (${code})`)
       const result = await fn(qb)
 
@@ -119,7 +119,7 @@ Tips:
     // Handle multi-line input
     if (trimmed.endsWith('\\')) {
       multilineMode = true
-      multilineBuffer += trimmed.slice(0, -1) + '\n'
+      multilineBuffer += `${trimmed.slice(0, -1)}\n`
       return
     }
 
@@ -131,7 +131,7 @@ Tips:
         multilineMode = false
       }
       else {
-        multilineBuffer += trimmed + '\n'
+        multilineBuffer += `${trimmed}\n`
       }
       return
     }

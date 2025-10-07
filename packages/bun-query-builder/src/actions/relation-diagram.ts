@@ -138,7 +138,7 @@ function generateDotDiagram(models: Record<string, any>): string {
       attrLines.push(`${attrName}: ${type}${pk}${unique}`)
     }
 
-    const attrStr = attrLines.join('\\l') + '\\l'
+    const attrStr = `${attrLines.join('\\l')}\\l`
     lines.push(`  ${table} [label="{${table}|${attrStr}}"];`)
   }
 

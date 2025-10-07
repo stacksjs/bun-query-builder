@@ -1,5 +1,4 @@
 import type { Database } from '../schemas/kysely'
-import { SQL } from 'bun'
 import { Database as BunDatabase } from 'bun:sqlite'
 import { PrismaClient } from '@prisma/client'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
@@ -25,7 +24,8 @@ export function createBunQBClient() {
   // Optimized to avoid regex for better performance on queries with many placeholders
   function convertPlaceholders(query: string): string {
     // Quick check - if no $, return as-is
-    if (!query.includes('$')) return query
+    if (!query.includes('$'))
+      return query
 
     // Use manual replacement for better performance
     let result = ''
@@ -53,8 +53,8 @@ export function createBunQBClient() {
   // Check if this is a complete SQL statement (vs a fragment like "id = ?")
   function isCompleteStatement(query: string): boolean {
     const trimmed = query.trim().toUpperCase()
-    return trimmed.startsWith('SELECT') || trimmed.startsWith('INSERT') ||
-           trimmed.startsWith('UPDATE') || trimmed.startsWith('DELETE')
+    return trimmed.startsWith('SELECT') || trimmed.startsWith('INSERT')
+      || trimmed.startsWith('UPDATE') || trimmed.startsWith('DELETE')
   }
 
   // Check if query is SELECT (returns rows) vs mutation (INSERT/UPDATE/DELETE)

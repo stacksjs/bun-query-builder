@@ -212,11 +212,11 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       const maxNameLength = Math.max(...columns.map(c => c.name.length), 10)
       const maxTypeLength = Math.max(...columns.map(c => c.type.length), 10)
 
-      const header = 'Name'.padEnd(maxNameLength + 2)
+      const header = `${'Name'.padEnd(maxNameLength + 2)
         + 'Type'.padEnd(maxTypeLength + 2)
         + 'Nullable'.padEnd(10)
         + 'Default'.padEnd(20)
-        + 'Flags'
+      }Flags`
 
       console.log(header)
       console.log('-'.repeat(header.length))

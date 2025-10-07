@@ -3,9 +3,9 @@ import { executeMigration, generateMigration, resetDatabase } from '../src/actio
 import { config } from '../src/config'
 
 // Absolute path to examples/models directory (relative to this file's location)
-export const EXAMPLES_MODELS_PATH = resolve(__dirname, '../../../examples/models')
+export const EXAMPLES_MODELS_PATH: string = resolve(__dirname, '../../../examples/models')
 
-export async function setupDatabase() {
+export async function setupDatabase(): Promise<void> {
   try {
     // Reset database first to ensure clean slate
     await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })

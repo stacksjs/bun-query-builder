@@ -1,10 +1,10 @@
 import type { SupportedDialect } from '@/types'
+import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { config } from '@/config'
-import { buildMigrationPlan, loadModels } from '../index'
 import { createQueryBuilder } from '../client'
-import { existsSync } from 'node:fs'
+import { buildMigrationPlan, loadModels } from '../index'
 
 /**
  * Find workspace root by looking for package.json

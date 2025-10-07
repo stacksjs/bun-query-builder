@@ -7,8 +7,8 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "paths": {
-      "@/*": ["./packages/bun-query-builder/src/*"],
       "@/examples/*": ["./examples/*"],
+      "@/*": ["./packages/bun-query-builder/src/*"],
       "bun-query-builder": ["./packages/bun-query-builder/src/index.ts"]
     },
     "resolveJsonModule": true,

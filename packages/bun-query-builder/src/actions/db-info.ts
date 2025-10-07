@@ -1,6 +1,5 @@
 import type { SupportedDialect } from '@/types'
 import { config } from '@/config'
-import { bunSql } from '@/db'
 import { createQueryBuilder } from '../index'
 
 export interface TableInfo {
