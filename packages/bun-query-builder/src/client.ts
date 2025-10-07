@@ -1,10 +1,29 @@
 /* eslint-disable regexp/no-super-linear-backtracking */
-/* eslint-disable style/max-statements-per-line */
+
 /* eslint-disable no-useless-catch */
 import type { SchemaMeta } from './meta'
 import type { DatabaseSchema } from './schema'
 import { config } from './config'
 import { bunSql } from './db'
+
+// Type guard for raw SQL expressions
+interface RawExpression {
+  raw: string
+}
+
+function isRawExpression(expr: unknown): expr is RawExpression {
+  return typeof expr === 'object' && expr !== null && 'raw' in expr && typeof (expr as RawExpression).raw === 'string'
+}
+
+// Pre-compiled regex patterns for performance
+const SQL_PATTERNS = {
+  SELECT_STAR: /^SELECT\s+\*/i,
+  SELECT: /^SELECT\s+/i,
+  SELECT_FROM: /^SELECT\s+(.+?)\s+FROM/i,
+  WHERE: /\bWHERE\b/i,
+  IDENTIFIER: /^[A-Z_][\w.]*$/i,
+  DELETED_AT: /\bdeleted_at\b/i,
+} as const
 
 // Simple query cache with TTL support
 interface CacheEntry {
@@ -871,6 +890,23 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   with?: (...relations: string[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `withPivot`
+   *
+   * Include pivot table columns when eager loading belongsToMany relationships.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').with('tags').withPivot('tags', 'created_at', 'role').get()
+   * ```
+   */
+  withPivot?: (relation: string, ...columns: string[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `applyPivotColumns`
+   *
+   * Apply pivot columns to the SELECT clause.
+   */
+  applyPivotColumns?: () => SelectQueryBuilder<DB, TTable, TSelected, any>
   // locks
   /**
    * # `lockForUpdate`
@@ -2110,7 +2146,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       : sql`SELECT * FROM ${sql(table)}`
 
     const addWhereText = (prefix: 'WHERE' | 'AND' | 'OR', clause: string) => {
-      const hasWhere = /\bWHERE\b/i.test(text)
+      const hasWhere = SQL_PATTERNS.WHERE.test(text)
       const p = hasWhere ? prefix : 'WHERE'
       text = `${text} ${p} ${clause}`
     }
@@ -2126,18 +2162,206 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
     // Track WHERE conditions and parameters for proper merging
     const whereConditions: string[] = []
-    const whereParams: any[] = []
+    const whereParams: unknown[] = []
+
+    // Helper function to validate SQL identifiers with context
+    const validateIdentifier = (name: string, context?: string): void => {
+      if (!SQL_PATTERNS.IDENTIFIER.test(name)) {
+        const contextMsg = context ? ` in ${context}` : ''
+        throw new Error(`[query-builder] Invalid identifier${contextMsg}: '${name}'. Identifiers must start with a letter or underscore and contain only alphanumeric characters, underscores, and dots.`)
+      }
+    }
+
+    // Helper function to add columns to the SELECT clause
+    const addToSelectClause = (columnsToAdd: string): void => {
+      // Update text representation for toSQL()
+      if (SQL_PATTERNS.SELECT_STAR.test(text)) {
+        text = text.replace(SQL_PATTERNS.SELECT_STAR, `SELECT *, ${columnsToAdd}`)
+      }
+      else if (SQL_PATTERNS.SELECT.test(text)) {
+        text = text.replace(SQL_PATTERNS.SELECT_FROM, `SELECT $1, ${columnsToAdd} FROM`)
+      }
+
+      // Update built query
+      const currentSelect = String(built)
+      if (SQL_PATTERNS.SELECT_STAR.test(currentSelect)) {
+        const newSql = currentSelect.replace(SQL_PATTERNS.SELECT_STAR, `SELECT *, ${columnsToAdd}`)
+        built = (_sql as any).unsafe(newSql)
+      }
+      else if (SQL_PATTERNS.SELECT.test(currentSelect)) {
+        const selectPart = SQL_PATTERNS.SELECT_FROM.exec(currentSelect)
+        if (selectPart) {
+          const newSql = currentSelect.replace(SQL_PATTERNS.SELECT_FROM, `SELECT $1, ${columnsToAdd} FROM`)
+          built = (_sql as any).unsafe(newSql)
+        }
+      }
+    }
+
+    // Helper function to build hasOne/hasMany subquery with validation
+    const buildHasSubquery = (parentTable: string, targetTable: string, pk: string, callback?: (qb: any) => any): string => {
+      validateIdentifier(parentTable, 'relationship subquery (parent table)')
+      validateIdentifier(targetTable, 'relationship subquery (target table)')
+      validateIdentifier(pk, 'relationship subquery (primary key)')
+
+      const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
+      validateIdentifier(fk, 'relationship subquery (foreign key)')
+
+      let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
+
+      if (callback) {
+        const subQb = {
+          where: (col: string, op: string, val: any) => {
+            validateIdentifier(col, 'relationship subquery condition')
+            return `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}`
+          },
+        }
+        const condition = callback(subQb)
+        if (condition) {
+          subquerySQL += ` AND ${condition}`
+        }
+      }
+
+      return subquerySQL
+    }
+
+    // Helper function to build belongsTo subquery with validation
+    const buildBelongsToSubquery = (parentTable: string, targetTable: string, pk: string, callback?: (qb: any) => any): string => {
+      validateIdentifier(parentTable, 'relationship subquery (parent table)')
+      validateIdentifier(targetTable, 'relationship subquery (target table)')
+      validateIdentifier(pk, 'relationship subquery (primary key)')
+
+      const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
+      validateIdentifier(fk, 'relationship subquery (foreign key)')
+
+      let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${pk} = ${parentTable}.${fk}`
+
+      if (callback) {
+        const subQb = {
+          where: (col: string, op: string, val: any) => {
+            validateIdentifier(col, 'relationship subquery condition')
+            return `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}`
+          },
+        }
+        const condition = callback(subQb)
+        if (condition) {
+          subquerySQL += ` AND ${condition}`
+        }
+      }
+
+      return subquerySQL
+    }
+
+    // Helper function to build belongsToMany subquery with validation
+    const buildBelongsToManySubquery = (parentTable: string, targetTable: string, pk: string, targetPk: string, callback?: (qb: any) => any): string => {
+      validateIdentifier(parentTable, 'relationship subquery (parent table)')
+      validateIdentifier(targetTable, 'relationship subquery (target table)')
+      validateIdentifier(pk, 'relationship subquery (primary key)')
+      validateIdentifier(targetPk, 'relationship subquery (target primary key)')
+
+      const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+      const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+      const pivot = [a, b].sort().join('_')
+      const fkA = `${a}_id`
+      const fkB = `${b}_id`
+
+      validateIdentifier(pivot, 'relationship subquery (pivot table)')
+      validateIdentifier(fkA, 'relationship subquery (foreign key A)')
+      validateIdentifier(fkB, 'relationship subquery (foreign key B)')
+
+      let subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${fkB} WHERE ${pivot}.${fkA} = ${parentTable}.${pk}`
+
+      if (callback) {
+        const subQb = {
+          where: (col: string, op: string, val: any) => {
+            validateIdentifier(col, 'relationship subquery condition')
+            return `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}`
+          },
+        }
+        const condition = callback(subQb)
+        if (condition) {
+          subquerySQL += ` AND ${condition}`
+        }
+      }
+
+      return subquerySQL
+    }
+
+    // Helper function to build count subquery for hasOne/hasMany with validation
+    const buildHasCountSubquery = (parentTable: string, targetTable: string, pk: string): string => {
+      validateIdentifier(parentTable, 'withCount (parent table)')
+      validateIdentifier(targetTable, 'withCount (target table)')
+      validateIdentifier(pk, 'withCount (primary key)')
+
+      const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
+      validateIdentifier(fk, 'withCount (foreign key)')
+
+      return `(SELECT COUNT(*) FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk})`
+    }
+
+    // Helper function to build count subquery for belongsToMany with validation
+    const buildBelongsToManyCountSubquery = (parentTable: string, targetTable: string, pk: string): string => {
+      validateIdentifier(parentTable, 'withCount (parent table)')
+      validateIdentifier(targetTable, 'withCount (target table)')
+      validateIdentifier(pk, 'withCount (primary key)')
+
+      const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+      const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+      const pivot = [a, b].sort().join('_')
+      const fkA = `${a}_id`
+
+      validateIdentifier(pivot, 'withCount (pivot table)')
+      validateIdentifier(fkA, 'withCount (foreign key)')
+
+      return `(SELECT COUNT(*) FROM ${pivot} WHERE ${pivot}.${fkA} = ${parentTable}.${pk})`
+    }
+
+    // Helper function to apply pivot columns to the query
+    const applyPivotColumnsToQuery = () => {
+      if (pivotColumns.size === 0)
+        return
+
+      const allPivotColumns: string[] = []
+
+      for (const [relation, columns] of pivotColumns.entries()) {
+        const parentTable = String(table)
+        const rels = meta?.relations?.[parentTable]
+        if (!rels)
+          continue
+
+        const targetModel = rels.belongsToMany?.[relation]
+        if (!targetModel)
+          continue
+
+        const targetTable = meta.modelToTable[targetModel] || targetModel
+        const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+        const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+        const pivot = [a, b].sort().join('_')
+
+        // Validate each column name to prevent SQL injection
+        for (const col of columns) {
+          validateIdentifier(col, 'withPivot')
+        }
+
+        const pivotColumnsStr = columns.map(col => `${pivot}.${col} AS pivot_${col}`)
+        allPivotColumns.push(...pivotColumnsStr)
+      }
+
+      if (allPivotColumns.length > 0) {
+        const pivotColumnsStr = allPivotColumns.join(', ')
+        addToSelectClause(pivotColumnsStr)
+      }
+    }
 
     // Build the base API; then wrap with a proxy that exposes dynamic where/orWhere/andWhere methods
 
     const base: BaseSelectQueryBuilder<DB, TTable, any, TTable> = {
       distinct() {
-        const rest = String(built).replace(/^SELECT\s+/i, '')
+        const rest = String(built).replace(SQL_PATTERNS.SELECT, '')
         built = sql`SELECT DISTINCT ${sql``}${sql(rest)}`
         return this as any
       },
       distinctOn(...columns: any[]) {
-        const match = /^SELECT\s+(\S+)\s+FROM/i.exec(String(built))
+        const match = SQL_PATTERNS.SELECT_FROM.exec(String(built))
         const body = match ? `${match[1]} FROM` : String(built)
         built = sql`SELECT DISTINCT ON (${sql(columns as any)}) ${sql``}${sql(body)}`
         return this as any
@@ -2209,7 +2433,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (!columns.length)
           return this as any
         // inject additional columns into SELECT list
-        const body = String(built).replace(/^SELECT\s+/i, '')
+        const body = String(built).replace(SQL_PATTERNS.SELECT, '')
         built = sql`SELECT ${sql(columns as any)} , ${sql(body)} `
         return this as any
       },
@@ -2537,28 +2761,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
           if (allPivotColumns.length > 0) {
             const pivotColumnsStr = allPivotColumns.join(', ')
-
-            // Update text representation for toSQL()
-            if (text.match(/^SELECT\s+\*/i)) {
-              text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumnsStr}`)
-            }
-            else if (text.match(/^SELECT\s+/i)) {
-              text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumnsStr} FROM`)
-            }
-
-            // Update built query
-            const currentSelect = String(built)
-            if (currentSelect.match(/^SELECT\s+\*/i)) {
-              const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumnsStr}`)
-              built = (_sql as any).unsafe(newSql)
-            }
-            else if (currentSelect.match(/^SELECT\s+/i)) {
-              const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
-              if (selectPart) {
-                const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumnsStr} FROM`)
-                built = (_sql as any).unsafe(newSql)
-              }
-            }
+            addToSelectClause(pivotColumnsStr)
           }
         }
 
@@ -2594,72 +2797,30 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const targetTable = meta.modelToTable[targetModel] || targetModel
 
         // Build raw SQL for EXISTS clause since we can't use sql in a cross-compatible way
+        let subquerySQL: string
+
         if (type === 'hasMany' || type === 'hasOne') {
-          const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
           const pk = meta.primaryKeys[parentTable] ?? 'id'
-
-          let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
-
-          if (callback) {
-            const subQb = { where: (col: string, op: string, val: any) => `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}` }
-            const condition = callback(subQb)
-            if (condition) {
-              subquerySQL += ` AND ${condition}`
-            }
-          }
-
-          // Use whereRaw to inject the EXISTS clause
-          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
-          try {
-            addWhereText('WHERE', `EXISTS (${subquerySQL})`)
-          }
-          catch {}
+          subquerySQL = buildHasSubquery(parentTable, targetTable, pk, callback)
         }
         else if (type === 'belongsTo') {
-          const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
           const pk = meta.primaryKeys[targetTable] ?? 'id'
-
-          let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${pk} = ${parentTable}.${fk}`
-
-          if (callback) {
-            const subQb = { where: (col: string, op: string, val: any) => `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}` }
-            const condition = callback(subQb)
-            if (condition) {
-              subquerySQL += ` AND ${condition}`
-            }
-          }
-
-          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
-          try {
-            addWhereText('WHERE', `EXISTS (${subquerySQL})`)
-          }
-          catch {}
+          subquerySQL = buildBelongsToSubquery(parentTable, targetTable, pk, callback)
         }
         else if (type === 'belongsToMany') {
-          const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-          const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-          const pivot = [a, b].sort().join('_')
-          const fkA = `${a}_id`
-          const fkB = `${b}_id`
           const pk = meta.primaryKeys[parentTable] ?? 'id'
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
-
-          let subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${fkB} WHERE ${pivot}.${fkA} = ${parentTable}.${pk}`
-
-          if (callback) {
-            const subQb = { where: (col: string, op: string, val: any) => `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}` }
-            const condition = callback(subQb)
-            if (condition) {
-              subquerySQL += ` AND ${condition}`
-            }
-          }
-
-          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
-          try {
-            addWhereText('WHERE', `EXISTS (${subquerySQL})`)
-          }
-          catch {}
+          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk, callback)
         }
+        else {
+          throw new Error(`[query-builder] Unsupported relationship type '${type}' for whereHas`)
+        }
+
+        built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
+        try {
+          addWhereText('WHERE', `EXISTS (${subquerySQL})`)
+        }
+        catch {}
 
         return this as any
       },
@@ -2688,26 +2849,30 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const targetModel = (relMap as any)[relation]
         const targetTable = meta.modelToTable[targetModel] || targetModel
 
+        let subquerySQL: string
+
         if (type === 'hasMany' || type === 'hasOne') {
-          const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
           const pk = meta.primaryKeys[parentTable] ?? 'id'
-
-          let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
-
-          if (callback) {
-            const subQb = { where: (col: string, op: string, val: any) => `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}` }
-            const condition = callback(subQb)
-            if (condition) {
-              subquerySQL += ` AND ${condition}`
-            }
-          }
-
-          built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
-          try {
-            addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`)
-          }
-          catch {}
+          subquerySQL = buildHasSubquery(parentTable, targetTable, pk, callback)
         }
+        else if (type === 'belongsTo') {
+          const pk = meta.primaryKeys[targetTable] ?? 'id'
+          subquerySQL = buildBelongsToSubquery(parentTable, targetTable, pk, callback)
+        }
+        else if (type === 'belongsToMany') {
+          const pk = meta.primaryKeys[parentTable] ?? 'id'
+          const targetPk = meta.primaryKeys[targetTable] ?? 'id'
+          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk, callback)
+        }
+        else {
+          throw new Error(`[query-builder] Unsupported relationship type '${type}' for whereDoesntHave`)
+        }
+
+        built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
+        try {
+          addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`)
+        }
+        catch {}
 
         return this as any
       },
@@ -2733,33 +2898,31 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const [type, relMap] = relType
         const targetModel = (relMap as any)[relation]
         const targetTable = meta.modelToTable[targetModel] || targetModel
-        const pk = meta.primaryKeys[parentTable] ?? 'id'
+
+        let subquerySQL: string
 
         if (type === 'hasMany' || type === 'hasOne') {
-          const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
-          const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
-          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) }
-          catch {}
+          const pk = meta.primaryKeys[parentTable] ?? 'id'
+          subquerySQL = buildHasSubquery(parentTable, targetTable, pk)
         }
         else if (type === 'belongsTo') {
-          const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
-          const targetPk = meta.primaryKeys[targetTable] ?? 'id'
-          const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${targetPk} = ${parentTable}.${fk}`
-          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) }
-          catch {}
+          const pk = meta.primaryKeys[targetTable] ?? 'id'
+          subquerySQL = buildBelongsToSubquery(parentTable, targetTable, pk)
         }
         else if (type === 'belongsToMany') {
-          const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-          const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-          const pivot = [a, b].sort().join('_')
+          const pk = meta.primaryKeys[parentTable] ?? 'id'
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
-          const subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${b}_id WHERE ${pivot}.${a}_id = ${parentTable}.${pk}`
-          built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `EXISTS (${subquerySQL})`) }
-          catch {}
+          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk)
         }
+        else {
+          throw new Error(`[query-builder] Unsupported relationship type '${type}' for has`)
+        }
+
+        built = sql`${built} WHERE EXISTS (${sql([subquerySQL] as any)})`
+        try {
+          addWhereText('WHERE', `EXISTS (${subquerySQL})`)
+        }
+        catch {}
 
         return this as any
       },
@@ -2785,33 +2948,31 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const [type, relMap] = relType
         const targetModel = (relMap as any)[relation]
         const targetTable = meta.modelToTable[targetModel] || targetModel
-        const pk = meta.primaryKeys[parentTable] ?? 'id'
+
+        let subquerySQL: string
 
         if (type === 'hasMany' || type === 'hasOne') {
-          const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
-          const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
-          built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) }
-          catch {}
+          const pk = meta.primaryKeys[parentTable] ?? 'id'
+          subquerySQL = buildHasSubquery(parentTable, targetTable, pk)
         }
         else if (type === 'belongsTo') {
-          const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
-          const targetPk = meta.primaryKeys[targetTable] ?? 'id'
-          const subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${targetPk} = ${parentTable}.${fk}`
-          built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) }
-          catch {}
+          const pk = meta.primaryKeys[targetTable] ?? 'id'
+          subquerySQL = buildBelongsToSubquery(parentTable, targetTable, pk)
         }
         else if (type === 'belongsToMany') {
-          const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-          const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-          const pivot = [a, b].sort().join('_')
+          const pk = meta.primaryKeys[parentTable] ?? 'id'
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
-          const subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${b}_id WHERE ${pivot}.${a}_id = ${parentTable}.${pk}`
-          built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
-          try { addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`) }
-          catch {}
+          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk)
         }
+        else {
+          throw new Error(`[query-builder] Unsupported relationship type '${type}' for doesntHave`)
+        }
+
+        built = sql`${built} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
+        try {
+          addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`)
+        }
+        catch {}
 
         return this as any
       },
@@ -2840,65 +3001,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const targetModel = (relMap as any)[relation]
           const targetTable = meta.modelToTable[targetModel] || targetModel
 
+          const pk = meta.primaryKeys[parentTable] ?? 'id'
+          let countSubquery: string
+
           if (type === 'hasMany' || type === 'hasOne') {
-            const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
-            const pk = meta.primaryKeys[parentTable] ?? 'id'
-            const countSubquery = `(SELECT COUNT(*) FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk})`
-            const alias = `${relation}_count`
-
-            // Update text representation for toSQL()
-            if (text.match(/^SELECT\s+\*/i)) {
-              text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${countSubquery} AS ${alias}`)
-            }
-            else if (text.match(/^SELECT\s+/i)) {
-              text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${countSubquery} AS ${alias} FROM`)
-            }
-
-            // Update built query
-            const currentSelect = String(built)
-            if (currentSelect.match(/^SELECT\s+\*/i)) {
-              const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${countSubquery} AS ${alias}`)
-              built = sql([newSql] as any)
-            }
-            else if (currentSelect.match(/^SELECT\s+/i)) {
-              const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
-              if (selectPart) {
-                const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${countSubquery} AS ${alias} FROM`)
-                built = sql([newSql] as any)
-              }
-            }
+            countSubquery = buildHasCountSubquery(parentTable, targetTable, pk)
           }
           else if (type === 'belongsToMany') {
-            const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-            const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-            const pivot = [a, b].sort().join('_')
-            const fkA = `${a}_id`
-            const pk = meta.primaryKeys[parentTable] ?? 'id'
-            const countSubquery = `(SELECT COUNT(*) FROM ${pivot} WHERE ${pivot}.${fkA} = ${parentTable}.${pk})`
-            const alias = `${relation}_count`
-
-            // Update text representation for toSQL()
-            if (text.match(/^SELECT\s+\*/i)) {
-              text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${countSubquery} AS ${alias}`)
-            }
-            else if (text.match(/^SELECT\s+/i)) {
-              text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${countSubquery} AS ${alias} FROM`)
-            }
-
-            // Update built query
-            const currentSelect = String(built)
-            if (currentSelect.match(/^SELECT\s+\*/i)) {
-              const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${countSubquery} AS ${alias}`)
-              built = sql([newSql] as any)
-            }
-            else if (currentSelect.match(/^SELECT\s+/i)) {
-              const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
-              if (selectPart) {
-                const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${countSubquery} AS ${alias} FROM`)
-                built = sql([newSql] as any)
-              }
-            }
+            countSubquery = buildBelongsToManyCountSubquery(parentTable, targetTable, pk)
           }
+          else {
+            continue // Skip unsupported relationship types
+          }
+
+          const alias = `${relation}_count`
+          addToSelectClause(`${countSubquery} AS ${alias}`)
         }
 
         return this as any
@@ -2907,56 +3024,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
        * Apply pivot columns to the SELECT clause
        */
       applyPivotColumns() {
-        if (pivotColumns.size === 0)
-          return this as any
-
-        const allPivotColumns: string[] = []
-
-        for (const [relation, columns] of pivotColumns.entries()) {
-          const parentTable = String(table)
-          const rels = meta?.relations?.[parentTable]
-          if (!rels)
-            continue
-
-          const targetModel = rels.belongsToMany?.[relation]
-          if (!targetModel)
-            continue
-
-          const targetTable = meta.modelToTable[targetModel] || targetModel
-          const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-          const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-          const pivot = [a, b].sort().join('_')
-
-          const pivotColumnsStr = columns.map(col => `${pivot}.${col} AS pivot_${col}`)
-          allPivotColumns.push(...pivotColumnsStr)
-        }
-
-        if (allPivotColumns.length > 0) {
-          const pivotColumnsStr = allPivotColumns.join(', ')
-
-          // Update text representation for toSQL()
-          if (text.match(/^SELECT\s+\*/i)) {
-            text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumnsStr}`)
-          }
-          else if (text.match(/^SELECT\s+/i)) {
-            text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumnsStr} FROM`)
-          }
-
-          // Update built query
-          const currentSelect = String(built)
-          if (currentSelect.match(/^SELECT\s+\*/i)) {
-            const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumnsStr}`)
-            built = (_sql as any).unsafe(newSql)
-          }
-          else if (currentSelect.match(/^SELECT\s+/i)) {
-            const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
-            if (selectPart) {
-              const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumnsStr} FROM`)
-              built = (_sql as any).unsafe(newSql)
-            }
-          }
-        }
-
+        applyPivotColumnsToQuery()
         return this as any
       },
       /**
@@ -2982,7 +3050,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         pivotColumns.set(relation, columns)
 
         // Apply pivot columns to the current query
-        this.applyPivotColumns()
+        applyPivotColumnsToQuery()
 
         return this as any
       },
@@ -3023,12 +3091,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
 
         // Handle object format: { name: 'Alice', age: 25 }
-        if (expr && typeof expr === 'object' && !('raw' in expr)) {
-          const keys = Object.keys(expr)
+        if (expr && typeof expr === 'object' && !isRawExpression(expr)) {
+          const whereObject = expr as Record<string, unknown>
+          const keys = Object.keys(whereObject)
           const conditions: string[] = []
 
           for (const key of keys) {
-            const value = (expr as any)[key]
+            const value = whereObject[key]
             if (Array.isArray(value)) {
               const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
               conditions.push(`${key} IN (${placeholders})`)
@@ -3051,9 +3120,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
 
         // Handle raw expressions
-        if (expr && typeof (expr as any).raw !== 'undefined') {
-          whereConditions.push((expr as any).raw)
-          text = `${text} WHERE ${(expr as any).raw}`
+        if (isRawExpression(expr)) {
+          whereConditions.push(expr.raw)
+          text = `${text} WHERE ${expr.raw}`
           built = (_sql as any).unsafe(text)
           return this
         }
@@ -3774,7 +3843,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const col = config.softDeletes.column
           const tbl = String(table)
           const hasCol = schema ? Boolean((schema as any)[tbl]?.columns?.[col]) : true
-          if (hasCol && !/\bdeleted_at\b/i.test(text)) {
+          if (hasCol && !SQL_PATTERNS.DELETED_AT.test(text)) {
             finalQuery = sql`${built} WHERE ${sql(String(col))} IS ${onlyTrashed ? sql`NOT NULL` : sql`NULL`}`
             addWhereText('WHERE', `${String(col)} IS ${onlyTrashed ? 'NOT ' : ''}NULL`)
           }
@@ -4019,14 +4088,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     /** Escape/validate identifier names (best-effort) */
     id(name: string) {
-      if (!/^[A-Z_][\w.]*$/i.test(name))
-        throw new Error(`Invalid identifier: ${name}`)
+      if (!SQL_PATTERNS.IDENTIFIER.test(name)) {
+        throw new Error(`[query-builder] Invalid identifier: '${name}'. Identifiers must start with a letter or underscore and contain only alphanumeric characters, underscores, and dots.`)
+      }
       return _sql(String(name))
     },
     ids(...names: string[]) {
       for (const n of names) {
-        if (!/^[A-Z_][\w.]*$/i.test(n))
-          throw new Error(`Invalid identifier: ${n}`)
+        if (!SQL_PATTERNS.IDENTIFIER.test(n)) {
+          throw new Error(`[query-builder] Invalid identifier: '${n}'. Identifiers must start with a letter or underscore and contain only alphanumeric characters, underscores, and dots.`)
+        }
       }
       return _sql(names as any)
     },
