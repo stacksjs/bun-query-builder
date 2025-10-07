@@ -3428,7 +3428,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const len = keys.length
           if (len) {
             const baseIdx = whereParams.length
-            const conditions: string[] = new Array(len)
+            const conditions: string[] = Array.from({ length: len })
             for (let i = 0; i < len; i++) {
               const key = keys[i]
               conditions[i] = `${key} = $${baseIdx + i + 1}`
@@ -4510,7 +4510,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const keys = Object.keys(firstRow)
       const colCount = keys.length
       const rowCount = rows.length
-      const params = new Array(rowCount * colCount)
+      const params = Array.from({ length: rowCount * colCount })
 
       let sql = `INSERT INTO ${table}(${keys.join(',')})VALUES`
       let pidx = 0
@@ -4538,7 +4538,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const keys = Object.keys(firstRow)
       const colCount = keys.length
       const rowCount = rows.length
-      const params = new Array(rowCount * colCount)
+      const params = Array.from({ length: rowCount * colCount })
 
       // Build SQL
       let sql = `INSERT INTO ${table}(${keys.join(',')})VALUES`
@@ -4566,7 +4566,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const params: any[] = []
 
       // Build SET clause using array join
-      const setClauses: string[] = new Array(dataLen)
+      const setClauses: string[] = Array.from({ length: dataLen })
       for (let i = 0; i < dataLen; i++) {
         setClauses[i] = `${dataKeys[i]}=$${i + 1}`
         params.push((data as any)[dataKeys[i]])
@@ -4584,7 +4584,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const condLen = condKeys.length
         if (condLen > 0) {
           const baseIdx = params.length
-          const whereClauses: string[] = new Array(condLen)
+          const whereClauses: string[] = Array.from(condLen)
           for (let i = 0; i < condLen; i++) {
             whereClauses[i] = `${condKeys[i]}=$${baseIdx + i + 1}`
             params.push((conditions as any)[condKeys[i]])

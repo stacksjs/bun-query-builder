@@ -1,6 +1,6 @@
 import type { SupportedDialect } from '@/types'
+import process from 'node:process'
 import { bunSql } from '@/db'
-import { getDialectDriver } from '@/drivers'
 
 export interface WipeOptions {
   dialect?: SupportedDialect
@@ -13,7 +13,6 @@ export interface WipeOptions {
  */
 export async function dbWipe(options: WipeOptions = {}): Promise<void> {
   const dialect = options.dialect || (process.env.DB_DIALECT as SupportedDialect) || 'postgres'
-  const driver = getDialectDriver(dialect)
 
   if (options.verbose) {
     console.log(`Wiping all tables from ${dialect} database...`)

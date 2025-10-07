@@ -1,5 +1,6 @@
 import { readdirSync } from 'node:fs'
 import { extname, join } from 'node:path'
+import process from 'node:process'
 
 export interface ModelShowOptions {
   dir?: string

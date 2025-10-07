@@ -71,7 +71,7 @@ export async function migrateStatus(): Promise<MigrationStatus[]> {
       executedMigrations = result
     }
     catch (err) {
-      console.log('-- Migrations table not found. All migrations are pending.')
+      console.log('-- Migrations table not found. All migrations are pending.', err)
       console.log()
     }
 

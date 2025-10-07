@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { deleteMigrationFiles } from '@/actions/migrate'
@@ -250,10 +250,9 @@ export default class SpecificSeeder extends Seeder {
       expect(out.stdout).toContain('Created model')
 
       const modelPath = join(workspace, 'app/Models/Product.ts')
-      const fs = require('node:fs')
-      expect(fs.existsSync(modelPath)).toBe(true)
+      expect(existsSync(modelPath)).toBe(true)
 
-      const content = fs.readFileSync(modelPath, 'utf8')
+      const content = readFileSync(modelPath, 'utf8')
       expect(content).toContain('Product')
       expect(content).toContain('products')
       expect(content).toContain('defineModel')

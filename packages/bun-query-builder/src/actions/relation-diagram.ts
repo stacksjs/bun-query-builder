@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import process from 'node:process'
 import { loadModels } from '../index'
 
 export interface DiagramOptions {

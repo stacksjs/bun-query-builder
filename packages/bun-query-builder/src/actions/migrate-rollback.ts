@@ -1,9 +1,6 @@
-import type { SupportedDialect } from '@/types'
 import { existsSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
-import { config } from '@/config'
-import { getDialectDriver } from '@/drivers'
 import { createQueryBuilder } from '../index'
 
 /**
@@ -43,8 +40,6 @@ export interface RollbackOptions {
  * 3. Generate fresh migrations
  */
 export async function migrateRollback(options: RollbackOptions = {}): Promise<void> {
-  const dialect = config.dialect as SupportedDialect || 'postgres'
-  const driver = getDialectDriver(dialect)
   const steps = options.steps || 1
 
   console.log('-- Rolling back migrations')
@@ -65,7 +60,7 @@ export async function migrateRollback(options: RollbackOptions = {}): Promise<vo
       executedMigrations = await qb.unsafe(query)
     }
     catch (err) {
-      console.log('-- Migrations table not found. Nothing to rollback.')
+      console.log('-- Migrations table not found. Nothing to rollback.', err)
       return
     }
 

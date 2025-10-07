@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
@@ -45,7 +45,7 @@ describe('Model Generation Actions', () => {
     const modelPath = join(workspace, 'app/Models/CustomModel.ts')
     expect(existsSync(modelPath)).toBe(true)
 
-    const content = require('node:fs').readFileSync(modelPath, 'utf8')
+    const content = readFileSync(modelPath, 'utf8')
     expect(content).toContain('custom_table_name')
 
     process.chdir(originalCwd)
@@ -638,9 +638,8 @@ describe('Relation Diagram Actions', () => {
         output: outputFile,
       })
 
-      const fs = require('node:fs')
-      if (fs.existsSync(outputFile)) {
-        const content = fs.readFileSync(outputFile, 'utf8')
+      if (existsSync(outputFile)) {
+        const content = readFileSync(outputFile, 'utf8')
         expect(content).toContain('erDiagram')
       }
     }
