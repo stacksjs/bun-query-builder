@@ -15,29 +15,34 @@ Define your data model once and get a type-safe query experience _(a la Kysely/L
 ## Features
 
 ### Core Query Building
+
 - **Typed from Models**: Infer tables/columns/PKs from your model files; `selectFrom('users')` and `where({ active: true })` are typed.
 - **Fluent Builder**: `select/insert/update/delete`, `where/andWhere/orWhere`, `join/leftJoin/rightJoin/crossJoin`, `groupBy/having`, `union/unionAll`.
 - **Aggregations**: `count()`, `avg()`, `sum()`, `max()`, `min()` with full type safety.
 - **Batch Operations**: `insertMany()`, `updateMany()`, `deleteMany()` for efficient bulk operations.
 
 ### Advanced Features
+
 - **Relations**: `with(...)`, `withCount(...)`, `whereHas(...)`, `has()`, `doesntHave()`, `selectAllRelations()` with configurable aliasing and constraint callbacks.
 - **Query Scopes**: Define reusable query constraints on models for cleaner, more maintainable code.
 - **Query Caching**: Built-in LRU cache with TTL support via `cache(ttlMs)`, `clearQueryCache()`, `setQueryCacheMaxSize()`.
 - **Model Hooks**: Lifecycle events - `beforeCreate`, `afterCreate`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`.
 
 ### Utilities & Helpers
+
 - **Utilities**: `distinct/distinctOn`, `orderByDesc/latest/oldest/inRandomOrder`, `whereColumn/whereRaw/groupByRaw/havingRaw`, JSON/date helpers.
 - **Pagination**: `paginate`, `simplePaginate`, `cursorPaginate`, plus `chunk/chunkById/eachById`.
 - **Soft Deletes**: `withTrashed()`, `onlyTrashed()` for logical deletion support.
 
 ### Database Operations
+
 - **Transactions**: `transaction` with retries/backoff/isolation/onRetry/afterCommit; `savepoint`; distributed tx helpers.
 - **Migrations**: Generate and execute migrations from models with full diff support.
 - **Seeders**: Database seeding with fake data generation via `ts-mocker` (faker alternative).
 - **Raw Queries**: Tagged templates and parameterized queries with `raw()` and `unsafe()`.
 
 ### Configuration & Integration
+
 - **Configurable**: Dialect hints, timestamps, alias strategies, relation FK formats, JSON mode, random function, shared lock syntax.
 - **Bun API passthroughs**: `unsafe`, `file`, `simple`, pool `reserve/release`, `close`, `ping/waitForReady`.
 - **CLI**: Introspection, query printing, connectivity checks, file/unsafe execution, explain.
@@ -373,8 +378,6 @@ query-builder relation:diagram --output schema.mmd
 
 **🏆 bun-query-builder wins 13 out of 16 benchmarks (81.25%)**
 
-Comprehensive benchmarks against Kysely, Drizzle, and Prisma show bun-query-builder is the **fastest full-featured query builder**, with perfect scores in basic operations and strong performance across advanced queries.
-
 ### Summary
 
 | Category | Win Rate | Performance vs Best |
@@ -386,6 +389,7 @@ Comprehensive benchmarks against Kysely, Drizzle, and Prisma show bun-query-buil
 ### Key Performance Wins
 
 🚀 **Dominant in Basic Queries:**
+
 - **29.29x faster** than Prisma in DELETE operations
 - **16.45x faster** than Prisma in SELECT with LIMIT
 - **14.86x faster** than Prisma in SELECT active users
@@ -393,6 +397,7 @@ Comprehensive benchmarks against Kysely, Drizzle, and Prisma show bun-query-buil
 - **12.65x faster** than Prisma in COUNT queries
 
 ⚡ **Strong in Advanced Queries:**
+
 - **3.96x faster** than Drizzle in AGGREGATE queries
 - **2.99x faster** than Prisma in GROUP BY + HAVING
 - **1.28x faster** than Prisma in JOIN operations
@@ -400,9 +405,10 @@ Comprehensive benchmarks against Kysely, Drizzle, and Prisma show bun-query-buil
 - **1.02x faster** than Kysely in AGGREGATE queries
 
 💪 **Competitive in Batch Operations:**
+
 - **4.83x faster** than Prisma in DELETE MANY
 - **1.45x faster** than Kysely in DELETE MANY
-- Within 14% of Kysely on INSERT MANY (highly optimized)
+- Within 14% of Kysely on INSERT MANY
 
 ### Perfect Category
 
@@ -410,17 +416,19 @@ Comprehensive benchmarks against Kysely, Drizzle, and Prisma show bun-query-buil
 
 ### The Trade-offs (3 out of 16)
 
-- **WHERE: Complex conditions** - Kysely 1.05x faster (essentially tied, within variance)
-- **ORDER BY + LIMIT** - Kysely 1.07x faster (essentially tied, within variance)
-- **SELECT: Large result set (1000 rows)** - Kysely 2.54x faster (see [detailed analysis](./packages/benchmark/BENCHMARKS_SUMMARY.md#deep-dive-why-kysely-wins-large-result-sets))
+- **WHERE: Complex conditions** - Kysely 1.05x faster
+- **ORDER BY + LIMIT** - Kysely 1.07x faster
+- **SELECT: Large result set (1000 rows)**
 
 **Note:** Two additional benchmarks where we're competitive but not winning:
-- **INSERT MANY: 100 users** - Kysely 1.14x faster (within 14%, highly variable)
-- **UPDATE MANY** - Prisma 1.10x faster (within 10%, essentially tied)
+
+- **INSERT MANY: 100 users** - Kysely 1.14x faster
+- **UPDATE MANY** - Prisma 1.10x faster
 
 ### Why Fast?
 
 bun-query-builder leverages Bun's native SQLite driver with:
+
 - **Direct BunDatabase access** - No abstraction layers
 - **Statement caching** - Prepared statements reused across queries
 - **Ultra-fast path** - Optimized execution for queries without hooks/soft-deletes
