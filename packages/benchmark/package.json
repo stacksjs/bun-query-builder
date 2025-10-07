@@ -20,7 +20,7 @@
     "cli-table3": "^0.6.5",
     "drizzle-orm": "^0.36.4",
     "kysely": "^0.28.7",
-    "mitata": "^0.1.14",
+    "mitata": "^1.0.34",
     "prisma": "^6.16.3",
     "typeorm": "^0.3.27"
   },
