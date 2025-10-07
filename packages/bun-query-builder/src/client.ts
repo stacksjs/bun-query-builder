@@ -2904,6 +2904,62 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       /**
+       * Apply pivot columns to the SELECT clause
+       */
+      applyPivotColumns() {
+        if (pivotColumns.size === 0)
+          return this as any
+
+        const allPivotColumns: string[] = []
+
+        for (const [relation, columns] of pivotColumns.entries()) {
+          const parentTable = String(table)
+          const rels = meta?.relations?.[parentTable]
+          if (!rels)
+            continue
+
+          const targetModel = rels.belongsToMany?.[relation]
+          if (!targetModel)
+            continue
+
+          const targetTable = meta.modelToTable[targetModel] || targetModel
+          const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+          const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+          const pivot = [a, b].sort().join('_')
+
+          const pivotColumnsStr = columns.map(col => `${pivot}.${col} AS pivot_${col}`)
+          allPivotColumns.push(...pivotColumnsStr)
+        }
+
+        if (allPivotColumns.length > 0) {
+          const pivotColumnsStr = allPivotColumns.join(', ')
+
+          // Update text representation for toSQL()
+          if (text.match(/^SELECT\s+\*/i)) {
+            text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumnsStr}`)
+          }
+          else if (text.match(/^SELECT\s+/i)) {
+            text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumnsStr} FROM`)
+          }
+
+          // Update built query
+          const currentSelect = String(built)
+          if (currentSelect.match(/^SELECT\s+\*/i)) {
+            const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumnsStr}`)
+            built = (_sql as any).unsafe(newSql)
+          }
+          else if (currentSelect.match(/^SELECT\s+/i)) {
+            const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
+            if (selectPart) {
+              const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumnsStr} FROM`)
+              built = (_sql as any).unsafe(newSql)
+            }
+          }
+        }
+
+        return this as any
+      },
+      /**
        * Include pivot table columns when eager loading belongsToMany relationships
        * Usage: .with('tags').withPivot('tags', 'created_at', 'role')
        */
@@ -2924,6 +2980,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         // Store pivot columns for this relationship
         pivotColumns.set(relation, columns)
+
+        // Apply pivot columns to the current query
+        this.applyPivotColumns()
 
         return this as any
       },
@@ -3981,25 +4040,265 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return makeSelect<TTable>(table)
     },
     selectFromSub(sub, alias) {
+      // Create a proper query builder that mimics makeSelect but works with subqueries
+      const sql = _sql
       const q = _sql`SELECT * FROM (${sub.toSQL()}) AS ${_sql(alias)}`
-      return {
-        where: (_: any) => this,
-        andWhere: (_: any) => this,
-        orWhere: (_: any) => this,
-        orderBy: () => this,
-        limit: () => this,
-        offset: () => this,
-        toSQL: () => makeExecutableQuery(q) as any,
-        execute: () => runWithHooks<any[]>(q, 'select'),
-        values: () => (q as any).values(),
-        raw: () => (q as any).raw(),
-        cancel: () => {
+
+      // Build the base API similar to makeSelect
+      const base: BaseSelectQueryBuilder<DB, any, any, any> = {
+        distinct() {
+          const rest = String(q).replace(/^SELECT\s+/i, '')
+          const newQ = sql`SELECT DISTINCT ${sql``}${sql(rest)}`
+          return createSubQueryBuilder(newQ) as any
+        },
+        distinctOn(...columns: any[]) {
+          const match = /^SELECT\s+(\S+)\s+FROM/i.exec(String(q))
+          const body = match ? `${match[1]} FROM` : String(q)
+          const newQ = sql`SELECT DISTINCT ON (${sql(columns as any)}) ${sql``}${sql(body)}`
+          return createSubQueryBuilder(newQ) as any
+        },
+        selectRaw(fragment: any) {
+          const newQ = sql`${q} , ${fragment}`
+          return createSubQueryBuilder(newQ) as any
+        },
+        where(expr: any, op?: WhereOperator, value?: any) {
+          // Apply where condition to the subquery
+          const newQ = applyWhereCondition(q, expr, op, value, 'WHERE')
+          return createSubQueryBuilder(newQ) as any
+        },
+        andWhere(expr: any, op?: WhereOperator, value?: any) {
+          const newQ = applyWhereCondition(q, expr, op, value, 'AND')
+          return createSubQueryBuilder(newQ) as any
+        },
+        orWhere(expr: any, op?: WhereOperator, value?: any) {
+          const newQ = applyWhereCondition(q, expr, op, value, 'OR')
+          return createSubQueryBuilder(newQ) as any
+        },
+        orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
+          const newQ = sql`${q} ORDER BY ${sql(column)} ${direction === 'asc' ? sql`ASC` : sql`DESC`}`
+          return createSubQueryBuilder(newQ) as any
+        },
+        limit(n: number) {
+          const newQ = sql`${q} LIMIT ${n}`
+          return createSubQueryBuilder(newQ) as any
+        },
+        offset(n: number) {
+          const newQ = sql`${q} OFFSET ${n}`
+          return createSubQueryBuilder(newQ) as any
+        },
+        toSQL() {
+          return makeExecutableQuery(q) as any
+        },
+        async execute() {
+          return runWithHooks<any[]>(q, 'select')
+        },
+        async executeTakeFirst() {
+          const rows = await runWithHooks<any[]>(q, 'select')
+          return Array.isArray(rows) ? rows[0] : rows
+        },
+        async get() {
+          return runWithHooks<any[]>(q, 'select')
+        },
+        async first() {
+          const rows = await runWithHooks<any[]>(q, 'select')
+          return Array.isArray(rows) ? rows[0] : rows
+        },
+        async firstOrFail() {
+          const rows = await runWithHooks<any[]>(q, 'select')
+          const first = Array.isArray(rows) ? rows[0] : rows
+          if (!first)
+            throw new Error('No rows found')
+          return first
+        },
+        async exists() {
+          const countQ = sql`SELECT EXISTS(${q}) as exists`
+          const result = await runWithHooks<any[]>(countQ, 'select')
+          return result?.[0]?.exists === true
+        },
+        async doesntExist() {
+          const exists = await this.exists()
+          return !exists
+        },
+        values() {
+          return (q as any).values()
+        },
+        raw() {
+          return (q as any).raw()
+        },
+        cancel() {
           try {
             ;(q as any).cancel()
           }
           catch {}
         },
-      } as any
+        // Add other essential methods as no-ops or basic implementations
+        whereRaw: () => this as any,
+        whereColumn: () => this as any,
+        orWhereColumn: () => this as any,
+        whereIn: () => this as any,
+        orWhereIn: () => this as any,
+        whereNotIn: () => this as any,
+        orWhereNotIn: () => this as any,
+        whereLike: () => this as any,
+        whereILike: () => this as any,
+        orWhereLike: () => this as any,
+        orWhereILike: () => this as any,
+        whereNotLike: () => this as any,
+        whereNotILike: () => this as any,
+        orWhereNotLike: () => this as any,
+        orWhereNotILike: () => this as any,
+        whereAny: () => this as any,
+        whereAll: () => this as any,
+        whereNone: () => this as any,
+        whereNested: () => this as any,
+        orWhereNested: () => this as any,
+        whereDate: () => this as any,
+        whereBetween: () => this as any,
+        whereNotBetween: () => this as any,
+        whereJsonContains: () => this as any,
+        whereJsonPath: () => this as any,
+        whereNull: () => this as any,
+        whereNotNull: () => this as any,
+        whereExists: () => this as any,
+        whereJsonDoesntContain: () => this as any,
+        whereJsonContainsKey: () => this as any,
+        whereJsonDoesntContainKey: () => this as any,
+        whereJsonLength: () => this as any,
+        join: () => this as any,
+        joinSub: () => this as any,
+        innerJoin: () => this as any,
+        leftJoin: () => this as any,
+        leftJoinSub: () => this as any,
+        rightJoin: () => this as any,
+        crossJoin: () => this as any,
+        crossJoinSub: () => this as any,
+        groupBy: () => this as any,
+        groupByRaw: () => this as any,
+        having: () => this as any,
+        havingRaw: () => this as any,
+        addSelect: () => this as any,
+        select: () => this as any,
+        selectAll: () => this as any,
+        orderByDesc: () => this as any,
+        inRandomOrder: () => this as any,
+        reorder: () => this as any,
+        orderByRaw: () => this as any,
+        union: () => this as any,
+        unionAll: () => this as any,
+        forPage: () => this as any,
+        selectAllRelations: () => this as any,
+        with: () => this as any,
+        value: () => Promise.resolve(undefined),
+        pluck: () => Promise.resolve([]),
+        cursorPaginate: () => Promise.resolve({ data: [], meta: { perPage: 0, nextCursor: null } }),
+        paginate: () => Promise.resolve({ data: [], meta: { perPage: 0, page: 1, total: 0, lastPage: 1 } }),
+        simplePaginate: () => Promise.resolve({ data: [], meta: { perPage: 0, page: 1, hasMore: false } }),
+        chunk: () => Promise.resolve(),
+        chunkById: () => Promise.resolve(),
+        eachById: () => Promise.resolve(),
+        count: () => Promise.resolve(0),
+        avg: () => Promise.resolve(0),
+        sum: () => Promise.resolve(0),
+        max: () => Promise.resolve(null),
+        min: () => Promise.resolve(null),
+        find: () => Promise.resolve(undefined),
+        findOrFail: () => Promise.reject(new Error('Not found')),
+        findMany: () => Promise.resolve([]),
+        latest: () => this as any,
+        oldest: () => this as any,
+        lazy: () => (async function* () {})(),
+        lazyById: () => (async function* () {})(),
+        pipe: (fn: any) => fn(this),
+        when: () => this as any,
+        tap: () => this as any,
+        dump: () => this as any,
+        dd: () => { throw new Error('Dump and Die') },
+        explain: () => Promise.resolve([]),
+        simple: () => (q as any).simple(),
+        toText: () => String(q),
+        toParams: () => (q as any).values?.() ?? [],
+        withTimeout: () => this as any,
+        abort: () => this as any,
+        lockForUpdate: () => this as any,
+        sharedLock: () => this as any,
+        withCTE: () => this as any,
+        withRecursive: () => this as any,
+        cache: () => this as any,
+        clone: () => this as any,
+        withTrashed: () => this as any,
+        onlyTrashed: () => this as any,
+        scope: () => this as any,
+        // Type-only properties
+        get rows() { return [] as any },
+        get row() { return undefined as any },
+      }
+
+      // Helper function to create a new subquery builder with updated SQL
+      function createSubQueryBuilder(newQ: any) {
+        return {
+          ...base,
+          toSQL: () => makeExecutableQuery(newQ) as any,
+          execute: () => runWithHooks<any[]>(newQ, 'select'),
+          get: () => runWithHooks<any[]>(newQ, 'select'),
+          first: async () => {
+            const rows = await runWithHooks<any[]>(newQ, 'select')
+            return Array.isArray(rows) ? rows[0] : rows
+          },
+          firstOrFail: async () => {
+            const rows = await runWithHooks<any[]>(newQ, 'select')
+            const first = Array.isArray(rows) ? rows[0] : rows
+            if (!first)
+              throw new Error('No rows found')
+            return first
+          },
+          exists: async () => {
+            const countQ = sql`SELECT EXISTS(${newQ}) as exists`
+            const result = await runWithHooks<any[]>(countQ, 'select')
+            return result?.[0]?.exists === true
+          },
+          doesntExist: async () => {
+            const exists = await base.exists()
+            return !exists
+          },
+          values: () => (newQ as any).values(),
+          raw: () => (newQ as any).raw(),
+          cancel: () => {
+            try {
+              ;(newQ as any).cancel()
+            }
+            catch {}
+          },
+          simple: () => (newQ as any).simple(),
+          toText: () => String(newQ),
+          toParams: () => (newQ as any).values?.() ?? [],
+        }
+      }
+
+      // Helper function to apply where conditions
+      function applyWhereCondition(query: any, expr: any, op?: WhereOperator, value?: any, prefix: 'WHERE' | 'AND' | 'OR' = 'WHERE') {
+        if (typeof expr === 'string' && op !== undefined) {
+          const clause = Array.isArray(value) ? `${expr} IN (?)` : `${expr} ${op} ?`
+          return sql`${query} ${sql(prefix)} ${sql(clause)}`
+        }
+        else if (Array.isArray(expr) && expr.length === 3) {
+          const [column, operator, val] = expr
+          const clause = Array.isArray(val) ? `${column} IN (?)` : `${column} ${operator} ?`
+          return sql`${query} ${sql(prefix)} ${sql(clause)}`
+        }
+        else if (typeof expr === 'object' && expr !== null) {
+          const conditions = Object.entries(expr).map(([key, val]) => {
+            const clause = Array.isArray(val) ? `${key} IN (?)` : `${key} = ?`
+            return sql`${sql(clause)}`
+          })
+          const combined = conditions.reduce((acc, cond, i) =>
+            i === 0 ? cond : sql`${acc} AND ${cond}`,
+          )
+          return sql`${query} ${sql(prefix)} ${combined}`
+        }
+        return query
+      }
+
+      return base as any
     },
     insertInto<TTable extends keyof DB & string>(table: TTable) {
       let built: any
