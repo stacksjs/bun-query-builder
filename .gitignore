@@ -20,3 +20,5 @@ packages/bun-query-builder/bin/query-builder
 /packages/bun-query-builder/sql
 packages/benchmark/benchmark.db-shm
 packages/benchmark/benchmark.db-wal
+*.sql
+*.csv

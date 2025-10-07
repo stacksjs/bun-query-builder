@@ -70,6 +70,26 @@ describe('End-to-End Seeding Workflow', () => {
   it('complete workflow: create, seed, verify', async () => {
     const qb = createQueryBuilder()
 
+    // Clean up - delete in correct order to avoid foreign key constraints
+    try {
+      await qb.deleteFrom('comments').execute()
+    }
+    catch {
+      // Table might not exist
+    }
+    try {
+      await qb.deleteFrom('posts').execute()
+    }
+    catch {
+      // Table might not exist
+    }
+    try {
+      await qb.deleteFrom('users').execute()
+    }
+    catch {
+      // Table might not exist
+    }
+
     // Step 1: Create seeder using makeSeeder
     const originalCwd = process.cwd()
     process.chdir(testWorkspace)
@@ -253,7 +273,19 @@ export default class CommentSeeder {
   it('seeder with faker generates realistic data', async () => {
     const qb = createQueryBuilder()
 
-    // Clean up
+    // Clean up - delete in correct order to avoid foreign key constraints
+    try {
+      await qb.deleteFrom('comments').execute()
+    }
+    catch {
+      // Table might not exist
+    }
+    try {
+      await qb.deleteFrom('posts').execute()
+    }
+    catch {
+      // Table might not exist
+    }
     try {
       await qb.deleteFrom('users').execute()
     }
@@ -304,7 +336,19 @@ export default class FakerTestSeeder {
   it('handles large dataset seeding', async () => {
     const qb = createQueryBuilder()
 
-    // Clean up
+    // Clean up - delete in correct order to avoid foreign key constraints
+    try {
+      await qb.deleteFrom('comments').execute()
+    }
+    catch {
+      // Table might not exist
+    }
+    try {
+      await qb.deleteFrom('posts').execute()
+    }
+    catch {
+      // Table might not exist
+    }
     try {
       await qb.deleteFrom('users').execute()
     }
