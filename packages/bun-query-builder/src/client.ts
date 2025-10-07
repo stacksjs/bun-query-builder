@@ -2084,8 +2084,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   }
 
   function makeExecutableQuery(q: any, text?: string) {
+    const sqlText = text ?? computeSqlText(q)
     return {
-      toString: () => (text ?? computeSqlText(q)),
+      sql: sqlText,
+      toString: () => sqlText,
       execute: () => (q as any).execute(),
       values: () => (q as any).values(),
       raw: () => (q as any).raw(),
@@ -2103,7 +2105,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       : `SELECT * FROM ${String(table)}`
 
     // Lazy building: don't prepare statement until execution
-    let built: any = null
+    let built: any = (columns && columns.length > 0)
+      ? sql`SELECT ${sql(columns.join(', '))} FROM ${sql(table)}`
+      : sql`SELECT * FROM ${sql(table)}`
 
     const addWhereText = (prefix: 'WHERE' | 'AND' | 'OR', clause: string) => {
       const hasWhere = /\bWHERE\b/i.test(text)
@@ -2117,6 +2121,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     let includeTrashed = false
     let onlyTrashed = false
     let useCache = false
+    const pivotColumns = new Map<string, string[]>() // Store pivot columns per relationship
     let cacheTtl = 60000
 
     // Track WHERE conditions and parameters for proper merging
@@ -2396,6 +2401,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const fkA = `${singularize(fromTable)}_id`
             const fkB = `${singularize(childTable)}_id`
             built = sql`${built} LEFT JOIN ${sql(pivot)} ON ${sql(`${pivot}.${fkA}`)} = ${sql(`${fromTable}.${fromPk}`)} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${childPk}`)} = ${sql(`${pivot}.${fkB}`)}`
+
             joinedTables.add(pivot)
             joinedTables.add(childTable)
             return childTable
@@ -2504,6 +2510,56 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
           // Track loaded relationship
           loadedRelationships.add(relationName)
+        }
+
+        // Apply pivot columns if any were requested
+        if (pivotColumns.size > 0) {
+          const allPivotColumns: string[] = []
+
+          for (const [relation, columns] of pivotColumns.entries()) {
+            const parentTable = String(table)
+            const rels = meta.relations?.[parentTable]
+            if (!rels)
+              continue
+
+            const targetModel = rels.belongsToMany?.[relation]
+            if (!targetModel)
+              continue
+
+            const targetTable = meta.modelToTable[targetModel] || targetModel
+            const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+            const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
+            const pivot = [a, b].sort().join('_')
+
+            const pivotColumnsStr = columns.map(col => `${pivot}.${col} AS pivot_${col}`)
+            allPivotColumns.push(...pivotColumnsStr)
+          }
+
+          if (allPivotColumns.length > 0) {
+            const pivotColumnsStr = allPivotColumns.join(', ')
+
+            // Update text representation for toSQL()
+            if (text.match(/^SELECT\s+\*/i)) {
+              text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumnsStr}`)
+            }
+            else if (text.match(/^SELECT\s+/i)) {
+              text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumnsStr} FROM`)
+            }
+
+            // Update built query
+            const currentSelect = String(built)
+            if (currentSelect.match(/^SELECT\s+\*/i)) {
+              const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumnsStr}`)
+              built = (_sql as any).unsafe(newSql)
+            }
+            else if (currentSelect.match(/^SELECT\s+/i)) {
+              const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
+              if (selectPart) {
+                const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumnsStr} FROM`)
+                built = (_sql as any).unsafe(newSql)
+              }
+            }
+          }
         }
 
         // Update text representation for toSQL()
@@ -2866,35 +2922,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           throw new Error(`[query-builder] Relationship '${relation}' is not a belongsToMany relationship on table '${parentTable}'`)
         }
 
-        const targetTable = meta.modelToTable[targetModel] || targetModel
-        const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-        const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-        const pivot = [a, b].sort().join('_')
-
-        // Add pivot columns to SELECT
-        const pivotColumns = columns.map(col => `${pivot}.${col} AS pivot_${col}`).join(', ')
-
-        // Update text representation for toSQL()
-        if (text.match(/^SELECT\s+\*/i)) {
-          text = text.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumns}`)
-        }
-        else if (text.match(/^SELECT\s+/i)) {
-          text = text.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumns} FROM`)
-        }
-
-        // Update built query
-        const currentSelect = String(built)
-        if (currentSelect.match(/^SELECT\s+\*/i)) {
-          const newSql = currentSelect.replace(/^SELECT\s+\*/i, `SELECT *, ${pivotColumns}`)
-          built = sql([newSql] as any)
-        }
-        else if (currentSelect.match(/^SELECT\s+/i)) {
-          const selectPart = currentSelect.match(/^SELECT\s+(.+?)\s+FROM/i)
-          if (selectPart) {
-            const newSql = currentSelect.replace(/^SELECT\s+(.+?)\s+FROM/i, `SELECT $1, ${pivotColumns} FROM`)
-            built = sql([newSql] as any)
-          }
-        }
+        // Store pivot columns for this relationship
+        pivotColumns.set(relation, columns)
 
         return this as any
       },

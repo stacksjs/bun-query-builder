@@ -52,7 +52,7 @@ describe('new relationship features', () => {
 
       const qb = db.selectFrom('users').whereHas('posts')
       expect(qb).toBeDefined()
-      const sql = String(qb.toSQL().sql || qb.toSQL())
+      const sql = String(qb.toSQL()?.sql || qb.toSQL() || '')
       expect(sql).toContain('EXISTS')
       expect(sql).toContain('posts')
     })
@@ -854,12 +854,10 @@ describe('new relationship features', () => {
         meta,
       })
 
-      const qb = db.selectFrom('users')
-        .with('roles')
-        .withPivot('roles', 'created_at', 'expires_at')
+      const qb = db.selectFrom('users').with('roles').withPivot('roles', 'created_at', 'expires_at')
 
       expect(qb).toBeDefined()
-      const sql = String(qb.toSQL() || '')
+      const sql = String(qb.toSQL()?.sql || qb.toSQL() || '')
       expect(sql).toContain('pivot_created_at')
       expect(sql).toContain('pivot_expires_at')
     })
@@ -937,7 +935,9 @@ describe('new relationship features', () => {
         .with('tags')
         .withPivot('tags', 'order', 'featured', 'created_at')
 
-      const sql = String(qb.toSQL() || '')
+      const sql = String(qb.toSQL()?.sql || qb.toSQL() || '')
+
+      console.log('qb is', qb.toSQL())
       expect(sql).toContain('pivot_order')
       expect(sql).toContain('pivot_featured')
       expect(sql).toContain('pivot_created_at')
