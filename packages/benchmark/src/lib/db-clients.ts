@@ -68,7 +68,9 @@ export function createBunQBClient() {
   // Wrap BunDatabase to provide SQL template tag API
   const sql: any = (strings: any, ...values: any[]) => {
     // Handle single string argument (e.g., sql('column_name')) - return as identifier/fragment
-    if (!Array.isArray(strings) || !strings.raw) {
+    const str = strings as any
+
+    if (!Array.isArray(strings) || !str.raw) {
       if (Array.isArray(strings)) {
         return { [SQL_FRAGMENT]: true, value: strings.join(', ') }
       }

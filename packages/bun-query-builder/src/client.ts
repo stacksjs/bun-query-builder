@@ -4584,7 +4584,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const condLen = condKeys.length
         if (condLen > 0) {
           const baseIdx = params.length
-          const whereClauses: string[] = Array.from(condLen)
+          const whereClauses: string[] = Array.from({ length: condLen })
           for (let i = 0; i < condLen; i++) {
             whereClauses[i] = `${condKeys[i]}=$${baseIdx + i + 1}`
             params.push((conditions as any)[condKeys[i]])
