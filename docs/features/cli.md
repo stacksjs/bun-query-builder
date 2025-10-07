@@ -207,6 +207,28 @@ query-builder make:model Post --table blog_posts
 query-builder make:model Product --dir ./models
 ```
 
+### model:show
+
+Display detailed information about a specific model including attributes, relations, scopes, hooks, and indexes.
+
+```
+query-builder model:show <name> [--dir <path>] [--json] [--verbose]
+```
+
+Options:
+
+- `--dir <path>` - Models directory (default: app/Models)
+- `--json` - Output as JSON
+- `--verbose` - Enable verbose output
+
+Examples:
+
+```bash
+query-builder model:show User
+query-builder model:show Post --json
+query-builder model:show Product --dir ./models
+```
+
 ### migrate:status
 
 Show the status of all migrations (executed vs pending).
@@ -244,6 +266,29 @@ query-builder migrate:rollback
 query-builder migrate:rollback --steps 2
 ```
 
+### migrate:generate
+
+Generate migration files from model changes (drift detection).
+
+```
+query-builder migrate:generate [dir] [--dialect <d>] [--apply] [--full]
+```
+
+Options:
+
+- `--dialect <d>` - Database dialect (postgres|mysql|sqlite), default: postgres
+- `--apply` - Execute the generated SQL immediately
+- `--full` - Force full migration SQL instead of incremental diff
+- `--state <path>` - Path to migration state file
+
+Examples:
+
+```bash
+query-builder migrate:generate
+query-builder migrate:generate ./app/Models --dialect postgres
+query-builder migrate:generate --apply
+```
+
 ### db:info
 
 Display database information including tables, row counts, and statistics.
@@ -264,6 +309,51 @@ Alias for `db:info`.
 
 ```
 query-builder db:stats
+```
+
+### db:wipe
+
+Drop all tables from the database. Useful for testing and development.
+
+```
+query-builder db:wipe [--dialect <d>] [--force] [--verbose]
+```
+
+Options:
+
+- `--dialect <d>` - Database dialect (postgres|mysql|sqlite), default: postgres
+- `--force` - Skip confirmation prompt
+- `--verbose` - Enable verbose output
+
+Examples:
+
+```bash
+query-builder db:wipe
+query-builder db:wipe --force
+query-builder db:wipe --verbose
+```
+
+### db:optimize
+
+Optimize database tables using VACUUM, ANALYZE (postgres), OPTIMIZE TABLE (mysql), or equivalent commands.
+
+```
+query-builder db:optimize [--dialect <d>] [--aggressive] [--tables <list>] [--verbose]
+```
+
+Options:
+
+- `--dialect <d>` - Database dialect (postgres|mysql|sqlite), default: postgres
+- `--aggressive` - Use aggressive optimization (VACUUM FULL for postgres)
+- `--tables <list>` - Comma-separated list of tables to optimize
+- `--verbose` - Enable verbose output
+
+Examples:
+
+```bash
+query-builder db:optimize
+query-builder db:optimize --aggressive
+query-builder db:optimize --tables users,posts
 ```
 
 ### inspect
@@ -456,6 +546,51 @@ Examples:
 query-builder dump
 query-builder dump --tables users,posts
 query-builder dump --output backup.sql
+```
+
+### query:explain-all
+
+Run EXPLAIN on all SQL files in a directory or a single SQL file. Useful for batch performance analysis.
+
+```
+query-builder query:explain-all <path> [--verbose] [--json]
+```
+
+Options:
+
+- `--verbose` - Enable verbose output
+- `--json` - Output as JSON
+
+Examples:
+
+```bash
+query-builder query:explain-all ./queries
+query-builder query:explain-all ./queries/users.sql
+query-builder query:explain-all ./queries --json
+```
+
+### relation:diagram
+
+Generate relationship diagrams from models in Mermaid or Graphviz DOT format.
+
+```
+query-builder relation:diagram [--dir <path>] [--format <fmt>] [--output <path>]
+```
+
+Options:
+
+- `--dir <path>` - Models directory (default: app/Models)
+- `--format <fmt>` - Output format: mermaid or dot (default: mermaid)
+- `--output <path>` - Output file path (prints to stdout if not specified)
+- `--verbose` - Enable verbose output
+
+Examples:
+
+```bash
+query-builder relation:diagram
+query-builder relation:diagram --format dot --output schema.dot
+query-builder relation:diagram --output schema.mmd
+query-builder relation:diagram --dir ./app/Models
 ```
 
 ## Examples

@@ -300,6 +300,7 @@ await runSeeder('UserSeeder', { verbose: true })
 # Model Generation
 query-builder make:model User
 query-builder make:model Post --table=blog_posts
+query-builder model:show User                   # Show detailed model info
 
 # Schema Introspection
 query-builder introspect ./app/Models --verbose
@@ -307,6 +308,7 @@ query-builder sql ./app/Models users --limit 5
 
 # Migrations
 query-builder migrate ./app/Models --dialect postgres
+query-builder migrate:generate                  # Generate migration from drift
 query-builder migrate:status                    # Show migration status
 query-builder migrate:list                      # List all migrations
 query-builder migrate:rollback --steps 2        # Rollback migrations
@@ -318,6 +320,9 @@ query-builder db:info                           # Show database statistics
 query-builder db:stats                          # Alias for db:info
 query-builder inspect users                     # Inspect table structure
 query-builder table:info users                  # Alias for inspect
+query-builder db:wipe --force                   # Drop all tables
+query-builder db:optimize                       # Optimize database (VACUUM, ANALYZE)
+query-builder db:optimize --aggressive          # Aggressive optimization
 
 # Interactive Console
 query-builder console                           # Start REPL
@@ -343,6 +348,7 @@ query-builder cache:config --size 500
 # Performance
 query-builder benchmark --iterations 1000
 query-builder benchmark --operations select,insert
+query-builder query:explain-all ./queries        # Batch EXPLAIN analysis
 
 # Schema Validation
 query-builder validate:schema ./app/Models
@@ -356,6 +362,11 @@ query-builder wait-ready --attempts 30 --delay 250
 query-builder file ./migrations/seed.sql
 query-builder unsafe "SELECT * FROM users WHERE id = $1" --params "[1]"
 query-builder explain "SELECT * FROM users WHERE active = true"
+
+# Diagrams & Visualization
+query-builder relation:diagram                   # Generate Mermaid ER diagram
+query-builder relation:diagram --format dot     # Generate Graphviz DOT
+query-builder relation:diagram --output schema.mmd
 ```
 
 ## Performance

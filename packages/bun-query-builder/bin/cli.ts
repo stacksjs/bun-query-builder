@@ -7,13 +7,19 @@ import { freshDatabase, makeSeeder, runSeeder, runSeeders } from '../src/actions
 import { makeModel } from '../src/actions/make-model'
 import { migrateList, migrateStatus } from '../src/actions/migrate-status'
 import { migrateRollback } from '../src/actions/migrate-rollback'
+import { migrateGenerate } from '../src/actions/migrate-generate'
 import { dbInfo, dbStats } from '../src/actions/db-info'
+import { dbWipe } from '../src/actions/db-wipe'
+import { dbOptimize } from '../src/actions/db-optimize'
 import { startConsole, tinker } from '../src/actions/console'
 import { inspectTable, tableInfo } from '../src/actions/inspect'
 import { cacheClear, cacheConfig, cacheStats } from '../src/actions/cache'
 import { runBenchmark } from '../src/actions/benchmark'
 import { checkSchema, validateSchema } from '../src/actions/validate'
 import { dumpDatabase, exportData, importData } from '../src/actions/data'
+import { modelShow } from '../src/actions/model-show'
+import { queryExplainAll } from '../src/actions/query-explain-all'
+import { relationDiagram } from '../src/actions/relation-diagram'
 
 const cli = new CAC('query-builder')
 
@@ -102,6 +108,51 @@ cli
   .example('query-builder explain "SELECT * FROM users WHERE active = true"')
   .action(async (sql: string) => {
     await explain(sql)
+  })
+
+cli
+  .command('query:explain-all <path>', 'Run EXPLAIN on all SQL files in a directory')
+  .option('--verbose', 'Enable verbose output')
+  .option('--json', 'Output as JSON')
+  .example('query-builder query:explain-all ./queries')
+  .example('query-builder query:explain-all ./queries/users.sql')
+  .action(async (path: string, opts: any) => {
+    try {
+      await queryExplainAll(path, {
+        verbose: opts.verbose,
+        json: opts.json,
+      })
+    }
+    catch (err) {
+      console.error('-- Explain all failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('relation:diagram', 'Generate relationship diagram from models')
+  .option('--dir <path>', 'Models directory (defaults to app/Models)')
+  .option('--format <fmt>', 'Output format (mermaid|dot)', { default: 'mermaid' })
+  .option('--output <path>', 'Output file path')
+  .option('--verbose', 'Enable verbose output')
+  .example('query-builder relation:diagram')
+  .example('query-builder relation:diagram --format dot --output schema.dot')
+  .example('query-builder relation:diagram --output schema.mmd')
+  .action(async (opts: any) => {
+    try {
+      await relationDiagram({
+        dir: opts.dir,
+        format: opts.format,
+        output: opts.output,
+        verbose: opts.verbose,
+      })
+    }
+    catch (err) {
+      console.error('-- Diagram generation failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
   })
 
 cli
@@ -261,6 +312,29 @@ cli
     }
   })
 
+// Model inspection commands
+cli
+  .command('model:show <name>', 'Show detailed model information')
+  .option('--dir <path>', 'Models directory (defaults to app/Models)')
+  .option('--json', 'Output as JSON')
+  .option('--verbose', 'Enable verbose output')
+  .example('query-builder model:show User')
+  .example('query-builder model:show Post --json')
+  .action(async (name: string, opts: any) => {
+    try {
+      await modelShow(name, {
+        dir: opts.dir,
+        json: opts.json,
+        verbose: opts.verbose,
+      })
+    }
+    catch (err) {
+      console.error('-- Failed to show model:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
 // Migration management commands
 cli
   .command('migrate:status', 'Show migration status')
@@ -306,6 +380,30 @@ cli
     }
   })
 
+cli
+  .command('migrate:generate [dir]', 'Generate migration from model changes')
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--state <path>', 'Path to migration state file')
+  .option('--apply', 'Execute the generated SQL')
+  .option('--full', 'Force full migration SQL')
+  .example('query-builder migrate:generate')
+  .example('query-builder migrate:generate ./app/Models --dialect postgres')
+  .action(async (dir?: string, opts?: any) => {
+    try {
+      await migrateGenerate(dir, {
+        dialect: opts?.dialect,
+        state: opts?.state,
+        apply: opts?.apply,
+        full: opts?.full,
+      })
+    }
+    catch (err) {
+      console.error('-- Generate migration failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
 // Database info commands
 cli
   .command('db:info', 'Show database information and statistics')
@@ -330,6 +428,53 @@ cli
     }
     catch (err) {
       console.error('-- Failed to get database stats:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('db:wipe', 'Drop all tables from the database')
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--force', 'Skip confirmation prompt')
+  .option('--verbose', 'Enable verbose output')
+  .example('query-builder db:wipe')
+  .example('query-builder db:wipe --force')
+  .action(async (opts: any) => {
+    try {
+      await dbWipe({
+        dialect: opts.dialect,
+        force: opts.force,
+        verbose: opts.verbose,
+      })
+    }
+    catch (err) {
+      console.error('-- Wipe failed:', err)
+      const proc = await import('node:process')
+      proc.default.exitCode = 1
+    }
+  })
+
+cli
+  .command('db:optimize', 'Optimize database tables (VACUUM, ANALYZE, OPTIMIZE)')
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--aggressive', 'Use aggressive optimization (VACUUM FULL for postgres)')
+  .option('--tables <tables>', 'Comma-separated list of tables to optimize')
+  .option('--verbose', 'Enable verbose output')
+  .example('query-builder db:optimize')
+  .example('query-builder db:optimize --aggressive')
+  .example('query-builder db:optimize --tables users,posts')
+  .action(async (opts: any) => {
+    try {
+      await dbOptimize({
+        dialect: opts.dialect,
+        aggressive: opts.aggressive,
+        tables: opts.tables ? opts.tables.split(',') : undefined,
+        verbose: opts.verbose,
+      })
+    }
+    catch (err) {
+      console.error('-- Optimize failed:', err)
       const proc = await import('node:process')
       proc.default.exitCode = 1
     }
