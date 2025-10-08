@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
+import { createQueryBuilder } from '../src'
 import { resetDatabase } from '../src/actions/migrate'
 import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 
