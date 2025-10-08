@@ -74,15 +74,20 @@ describe('model-like facade usage examples (typed only)', () => {
     expect(typeof UserModel.save).toBe('function')
     expect(typeof UserModel.find).toBe('function')
     expect(typeof UserModel.remove).toBe('function')
-    // smoke-compile calls (no runtime exec)
-    void UserModel.create({ email: 'x@y.z', name: 'X', role: 'guest' })
-    void UserModel.createMany([{ email: 'a@b.c', name: 'A', role: 'member' }])
-    void UserModel.firstOrCreate({ email: 'unique1@test.com' }, { name: 'X' })
-    void UserModel.updateOrCreate({ email: 'm@n.o' }, { name: 'M' })
-    void UserModel.save({ role: 'admin' })
-    void UserModel.find(1)
-    void UserModel.remove(1)
-    void UserModel.latest('created_at')
-    void UserModel.oldest('created_at')
+
+    // Type-only smoke tests (compile-time validation, no runtime execution)
+    // These ensure the API is typed correctly without actually executing
+    const _typeTests = false as boolean
+    if (_typeTests) {
+      void UserModel.create({ email: 'x@y.z', name: 'X', role: 'guest' })
+      void UserModel.createMany([{ email: 'a@b.c', name: 'A', role: 'member' }])
+      void UserModel.firstOrCreate({ email: 'unique1@test.com' }, { name: 'X' })
+      void UserModel.updateOrCreate({ email: 'm@n.o' }, { name: 'M' })
+      void UserModel.save({ role: 'admin' })
+      void UserModel.find(1)
+      void UserModel.remove(1)
+      void UserModel.latest('created_at')
+      void UserModel.oldest('created_at')
+    }
   })
 })
