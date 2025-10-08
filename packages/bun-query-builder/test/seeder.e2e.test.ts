@@ -401,10 +401,7 @@ describe('Error Handling and Edge Cases', () => {
     const errorDir = join(testWorkspace, 'database/seeders-syntax-error')
     mkdirSync(errorDir, { recursive: true })
 
-    const badSeeder = `
-
-
-export default class SyntaxErrorSeeder {
+    const badSeeder = `export default class SyntaxErrorSeeder {
   async run(qb: any): Promise<void> {
     // Missing closing brace
     const data = {
@@ -434,10 +431,7 @@ export default class SyntaxErrorSeeder {
     const runtimeErrorDir = join(testWorkspace, 'database/seeders-runtime-error')
     mkdirSync(runtimeErrorDir, { recursive: true })
 
-    const runtimeErrorSeeder = `
-
-
-export default class RuntimeErrorSeeder {
+    const runtimeErrorSeeder = `export default class RuntimeErrorSeeder {
   async run(qb: any): Promise<void> {
     throw new Error('Runtime error in seeder')
   }
@@ -464,10 +458,7 @@ export default class RuntimeErrorSeeder {
     const missingMethodDir = join(testWorkspace, 'database/seeders-missing-method')
     mkdirSync(missingMethodDir, { recursive: true })
 
-    const missingMethodSeeder = `
-
-
-export default class MissingMethodSeeder {
+    const missingMethodSeeder = `export default class MissingMethodSeeder {
   async run(qb: any): Promise<void> {
     // Try to use non-existent method
     try {
@@ -509,10 +500,7 @@ export default class MissingMethodSeeder {
     const noExportDir = join(testWorkspace, 'database/seeders-no-export')
     mkdirSync(noExportDir, { recursive: true })
 
-    const noExportSeeder = `
-
-
-class NoExportSeeder {
+    const noExportSeeder = `class NoExportSeeder {
   async run(qb: any): Promise<void> {
     console.log('This seeder has no default export')
   }
