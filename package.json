@@ -63,15 +63,10 @@
     "changelog": "bunx logsmith --verbose",
     "changelog:generate": "bunx logsmith --output CHANGELOG.md",
     "release": "bun run changelog:generate && bunx bumpx prompt --recursive",
-    "postinstall": "bunx git-hooks",
     "dev:docs": "bun --bun vitepress dev docs",
     "build:docs": "bun --bun vitepress build docs",
     "preview:docs": "bun --bun vitepress preview docs",
     "typecheck": "bun --bun tsc"
-  },
-  "dependencies": {
-    "@stacksjs/ts-validation": "^0.4.7",
-    "ts-mocker": "^0.1.2"
   },
   "devDependencies": {
     "@stacksjs/bumpx": "^0.1.86",
