@@ -22,3 +22,4 @@ packages/benchmark/benchmark.db-shm
 packages/benchmark/benchmark.db-wal
 *.sql
 *.csv
+users.json
