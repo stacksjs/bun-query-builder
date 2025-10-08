@@ -1419,6 +1419,54 @@ export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
   executeTakeFirst?: () => Promise<{ numDeletedRows?: number }>
 }
 
+export interface TableQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
+  /**
+   * # `insert`
+   *
+   * Inserts rows into the table (Laravel-style API).
+   *
+   * @example
+   * ```ts
+   * const count = await db.table('users').insert({ name: 'Alice' }).execute()
+   * const rows = await db.table('users').insert([{ name: 'A' }, { name: 'B' }]).execute()
+   * ```
+   */
+  insert: (data: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[]) => InsertQueryBuilder<DB, TTable>
+  /**
+   * # `update`
+   *
+   * Updates rows in the table (Laravel-style API).
+   *
+   * @example
+   * ```ts
+   * const count = await db.table('users').update({ active: true }).where({ id: 1 }).execute()
+   * ```
+   */
+  update: (values: Partial<DB[TTable]['columns']>) => UpdateQueryBuilder<DB, TTable>
+  /**
+   * # `delete`
+   *
+   * Deletes rows from the table (Laravel-style API).
+   *
+   * @example
+   * ```ts
+   * const count = await db.table('users').delete().where({ id: 1 }).execute()
+   * ```
+   */
+  delete: () => DeleteQueryBuilder<DB, TTable>
+  /**
+   * # `select`
+   *
+   * Selects from the table (Laravel-style API).
+   *
+   * @example
+   * ```ts
+   * const rows = await db.table('users').select('id', 'name').execute()
+   * ```
+   */
+  select: (...columns: (keyof DB[TTable]['columns'] & string)[]) => SelectQueryBuilder<DB, TTable, any>
+}
+
 export interface QueryBuilder<DB extends DatabaseSchema<any>> {
   // typed select list (column names or raw aliases)
   /**
@@ -1482,6 +1530,20 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * ```
    */
   deleteFrom: <TTable extends keyof DB & string>(table: TTable) => DeleteQueryBuilder<DB, TTable>
+  /**
+   * # `table`
+   *
+   * Laravel-style table API with insert/update/delete methods.
+   *
+   * @example
+   * ```ts
+   * const count = await db.table('users').insert({ name: 'Alice' }).execute()
+   * const rows = await db.table('users').insert([{ name: 'A' }, { name: 'B' }]).execute()
+   * await db.table('users').update({ active: true }).where({ id: 1 }).execute()
+   * await db.table('users').delete().where({ id: 1 }).execute()
+   * ```
+   */
+  table: <TTable extends keyof DB & string>(table: TTable) => TableQueryBuilder<DB, TTable>
   /**
    * # `selectFromSub`
    *
@@ -4556,6 +4618,26 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           catch {}
 
           return result
+        },
+      }
+    },
+    table(tableName) {
+      const self = this as any
+      return {
+        insert(data) {
+          return self.insertInto(tableName).values(data)
+        },
+        update(values) {
+          return self.updateTable(tableName).set(values)
+        },
+        delete() {
+          return self.deleteFrom(tableName)
+        },
+        select(...columns) {
+          if (columns.length === 0) {
+            return self.selectFrom(tableName)
+          }
+          return self.select(tableName, ...columns)
         },
       }
     },

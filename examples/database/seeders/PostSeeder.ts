@@ -1,5 +1,5 @@
+import { Seeder } from 'bun-query-builder'
 import { faker } from 'ts-mocker'
-import { Seeder } from '../../../src/seeder'
 
 export default class PostSeeder extends Seeder {
   /**

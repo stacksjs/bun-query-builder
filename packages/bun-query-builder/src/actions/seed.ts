@@ -183,17 +183,32 @@ export default class ${className} extends Seeder {
    * Run the database seeds.
    */
   async run(qb: QueryBuilder): Promise<void> {
-    // Example: Create 10 records
-    // const records = Array.from({ length: 10 }, () => ({
-    //   name: faker.person.fullName(),
-    //   email: faker.internet.email(),
-    //   created_at: new Date(),
-    //   updated_at: new Date(),
-    // }))
-    //
-    // await qb.insertInto('table_name').values(records).execute()
+    console.log('Seeding: ${className}')
 
-    console.log('Seeder: ${className}')
+    // Example: Create 10 records with faker
+    const records = Array.from({ length: 10 }, () => ({
+      name: faker.person.fullName(),
+      email: faker.internet.email().toLowerCase(),
+      age: faker.number.int({ min: 18, max: 80 }),
+      created_at: faker.date.past(),
+      updated_at: new Date(),
+    }))
+
+    // Option 1: Kysely-style API
+    await qb.insertInto('table_name').values(records).execute()
+
+    // Option 2: Laravel-style API (equivalent)
+    // await qb.table('table_name').insert(records).execute()
+
+    console.log(\`✓ Seeded \${records.length} records\`)
+
+    // For large datasets, use batch inserts:
+    // const batchSize = 100
+    // for (let i = 0; i < records.length; i += batchSize) {
+    //   const batch = records.slice(i, i + batchSize)
+    //   await qb.insertInto('table_name').values(batch).execute()
+    //   // Or: await qb.table('table_name').insert(batch).execute()
+    // }
   }
 
   /**

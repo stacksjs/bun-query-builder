@@ -23,7 +23,8 @@ beforeAll(async () => {
 
   // Create package.json with local dependencies
   const bunQBPath = resolve(__dirname, '..')
-  const tsMockerPath = resolve(__dirname, '../../../node_modules/ts-mocker')
+  // Resolve ts-mocker from the root node_modules
+  const tsMockerPath = resolve(bunQBPath, '../..', 'node_modules/ts-mocker')
 
   writeFileSync(
     join(testWorkspace, 'package.json'),

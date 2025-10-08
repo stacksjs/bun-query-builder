@@ -36,7 +36,11 @@ export default class UserSeeder extends Seeder {
       updated_at: new Date(),
     }))
 
-    await qb.table('users').insert(users).execute()
+    // Option 1: Kysely-style API
+    await qb.insertInto('users').values(users).execute()
+
+    // Option 2: Laravel-style API (equivalent)
+    // await qb.table('users').insert(users).execute()
   }
 
   // Optional: Control execution order (lower runs first)
@@ -90,6 +94,38 @@ bun qb db:fresh
 ```
 
 This is useful when you want to completely reset your database to a clean state.
+
+## API Styles
+
+bun-query-builder supports two API styles for database operations:
+
+### Kysely-style API
+
+```typescript
+// Insert
+await qb.insertInto('users').values(users).execute()
+
+// Update
+await qb.updateTable('users').set({ active: true }).where({ id: 1 }).execute()
+
+// Delete
+await qb.deleteFrom('users').where({ id: 1 }).execute()
+```
+
+### Laravel-style API
+
+```typescript
+// Insert
+await qb.table('users').insert(users).execute()
+
+// Update
+await qb.table('users').update({ active: true }).where({ id: 1 }).execute()
+
+// Delete
+await qb.table('users').delete().where({ id: 1 }).execute()
+```
+
+Both APIs are functionally equivalent - use whichever style you prefer!
 
 ## Using ts-mocker (Faker)
 
