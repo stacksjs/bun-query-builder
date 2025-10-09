@@ -19,7 +19,7 @@
     "chalk": "^5.6.2",
     "cli-table3": "^0.6.5",
     "drizzle-orm": "^0.44.6",
-    "kysely": "^0.28.7",
+    "kysely": "^0.28.8",
     "mitata": "^0.1.14",
     "prisma": "^6.17.0",
     "typeorm": "^0.3.27"
