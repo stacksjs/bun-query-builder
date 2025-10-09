@@ -1,3 +1,24 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.4...v0.1.5)
+
+### 🧹 Chores
+
+- release v0.1.5 ([31155a7](https://github.com/stacksjs/bun-query-builder/commit/31155a7))
+- wip ([c15459c](https://github.com/stacksjs/bun-query-builder/commit/c15459c))
+
+### Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.4...HEAD)
+
+### 🧹 Chores
+
+- wip ([c15459c](https://github.com/stacksjs/bun-query-builder/commit/c15459c))
+
+### Contributors
+
+- Chris <chrisbreuer93@gmail.com>
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.3...v0.1.4)
 
 ### 🧹 Chores
