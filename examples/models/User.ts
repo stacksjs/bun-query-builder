@@ -1,10 +1,11 @@
 import { v } from '@stacksjs/ts-validation'
-import { defineModel } from 'bun-query-builder'
+import { defineModel } from '../../packages/bun-query-builder/src'
 
 const model = defineModel({
   name: 'User',
   table: 'users',
   primaryKey: 'id',
+  hasMany: { posts: 'Post' },
   attributes: {
     id: { validation: { rule: v.integer() } },
     email: { unique: true, validation: { rule: v.string() } },

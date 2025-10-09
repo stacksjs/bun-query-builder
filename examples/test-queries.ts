@@ -1,6 +1,6 @@
 import { join } from 'node:path'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
-import { executeMigration, generateMigration, resetDatabase } from '../src/actions/migrate'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../packages/bun-query-builder/src'
+import { executeMigration, generateMigration, resetDatabase } from '../packages/bun-query-builder/src/actions/migrate'
 import User from './models/User'
 
 // Define models with proper structure
@@ -34,8 +34,8 @@ async function basicSelectQuery() {
 async function freshMigration() {
   const modelsPath = join(import.meta.dir, 'models')
   await resetDatabase(modelsPath, { dialect: 'postgres' })
-  // await generateMigration(modelsPath, { dialect: 'postgres', full: true })
-  // await executeMigration()
+  await generateMigration(modelsPath, { dialect: 'postgres', full: true })
+  await executeMigration()
 }
 
 /**

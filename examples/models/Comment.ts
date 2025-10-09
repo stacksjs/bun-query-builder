@@ -1,5 +1,5 @@
-import { defineModel } from 'bun-query-builder'
 import { v } from '../../examples/validation'
+import { defineModel } from '../../packages/bun-query-builder/src'
 
 const model: {
   readonly name: 'Comment'
