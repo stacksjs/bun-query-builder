@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { config } from '@/config'
-import { bunSql } from '@/db'
+import { getOrCreateBunSql, withFreshConnection } from '@/db'
 import { getDialectDriver } from '@/drivers'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../index'
 
@@ -248,8 +248,10 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
     const dropMigrationsSql = driver.dropTable('migrations')
 
     try {
-      await bunSql.unsafe(dropMigrationsSql).execute()
-      console.log('-- Dropped migrations table')
+      await withFreshConnection(async (bunSql) => {
+        await bunSql.unsafe(dropMigrationsSql).execute()
+        console.log('-- Dropped migrations table')
+      })
     }
     catch (err) {
       // Ignore errors when dropping migrations table
@@ -293,8 +295,10 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
       for (const tableName of tableNames.reverse()) {
         try {
           const dropSql = driver.dropTable(tableName)
-          await bunSql.unsafe(dropSql).execute()
-          console.log(`-- Dropped table: ${tableName}`)
+          await withFreshConnection(async (bunSql) => {
+            await bunSql.unsafe(dropSql).execute()
+            console.log(`-- Dropped table: ${tableName}`)
+          })
         }
         catch (err) {
           console.error(err)
@@ -312,8 +316,10 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
         try {
           const dropEnumSql = driver.dropEnumType(enumTypeName)
           if (dropEnumSql) {
-            await bunSql.unsafe(dropEnumSql).execute()
-            console.log(`-- Dropped enum type: ${enumTypeName}`)
+            await withFreshConnection(async (bunSql) => {
+              await bunSql.unsafe(dropEnumSql).execute()
+              console.log(`-- Dropped enum type: ${enumTypeName}`)
+            })
           }
         }
         catch (err) {

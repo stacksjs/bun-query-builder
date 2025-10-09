@@ -4,7 +4,7 @@
 import type { SchemaMeta } from './meta'
 import type { DatabaseSchema } from './schema'
 import { config } from './config'
-import { bunSql } from './db'
+import { bunSql, getOrCreateBunSql } from './db'
 
 // Type guard for raw SQL expressions
 interface RawExpression {
@@ -1998,7 +1998,7 @@ function computeBackoffMs(attempt: number, cfg?: TxBackoff): number {
 }
 
 export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Partial<InternalState>): QueryBuilder<DB> {
-  const _sql = state?.sql ?? bunSql
+  const _sql = state?.sql ?? getOrCreateBunSql()
   const meta = state?.meta
   const schema = state?.schema
 

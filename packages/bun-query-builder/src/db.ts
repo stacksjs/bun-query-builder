@@ -80,7 +80,33 @@ export function getBunSql(): SQL {
 
 // Note: This is created once when the module loads
 // Using a fallback in-memory SQLite if main database is unavailable
-export const bunSql = getBunSql()
+let _bunSqlInstance: SQL | null = null
+
+export function getOrCreateBunSql(forceNew = false): SQL {
+  // If forceNew is true or we don't have an instance, create a new one
+  if (forceNew || !_bunSqlInstance) {
+    _bunSqlInstance = getBunSql()
+  }
+  return _bunSqlInstance
+}
+
+// Wrapper that catches "Connection closed" errors and retries with a fresh connection
+export async function withFreshConnection<T>(fn: (sql: SQL) => Promise<T>): Promise<T> {
+  try {
+    return await fn(_bunSqlInstance || getOrCreateBunSql())
+  }
+  catch (error: any) {
+    // If connection is closed, create a fresh connection and retry once
+    if (error?.code === 'ERR_POSTGRES_CONNECTION_CLOSED' || error?.message?.includes('Connection closed')) {
+      console.log('-- Connection closed, creating fresh connection...')
+      const freshSql = getOrCreateBunSql(true)
+      return await fn(freshSql)
+    }
+    throw error
+  }
+}
+
+export const bunSql = getOrCreateBunSql()
 
 // Add global error handler for unhandled rejections from SQL connections
 if (typeof process !== 'undefined' && process.on) {
