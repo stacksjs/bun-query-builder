@@ -30,7 +30,7 @@ jobs:
         run: bun install
 
       - name: Publish to npm
-        run: bun publish --access public
+        run: ./scripts/publish.sh
         env:
           BUN_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
 
@@ -43,10 +43,10 @@ jobs:
         uses: stacksjs/action-releaser@v1.1.0
         with:
           files: |
-            bin/query-builder-linux-x64
-            bin/query-builder-linux-arm64
-            bin/query-builder-windows-x64.exe
-            bin/query-builder-darwin-x64
-            bin/query-builder-darwin-arm64
+            packages/bun-query-builder/bin/qbx-linux-x64.zip
+            packages/bun-query-builder/bin/qbx-linux-arm64.zip
+            packages/bun-query-builder/bin/qbx-windows-x64.zip
+            packages/bun-query-builder/bin/qbx-darwin-x64.zip
+            packages/bun-query-builder/bin/qbx-darwin-arm64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -29,7 +29,7 @@ curl -L https://github.com/stacksjs/bun-query-builder/releases/download/v0.9.1/q
 chmod +x query-builder
 
 # Move it to your PATH
-mv query-builder /usr/local/bin/query-builder
+mv qbx /usr/local/bin/qbx
 ```
 
 ```sh [macOS (x64)]
@@ -40,7 +40,7 @@ curl -L https://github.com/stacksjs/bun-query-builder/releases/download/v0.9.1/q
 chmod +x query-builder
 
 # Move it to your PATH
-mv query-builder /usr/local/bin/query-builder
+mv qbx /usr/local/bin/qbx
 ```
 
 ```sh [Linux (arm64)]
@@ -51,7 +51,7 @@ curl -L https://github.com/stacksjs/bun-query-builder/releases/download/v0.9.1/q
 chmod +x query-builder
 
 # Move it to your PATH
-mv query-builder /usr/local/bin/query-builder
+mv qbx /usr/local/bin/qbx
 ```
 
 ```sh [Linux (x64)]
@@ -62,7 +62,7 @@ curl -L https://github.com/stacksjs/bun-query-builder/releases/download/v0.9.1/q
 chmod +x query-builder
 
 # Move it to your PATH
-mv query-builder /usr/local/bin/query-builder
+mv qbx /usr/local/bin/qbx
 ```
 
 ```sh [Windows (x64)]
