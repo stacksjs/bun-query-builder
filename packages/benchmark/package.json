@@ -13,19 +13,19 @@
     "clean": "bun run src/clean.ts"
   },
   "dependencies": {
-    "@prisma/client": "^6.16.3",
+    "@prisma/client": "^6.17.0",
     "better-sqlite3": "^12.4.1",
     "bun-query-builder": "workspace:*",
-    "chalk": "^5.3.0",
+    "chalk": "^5.6.2",
     "cli-table3": "^0.6.5",
-    "drizzle-orm": "^0.36.4",
-    "kysely": "^0.28.7",
+    "drizzle-orm": "^0.44.6",
+    "kysely": "^0.28.8",
     "mitata": "^0.1.14",
-    "prisma": "^6.16.3",
+    "prisma": "^6.17.0",
     "typeorm": "^0.3.27"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.21",
-    "typescript": "^5.9.2"
+    "@types/bun": "^1.2.23",
+    "typescript": "^5.9.3"
   }
 }
