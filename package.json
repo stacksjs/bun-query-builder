@@ -69,7 +69,7 @@
     "typecheck": "bun --bun tsc"
   },
   "devDependencies": {
-    "@stacksjs/bumpx": "^0.1.86",
+    "@stacksjs/bumpx": "^0.2.1",
     "@stacksjs/docs": "^0.70.23",
     "@stacksjs/eslint-config": "^4.14.0-beta.3",
     "@stacksjs/gitlint": "^0.1.5",
