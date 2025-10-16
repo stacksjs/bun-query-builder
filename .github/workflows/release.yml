@@ -19,7 +19,7 @@ jobs:
         uses: oven-sh/setup-bun@v2.0.2
 
       - name: Use cached node_modules
-        uses: actions/cache@v4.2.4
+        uses: actions/cache@v4.3.0
         with:
           path: node_modules
           key: node-modules-${{ hashFiles('**/bun.lock') }}
@@ -40,7 +40,7 @@ jobs:
           GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
 
       - name: Attach Binaries
-        uses: stacksjs/action-releaser@v1.2.5
+        uses: stacksjs/action-releaser@v1.2.6
         with:
           files: |
             packages/bun-query-builder/bin/qbx-linux-x64.zip
