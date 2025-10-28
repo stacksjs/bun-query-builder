@@ -1,3 +1,61 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.5...v0.1.6)
+
+### 🧹 Chores
+
+- release v0.1.6 ([fbce5e8](https://github.com/stacksjs/bun-query-builder/commit/fbce5e8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (#164) ([c3ad9cd](https://github.com/stacksjs/bun-query-builder/commit/c3ad9cd)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#164](https://github.com/stacksjs/bun-query-builder/issues/164), [#164](https://github.com/stacksjs/bun-query-builder/issues/164))
+- wip ([40b5ad1](https://github.com/stacksjs/bun-query-builder/commit/40b5ad1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([1c23b98](https://github.com/stacksjs/bun-query-builder/commit/1c23b98)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (#162) ([4631a1f](https://github.com/stacksjs/bun-query-builder/commit/4631a1f)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#162](https://github.com/stacksjs/bun-query-builder/issues/162), [#162](https://github.com/stacksjs/bun-query-builder/issues/162))
+- wip ([3fcdd8d](https://github.com/stacksjs/bun-query-builder/commit/3fcdd8d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (#160) ([01a050e](https://github.com/stacksjs/bun-query-builder/commit/01a050e)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#160](https://github.com/stacksjs/bun-query-builder/issues/160), [#160](https://github.com/stacksjs/bun-query-builder/issues/160))
+- wip ([2041f44](https://github.com/stacksjs/bun-query-builder/commit/2041f44)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update dependency mitata to 1.0.34 (#74) ([84d507f](https://github.com/stacksjs/bun-query-builder/commit/84d507f)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#74](https://github.com/stacksjs/bun-query-builder/issues/74), [#74](https://github.com/stacksjs/bun-query-builder/issues/74))
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _[renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot])_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.5...HEAD)
+
+### 🧹 Chores
+
+- **deps**: update all non-major dependencies (#164) ([c3ad9cd](https://github.com/stacksjs/bun-query-builder/commit/c3ad9cd)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#164](https://github.com/stacksjs/bun-query-builder/issues/164), [#164](https://github.com/stacksjs/bun-query-builder/issues/164))
+- wip ([40b5ad1](https://github.com/stacksjs/bun-query-builder/commit/40b5ad1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([1c23b98](https://github.com/stacksjs/bun-query-builder/commit/1c23b98)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (#162) ([4631a1f](https://github.com/stacksjs/bun-query-builder/commit/4631a1f)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#162](https://github.com/stacksjs/bun-query-builder/issues/162), [#162](https://github.com/stacksjs/bun-query-builder/issues/162))
+- wip ([3fcdd8d](https://github.com/stacksjs/bun-query-builder/commit/3fcdd8d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (#160) ([01a050e](https://github.com/stacksjs/bun-query-builder/commit/01a050e)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#160](https://github.com/stacksjs/bun-query-builder/issues/160), [#160](https://github.com/stacksjs/bun-query-builder/issues/160))
+- wip ([2041f44](https://github.com/stacksjs/bun-query-builder/commit/2041f44)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update dependency mitata to 1.0.34 (#74) ([84d507f](https://github.com/stacksjs/bun-query-builder/commit/84d507f)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#74](https://github.com/stacksjs/bun-query-builder/issues/74), [#74](https://github.com/stacksjs/bun-query-builder/issues/74))
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _[renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot])_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.5...HEAD)
+
+### 🧹 Chores
+
+- **deps**: update all non-major dependencies (#164) ([c3ad9cd](https://github.com/stacksjs/bun-query-builder/commit/c3ad9cd)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#164](https://github.com/stacksjs/bun-query-builder/issues/164), [#164](https://github.com/stacksjs/bun-query-builder/issues/164))
+- wip ([40b5ad1](https://github.com/stacksjs/bun-query-builder/commit/40b5ad1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([1c23b98](https://github.com/stacksjs/bun-query-builder/commit/1c23b98)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (#162) ([4631a1f](https://github.com/stacksjs/bun-query-builder/commit/4631a1f)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#162](https://github.com/stacksjs/bun-query-builder/issues/162), [#162](https://github.com/stacksjs/bun-query-builder/issues/162))
+- wip ([3fcdd8d](https://github.com/stacksjs/bun-query-builder/commit/3fcdd8d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (#160) ([01a050e](https://github.com/stacksjs/bun-query-builder/commit/01a050e)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#160](https://github.com/stacksjs/bun-query-builder/issues/160), [#160](https://github.com/stacksjs/bun-query-builder/issues/160))
+- wip ([2041f44](https://github.com/stacksjs/bun-query-builder/commit/2041f44)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update dependency mitata to 1.0.34 (#74) ([84d507f](https://github.com/stacksjs/bun-query-builder/commit/84d507f)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#74](https://github.com/stacksjs/bun-query-builder/issues/74), [#74](https://github.com/stacksjs/bun-query-builder/issues/74))
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _[renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot])_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.4...v0.1.5)
 
 ### 🧹 Chores
