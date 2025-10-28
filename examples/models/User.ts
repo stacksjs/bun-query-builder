@@ -1,5 +1,5 @@
-import { defineModel } from '../../packages/bun-query-builder/src'
 import { v } from '@stacksjs/ts-validation'
+import { defineModel } from '../../packages/bun-query-builder/src'
 
 const model = defineModel({
   name: 'User',

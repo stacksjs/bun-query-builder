@@ -30,7 +30,7 @@ function findWorkspaceRoot(startPath: string): string {
 
 function ensureSqlDirectory(): string {
   const workspaceRoot = findWorkspaceRoot(process.cwd())
-  const sqlDir = join(workspaceRoot, 'sql')
+  const sqlDir = join(workspaceRoot, 'database', 'sql')
   if (!existsSync(sqlDir)) {
     mkdirSync(sqlDir, { recursive: true })
     console.log(`-- Created SQL directory: ${sqlDir}`)
