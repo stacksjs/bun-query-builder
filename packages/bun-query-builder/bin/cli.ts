@@ -1,5 +1,5 @@
 import type { CliOption, FileOptions, MigrateOptions, SqlOptions, UnsafeOptions } from '../src/types'
-import { CAC } from 'cac'
+import { CLI } from '@stacksjs/clapp'
 import { version } from '../package.json'
 import { explain, file, introspect, ping, sql, unsafe, waitReady } from '../src/actions'
 import { runBenchmark } from '../src/actions/benchmark'
@@ -21,7 +21,7 @@ import { relationDiagram } from '../src/actions/relation-diagram'
 import { freshDatabase, makeSeeder, runSeeder, runSeeders } from '../src/actions/seed'
 import { checkSchema, validateSchema } from '../src/actions/validate'
 
-const cli = new CAC('query-builder')
+const cli = new CLI('query-builder')
 
 cli
   .command('introspect <dir>', 'Load models and print inferred schema')
