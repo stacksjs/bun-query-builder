@@ -33,6 +33,7 @@ async function basicSelectQuery() {
  */
 async function freshMigration() {
   const modelsPath = join(import.meta.dir, 'models')
+
   await resetDatabase(modelsPath, { dialect: 'postgres' })
   await generateMigration(modelsPath, { dialect: 'postgres', full: true })
   await executeMigration()
