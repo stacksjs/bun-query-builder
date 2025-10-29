@@ -69,7 +69,8 @@
     "typecheck": "bun --bun tsc"
   },
   "dependencies": {
-    "@stacksjs/ts-validation": "^0.4.7"
+    "@stacksjs/ts-validation": "^0.4.7",
+    "bunfig": "^0.15.2"
   },
   "devDependencies": {
     "@stacksjs/bumpx": "^0.2.2",
@@ -82,7 +83,6 @@
     "buddy-bot": "^0.9.9",
     "bun-git-hooks": "^0.3.1",
     "bun-plugin-dtsx": "0.21.12",
-    "bunfig": "^0.15.0",
     "typescript": "^5.9.3"
   },
   "overrides": {

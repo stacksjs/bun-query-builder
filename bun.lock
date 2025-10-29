@@ -5,6 +5,7 @@
       "name": "bun-query-builder",
       "dependencies": {
         "@stacksjs/ts-validation": "^0.4.7",
+        "bunfig": "^0.15.2",
       },
       "devDependencies": {
         "@stacksjs/bumpx": "^0.2.2",
@@ -17,13 +18,12 @@
         "buddy-bot": "^0.9.9",
         "bun-git-hooks": "^0.3.1",
         "bun-plugin-dtsx": "0.21.12",
-        "bunfig": "^0.15.0",
         "typescript": "^5.9.3",
       },
     },
     "packages/benchmark": {
       "name": "@bun-query-builder/benchmark",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "dependencies": {
         "@prisma/client": "^6.19.0-integration-next.6",
         "better-sqlite3": "^12.4.1",
@@ -43,7 +43,7 @@
     },
     "packages/bun-query-builder": {
       "name": "bun-query-builder",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "bin": {
         "query-builder": "./dist/bin/cli.js",
         "qbx": "./dist/bin/cli.js",
@@ -55,7 +55,7 @@
         "ts-mocker": "^0.1.5",
       },
       "devDependencies": {
-        "bunfig": "^0.15.0",
+        "bunfig": "^0.15.2",
       },
     },
   },
@@ -895,7 +895,7 @@
 
     "bun-types": ["bun-types@1.3.1", "", { "dependencies": { "@types/node": "*" }, "peerDependencies": { "@types/react": "^19" } }, "sha512-NMrcy7smratanWJ2mMXdpatalovtxVggkj11bScuWuiOoXTiKIu2eVS1/7qbyI/4yHedtsn175n4Sm4JcdHLXw=="],
 
-    "bunfig": ["bunfig@0.15.0", "", { "bin": { "bunfig": "bin/cli.js" } }, "sha512-CsAOYBDUI/OJPDG3GXQXIcPgCl4p025ybw15D5icJ3shRxDxFZAxlRzib0f69yER9fMj2bDrrObkkvs1qZ1qVg=="],
+    "bunfig": ["bunfig@0.15.2", "", { "dependencies": { "@stacksjs/clapp": "^0.2.0" }, "bin": { "bunfig": "bin/cli.js" } }, "sha512-D158D5KzsqYkGqZ5EVKnk9LaAM487ROM2lIB96gVi+w8fQqi7fbl+SCso34LAlrXue+Hes56vL+gpvkRNER4Wg=="],
 
     "c12": ["c12@3.1.0", "", { "dependencies": { "chokidar": "^4.0.3", "confbox": "^0.2.2", "defu": "^6.1.4", "dotenv": "^16.6.1", "exsolve": "^1.0.7", "giget": "^2.0.0", "jiti": "^2.4.2", "ohash": "^2.0.11", "pathe": "^2.0.3", "perfect-debounce": "^1.0.0", "pkg-types": "^2.2.0", "rc9": "^2.1.2" }, "peerDependencies": { "magicast": "^0.3.5" }, "optionalPeers": ["magicast"] }, "sha512-uWoS8OU1MEIsOv8p/5a82c3H31LsWVR5qiyXVfBNOzfffjUWtPnhAb4BYI2uG2HfGmZmFjCtui5XNWaps+iFuw=="],
 
@@ -2286,6 +2286,8 @@
     "@stacksjs/eslint-plugin/@unocss/core": ["@unocss/core@66.0.0", "", {}, "sha512-PdVbSMHNDDkr++9nkqzsZRAkaU84gxMTEgYbqI7dt2p1DXp/5tomVtmMsr2/whXGYKRiUc0xZ3p4Pzraz8TcXA=="],
 
     "@stacksjs/launchpad/bunfig": ["bunfig@0.11.1", "", { "bin": { "bunfig": "bin/cli.js" } }, "sha512-piIvNqxmMejrYPMSBIXf4t9+RdfyFsXMYty638eAZiL9L3dV63qwf2cvSvUTJahCQn2dT27VMdJL1z37HuD7eQ=="],
+
+    "@stacksjs/logsmith/bunfig": ["bunfig@0.15.0", "", { "bin": { "bunfig": "bin/cli.js" } }, "sha512-CsAOYBDUI/OJPDG3GXQXIcPgCl4p025ybw15D5icJ3shRxDxFZAxlRzib0f69yER9fMj2bDrrObkkvs1qZ1qVg=="],
 
     "@surma/rollup-plugin-off-main-thread/magic-string": ["magic-string@0.25.9", "", { "dependencies": { "sourcemap-codec": "^1.4.8" } }, "sha512-RmF0AsMzgt25qzqqLc1+MbHmhdx0ojF2Fvs4XnOqz2ZOBXzzkEwc/dJQZCYHAn7v1jbVOjAZfK8msRn4BxO4VQ=="],
 
