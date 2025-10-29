@@ -70,7 +70,7 @@
   },
   "dependencies": {
     "@stacksjs/ts-validation": "^0.4.7",
-    "bunfig": "^0.15.2"
+    "bunfig": "^0.15.3"
   },
   "devDependencies": {
     "@stacksjs/bumpx": "^0.2.2",
