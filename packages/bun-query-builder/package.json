@@ -74,7 +74,7 @@
     "ts-mocker": "^0.1.5"
   },
   "devDependencies": {
-    "bunfig": "^0.15.4"
+    "bunfig": "^0.15.5"
   },
   "overrides": {
     "unconfig": "0.3.10"
