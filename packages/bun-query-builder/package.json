@@ -1,7 +1,7 @@
 {
   "name": "bun-query-builder",
   "type": "module",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "A simple yet performant query builder for TypeScript. Built with Bun.",
   "author": "Chris Breuer <chris@stacksjs.org>",
   "license": "MIT",
@@ -74,7 +74,7 @@
     "ts-mocker": "^0.1.5"
   },
   "devDependencies": {
-    "bunfig": "^0.15.5"
+    "bunfig": "^0.15.6"
   },
   "overrides": {
     "unconfig": "0.3.10"
