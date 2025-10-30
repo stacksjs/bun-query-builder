@@ -1,3 +1,28 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.7...v0.1.8)
+
+### 🧹 Chores
+
+- release v0.1.8 ([cf4543f](https://github.com/stacksjs/bun-query-builder/commit/cf4543f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([3d17fc0](https://github.com/stacksjs/bun-query-builder/commit/3d17fc0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([073ca30](https://github.com/stacksjs/bun-query-builder/commit/073ca30)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([fd03a3d](https://github.com/stacksjs/bun-query-builder/commit/fd03a3d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.7...HEAD)
+
+### 🧹 Chores
+
+- wip ([3d17fc0](https://github.com/stacksjs/bun-query-builder/commit/3d17fc0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([073ca30](https://github.com/stacksjs/bun-query-builder/commit/073ca30)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([fd03a3d](https://github.com/stacksjs/bun-query-builder/commit/fd03a3d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.6...v0.1.7)
 
 ### 🧹 Chores
