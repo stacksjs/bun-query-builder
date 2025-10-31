@@ -1,5 +1,5 @@
+import { readFile, writeFile } from 'node:fs/promises'
 import { dts } from 'bun-plugin-dtsx'
-import { readFile, writeFile } from 'fs/promises'
 
 await Bun.build({
   entrypoints: ['src/index.ts'],
@@ -15,8 +15,9 @@ const content = await readFile(filePath, 'utf8')
 
 // Replace init_config(); with await init_config(); only in the init_src function body
 const updatedContent = content.replace(
-  /(var init_src = __esm\(async \(\) => \{[\s\S]*?)(\s+)(init_config\(\);)/,
-  '$1$2await init_config();'
+  // eslint-disable-next-line regexp/no-super-linear-backtracking
+  /(var init_src = __esm\(async \(\) => \{)((?:(?!\s+init_config\(\);)[\s\S])*?)(\s+)(init_config\(\);)/,
+  '$1$2$3await $4',
 )
 
 await writeFile(filePath, updatedContent)
