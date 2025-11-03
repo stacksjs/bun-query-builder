@@ -21,7 +21,7 @@
     "drizzle-orm": "^0.44.7",
     "kysely": "^0.28.8",
     "mitata": "^1.0.34",
-    "prisma": "^6.19.0-integration-next.14",
+    "prisma": "^6.19.0-integration-next.15",
     "typeorm": "^0.3.27"
   },
   "devDependencies": {
