@@ -69,7 +69,7 @@
     "typecheck": "bun --bun tsc"
   },
   "dependencies": {
-    "@stacksjs/ts-validation": "^0.4.7"
+    "@stacksjs/ts-validation": "^0.4.8"
   },
   "devDependencies": {
     "@stacksjs/docs": "^0.70.23",
