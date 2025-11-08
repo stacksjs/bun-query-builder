@@ -70,7 +70,7 @@
   },
   "dependencies": {
     "@stacksjs/clapp": "^0.2.0",
-    "@stacksjs/ts-validation": "^0.4.7",
+    "@stacksjs/ts-validation": "^0.4.8",
     "ts-mocker": "^0.1.5"
   },
   "devDependencies": {
