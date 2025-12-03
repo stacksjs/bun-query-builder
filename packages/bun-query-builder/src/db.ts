@@ -78,22 +78,41 @@ export function getBunSql(): SQL {
   }
 }
 
-// Note: This is created once when the module loads
-// Using a fallback in-memory SQLite if main database is unavailable
+// Note: Connection is created lazily on first access, not at module load time
 let _bunSqlInstance: SQL | null = null
+let _currentDialect: string | null = null
+let _currentDatabase: string | null = null
 
 export function getOrCreateBunSql(forceNew = false): SQL {
-  // If forceNew is true or we don't have an instance, create a new one
-  if (forceNew || !_bunSqlInstance) {
+  // Check if config has changed since we created the connection
+  const configChanged = _bunSqlInstance !== null && (
+    _currentDialect !== config.dialect
+    || _currentDatabase !== config.database.database
+  )
+
+  // If forceNew is true, config changed, or we don't have an instance, create a new one
+  if (forceNew || configChanged || !_bunSqlInstance) {
     _bunSqlInstance = getBunSql()
+    _currentDialect = config.dialect
+    _currentDatabase = config.database.database
   }
   return _bunSqlInstance
+}
+
+/**
+ * Resets the cached database connection.
+ * Call this after changing config via setConfig() to ensure the new config is used.
+ */
+export function resetConnection(): void {
+  _bunSqlInstance = null
+  _currentDialect = null
+  _currentDatabase = null
 }
 
 // Wrapper that catches "Connection closed" errors and retries with a fresh connection
 export async function withFreshConnection<T>(fn: (sql: SQL) => Promise<T>): Promise<T> {
   try {
-    return await fn(_bunSqlInstance || getOrCreateBunSql())
+    return await fn(getOrCreateBunSql())
   }
   catch (error: any) {
     // If connection is closed, create a fresh connection and retry once
@@ -106,7 +125,33 @@ export async function withFreshConnection<T>(fn: (sql: SQL) => Promise<T>): Prom
   }
 }
 
-export const bunSql = getOrCreateBunSql()
+/**
+ * Lazy SQL connection proxy - connection is only created when first accessed.
+ * This allows setConfig() to be called before any database connection is made.
+ */
+function createLazyBunSql(): SQL {
+  // Create a proxy that lazily initializes the connection on first use
+  return new Proxy({} as SQL, {
+    get(_target, prop) {
+      // Get or create the actual SQL instance
+      const sql = getOrCreateBunSql()
+      const value = (sql as any)[prop]
+      // If it's a function, bind it to the sql instance
+      if (typeof value === 'function') {
+        return value.bind(sql)
+      }
+      return value
+    },
+    apply(_target, _thisArg, args) {
+      // Handle tagged template literal calls: bunSql`SELECT ...`
+      const sql = getOrCreateBunSql()
+      return (sql as any)(...args)
+    },
+  })
+}
+
+// Export a lazy proxy - no connection is made until first use
+export const bunSql: SQL = createLazyBunSql()
 
 // Add global error handler for unhandled rejections from SQL connections
 if (typeof process !== 'undefined' && process.on) {
@@ -123,7 +168,6 @@ if (typeof process !== 'undefined' && process.on) {
           || reason.code === '3D000')
       ) {
         // Suppress these errors - they're expected when database isn't available
-
       }
     }
     Object.defineProperty(sqlConnectionErrorHandler, 'name', { value: 'sqlConnectionErrorHandler' })
