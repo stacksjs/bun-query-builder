@@ -4,7 +4,9 @@
 import type { SchemaMeta } from './meta'
 import type { DatabaseSchema } from './schema'
 import { config } from './config'
-import { bunSql, getOrCreateBunSql } from './db'
+import { bunSql, getOrCreateBunSql, resetConnection } from './db'
+
+export { resetConnection }
 
 // Type guard for raw SQL expressions
 interface RawExpression {

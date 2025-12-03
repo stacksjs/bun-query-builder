@@ -59,9 +59,48 @@ export const defaultConfig: QueryBuilderConfig = {
   },
 }
 
-// eslint-disable-next-line antfu/no-top-level-await
-export const config: QueryBuilderConfig = await loadConfig({
-  name: 'query-builder',
-  alias: 'qb',
-  defaultConfig,
-})
+// Lazy-loaded config to avoid top-level await (enables bun --compile)
+let _config: QueryBuilderConfig | null = null
+
+export async function getConfig(): Promise<QueryBuilderConfig> {
+  if (!_config) {
+    _config = await loadConfig({
+      name: 'query-builder',
+      alias: 'qb',
+      defaultConfig,
+    })
+  }
+  return _config
+}
+
+// For backwards compatibility - synchronous access with default fallback
+export const config: QueryBuilderConfig = defaultConfig
+
+/**
+ * Programmatically set/override the query builder configuration.
+ * This is useful when you want to configure bun-query-builder from
+ * your application code rather than using a config file.
+ */
+export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
+  // Merge user config with existing config
+  Object.assign(config, userConfig)
+
+  // Handle nested objects like database, timestamps, etc.
+  if (userConfig.database) {
+    config.database = { ...config.database, ...userConfig.database }
+  }
+  if (userConfig.timestamps) {
+    config.timestamps = { ...config.timestamps, ...userConfig.timestamps }
+  }
+  if (userConfig.pagination) {
+    config.pagination = { ...config.pagination, ...userConfig.pagination }
+  }
+  if (userConfig.softDeletes) {
+    config.softDeletes = { ...config.softDeletes, ...userConfig.softDeletes }
+  }
+
+  // Also update the cached config if it exists
+  if (_config) {
+    Object.assign(_config, config)
+  }
+}
