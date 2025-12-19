@@ -30,7 +30,7 @@ function findWorkspaceRoot(startPath: string): string {
 
 function ensureSqlDirectory(): string {
   const workspaceRoot = findWorkspaceRoot(process.cwd())
-  const sqlDir = join(workspaceRoot, 'database', 'sql')
+  const sqlDir = join(workspaceRoot, 'database', 'migrations')
   if (!existsSync(sqlDir)) {
     mkdirSync(sqlDir, { recursive: true })
     console.log(`-- Created SQL directory: ${sqlDir}`)
@@ -528,33 +528,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 1) Add foreign key constraints for new tables (ALTER statements - will execute last)
-  for (const tableName of Object.keys(nextTables)) {
-    if (!prevTables[tableName]) {
-      const t = nextTables[tableName]
-      for (const c of t.columns) {
-        if (c.references) {
-          const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column)
-          chunks.push(alterTableStatement)
-          createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
-        }
-      }
-    }
-  }
-
-  // 2) Create indexes for new tables (CREATE statements - will execute in middle)
-  for (const tableName of Object.keys(nextTables)) {
-    if (!prevTables[tableName]) {
-      const t = nextTables[tableName]
-      for (const idx of t.indexes) {
-        const createIndexStatement = driver.createIndex(t.table, idx)
-        chunks.push(createIndexStatement)
-        createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
-      }
-    }
-  }
-
-  // 3) New tables -> create tables with their enum types in the same migration file
+  // 1) New tables -> create tables with their enum types in the same migration file (MUST come before indexes)
   for (const tableName of Object.keys(nextTables)) {
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
@@ -588,7 +562,33 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 5) Create enum types for new columns in existing tables
+  // 2) Create indexes for new tables (MUST come after tables are created)
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
+      for (const idx of t.indexes) {
+        const createIndexStatement = driver.createIndex(t.table, idx)
+        chunks.push(createIndexStatement)
+        createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
+      }
+    }
+  }
+
+  // 3) Add foreign key constraints for new tables (ALTER statements - execute last)
+  for (const tableName of Object.keys(nextTables)) {
+    if (!prevTables[tableName]) {
+      const t = nextTables[tableName]
+      for (const c of t.columns) {
+        if (c.references) {
+          const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column)
+          chunks.push(alterTableStatement)
+          createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
+        }
+      }
+    }
+  }
+
+  // 4) Create enum types for new columns in existing tables
   const enumTypes = new Set<string>()
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]

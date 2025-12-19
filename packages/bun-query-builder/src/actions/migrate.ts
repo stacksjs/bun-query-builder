@@ -1,5 +1,5 @@
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -336,6 +336,15 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
       console.log('-- Could not clean up migration files')
     }
 
+    // Clear generated directory to force fresh migration generation
+    try {
+      await clearGeneratedDirectory(workspaceRoot)
+    }
+    catch (err) {
+      console.error(err)
+      console.log('-- Could not clear generated directory')
+    }
+
     console.log('-- Database reset completed successfully')
     return true
   }
@@ -377,7 +386,7 @@ export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string,
       unlinkSync(filePath)
       console.log(`-- Removed migration file: ${file}`)
     }
-    console.log(`-- Cleaned up ${migrationFiles.length} migration files from sql directory`)
+    console.log(`-- Cleaned up ${migrationFiles.length} migration files from migrations directory`)
   }
 }
 
@@ -425,12 +434,34 @@ export async function copyModelsToGenerated(dir?: string, workspaceRoot?: string
   }
 }
 
+/**
+ * Clear the generated directory to force fresh migration generation
+ * This is called during migrate:fresh to ensure all models are treated as new
+ */
+export async function clearGeneratedDirectory(workspaceRoot?: string): Promise<void> {
+  if (!workspaceRoot) {
+    workspaceRoot = getWorkspaceRoot()
+  }
+
+  const generatedDir = join(workspaceRoot, 'generated')
+
+  if (existsSync(generatedDir)) {
+    try {
+      rmSync(generatedDir, { recursive: true, force: true })
+      console.log('-- Cleared generated directory')
+    }
+    catch (err) {
+      console.error('-- Failed to clear generated directory:', err)
+    }
+  }
+}
+
 function getSqlDirectory(workspaceRoot?: string): string {
   if (!workspaceRoot) {
     workspaceRoot = getWorkspaceRoot()
   }
 
-  return join(workspaceRoot, 'database', 'sql')
+  return join(workspaceRoot, 'database', 'migrations')
 }
 
 async function createMigrationsTable(qb: any, dialect: SupportedDialect): Promise<void> {

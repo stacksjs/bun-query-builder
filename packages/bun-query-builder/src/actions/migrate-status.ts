@@ -26,7 +26,7 @@ function getSqlDirectory(workspaceRoot?: string): string {
   if (!workspaceRoot) {
     workspaceRoot = findWorkspaceRoot(process.cwd())
   }
-  return join(workspaceRoot, 'sql')
+  return join(workspaceRoot, 'database', 'migrations')
 }
 
 export interface MigrationStatus {
