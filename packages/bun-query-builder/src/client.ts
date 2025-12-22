@@ -4508,7 +4508,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this
         },
         returning(...cols: (keyof any & string)[]) {
-          const q = _sql`${built} RETURNING ${_sql(cols as any)}`
+          // Append RETURNING clause to the existing SQL
+          const returningSql = `${sqlText} RETURNING ${cols.join(', ')}`
+          const q = (_sql as any).unsafe(returningSql, params)
           return {
             where: () => this,
             andWhere: () => this,
@@ -4516,12 +4518,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             orderBy: () => this,
             limit: () => this,
             offset: () => this,
-            toSQL: () => makeExecutableQuery(q, computeSqlText(q)) as any,
+            toSQL: () => makeExecutableQuery(q, returningSql) as any,
             execute: () => runWithHooks<any[]>(q, 'insert'),
           }
         },
         toSQL: () => makeExecutableQuery(built, sqlText) as any,
         execute: () => runWithHooks(built, 'insert'),
+        async executeTakeFirst() {
+          const result = await runWithHooks(built, 'insert')
+          return result
+        },
       } as any as TypedInsertQueryBuilder<DB, TTable>
     },
     updateTable(table) {
@@ -4612,8 +4618,33 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       let built = (_sql as any).unsafe(`DELETE FROM ${quotedTable}`)
       let whereCondition: any = null
       return {
-        where(expr) {
+        where(expr: any, op?: string, value?: any) {
           whereCondition = expr
+          // Support 3-arg format: where(column, operator, value)
+          if (typeof expr === 'string' && op !== undefined) {
+            const paramIndex = 1
+            built = (_sql as any).unsafe(`DELETE FROM ${quotedTable} WHERE ${quoteId(expr)} ${op} $${paramIndex}`, [value])
+            return this
+          }
+          // Support array format: where(['column', 'op', value])
+          if (Array.isArray(expr)) {
+            const [col, oper, val] = expr
+            built = (_sql as any).unsafe(`DELETE FROM ${quotedTable} WHERE ${quoteId(String(col))} ${oper} $1`, [val])
+            return this
+          }
+          // Object format: where({ id: 1 })
+          if (expr && typeof expr === 'object' && !('raw' in expr)) {
+            const keys = Object.keys(expr)
+            const conditions: string[] = []
+            const params: any[] = []
+            let idx = 1
+            for (const key of keys) {
+              conditions.push(`${quoteId(key)} = $${idx++}`)
+              params.push((expr as any)[key])
+            }
+            built = (_sql as any).unsafe(`DELETE FROM ${quotedTable} WHERE ${conditions.join(' AND ')}`, params)
+            return this
+          }
           built = applyWhere(({} as any), built, expr)
           return this
         },
