@@ -6,6 +6,26 @@ import process from 'node:process'
 import { getDialectDriver } from './drivers'
 import { buildSchemaMeta } from './meta'
 
+/**
+ * Convert a camelCase or PascalCase string to snake_case
+ * Examples:
+ *   companyName -> company_name
+ *   billingEmail -> billing_email
+ *   isPersonal -> is_personal
+ *   createdAt -> created_at
+ *   HTMLParser -> html_parser
+ */
+function snakeCase(str: string): string {
+  return str
+    // Handle acronyms and consecutive uppercase letters
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    // Handle transition from lowercase to uppercase
+    .replace(/([a-z\d])([A-Z])/g, '$1_$2')
+    // Handle numbers followed by letters
+    .replace(/(\d)([A-Za-z])/g, '$1_$2')
+    .toLowerCase()
+}
+
 let migrationCounter = 0
 let migrationsCreatedCount = 0
 let migrationsUpdatedCount = 0
@@ -246,6 +266,9 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     for (const attrName of Object.keys(attrs)) {
       const attr = attrs[attrName]
 
+      // Convert attribute name to snake_case for database column
+      const columnName = snakeCase(attrName)
+
       // Base nullability: if no validation rule enforcing required, default nullable
       const isNullable = true
 
@@ -266,9 +289,9 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         }
       }
 
-      // Priority 3: Guess from column name patterns
+      // Priority 3: Guess from column name patterns (use snake_case column name)
       if (!inferred) {
-        inferred = guessTypeFromName(attrName)
+        inferred = guessTypeFromName(columnName)
       }
 
       // Priority 4: Infer from default value type
@@ -292,7 +315,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       }
 
       const col: ColumnPlan = {
-        name: attrName,
+        name: columnName,
         type: inferred,
         isPrimaryKey: isPk,
         isUnique: Boolean(attr.unique),
@@ -303,8 +326,8 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       }
 
       // Foreign key inference for *_id referencing another model's table
-      if (attrName.endsWith('_id')) {
-        const base = attrName.replace(/_id$/, '')
+      if (columnName.endsWith('_id')) {
+        const base = columnName.replace(/_id$/, '')
         const maybeModel = base.charAt(0).toUpperCase() + base.slice(1)
         const refTable = meta.modelToTable[maybeModel]
         if (refTable) {
@@ -316,9 +339,13 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       columns.push(col)
     }
 
-    // Composite indexes from model definition
+    // Composite indexes from model definition - convert column names to snake_case
     for (const idx of (model.indexes ?? [])) {
-      indexes.push({ name: idx.name, columns: idx.columns, type: 'index' })
+      indexes.push({
+        name: idx.name,
+        columns: idx.columns.map((c: string) => snakeCase(c)),
+        type: 'index',
+      })
     }
 
     // Unique single-column indexes from attribute flags

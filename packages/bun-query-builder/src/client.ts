@@ -4440,6 +4440,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       let sqlText = ''
       const params: any[] = []
 
+      // Quote identifier based on dialect
+      const quoteId = (id: string): string => {
+        if (config.dialect === 'mysql') {
+          return `\`${id}\``
+        }
+        // PostgreSQL and SQLite use double quotes
+        return `"${id}"`
+      }
+
       return {
         values(data: Partial<any> | Partial<any>[]) {
           const rows = Array.isArray(data) ? data : [data]
@@ -4458,11 +4467,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           params.length = totalParams
 
           // Build SQL - optimize for single row case
-          const columnList = keys.join(',')
+          // Quote column names for case-sensitive databases
+          const columnList = keys.map(k => quoteId(k)).join(',')
 
           if (rowCount === 1) {
             // Fast path for single row
-            sqlText = `INSERT INTO ${table}(${columnList})VALUES(`
+            sqlText = `INSERT INTO ${quoteId(table)}(${columnList})VALUES(`
             for (let c = 0; c < colCount; c++) {
               if (c > 0)
                 sqlText += ','
@@ -4473,7 +4483,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
           else {
             // Multi-row path
-            sqlText = `INSERT INTO ${table}(${columnList})VALUES`
+            sqlText = `INSERT INTO ${quoteId(table)}(${columnList})VALUES`
             let pidx = 0
             for (let r = 0; r < rowCount; r++) {
               const row = rows[r]
@@ -4516,8 +4526,18 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     updateTable(table) {
       let built: any
-      let sqlText = `UPDATE ${String(table)}`
       const params: any[] = []
+
+      // Quote identifier based on dialect
+      const quoteId = (id: string): string => {
+        if (config.dialect === 'mysql') {
+          return `\`${id}\``
+        }
+        // PostgreSQL and SQLite use double quotes
+        return `"${id}"`
+      }
+
+      let sqlText = `UPDATE ${quoteId(String(table))}`
 
       return {
         set(values) {
@@ -4526,7 +4546,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const setClauses: string[] = Array.from({ length: len })
           for (let i = 0; i < len; i++) {
             const key = keys[i]
-            setClauses[i] = `${key} = $${i + 1}`
+            setClauses[i] = `${quoteId(key)} = $${i + 1}`
             params.push((values as any)[key])
           }
           sqlText = `${sqlText} SET ${setClauses.join(', ')}`
@@ -4538,7 +4558,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (Array.isArray(expr)) {
             const [col, op, val] = expr
             const paramIndex = params.length + 1
-            sqlText = `${sqlText} WHERE ${String(col)} ${String(op)} $${paramIndex}`
+            sqlText = `${sqlText} WHERE ${quoteId(String(col))} ${String(op)} $${paramIndex}`
             params.push(val)
             built = (_sql as any).unsafe(sqlText, params)
           }
@@ -4548,7 +4568,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const baseIdx = params.length
             const conditions: string[] = Array.from({ length: len })
             for (let i = 0; i < len; i++) {
-              conditions[i] = `${keys[i]} = $${baseIdx + i + 1}`
+              conditions[i] = `${quoteId(keys[i])} = $${baseIdx + i + 1}`
               params.push((expr as any)[keys[i]])
             }
             sqlText = `${sqlText} WHERE ${conditions.join(' AND ')}`
@@ -4579,7 +4599,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     },
     deleteFrom(table) {
-      let built = _sql`DELETE FROM ${_sql(String(table))}`
+      // Quote identifier based on dialect
+      const quoteId = (id: string): string => {
+        if (config.dialect === 'mysql') {
+          return `\`${id}\``
+        }
+        // PostgreSQL and SQLite use double quotes
+        return `"${id}"`
+      }
+
+      const quotedTable = quoteId(String(table))
+      let built = (_sql as any).unsafe(`DELETE FROM ${quotedTable}`)
       let whereCondition: any = null
       return {
         where(expr) {
