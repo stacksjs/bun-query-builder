@@ -258,10 +258,24 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     const model = models[modelName]
     const table = (model.table as string) || `${String(model.name).toLowerCase()}s`
     const primaryKey = model.primaryKey ?? 'id'
+    const autoIncrement = model.autoIncrement !== false // default to true
     const attrs = model.attributes ?? {}
 
     const columns: ColumnPlan[] = []
     const indexes: IndexPlan[] = []
+
+    // Always add the primary key column first (if not already in attributes)
+    // This ensures every table has an id column by default
+    if (!attrs[primaryKey]) {
+      columns.push({
+        name: snakeCase(primaryKey),
+        type: autoIncrement ? 'bigint' : 'bigint', // Use bigint for primary keys
+        isPrimaryKey: true,
+        isUnique: false,
+        isNullable: false,
+        hasDefault: false,
+      })
+    }
 
     for (const attrName of Object.keys(attrs)) {
       const attr = attrs[attrName]
