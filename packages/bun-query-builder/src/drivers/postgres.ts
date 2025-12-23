@@ -18,7 +18,9 @@ export interface DialectDriver {
 
 export class PostgresDriver implements DialectDriver {
   private quoteIdentifier(id: string): string {
-    return `"${id}"`
+    // Escape double quotes by doubling them, then wrap in quotes
+    // This prevents SQL injection through identifier names
+    return `"${id.replace(/"/g, '""')}"`
   }
 
   private getColumnType(column: ColumnPlan): string {
@@ -84,14 +86,14 @@ export class PostgresDriver implements DialectDriver {
 
   createTable(table: TablePlan): string {
     const columns = table.columns.map(c => this.renderColumn(c)).join(',\n  ')
-    return `CREATE TABLE ${this.quoteIdentifier(table.table)} (\n  ${columns}\n);`
+    return `CREATE TABLE IF NOT EXISTS ${this.quoteIdentifier(table.table)} (\n  ${columns}\n);`
   }
 
   createIndex(tableName: string, index: IndexPlan): string {
     const kind = index.type === 'unique' ? 'UNIQUE ' : ''
     const idxName = `${tableName}_${index.name}`
     const columns = index.columns.map(c => this.quoteIdentifier(c)).join(', ')
-    return `CREATE ${kind}INDEX ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns});`
+    return `CREATE ${kind}INDEX IF NOT EXISTS ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns});`
   }
 
   addForeignKey(tableName: string, columnName: string, refTable: string, refColumn: string): string {

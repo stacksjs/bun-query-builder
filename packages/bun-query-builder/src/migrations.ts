@@ -269,7 +269,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     if (!attrs[primaryKey]) {
       columns.push({
         name: snakeCase(primaryKey),
-        type: autoIncrement ? 'bigint' : 'bigint', // Use bigint for primary keys
+        type: 'bigint',
         isPrimaryKey: true,
         isUnique: false,
         isNullable: false,
@@ -294,8 +294,8 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       // Priority 1: Check validation rule for explicit type
       inferred = detectTypeFromValidationRule(attr.validation.rule)
 
-      // Priority 2: Check for enum validation rule
-      if (!inferred) {
+      // Priority 2: Check for enum validation rule (or extract enum values if type is enum)
+      if (!inferred || inferred === 'enum') {
         const enumVals = detectEnumFromValidationRule(attr.validation.rule)
         if (enumVals && enumVals.length > 0) {
           inferred = 'enum'
@@ -351,6 +351,50 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       }
 
       columns.push(col)
+    }
+
+    // Handle useTimestamps trait - add created_at and updated_at columns
+    const traits = model.traits as Record<string, any> | undefined
+    const useTimestamps = traits?.useTimestamps ?? traits?.timestampable ?? false
+    if (useTimestamps) {
+      // Add created_at column if not already present
+      if (!columns.some(c => c.name === 'created_at')) {
+        columns.push({
+          name: 'created_at',
+          type: 'datetime',
+          isPrimaryKey: false,
+          isUnique: false,
+          isNullable: false,
+          hasDefault: true,
+          defaultValue: 'CURRENT_TIMESTAMP' as any,
+        })
+      }
+      // Add updated_at column if not already present
+      if (!columns.some(c => c.name === 'updated_at')) {
+        columns.push({
+          name: 'updated_at',
+          type: 'datetime',
+          isPrimaryKey: false,
+          isUnique: false,
+          isNullable: true,
+          hasDefault: false,
+        })
+      }
+    }
+
+    // Handle useSoftDeletes trait - add deleted_at column
+    const useSoftDeletes = traits?.useSoftDeletes ?? traits?.softDeletable ?? false
+    if (useSoftDeletes) {
+      if (!columns.some(c => c.name === 'deleted_at')) {
+        columns.push({
+          name: 'deleted_at',
+          type: 'datetime',
+          isPrimaryKey: false,
+          isUnique: false,
+          isNullable: true,
+          hasDefault: false,
+        })
+      }
     }
 
     // Composite indexes from model definition - convert column names to snake_case

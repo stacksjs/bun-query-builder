@@ -1,5 +1,6 @@
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import type { MigrationPlan } from '@/migrations'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -7,6 +8,74 @@ import { config } from '@/config'
 import { withFreshConnection } from '@/db'
 import { getDialectDriver } from '@/drivers'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../index'
+
+/**
+ * Get the path to the model snapshot file for a given dialect.
+ * This file stores the serialized migration plan from the last successful migration.
+ */
+function getSnapshotPath(workspaceRoot: string, dialect: SupportedDialect): string {
+  const snapshotDir = join(workspaceRoot, '.qb')
+  return join(snapshotDir, `model-snapshot.${dialect}.json`)
+}
+
+/**
+ * Load the previous migration plan from the snapshot file.
+ * Returns undefined if no snapshot exists or if the snapshot is invalid.
+ */
+function loadPlanSnapshot(workspaceRoot: string, dialect: SupportedDialect): MigrationPlan | undefined {
+  const snapshotPath = getSnapshotPath(workspaceRoot, dialect)
+
+  if (!existsSync(snapshotPath)) {
+    return undefined
+  }
+
+  try {
+    const raw = readFileSync(snapshotPath, 'utf8')
+    const parsed = JSON.parse(raw)
+
+    // Validate the snapshot structure
+    if (parsed?.plan && Array.isArray(parsed.plan.tables) && parsed.plan.dialect) {
+      return parsed.plan as MigrationPlan
+    }
+
+    // Legacy format support
+    if (Array.isArray(parsed?.tables) && parsed?.dialect) {
+      return parsed as MigrationPlan
+    }
+
+    console.log('-- Invalid snapshot format, treating as no previous state')
+    return undefined
+  }
+  catch (err) {
+    console.log('-- Could not load snapshot, treating as no previous state:', err)
+    return undefined
+  }
+}
+
+/**
+ * Save the current migration plan as a snapshot for future comparisons.
+ * This is called after a successful migration generation.
+ */
+function savePlanSnapshot(workspaceRoot: string, dialect: SupportedDialect, plan: MigrationPlan): void {
+  const snapshotPath = getSnapshotPath(workspaceRoot, dialect)
+  const snapshotDir = join(workspaceRoot, '.qb')
+
+  // Ensure the .qb directory exists
+  if (!existsSync(snapshotDir)) {
+    mkdirSync(snapshotDir, { recursive: true })
+    console.log(`-- Created snapshot directory: ${snapshotDir}`)
+  }
+
+  const snapshot = {
+    plan,
+    hash: hashMigrationPlan(plan),
+    dialect,
+    updatedAt: new Date().toISOString(),
+  }
+
+  writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2))
+  console.log(`-- Model snapshot saved to ${snapshotPath}`)
+}
 
 /**
  * Get workspace root - always use process.cwd() for consistency
@@ -25,19 +94,20 @@ function ensureSqlDirectory(workspaceRoot?: string): string {
 }
 
 /**
- * Generate migration files by comparing old models (from generated/) with new models (from source).
+ * Generate migration files by comparing the stored model snapshot with current models.
  *
  * Workflow:
- * 1. Loads previous model state from the 'generated/' directory (old model copies)
- * 2. Loads current models from the source directory
- * 3. Compares both to detect all changes:
+ * 1. Loads the previous migration plan from `.qb/model-snapshot.{dialect}.json`
+ * 2. Loads current models from the source directory and builds a new migration plan
+ * 3. Compares both plans to detect all changes:
  *    - Dropped tables, columns, indexes
  *    - New tables, columns, indexes
  *    - Modified columns (type changes, etc.)
- * 4. Generates SQL migration files for all detected changes
- * 5. Copies current models to 'generated/' for next comparison
+ * 4. Generates SQL migration files for only the detected differences
+ * 5. Saves the current plan as the new snapshot for future comparisons
  *
  * This follows Laravel's migration philosophy where model changes drive schema changes.
+ * Simply update your models and run migrations - the system automatically figures out what changed.
  */
 export async function generateMigration(dir?: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
   if (!dir) {
@@ -49,60 +119,52 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   // Get workspace root - always use current working directory
   const workspaceRoot = getWorkspaceRoot()
 
-  // Load current models from source directory
+  // Load current models from source directory and build migration plan
   const models = await loadModels({ modelsDir: dir })
   const plan = buildMigrationPlan(models, { dialect })
 
-  const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
-  const statePath = String(opts.state || defaultStatePath)
-
-  let previous: any | undefined
+  let previous: MigrationPlan | undefined
 
   if (!opts.full) {
-    // Try to load previous state from the generated directory (old model copies)
-    const generatedDir = join(workspaceRoot, 'generated')
+    // Load previous state from the snapshot file (primary source)
+    previous = loadPlanSnapshot(workspaceRoot, dialect)
 
-    if (existsSync(generatedDir)) {
-      try {
-        const oldModels = await loadModels({ modelsDir: generatedDir })
-        previous = buildMigrationPlan(oldModels, { dialect })
-        console.log('-- Comparing with models from generated/ directory')
-      }
-      catch (err) {
-        console.log('-- No previous models found in generated/ directory, checking state file', err)
-        // Fallback to state file if generated directory doesn't have models
-        if (existsSync(statePath)) {
-          try {
-            const raw = readFileSync(statePath, 'utf8')
-            const parsed = JSON.parse(raw)
-            previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
-          }
-          catch {
-            // ignore corrupt state; treat as no previous
+    if (previous) {
+      console.log('-- Comparing with stored model snapshot')
+    }
+    else {
+      // Fallback: Try legacy state file location
+      const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
+      const statePath = String(opts.state || defaultStatePath)
+
+      if (existsSync(statePath)) {
+        try {
+          const raw = readFileSync(statePath, 'utf8')
+          const parsed = JSON.parse(raw)
+          previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
+          if (previous) {
+            console.log('-- Comparing with legacy state file (will migrate to new snapshot format)')
           }
         }
+        catch {
+          // ignore corrupt state; treat as no previous
+        }
+      }
+
+      if (!previous) {
+        console.log('-- No previous snapshot found, generating full migration')
       }
     }
-    else if (existsSync(statePath)) {
-      try {
-        const raw = readFileSync(statePath, 'utf8')
-        const parsed = JSON.parse(raw)
-        previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
-      }
-      catch {
-        // ignore corrupt state; treat as no previous
-      }
-    }
+  }
+  else {
+    console.log('-- Full migration requested, ignoring any previous state')
   }
 
   const sqlStatements = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
 
-  // After generating migrations, copy current models to generated directory
-  // This becomes the "old state" for the next migration
-
   const sql = sqlStatements.join('\n')
 
-  const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER)\b/i.test(stmt))
+  const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER|DROP)\b/i.test(stmt))
 
   if (opts.apply) {
     // Use a temp file to execute multiple statements safely via file()
@@ -117,8 +179,6 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
       else {
         console.log('-- No changes; nothing to apply')
       }
-      // On success, write state snapshot with current plan and hash
-      writeFileSync(statePath, JSON.stringify({ plan, hash: hashMigrationPlan(plan), updatedAt: new Date().toISOString() }, null, 2))
     }
     catch (err) {
       console.error('-- Migration failed:', err)
@@ -126,7 +186,9 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
     }
   }
 
-  await copyModelsToGenerated(dir, workspaceRoot)
+  // Always save the current plan as a snapshot after generating migrations
+  // This ensures the next migration will only include new changes
+  savePlanSnapshot(workspaceRoot, dialect, plan)
 
   return { sql, sqlStatements, hasChanges, plan }
 }
@@ -366,13 +428,20 @@ export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string,
 
   const dialect = String(opts.dialect || 'postgres') as SupportedDialect
 
-  // Clean up migration state file
+  // Clean up the new snapshot file
+  const snapshotPath = getSnapshotPath(workspaceRoot, dialect)
+  if (existsSync(snapshotPath)) {
+    unlinkSync(snapshotPath)
+    console.log(`-- Removed model snapshot file: ${snapshotPath}`)
+  }
+
+  // Clean up legacy migration state file
   const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
   const statePath = String(opts.state || defaultStatePath)
 
   if (existsSync(statePath)) {
     unlinkSync(statePath)
-    console.log(`-- Removed migration state file: ${statePath}`)
+    console.log(`-- Removed legacy migration state file: ${statePath}`)
   }
 
   // Clean up all files in the sql directory
@@ -390,48 +459,13 @@ export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string,
   }
 }
 
-export async function copyModelsToGenerated(dir?: string, workspaceRoot?: string): Promise<void> {
-  if (!dir) {
-    dir = join(process.cwd(), 'app/Models')
-  }
-
-  if (!workspaceRoot) {
-    workspaceRoot = getWorkspaceRoot()
-  }
-
-  try {
-    // Ensure the generated directory exists at the workspace root
-    const generatedDir = join(workspaceRoot, 'generated')
-    if (!existsSync(generatedDir)) {
-      mkdirSync(generatedDir, { recursive: true })
-      console.log('-- Created generated directory')
-    }
-
-    // Read all files from the models directory
-    const files = readdirSync(dir)
-
-    // Filter for TypeScript files
-    const modelFiles = files.filter(file => file.endsWith('.ts') || file.endsWith('.js'))
-
-    if (modelFiles.length === 0) {
-      console.log('-- No model files found to copy')
-      return
-    }
-
-    // Copy each model file to the generated directory
-    for (const file of modelFiles) {
-      const sourcePath = join(dir, file)
-      const destPath = join(generatedDir, file)
-
-      copyFileSync(sourcePath, destPath)
-    }
-
-    console.log('-- Model files copied successfully')
-  }
-  catch (err) {
-    console.error('-- Failed to copy model files:', err)
-    throw err
-  }
+/**
+ * @deprecated This function is no longer needed. Model snapshots are now stored as JSON migration plans.
+ * Keeping for backward compatibility but this is now a no-op.
+ */
+export async function copyModelsToGenerated(_dir?: string, _workspaceRoot?: string): Promise<void> {
+  // No-op: Model snapshots are now stored as JSON migration plans in .qb/model-snapshot.{dialect}.json
+  // This function is kept for backward compatibility but does nothing.
 }
 
 /**

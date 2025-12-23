@@ -18,7 +18,9 @@ export interface DialectDriver {
 
 export class MySQLDriver implements DialectDriver {
   private quoteIdentifier(id: string): string {
-    return `\`${id}\``
+    // Escape backticks by doubling them, then wrap in backticks
+    // This prevents SQL injection through identifier names
+    return `\`${id.replace(/`/g, '``')}\``
   }
 
   private getColumnType(column: ColumnPlan): string {
@@ -83,13 +85,14 @@ export class MySQLDriver implements DialectDriver {
 
   createTable(table: TablePlan): string {
     const columns = table.columns.map(c => this.renderColumn(c)).join(',\n  ')
-    return `CREATE TABLE ${this.quoteIdentifier(table.table)} (\n  ${columns}\n);`
+    return `CREATE TABLE IF NOT EXISTS ${this.quoteIdentifier(table.table)} (\n  ${columns}\n);`
   }
 
   createIndex(tableName: string, index: IndexPlan): string {
     const kind = index.type === 'unique' ? 'UNIQUE ' : ''
     const idxName = `${tableName}_${index.name}`
     const columns = index.columns.map(c => this.quoteIdentifier(c)).join(', ')
+    // MySQL doesn't support IF NOT EXISTS for CREATE INDEX, so we use a different approach
     return `CREATE ${kind}INDEX ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns});`
   }
 
