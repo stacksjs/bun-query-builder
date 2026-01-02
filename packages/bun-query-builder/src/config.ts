@@ -59,6 +59,31 @@ export const defaultConfig: QueryBuilderConfig = {
   },
 }
 
+/**
+ * Get the placeholder format for the current dialect.
+ * PostgreSQL uses $1, $2, $3... while MySQL and SQLite use ?
+ */
+export function getPlaceholder(index: number): string {
+  if (config.dialect === 'postgres') {
+    return `$${index}`
+  }
+  // MySQL and SQLite use ? placeholders
+  return '?'
+}
+
+/**
+ * Generate placeholders for an array of values.
+ * PostgreSQL: $1, $2, $3
+ * MySQL/SQLite: ?, ?, ?
+ */
+export function getPlaceholders(count: number, startIndex = 1): string {
+  if (config.dialect === 'postgres') {
+    return Array.from({ length: count }, (_, i) => `$${startIndex + i}`).join(', ')
+  }
+  // MySQL and SQLite use ? placeholders
+  return Array.from({ length: count }, () => '?').join(', ')
+}
+
 // Lazy-loaded config to avoid top-level await (enables bun --compile)
 let _config: QueryBuilderConfig | null = null
 
