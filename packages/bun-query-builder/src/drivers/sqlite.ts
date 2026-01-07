@@ -65,7 +65,7 @@ export class SQLiteDriver implements DialectDriver {
     const dv = column.defaultValue
     if (typeof dv === 'string') {
       // Handle SQL functions like CURRENT_TIMESTAMP - don't quote them
-      const sqlFunctions = ['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME', 'NULL', 'TRUE', 'FALSE']
+      const sqlFunctions = ['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME', 'NOW()', 'NULL', 'TRUE', 'FALSE']
       if (sqlFunctions.includes(dv.toUpperCase())) {
         return `default ${dv.toUpperCase()}`
       }

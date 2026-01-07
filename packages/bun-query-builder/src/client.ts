@@ -3122,12 +3122,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       where(expr: any, op?: WhereOperator, value?: any) {
+        // Helper to get the correct keyword (WHERE for first condition, AND for subsequent)
+        const getWhereKeyword = () => text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+
         if (typeof expr === 'string' && op !== undefined) {
           const paramIndex = whereParams.length + 1
           whereConditions.push(`${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
           whereParams.push(value)
           // Update built and text immediately
-          text = `${text} WHERE ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`
+          text = `${text} ${getWhereKeyword()} ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`
           built = (_sql as any).unsafe(text, whereParams)
           return this
         }
@@ -3143,14 +3146,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const placeholders = getPlaceholders(values.length, whereParams.length + 1)
             whereConditions.push(`${colName} ${operator.toUpperCase()} (${placeholders})`)
             whereParams.push(...values)
-            text = `${text} WHERE ${colName} ${operator.toUpperCase()} (${placeholders})`
+            text = `${text} ${getWhereKeyword()} ${colName} ${operator.toUpperCase()} (${placeholders})`
             built = (_sql as any).unsafe(text, whereParams)
           }
           else {
             const paramIndex = whereParams.length + 1
             whereConditions.push(`${colName} ${operator} ${getPlaceholder(paramIndex)}`)
             whereParams.push(val)
-            text = `${text} WHERE ${colName} ${operator} ${getPlaceholder(paramIndex)}`
+            text = `${text} ${getWhereKeyword()} ${colName} ${operator} ${getPlaceholder(paramIndex)}`
             built = (_sql as any).unsafe(text, whereParams)
           }
 
@@ -3180,7 +3183,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
 
           if (conditions.length > 0) {
-            text = `${text} WHERE ${conditions.join(' AND ')}`
+            text = `${text} ${getWhereKeyword()} ${conditions.join(' AND ')}`
             built = (_sql as any).unsafe(text, whereParams)
           }
           return this
@@ -3189,7 +3192,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Handle raw expressions
         if (isRawExpression(expr)) {
           whereConditions.push(expr.raw)
-          text = `${text} WHERE ${expr.raw}`
+          text = `${text} ${getWhereKeyword()} ${expr.raw}`
           built = (_sql as any).unsafe(text)
           return this
         }
@@ -3198,19 +3201,28 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       // where helpers
       whereNull(column: string) {
-        built = sql`${built} WHERE ${sql(String(column))} IS NULL`
+        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        text = `${text} ${keyword} ${String(column)} IS NULL`
+        built = (_sql as any).unsafe(text, whereParams)
         return this
       },
       whereNotNull(column: string) {
-        built = sql`${built} WHERE ${sql(String(column))} IS NOT NULL`
+        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        text = `${text} ${keyword} ${String(column)} IS NOT NULL`
+        built = (_sql as any).unsafe(text, whereParams)
         return this
       },
       whereBetween(column: string, start: any, end: any) {
-        built = sql`${built} WHERE ${sql(String(column))} BETWEEN ${start} AND ${end}`
+        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        whereParams.push(start, end)
+        text = `${text} ${keyword} ${String(column)} BETWEEN ? AND ?`
+        built = (_sql as any).unsafe(text, whereParams)
         return this
       },
       whereExists(subquery: { toSQL: () => any }) {
-        built = sql`${built} WHERE EXISTS (${subquery.toSQL()})`
+        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        text = `${text} ${keyword} EXISTS (${subquery.toSQL()})`
+        built = (_sql as any).unsafe(text, whereParams)
         return this
       },
       whereJsonContains(column: string, json: unknown) {
@@ -4572,16 +4584,31 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           built = (_sql as any).unsafe(sqlText, params)
           return this
         },
-        where(expr) {
-          // Handle WHERE using the new optimized approach
+        where(expr: any, op?: string, value?: any) {
+          // Helper to get the correct keyword (WHERE for first condition, AND for subsequent)
+          const getWhereKeyword = () => sqlText.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+
+          // Handle 3-arg format: where('column', '=', value)
+          if (typeof expr === 'string' && op !== undefined) {
+            const paramIndex = params.length + 1
+            sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(expr)} ${op} ${getPlaceholder(paramIndex)}`
+            params.push(value)
+            built = (_sql as any).unsafe(sqlText, params)
+            return this
+          }
+
+          // Handle array format: where(['column', 'op', value])
           if (Array.isArray(expr)) {
             const [col, op, val] = expr
             const paramIndex = params.length + 1
-            sqlText = `${sqlText} WHERE ${quoteId(String(col))} ${String(op)} ${getPlaceholder(paramIndex)}`
+            sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(String(col))} ${String(op)} ${getPlaceholder(paramIndex)}`
             params.push(val)
             built = (_sql as any).unsafe(sqlText, params)
+            return this
           }
-          else if (expr && typeof expr === 'object' && !('raw' in expr)) {
+
+          // Handle object format: where({ column: value })
+          if (expr && typeof expr === 'object' && !('raw' in expr)) {
             const keys = Object.keys(expr)
             const len = keys.length
             const baseIdx = params.length
@@ -4590,7 +4617,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               conditions[i] = `${quoteId(keys[i])} = ${getPlaceholder(baseIdx + i + 1)}`
               params.push((expr as any)[keys[i]])
             }
-            sqlText = `${sqlText} WHERE ${conditions.join(' AND ')}`
+            sqlText = `${sqlText} ${getWhereKeyword()} ${conditions.join(' AND ')}`
             built = (_sql as any).unsafe(sqlText, params)
           }
           return this

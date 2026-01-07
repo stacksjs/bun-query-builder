@@ -65,6 +65,12 @@ export class PostgresDriver implements DialectDriver {
 
     const dv = column.defaultValue
     if (typeof dv === 'string') {
+      // Check for raw SQL expressions that should not be quoted
+      const rawSqlExpressions = ['CURRENT_TIMESTAMP', 'NOW()', 'NULL', 'CURRENT_DATE', 'CURRENT_TIME']
+      const upperDv = dv.toUpperCase()
+      if (rawSqlExpressions.includes(upperDv)) {
+        return `default ${upperDv}`
+      }
       return `default '${dv.replace(/'/g, '\'\'')}'`
     }
     else if (typeof dv === 'number' || typeof dv === 'bigint') {
