@@ -258,7 +258,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     const model = models[modelName]
     const table = (model.table as string) || `${String(model.name).toLowerCase()}s`
     const primaryKey = model.primaryKey ?? 'id'
-    const autoIncrement = model.autoIncrement !== false // default to true
+    const _autoIncrement = model.autoIncrement !== false // default to true
     const attrs = model.attributes ?? {}
 
     const columns: ColumnPlan[] = []

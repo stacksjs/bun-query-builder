@@ -59,6 +59,9 @@ export const defaultConfig: QueryBuilderConfig = {
   },
 }
 
+// For backwards compatibility - synchronous access with default fallback
+export const config: QueryBuilderConfig = defaultConfig
+
 /**
  * Get the placeholder format for the current dialect.
  * PostgreSQL uses $1, $2, $3... while MySQL and SQLite use ?
@@ -97,9 +100,6 @@ export async function getConfig(): Promise<QueryBuilderConfig> {
   }
   return _config
 }
-
-// For backwards compatibility - synchronous access with default fallback
-export const config: QueryBuilderConfig = defaultConfig
 
 /**
  * Programmatically set/override the query builder configuration.

@@ -544,10 +544,10 @@ describe('migrations - snapshot system', () => {
 
       try {
         // First generate to see what the plan looks like
-        const initialResult = await generateMigration(modelsDir, { dialect: 'postgres', full: true })
+        const _initialResult = await generateMigration(modelsDir, { dialect: 'postgres', full: true })
 
         // Delete the snapshot and write it back in legacy format (tables at root level, not wrapped in { plan: ... })
-        const snapshotPath = getSnapshotPath()
+        const _snapshotPath = getSnapshotPath()
         const snapshot = readSnapshot()
         // Legacy format: the plan IS the root object, not wrapped in { plan: ... }
         writeSnapshot(snapshot.plan)
