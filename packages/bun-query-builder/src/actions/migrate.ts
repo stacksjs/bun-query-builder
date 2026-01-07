@@ -1,5 +1,5 @@
-import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
 import type { MigrationPlan } from '@/migrations'
+import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

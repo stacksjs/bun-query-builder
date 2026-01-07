@@ -1,11 +1,11 @@
+import type { ColumnPlan, MigrationPlan, TablePlan } from '../src/migrations'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { generateMigration } from '../src/actions/migrate'
 import { buildMigrationPlan, generateDiffSql, generateSql } from '../src/migrations'
 import { defineModels } from '../src/schema'
-import type { MigrationPlan, ColumnPlan, TablePlan } from '../src/migrations'
 
 /**
  * Extremely thorough tests for complex model attribute scenarios.

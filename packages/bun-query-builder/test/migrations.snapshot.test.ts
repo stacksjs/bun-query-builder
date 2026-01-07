@@ -1,11 +1,10 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { deleteMigrationFiles, generateMigration, resetDatabase } from '../src/actions/migrate'
-import { buildMigrationPlan, generateDiffSql, hashMigrationPlan } from '../src/migrations'
+import { join } from 'node:path'
+import { deleteMigrationFiles, generateMigration } from '../src/actions/migrate'
+import { buildMigrationPlan, hashMigrationPlan } from '../src/migrations'
 import { defineModels } from '../src/schema'
-import type { MigrationPlan } from '../src/migrations'
 
 /**
  * Comprehensive tests for the model snapshot system.
@@ -53,7 +52,8 @@ describe('migrations - snapshot system', () => {
   // Helper to read snapshot
   function readSnapshot(dialect: string = 'postgres'): any {
     const path = getSnapshotPath(dialect)
-    if (!existsSync(path)) return null
+    if (!existsSync(path))
+      return null
     return JSON.parse(readFileSync(path, 'utf8'))
   }
 

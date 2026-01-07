@@ -1,6 +1,6 @@
 import type { DatabaseConfig, SupportedDialect } from './types'
-import { Database } from 'bun:sqlite'
 import { SQL } from 'bun'
+import { Database } from 'bun:sqlite'
 import process from 'node:process'
 import { config } from './config'
 
@@ -114,9 +114,9 @@ function splitSqlStatements(sql: string): string[] {
     }
 
     // Handle single quotes (respecting escape sequences)
-    if (char === "'" && !inDoubleQuote) {
+    if (char === '\'' && !inDoubleQuote) {
       // Check for escaped quote ('')
-      if (inSingleQuote && nextChar === "'") {
+      if (inSingleQuote && nextChar === '\'') {
         current += char + nextChar
         i++ // skip next char
         continue
@@ -196,7 +196,7 @@ function createSQLiteSQL(filename: string): SQL {
       }
       // Regular value - use placeholder
       else {
-        sql += '?' + (strings[i + 1] || '')
+        sql += `?${strings[i + 1] || ''}`
         params.push(value)
       }
     }

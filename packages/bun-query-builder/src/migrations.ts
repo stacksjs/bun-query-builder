@@ -22,7 +22,7 @@ function snakeCase(str: string): string {
     // Handle transition from lowercase to uppercase
     .replace(/([a-z\d])([A-Z])/g, '$1_$2')
     // Handle numbers followed by letters
-    .replace(/(\d)([A-Za-z])/g, '$1_$2')
+    .replace(/(\d)([A-Z])/gi, '$1_$2')
     .toLowerCase()
 }
 
