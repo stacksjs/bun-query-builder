@@ -6,6 +6,26 @@ import process from 'node:process'
 import { getDialectDriver } from './drivers'
 import { buildSchemaMeta } from './meta'
 
+/**
+ * Convert a camelCase or PascalCase string to snake_case
+ * Examples:
+ *   companyName -> company_name
+ *   billingEmail -> billing_email
+ *   isPersonal -> is_personal
+ *   createdAt -> created_at
+ *   HTMLParser -> html_parser
+ */
+function snakeCase(str: string): string {
+  return str
+    // Handle acronyms and consecutive uppercase letters
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    // Handle transition from lowercase to uppercase
+    .replace(/([a-z\d])([A-Z])/g, '$1_$2')
+    // Handle numbers followed by letters
+    .replace(/(\d)([A-Z])/gi, '$1_$2')
+    .toLowerCase()
+}
+
 let migrationCounter = 0
 let migrationsCreatedCount = 0
 let migrationsUpdatedCount = 0
@@ -238,13 +258,30 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     const model = models[modelName]
     const table = (model.table as string) || `${String(model.name).toLowerCase()}s`
     const primaryKey = model.primaryKey ?? 'id'
+    const _autoIncrement = model.autoIncrement !== false // default to true
     const attrs = model.attributes ?? {}
 
     const columns: ColumnPlan[] = []
     const indexes: IndexPlan[] = []
 
+    // Always add the primary key column first (if not already in attributes)
+    // This ensures every table has an id column by default
+    if (!attrs[primaryKey]) {
+      columns.push({
+        name: snakeCase(primaryKey),
+        type: 'bigint',
+        isPrimaryKey: true,
+        isUnique: false,
+        isNullable: false,
+        hasDefault: false,
+      })
+    }
+
     for (const attrName of Object.keys(attrs)) {
       const attr = attrs[attrName]
+
+      // Convert attribute name to snake_case for database column
+      const columnName = snakeCase(attrName)
 
       // Base nullability: if no validation rule enforcing required, default nullable
       const isNullable = true
@@ -257,8 +294,8 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       // Priority 1: Check validation rule for explicit type
       inferred = detectTypeFromValidationRule(attr.validation.rule)
 
-      // Priority 2: Check for enum validation rule
-      if (!inferred) {
+      // Priority 2: Check for enum validation rule (or extract enum values if type is enum)
+      if (!inferred || inferred === 'enum') {
         const enumVals = detectEnumFromValidationRule(attr.validation.rule)
         if (enumVals && enumVals.length > 0) {
           inferred = 'enum'
@@ -266,9 +303,9 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         }
       }
 
-      // Priority 3: Guess from column name patterns
+      // Priority 3: Guess from column name patterns (use snake_case column name)
       if (!inferred) {
-        inferred = guessTypeFromName(attrName)
+        inferred = guessTypeFromName(columnName)
       }
 
       // Priority 4: Infer from default value type
@@ -292,7 +329,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       }
 
       const col: ColumnPlan = {
-        name: attrName,
+        name: columnName,
         type: inferred,
         isPrimaryKey: isPk,
         isUnique: Boolean(attr.unique),
@@ -303,8 +340,8 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       }
 
       // Foreign key inference for *_id referencing another model's table
-      if (attrName.endsWith('_id')) {
-        const base = attrName.replace(/_id$/, '')
+      if (columnName.endsWith('_id')) {
+        const base = columnName.replace(/_id$/, '')
         const maybeModel = base.charAt(0).toUpperCase() + base.slice(1)
         const refTable = meta.modelToTable[maybeModel]
         if (refTable) {
@@ -316,9 +353,57 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       columns.push(col)
     }
 
-    // Composite indexes from model definition
+    // Handle useTimestamps trait - add created_at and updated_at columns
+    const traits = model.traits as Record<string, any> | undefined
+    const useTimestamps = traits?.useTimestamps ?? traits?.timestampable ?? false
+    if (useTimestamps) {
+      // Add created_at column if not already present
+      if (!columns.some(c => c.name === 'created_at')) {
+        columns.push({
+          name: 'created_at',
+          type: 'datetime',
+          isPrimaryKey: false,
+          isUnique: false,
+          isNullable: false,
+          hasDefault: true,
+          defaultValue: 'CURRENT_TIMESTAMP' as any,
+        })
+      }
+      // Add updated_at column if not already present
+      if (!columns.some(c => c.name === 'updated_at')) {
+        columns.push({
+          name: 'updated_at',
+          type: 'datetime',
+          isPrimaryKey: false,
+          isUnique: false,
+          isNullable: true,
+          hasDefault: false,
+        })
+      }
+    }
+
+    // Handle useSoftDeletes trait - add deleted_at column
+    const useSoftDeletes = traits?.useSoftDeletes ?? traits?.softDeletable ?? false
+    if (useSoftDeletes) {
+      if (!columns.some(c => c.name === 'deleted_at')) {
+        columns.push({
+          name: 'deleted_at',
+          type: 'datetime',
+          isPrimaryKey: false,
+          isUnique: false,
+          isNullable: true,
+          hasDefault: false,
+        })
+      }
+    }
+
+    // Composite indexes from model definition - convert column names to snake_case
     for (const idx of (model.indexes ?? [])) {
-      indexes.push({ name: idx.name, columns: idx.columns, type: 'index' })
+      indexes.push({
+        name: idx.name,
+        columns: idx.columns.map((c: string) => snakeCase(c)),
+        type: 'index',
+      })
     }
 
     // Unique single-column indexes from attribute flags

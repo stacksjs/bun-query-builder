@@ -3,7 +3,7 @@
 /* eslint-disable no-useless-catch */
 import type { SchemaMeta } from './meta'
 import type { DatabaseSchema } from './schema'
-import { config } from './config'
+import { config, getPlaceholder, getPlaceholders } from './config'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 
 export { resetConnection }
@@ -1334,9 +1334,10 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * @example
    * ```ts
    * const cnt = await db.updateTable('users').set({ active: true }).where({ id: 1 }).execute()
+   * const cnt2 = await db.updateTable('users').set({ active: true }).where('id', '=', 1).execute()
    * ```
    */
-  where: (expr: WhereExpression<DB[TTable]['columns']>) => UpdateQueryBuilder<DB, TTable>
+  where: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => UpdateQueryBuilder<DB, TTable>
   /**
    * # `returning`
    *
@@ -1382,9 +1383,10 @@ export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * @example
    * ```ts
    * const count = await db.deleteFrom('users').where({ inactive: true }).execute()
+   * const count2 = await db.deleteFrom('users').where('id', '=', 1).execute()
    * ```
    */
-  where: (expr: WhereExpression<DB[TTable]['columns']>) => DeleteQueryBuilder<DB, TTable>
+  where: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => DeleteQueryBuilder<DB, TTable>
   /**
    * # `returning`
    *
@@ -2013,31 +2015,31 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       switch (op) {
         case 'in':
           if (Array.isArray(val)) {
-            const placeholders = val.map((_, i) => `$${i + 1}`).join(', ')
+            const placeholders = getPlaceholders(val.length)
             return (_sql as any).unsafe(`${colName} IN (${placeholders})`, val)
           }
-          return (_sql as any).unsafe(`${colName} IN ($1)`, [val])
+          return (_sql as any).unsafe(`${colName} IN (${getPlaceholder(1)})`, [val])
         case 'not in':
           if (Array.isArray(val)) {
-            const placeholders = val.map((_, i) => `$${i + 1}`).join(', ')
+            const placeholders = getPlaceholders(val.length)
             return (_sql as any).unsafe(`${colName} NOT IN (${placeholders})`, val)
           }
-          return (_sql as any).unsafe(`${colName} NOT IN ($1)`, [val])
+          return (_sql as any).unsafe(`${colName} NOT IN (${getPlaceholder(1)})`, [val])
         case 'like':
-          return (_sql as any).unsafe(`${colName} LIKE $1`, [val])
+          return (_sql as any).unsafe(`${colName} LIKE ${getPlaceholder(1)}`, [val])
         case 'is':
           return (_sql as any).unsafe(`${colName} IS ${val}`)
         case 'is not':
           return (_sql as any).unsafe(`${colName} IS NOT ${val}`)
         case '!=':
-          return (_sql as any).unsafe(`${colName} <> $1`, [val])
+          return (_sql as any).unsafe(`${colName} <> ${getPlaceholder(1)}`, [val])
         case '<':
         case '>':
         case '<=':
         case '>=':
         case '=':
         default:
-          return (_sql as any).unsafe(`${colName} ${op} $1`, [val])
+          return (_sql as any).unsafe(`${colName} ${op} ${getPlaceholder(1)}`, [val])
       }
     }
     if ('raw' in (expr as any)) {
@@ -2055,12 +2057,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     for (const key of keys) {
       const value = (expr as any)[key]
       if (Array.isArray(value)) {
-        const placeholders = value.map(() => `$${paramIndex++}`).join(', ')
+        const placeholders = getPlaceholders(value.length, paramIndex)
         conditions.push(`${key} IN (${placeholders})`)
         allParams.push(...value)
+        paramIndex += value.length
       }
       else {
-        conditions.push(`${key} = $${paramIndex++}`)
+        conditions.push(`${key} = ${getPlaceholder(paramIndex++)}`)
         allParams.push(value)
       }
     }
@@ -3119,12 +3122,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       where(expr: any, op?: WhereOperator, value?: any) {
+        // Helper to get the correct keyword (WHERE for first condition, AND for subsequent)
+        const getWhereKeyword = () => text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+
         if (typeof expr === 'string' && op !== undefined) {
           const paramIndex = whereParams.length + 1
-          whereConditions.push(`${String(expr)} ${String(op)} $${paramIndex}`)
+          whereConditions.push(`${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
           whereParams.push(value)
           // Update built and text immediately
-          text = `${text} WHERE ${String(expr)} ${String(op)} $${paramIndex}`
+          text = `${text} ${getWhereKeyword()} ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`
           built = (_sql as any).unsafe(text, whereParams)
           return this
         }
@@ -3137,17 +3143,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(val) ? val : [val]
-            const placeholders = values.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+            const placeholders = getPlaceholders(values.length, whereParams.length + 1)
             whereConditions.push(`${colName} ${operator.toUpperCase()} (${placeholders})`)
             whereParams.push(...values)
-            text = `${text} WHERE ${colName} ${operator.toUpperCase()} (${placeholders})`
+            text = `${text} ${getWhereKeyword()} ${colName} ${operator.toUpperCase()} (${placeholders})`
             built = (_sql as any).unsafe(text, whereParams)
           }
           else {
             const paramIndex = whereParams.length + 1
-            whereConditions.push(`${colName} ${operator} $${paramIndex}`)
+            whereConditions.push(`${colName} ${operator} ${getPlaceholder(paramIndex)}`)
             whereParams.push(val)
-            text = `${text} WHERE ${colName} ${operator} $${paramIndex}`
+            text = `${text} ${getWhereKeyword()} ${colName} ${operator} ${getPlaceholder(paramIndex)}`
             built = (_sql as any).unsafe(text, whereParams)
           }
 
@@ -3163,21 +3169,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           for (const key of keys) {
             const value = whereObject[key]
             if (Array.isArray(value)) {
-              const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+              const placeholders = getPlaceholders(value.length, whereParams.length + 1)
               conditions.push(`${key} IN (${placeholders})`)
               whereConditions.push(`${key} IN (${placeholders})`)
               whereParams.push(...value)
             }
             else {
               const paramIndex = whereParams.length + 1
-              conditions.push(`${key} = $${paramIndex}`)
-              whereConditions.push(`${key} = $${paramIndex}`)
+              conditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
+              whereConditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
               whereParams.push(value)
             }
           }
 
           if (conditions.length > 0) {
-            text = `${text} WHERE ${conditions.join(' AND ')}`
+            text = `${text} ${getWhereKeyword()} ${conditions.join(' AND ')}`
             built = (_sql as any).unsafe(text, whereParams)
           }
           return this
@@ -3186,7 +3192,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Handle raw expressions
         if (isRawExpression(expr)) {
           whereConditions.push(expr.raw)
-          text = `${text} WHERE ${expr.raw}`
+          text = `${text} ${getWhereKeyword()} ${expr.raw}`
           built = (_sql as any).unsafe(text)
           return this
         }
@@ -3195,19 +3201,28 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       // where helpers
       whereNull(column: string) {
-        built = sql`${built} WHERE ${sql(String(column))} IS NULL`
+        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        text = `${text} ${keyword} ${String(column)} IS NULL`
+        built = (_sql as any).unsafe(text, whereParams)
         return this
       },
       whereNotNull(column: string) {
-        built = sql`${built} WHERE ${sql(String(column))} IS NOT NULL`
+        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        text = `${text} ${keyword} ${String(column)} IS NOT NULL`
+        built = (_sql as any).unsafe(text, whereParams)
         return this
       },
       whereBetween(column: string, start: any, end: any) {
-        built = sql`${built} WHERE ${sql(String(column))} BETWEEN ${start} AND ${end}`
+        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        whereParams.push(start, end)
+        text = `${text} ${keyword} ${String(column)} BETWEEN ? AND ?`
+        built = (_sql as any).unsafe(text, whereParams)
         return this
       },
       whereExists(subquery: { toSQL: () => any }) {
-        built = sql`${built} WHERE EXISTS (${subquery.toSQL()})`
+        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        text = `${text} ${keyword} EXISTS (${subquery.toSQL()})`
+        built = (_sql as any).unsafe(text, whereParams)
         return this
       },
       whereJsonContains(column: string, json: unknown) {
@@ -3375,9 +3390,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       andWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
           const paramIndex = whereParams.length + 1
-          whereConditions.push(`${String(expr)} ${String(op)} $${paramIndex}`)
+          whereConditions.push(`${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
           whereParams.push(value)
-          text = `${text} AND ${String(expr)} ${String(op)} $${paramIndex}`
+          text = `${text} AND ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`
           built = (_sql as any).unsafe(text, whereParams)
           return this
         }
@@ -3390,7 +3405,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(val) ? val : [val]
-            const placeholders = values.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+            const placeholders = getPlaceholders(values.length, whereParams.length + 1)
             whereConditions.push(`${colName} ${operator.toUpperCase()} (${placeholders})`)
             whereParams.push(...values)
             text = `${text} AND ${colName} ${operator.toUpperCase()} (${placeholders})`
@@ -3398,9 +3413,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
           else {
             const paramIndex = whereParams.length + 1
-            whereConditions.push(`${colName} ${operator} $${paramIndex}`)
+            whereConditions.push(`${colName} ${operator} ${getPlaceholder(paramIndex)}`)
             whereParams.push(val)
-            text = `${text} AND ${colName} ${operator} $${paramIndex}`
+            text = `${text} AND ${colName} ${operator} ${getPlaceholder(paramIndex)}`
             built = (_sql as any).unsafe(text, whereParams)
           }
 
@@ -3415,15 +3430,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           for (const key of keys) {
             const value = (expr as any)[key]
             if (Array.isArray(value)) {
-              const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+              const placeholders = getPlaceholders(value.length, whereParams.length + 1)
               conditions.push(`${key} IN (${placeholders})`)
               whereConditions.push(`${key} IN (${placeholders})`)
               whereParams.push(...value)
             }
             else {
               const paramIndex = whereParams.length + 1
-              conditions.push(`${key} = $${paramIndex}`)
-              whereConditions.push(`${key} = $${paramIndex}`)
+              conditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
+              whereConditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
               whereParams.push(value)
             }
           }
@@ -3448,9 +3463,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       orWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
           const paramIndex = whereParams.length + 1
-          whereConditions.push(`OR ${String(expr)} ${String(op)} $${paramIndex}`)
+          whereConditions.push(`OR ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
           whereParams.push(value)
-          text = `${text} OR ${String(expr)} ${String(op)} $${paramIndex}`
+          text = `${text} OR ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`
           built = (_sql as any).unsafe(text, whereParams)
           return this
         }
@@ -3463,7 +3478,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(val) ? val : [val]
-            const placeholders = values.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+            const placeholders = getPlaceholders(values.length, whereParams.length + 1)
             whereConditions.push(`OR ${colName} ${operator.toUpperCase()} (${placeholders})`)
             whereParams.push(...values)
             text = `${text} OR ${colName} ${operator.toUpperCase()} (${placeholders})`
@@ -3471,9 +3486,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
           else {
             const paramIndex = whereParams.length + 1
-            whereConditions.push(`OR ${colName} ${operator} $${paramIndex}`)
+            whereConditions.push(`OR ${colName} ${operator} ${getPlaceholder(paramIndex)}`)
             whereParams.push(val)
-            text = `${text} OR ${colName} ${operator} $${paramIndex}`
+            text = `${text} OR ${colName} ${operator} ${getPlaceholder(paramIndex)}`
             built = (_sql as any).unsafe(text, whereParams)
           }
 
@@ -3488,15 +3503,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           for (const key of keys) {
             const value = (expr as any)[key]
             if (Array.isArray(value)) {
-              const placeholders = value.map((_, i) => `$${whereParams.length + i + 1}`).join(', ')
+              const placeholders = getPlaceholders(value.length, whereParams.length + 1)
               conditions.push(`${key} IN (${placeholders})`)
               whereConditions.push(`OR ${key} IN (${placeholders})`)
               whereParams.push(...value)
             }
             else {
               const paramIndex = whereParams.length + 1
-              conditions.push(`${key} = $${paramIndex}`)
-              whereConditions.push(`OR ${key} = $${paramIndex}`)
+              conditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
+              whereConditions.push(`OR ${key} = ${getPlaceholder(paramIndex)}`)
               whereParams.push(value)
             }
           }
@@ -3639,7 +3654,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Handle array format: ['COUNT(id)', '>', 3]
         if (Array.isArray(expr)) {
           const paramIdx = whereParams.length + 1
-          text = `${text} HAVING ${expr[0]} ${expr[1]} $${paramIdx}`
+          text = `${text} HAVING ${expr[0]} ${expr[1]} ${getPlaceholder(paramIdx)}`
           whereParams.push(expr[2])
           built = (_sql as any).unsafe(text, whereParams)
         }
@@ -3652,7 +3667,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const conditions: string[] = Array.from({ length: len })
             for (let i = 0; i < len; i++) {
               const key = keys[i]
-              conditions[i] = `${key} = $${baseIdx + i + 1}`
+              conditions[i] = `${key} = ${getPlaceholder(baseIdx + i + 1)}`
               whereParams.push(expr[key])
             }
             text = `${text} HAVING ${conditions.join(' AND ')}`
@@ -4440,6 +4455,25 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       let sqlText = ''
       const params: any[] = []
 
+      // Quote identifier based on dialect
+      const quoteId = (id: string): string => {
+        if (config.dialect === 'mysql') {
+          return `\`${id}\``
+        }
+        // PostgreSQL and SQLite use double quotes
+        return `"${id}"`
+      }
+
+      // Get placeholder based on dialect
+      // MySQL and SQLite use ?, PostgreSQL uses $1, $2, etc.
+      const getPlaceholder = (index: number): string => {
+        if (config.dialect === 'mysql' || config.dialect === 'sqlite') {
+          return '?'
+        }
+        // PostgreSQL uses $1, $2, etc.
+        return `$${index + 1}`
+      }
+
       return {
         values(data: Partial<any> | Partial<any>[]) {
           const rows = Array.isArray(data) ? data : [data]
@@ -4458,22 +4492,23 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           params.length = totalParams
 
           // Build SQL - optimize for single row case
-          const columnList = keys.join(',')
+          // Quote column names for case-sensitive databases
+          const columnList = keys.map(k => quoteId(k)).join(',')
 
           if (rowCount === 1) {
             // Fast path for single row
-            sqlText = `INSERT INTO ${table}(${columnList})VALUES(`
+            sqlText = `INSERT INTO ${quoteId(table)}(${columnList})VALUES(`
             for (let c = 0; c < colCount; c++) {
               if (c > 0)
                 sqlText += ','
-              sqlText += `$${c + 1}`
+              sqlText += getPlaceholder(c)
               params[c] = firstRow[keys[c]]
             }
             sqlText += ')'
           }
           else {
             // Multi-row path
-            sqlText = `INSERT INTO ${table}(${columnList})VALUES`
+            sqlText = `INSERT INTO ${quoteId(table)}(${columnList})VALUES`
             let pidx = 0
             for (let r = 0; r < rowCount; r++) {
               const row = rows[r]
@@ -4487,7 +4522,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               for (let c = 0; c < colCount; c++) {
                 if (c > 0)
                   sqlText += ','
-                sqlText += `$${pidx + 1}`
+                sqlText += getPlaceholder(pidx)
                 params[pidx++] = row[keys[c]]
               }
             }
@@ -4498,7 +4533,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this
         },
         returning(...cols: (keyof any & string)[]) {
-          const q = _sql`${built} RETURNING ${_sql(cols as any)}`
+          // Append RETURNING clause to the existing SQL
+          const returningSql = `${sqlText} RETURNING ${cols.join(', ')}`
+          const q = (_sql as any).unsafe(returningSql, params)
           return {
             where: () => this,
             andWhere: () => this,
@@ -4506,18 +4543,32 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             orderBy: () => this,
             limit: () => this,
             offset: () => this,
-            toSQL: () => makeExecutableQuery(q, computeSqlText(q)) as any,
+            toSQL: () => makeExecutableQuery(q, returningSql) as any,
             execute: () => runWithHooks<any[]>(q, 'insert'),
           }
         },
         toSQL: () => makeExecutableQuery(built, sqlText) as any,
         execute: () => runWithHooks(built, 'insert'),
+        async executeTakeFirst() {
+          const result = await runWithHooks(built, 'insert')
+          return result
+        },
       } as any as TypedInsertQueryBuilder<DB, TTable>
     },
     updateTable(table) {
       let built: any
-      let sqlText = `UPDATE ${String(table)}`
       const params: any[] = []
+
+      // Quote identifier based on dialect
+      const quoteId = (id: string): string => {
+        if (config.dialect === 'mysql') {
+          return `\`${id}\``
+        }
+        // PostgreSQL and SQLite use double quotes
+        return `"${id}"`
+      }
+
+      let sqlText = `UPDATE ${quoteId(String(table))}`
 
       return {
         set(values) {
@@ -4526,32 +4577,47 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const setClauses: string[] = Array.from({ length: len })
           for (let i = 0; i < len; i++) {
             const key = keys[i]
-            setClauses[i] = `${key} = $${i + 1}`
+            setClauses[i] = `${quoteId(key)} = ${getPlaceholder(i + 1)}`
             params.push((values as any)[key])
           }
           sqlText = `${sqlText} SET ${setClauses.join(', ')}`
           built = (_sql as any).unsafe(sqlText, params)
           return this
         },
-        where(expr) {
-          // Handle WHERE using the new optimized approach
+        where(expr: any, op?: string, value?: any) {
+          // Helper to get the correct keyword (WHERE for first condition, AND for subsequent)
+          const getWhereKeyword = () => sqlText.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+
+          // Handle 3-arg format: where('column', '=', value)
+          if (typeof expr === 'string' && op !== undefined) {
+            const paramIndex = params.length + 1
+            sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(expr)} ${op} ${getPlaceholder(paramIndex)}`
+            params.push(value)
+            built = (_sql as any).unsafe(sqlText, params)
+            return this
+          }
+
+          // Handle array format: where(['column', 'op', value])
           if (Array.isArray(expr)) {
             const [col, op, val] = expr
             const paramIndex = params.length + 1
-            sqlText = `${sqlText} WHERE ${String(col)} ${String(op)} $${paramIndex}`
+            sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(String(col))} ${String(op)} ${getPlaceholder(paramIndex)}`
             params.push(val)
             built = (_sql as any).unsafe(sqlText, params)
+            return this
           }
-          else if (expr && typeof expr === 'object' && !('raw' in expr)) {
+
+          // Handle object format: where({ column: value })
+          if (expr && typeof expr === 'object' && !('raw' in expr)) {
             const keys = Object.keys(expr)
             const len = keys.length
             const baseIdx = params.length
             const conditions: string[] = Array.from({ length: len })
             for (let i = 0; i < len; i++) {
-              conditions[i] = `${keys[i]} = $${baseIdx + i + 1}`
+              conditions[i] = `${quoteId(keys[i])} = ${getPlaceholder(baseIdx + i + 1)}`
               params.push((expr as any)[keys[i]])
             }
-            sqlText = `${sqlText} WHERE ${conditions.join(' AND ')}`
+            sqlText = `${sqlText} ${getWhereKeyword()} ${conditions.join(' AND ')}`
             built = (_sql as any).unsafe(sqlText, params)
           }
           return this
@@ -4579,11 +4645,46 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     },
     deleteFrom(table) {
-      let built = _sql`DELETE FROM ${_sql(String(table))}`
+      // Quote identifier based on dialect
+      const quoteId = (id: string): string => {
+        if (config.dialect === 'mysql') {
+          return `\`${id}\``
+        }
+        // PostgreSQL and SQLite use double quotes
+        return `"${id}"`
+      }
+
+      const quotedTable = quoteId(String(table))
+      let built = (_sql as any).unsafe(`DELETE FROM ${quotedTable}`)
       let whereCondition: any = null
       return {
-        where(expr) {
+        where(expr: any, op?: string, value?: any) {
           whereCondition = expr
+          // Support 3-arg format: where(column, operator, value)
+          if (typeof expr === 'string' && op !== undefined) {
+            const paramIndex = 1
+            built = (_sql as any).unsafe(`DELETE FROM ${quotedTable} WHERE ${quoteId(expr)} ${op} ${getPlaceholder(paramIndex)}`, [value])
+            return this
+          }
+          // Support array format: where(['column', 'op', value])
+          if (Array.isArray(expr)) {
+            const [col, oper, val] = expr
+            built = (_sql as any).unsafe(`DELETE FROM ${quotedTable} WHERE ${quoteId(String(col))} ${oper} ${getPlaceholder(1)}`, [val])
+            return this
+          }
+          // Object format: where({ id: 1 })
+          if (expr && typeof expr === 'object' && !('raw' in expr)) {
+            const keys = Object.keys(expr)
+            const conditions: string[] = []
+            const params: any[] = []
+            let idx = 1
+            for (const key of keys) {
+              conditions.push(`${quoteId(key)} = ${getPlaceholder(idx++)}`)
+              params.push((expr as any)[key])
+            }
+            built = (_sql as any).unsafe(`DELETE FROM ${quotedTable} WHERE ${conditions.join(' AND ')}`, params)
+            return this
+          }
           built = applyWhere(({} as any), built, expr)
           return this
         },
@@ -5005,7 +5106,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         for (let c = 0; c < colCount; c++) {
           if (c > 0)
             sql += ','
-          sql += `$${pidx + 1}`
+          sql += getPlaceholder(pidx + 1)
           params[pidx++] = row[keys[c]]
         }
         sql += ')'
@@ -5030,8 +5131,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const row = rows[r]
         sql += r > 0 ? '),(' : '('
         for (let c = 0; c < colCount; c++) {
-          sql += c > 0 ? ',$' : '$'
-          sql += pidx + 1
+          if (c > 0)
+            sql += ','
+          sql += getPlaceholder(pidx + 1)
           params[pidx++] = row[keys[c]]
         }
       }
@@ -5051,7 +5153,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // Build SET clause using array join
       const setClauses: string[] = Array.from({ length: dataLen })
       for (let i = 0; i < dataLen; i++) {
-        setClauses[i] = `${dataKeys[i]}=$${i + 1}`
+        setClauses[i] = `${dataKeys[i]}=${getPlaceholder(i + 1)}`
         params.push((data as any)[dataKeys[i]])
       }
 
@@ -5059,7 +5161,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
       // Build WHERE clause
       if (Array.isArray(conditions)) {
-        sql += ` WHERE ${conditions[0]}${conditions[1]}$${params.length + 1}`
+        sql += ` WHERE ${conditions[0]}${conditions[1]}${getPlaceholder(params.length + 1)}`
         params.push(conditions[2])
       }
       else if (conditions && typeof conditions === 'object' && !('raw' in conditions)) {
@@ -5069,7 +5171,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const baseIdx = params.length
           const whereClauses: string[] = Array.from({ length: condLen })
           for (let i = 0; i < condLen; i++) {
-            whereClauses[i] = `${condKeys[i]}=$${baseIdx + i + 1}`
+            whereClauses[i] = `${condKeys[i]}=${getPlaceholder(baseIdx + i + 1)}`
             params.push((conditions as any)[condKeys[i]])
           }
           sql += ` WHERE ${whereClauses.join(' AND ')}`

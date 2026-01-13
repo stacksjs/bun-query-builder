@@ -24,7 +24,10 @@ export async function loadModels(options: LoadModelsOptions): Promise<ModelRecor
     if (!['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs'].includes(ext))
       continue
 
-    const mod = await import(full)
+    // Use cache-busting query parameter to ensure fresh import
+    // This is necessary because dynamic import() caches modules by path
+    const cacheBuster = `?t=${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const mod = await import(`${full}${cacheBuster}`)
     const def: ModelDefinition = mod.default ?? mod
     const fileName = basename(entry, ext)
     const name = def.name ?? fileName
