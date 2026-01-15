@@ -21,3 +21,31 @@ export { MySQLDriver } from './mysql'
 export type { DialectDriver } from './postgres'
 export { PostgresDriver } from './postgres'
 export { SQLiteDriver } from './sqlite'
+
+// DynamoDB driver (NoSQL)
+export {
+  createDynamoDBDriver,
+  DynamoDBDriverImpl,
+} from './dynamodb'
+export type {
+  DynamoDBAttributeDefinition,
+  DynamoDBAttributeType,
+  DynamoDBBatchGetItemParams,
+  DynamoDBBatchWriteItemParams,
+  DynamoDBComparisonOperator,
+  DynamoDBCondition,
+  DynamoDBConfig,
+  DynamoDBDeleteItemParams,
+  DynamoDBDriver,
+  DynamoDBGetItemParams,
+  DynamoDBGlobalSecondaryIndex,
+  DynamoDBKeySchema,
+  DynamoDBLocalSecondaryIndex,
+  DynamoDBPutItemParams,
+  DynamoDBQueryParams,
+  DynamoDBScanParams,
+  DynamoDBTableDefinition,
+  DynamoDBTransactWriteParams,
+  DynamoDBUpdateItemParams,
+  SingleTableEntityMapping,
+} from './dynamodb'

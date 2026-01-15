@@ -3,15 +3,15 @@
 ## DynamoDB Driver
 
 ### Add DynamoDB Driver
-**Status:** Not Started
+**Status:** Complete
 **Description:** bun-query-builder needs a new DynamoDB driver to support the DynamoDB ORM that transforms Stacks models to single table designs.
 
 **Tasks:**
-- [ ] Design DynamoDB driver interface
-- [ ] Implement DynamoDB query building
-- [ ] Support single table design patterns
-- [ ] Integrate with dynamodb-tooling ORM driver
-- [ ] Add tests for DynamoDB operations
+- [x] Design DynamoDB driver interface
+- [x] Implement DynamoDB query building
+- [x] Support single table design patterns
+- [x] Integrate with dynamodb-tooling ORM driver
+- [x] Add tests for DynamoDB operations
 
 ---
 
