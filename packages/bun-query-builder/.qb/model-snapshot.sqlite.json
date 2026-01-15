@@ -1,0 +1,32 @@
+{
+  "plan": {
+    "dialect": "sqlite",
+    "tables": [
+      {
+        "table": "users",
+        "columns": [
+          {
+            "name": "id",
+            "type": "bigint",
+            "isPrimaryKey": true,
+            "isUnique": false,
+            "isNullable": true,
+            "hasDefault": false
+          },
+          {
+            "name": "email",
+            "type": "string",
+            "isPrimaryKey": false,
+            "isUnique": false,
+            "isNullable": true,
+            "hasDefault": false
+          }
+        ],
+        "indexes": []
+      }
+    ]
+  },
+  "hash": "7521cca4736ee938258bc46238d66ef41731b646c01e45082cf87852502a47ad",
+  "dialect": "sqlite",
+  "updatedAt": "2026-01-15T10:47:18.110Z"
+}

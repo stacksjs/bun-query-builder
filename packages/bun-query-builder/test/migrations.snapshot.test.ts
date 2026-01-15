@@ -207,9 +207,9 @@ describe('migrations - snapshot system', () => {
         // Second migration - should only create posts table
         const second = await generateMigration(modelsDir, { dialect: 'postgres' })
         expect(second.hasChanges).toBe(true)
-        expect(second.sql).toContain('CREATE TABLE "posts"')
+        expect(second.sql).toContain('CREATE TABLE IF NOT EXISTS "posts"')
         // Should NOT re-create users table
-        expect(second.sql).not.toContain('CREATE TABLE "users"')
+        expect(second.sql).not.toContain('CREATE TABLE IF NOT EXISTS "users"')
       }
       finally {
         process.chdir(originalCwd)
@@ -519,7 +519,7 @@ describe('migrations - snapshot system', () => {
         // Full migration should recreate everything
         const full = await generateMigration(modelsDir, { dialect: 'postgres', full: true })
         expect(full.hasChanges).toBe(true)
-        expect(full.sql).toContain('CREATE TABLE "users"')
+        expect(full.sql).toContain('CREATE TABLE IF NOT EXISTS "users"')
       }
       finally {
         process.chdir(originalCwd)
@@ -807,7 +807,7 @@ describe('migrations - snapshot system', () => {
 
         const step1 = await generateMigration(modelsDir, { dialect: 'postgres' })
         expect(step1.hasChanges).toBe(true)
-        expect(step1.sql).toContain('CREATE TABLE "users"')
+        expect(step1.sql).toContain('CREATE TABLE IF NOT EXISTS "users"')
 
         // Step 2: Add Post model
         createModelFile('Post', `
@@ -825,8 +825,8 @@ describe('migrations - snapshot system', () => {
 
         const step2 = await generateMigration(modelsDir, { dialect: 'postgres' })
         expect(step2.hasChanges).toBe(true)
-        expect(step2.sql).toContain('CREATE TABLE "posts"')
-        expect(step2.sql).not.toContain('CREATE TABLE "users"')
+        expect(step2.sql).toContain('CREATE TABLE IF NOT EXISTS "posts"')
+        expect(step2.sql).not.toContain('CREATE TABLE IF NOT EXISTS "users"')
 
         // Step 3: Add column to User, modify Post
         createModelFile('User', `
