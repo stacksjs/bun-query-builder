@@ -75,7 +75,7 @@
     "@stacksjs/docs": "^0.70.23",
     "@stacksjs/eslint-config": "^4.14.0-beta.3",
     "@stacksjs/launchpad": "^0.6.4",
-    "better-dx": "^0.2.3"
+    "better-dx": "^0.2.5"
   },
   "overrides": {
     "unconfig": "0.3.10"
