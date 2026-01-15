@@ -77,7 +77,7 @@
     "@stacksjs/docs": "^0.70.23",
     "pickier": "^0.1.10",
     "@stacksjs/launchpad": "^0.6.4",
-    "better-dx": "^0.2.3"
+    "better-dx": "^0.2.5"
   },
   "overrides": {
     "unconfig": "0.3.10"
