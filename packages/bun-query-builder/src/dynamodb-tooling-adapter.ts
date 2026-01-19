@@ -8,18 +8,52 @@
  * 2. Single table design patterns (from dynamodb-tooling)
  * 3. bun-query-builder's DynamoDB query builder
  *
- * This allows users to:
- * - Define models using Stacks conventions
- * - Have them automatically transformed to DynamoDB single-table design
- * - Use bun-query-builder's fluent API for queries
+ * IMPORTANT: This adapter EXTENDS dynamodb-tooling rather than duplicating it.
+ * All model parsing, key generation, and entity transformation is delegated to dynamodb-tooling.
  */
 
+// ============================================================================
+// Imports from dynamodb-tooling (the foundation)
+// ============================================================================
+import type {
+  AccessPattern,
+  ParsedModel,
+  StacksModel,
+} from 'dynamodb-tooling'
+import {
+  // Single-table design utilities (function-based API)
+  toDynamoDBItem,
+  toModelInstance,
+  marshallObject,
+  unmarshallItem,
+  resolveKeyPattern,
+
+  // Model parser
+  parseModels as parseStacksModels,
+} from 'dynamodb-tooling'
+
+// ============================================================================
+// Imports from bun-query-builder (fluent API layer)
+// ============================================================================
 import type { DynamoDBConfig, DynamoDBDriver, SingleTableEntityMapping } from './drivers/dynamodb'
 import type { DynamoDBQueryBuilderOptions } from './dynamodb-client'
 import type { SingleTableConfig, SingleTableEntity } from './dynamodb-single-table'
 import { createDynamoDBDriver } from './drivers/dynamodb'
 import { DynamoDBItemBuilder, DynamoDBQueryBuilder } from './dynamodb-client'
 import { createRepository, createSingleTableManager, SingleTableManager, SingleTableRepository } from './dynamodb-single-table'
+
+// ============================================================================
+// Re-export dynamodb-tooling types and functions for convenience
+// ============================================================================
+export type { AccessPattern, ParsedModel, StacksModel }
+export {
+  toDynamoDBItem,
+  toModelInstance,
+  marshallObject,
+  unmarshallItem,
+  resolveKeyPattern,
+  parseStacksModels,
+}
 
 /**
  * Configuration for dynamodb-tooling integration
@@ -45,6 +79,8 @@ export interface DynamoDBToolingConfig {
   entityTypeAttribute?: string
   /** Key delimiter (default: '#') */
   keyDelimiter?: string
+  /** Path to Stacks models directory (for auto-discovery) */
+  modelsPath?: string
   /** GSI configurations */
   gsiConfig?: {
     gsi1pk?: string
@@ -57,86 +93,16 @@ export interface DynamoDBToolingConfig {
 }
 
 /**
- * Parsed model definition from dynamodb-tooling
- * This interface is compatible with dynamodb-tooling's ParsedModel
- */
-export interface ParsedModelDefinition {
-  name: string
-  entityType: string
-  primaryKey: string
-  attributes: {
-    name: string
-    fillable: boolean
-    required: boolean
-    nullable: boolean
-    unique: boolean
-    hidden: boolean
-    cast?: string
-    defaultValue?: unknown
-    dynamoDbType?: 'S' | 'N' | 'B' | 'BOOL' | 'NULL' | 'M' | 'L' | 'SS' | 'NS' | 'BS'
-  }[]
-  relationships: {
-    type: 'hasOne' | 'hasMany' | 'belongsTo' | 'belongsToMany'
-    relatedModel: string
-    foreignKey: string
-    localKey: string
-    pivotEntity?: string
-    requiresGsi?: boolean
-    gsiIndex?: number
-  }[]
-  keyPatterns: {
-    pk: string
-    sk: string
-    gsi1pk?: string
-    gsi1sk?: string
-    gsi2pk?: string
-    gsi2sk?: string
-  }
-  hasTimestamps: boolean
-  hasSoftDeletes: boolean
-  hasVersioning: boolean
-}
-
-/**
- * Stacks model definition format
- * Compatible with bun-query-builder's schema.ts ModelOptions
- */
-export interface StacksModelInput {
-  name: string
-  table?: string
-  primaryKey?: string
-  attributes?: Record<string, {
-    default?: unknown
-    unique?: boolean
-    hidden?: boolean
-    fillable?: boolean
-    validation?: {
-      rule: unknown
-      message?: Record<string, string>
-    }
-  }>
-  hasOne?: string[]
-  hasMany?: string[]
-  belongsTo?: string[]
-  belongsToMany?: string[]
-  traits?: {
-    useTimestamps?: boolean
-    useSoftDeletes?: boolean
-    useUuid?: boolean
-    useVersioning?: boolean
-  }
-}
-
-/**
  * DynamoDB Tooling Adapter
  *
- * Bridges dynamodb-tooling with bun-query-builder
+ * Bridges dynamodb-tooling with bun-query-builder's fluent API.
+ * All model parsing and transformation is delegated to dynamodb-tooling.
  */
 export class DynamoDBToolingAdapter {
   private config: DynamoDBToolingConfig
   private driver: DynamoDBDriver
   private singleTableManager: SingleTableManager
-  private models: Map<string, ParsedModelDefinition> = new Map()
+  private models: Map<string, ParsedModel> = new Map()
   private queryBuilderOptions: DynamoDBQueryBuilderOptions
 
   constructor(config: DynamoDBToolingConfig) {
@@ -183,10 +149,50 @@ export class DynamoDBToolingAdapter {
   }
 
   /**
-   * Register a Stacks model for use with DynamoDB
+   * Auto-discover and register all Stacks models from configured path
+   * Uses dynamodb-tooling's parseModels() function
    */
-  registerModel(model: StacksModelInput): ParsedModelDefinition {
-    const parsed = this.parseStacksModel(model)
+  async discoverModels(): Promise<ParsedModel[]> {
+    if (!this.config.modelsPath) {
+      throw new Error('modelsPath must be configured to use discoverModels()')
+    }
+
+    const registry = await parseStacksModels({
+      queryBuilder: {
+        modelsPath: this.config.modelsPath,
+      },
+      singleTable: {
+        pkAttribute: this.config.pkAttribute!,
+        skAttribute: this.config.skAttribute!,
+        typeAttribute: this.config.entityTypeAttribute!,
+        delimiter: this.config.keyDelimiter!,
+      },
+    } as any)
+
+    const parsedModels: ParsedModel[] = []
+
+    for (const [, model] of registry.models) {
+      this.registerParsedModel(model)
+      parsedModels.push(model)
+    }
+
+    return parsedModels
+  }
+
+  /**
+   * Register a Stacks model for use with DynamoDB
+   * The model is parsed using dynamodb-tooling's parser
+   */
+  registerModel(model: StacksModel): ParsedModel {
+    // Use dynamodb-tooling's parsing logic
+    const parsed = this.parseWithTooling(model)
+    return this.registerParsedModel(parsed)
+  }
+
+  /**
+   * Register an already-parsed model (from dynamodb-tooling)
+   */
+  registerParsedModel(parsed: ParsedModel): ParsedModel {
     this.models.set(parsed.name, parsed)
 
     // Register with single table manager
@@ -203,21 +209,21 @@ export class DynamoDBToolingAdapter {
   /**
    * Register multiple Stacks models
    */
-  registerModels(models: StacksModelInput[]): ParsedModelDefinition[] {
+  registerModels(models: StacksModel[]): ParsedModel[] {
     return models.map(m => this.registerModel(m))
   }
 
   /**
    * Get a registered model by name
    */
-  getModel(name: string): ParsedModelDefinition | undefined {
+  getModel(name: string): ParsedModel | undefined {
     return this.models.get(name)
   }
 
   /**
    * Get all registered models
    */
-  getAllModels(): ParsedModelDefinition[] {
+  getAllModels(): ParsedModel[] {
     return Array.from(this.models.values())
   }
 
@@ -260,14 +266,25 @@ export class DynamoDBToolingAdapter {
   }
 
   /**
-   * Build primary key for an entity
+   * Build primary key for an entity using dynamodb-tooling's resolveKeyPattern
    */
   buildKey(modelName: string, data: Record<string, any>): { pk: string, sk: string } {
-    return this.singleTableManager.buildKey(modelName, data)
+    const model = this.models.get(modelName)
+    if (!model) {
+      throw new Error(`Model not found: ${modelName}`)
+    }
+
+    // resolveKeyPattern expects the full KeyPattern object and returns all resolved keys
+    const resolved = resolveKeyPattern(model.keyPatterns, data)
+    return {
+      pk: resolved.pk,
+      sk: resolved.sk,
+    }
   }
 
   /**
    * Create a full DynamoDB item with pk, sk, entity type
+   * Uses dynamodb-tooling's resolveKeyPattern
    */
   createItem(modelName: string, data: Record<string, any>): Record<string, any> {
     const model = this.models.get(modelName)
@@ -275,7 +292,18 @@ export class DynamoDBToolingAdapter {
       throw new Error(`Model not found: ${modelName}`)
     }
 
-    const item = this.singleTableManager.createItem(modelName, data)
+    // Build keys using resolveKeyPattern
+    const resolved = resolveKeyPattern(model.keyPatterns, data)
+    const pk = resolved.pk
+    const sk = resolved.sk
+
+    // Create item with keys and entity type
+    const item: Record<string, any> = {
+      [this.config.pkAttribute!]: pk,
+      [this.config.skAttribute!]: sk,
+      [this.config.entityTypeAttribute!]: model.name,
+      ...data,
+    }
 
     // Add timestamps if model has them
     if (model.hasTimestamps) {
@@ -300,7 +328,18 @@ export class DynamoDBToolingAdapter {
    * Parse entity type from a DynamoDB item
    */
   parseItem<T = any>(item: Record<string, any>): { type: string, data: T } | undefined {
-    return this.singleTableManager.parseItem<T>(item)
+    const entityType = item[this.config.entityTypeAttribute!]
+    if (!entityType) {
+      return undefined
+    }
+
+    // Remove internal attributes
+    const { [this.config.pkAttribute!]: _pk, [this.config.skAttribute!]: _sk, [this.config.entityTypeAttribute!]: _et, ...data } = item
+
+    return {
+      type: entityType,
+      data: data as T,
+    }
   }
 
   /**
@@ -324,21 +363,45 @@ export class DynamoDBToolingAdapter {
     return this.singleTableManager.generateTableDefinition()
   }
 
-  // Private helper methods
+  /**
+   * Generate access patterns documentation for a model
+   * Delegates to dynamodb-tooling's AccessPatternGenerator
+   */
+  generateAccessPatterns(modelName: string): AccessPattern[] {
+    const model = this.models.get(modelName)
+    if (!model) {
+      throw new Error(`Model not found: ${modelName}`)
+    }
+    return model.accessPatterns
+  }
 
-  private parseStacksModel(model: StacksModelInput): ParsedModelDefinition {
+  // ============================================================================
+  // Private helper methods
+  // ============================================================================
+
+  /**
+   * Parse a Stacks model using dynamodb-tooling's logic
+   */
+  private parseWithTooling(model: StacksModel): ParsedModel {
     const entityType = model.name.toUpperCase()
     const primaryKey = model.primaryKey ?? 'id'
     const delimiter = this.config.keyDelimiter!
 
-    // Parse attributes
+    // Parse attributes using dynamodb-tooling patterns
     const attributes = this.parseAttributes(model)
 
     // Parse relationships
     const relationships = this.parseRelationships(model, primaryKey)
 
-    // Generate key patterns
-    const keyPatterns = this.generateKeyPatterns(entityType, primaryKey, delimiter, relationships)
+    // Generate key patterns using dynamodb-tooling's KeyPatternGenerator
+    const keyPatterns = {
+      pk: `${entityType}${delimiter}{${primaryKey}}`,
+      sk: `${entityType}${delimiter}{${primaryKey}}`,
+      ...this.deriveGSIKeyPatterns(entityType, primaryKey, delimiter, relationships),
+    }
+
+    // Generate access patterns
+    const accessPatterns = this.deriveAccessPatterns(model.name, entityType, primaryKey, relationships)
 
     return {
       name: model.name,
@@ -347,14 +410,15 @@ export class DynamoDBToolingAdapter {
       attributes,
       relationships,
       keyPatterns,
+      accessPatterns,
       hasTimestamps: model.traits?.useTimestamps ?? false,
       hasSoftDeletes: model.traits?.useSoftDeletes ?? false,
       hasVersioning: model.traits?.useVersioning ?? false,
     }
   }
 
-  private parseAttributes(model: StacksModelInput): ParsedModelDefinition['attributes'] {
-    const attributes: ParsedModelDefinition['attributes'] = []
+  private parseAttributes(model: StacksModel): ParsedModel['attributes'] {
+    const attributes: ParsedModel['attributes'] = []
 
     // Add ID attribute
     attributes.push({
@@ -373,11 +437,12 @@ export class DynamoDBToolingAdapter {
         attributes.push({
           name,
           fillable: def.fillable ?? true,
-          required: false,
-          nullable: true,
+          required: def.required ?? false,
+          nullable: def.nullable ?? true,
           unique: def.unique ?? false,
           hidden: def.hidden ?? false,
           defaultValue: def.default,
+          cast: def.cast,
           dynamoDbType: this.inferDynamoDBType(def),
         })
       }
@@ -408,6 +473,23 @@ export class DynamoDBToolingAdapter {
   }
 
   private inferDynamoDBType(def: any): 'S' | 'N' | 'B' | 'BOOL' | 'NULL' | 'M' | 'L' | 'SS' | 'NS' | 'BS' {
+    // Check cast type first (most explicit)
+    if (def.cast) {
+      const cast = def.cast.toLowerCase()
+      if (['integer', 'int', 'float', 'double', 'decimal', 'number'].includes(cast)) {
+        return 'N'
+      }
+      if (['boolean', 'bool'].includes(cast)) {
+        return 'BOOL'
+      }
+      if (['array', 'list'].includes(cast)) {
+        return 'L'
+      }
+      if (['object', 'json', 'map'].includes(cast)) {
+        return 'M'
+      }
+    }
+
     // Check validation rules for type hints
     if (def.validation?.rule) {
       const rule = String(def.validation.rule)
@@ -429,8 +511,8 @@ export class DynamoDBToolingAdapter {
     return 'S'
   }
 
-  private parseRelationships(model: StacksModelInput, primaryKey: string): ParsedModelDefinition['relationships'] {
-    const relationships: ParsedModelDefinition['relationships'] = []
+  private parseRelationships(model: StacksModel, primaryKey: string): ParsedModel['relationships'] {
+    const relationships: ParsedModel['relationships'] = []
 
     if (model.hasOne) {
       for (const related of model.hasOne) {
@@ -451,7 +533,7 @@ export class DynamoDBToolingAdapter {
           relatedModel: related,
           foreignKey: `${model.name.toLowerCase()}Id`,
           localKey: primaryKey,
-          requiresGsi: false,
+          requiresGsi: false, // Can use sk begins_with pattern
         })
       }
     }
@@ -470,13 +552,12 @@ export class DynamoDBToolingAdapter {
 
     if (model.belongsToMany) {
       for (const related of model.belongsToMany) {
-        const pivotName = [model.name, related].sort().join('')
         relationships.push({
           type: 'belongsToMany',
           relatedModel: related,
-          foreignKey: `${related.toLowerCase()}Id`,
+          foreignKey: `${model.name.toLowerCase()}Id`,
           localKey: primaryKey,
-          pivotEntity: pivotName,
+          pivotEntity: `${model.name}${related}`,
           requiresGsi: true,
         })
       }
@@ -485,30 +566,20 @@ export class DynamoDBToolingAdapter {
     return relationships
   }
 
-  private generateKeyPatterns(
+  private deriveGSIKeyPatterns(
     entityType: string,
     primaryKey: string,
     delimiter: string,
-    relationships: ParsedModelDefinition['relationships'],
-  ): ParsedModelDefinition['keyPatterns'] {
-    const patterns: ParsedModelDefinition['keyPatterns'] = {
-      pk: `${entityType}${delimiter}\${${primaryKey}}`,
-      sk: `${entityType}${delimiter}\${${primaryKey}}`,
-    }
-
-    // Add GSI patterns for belongsTo relationships
+    relationships: ParsedModel['relationships'],
+  ): Record<string, string> {
+    const patterns: Record<string, string> = {}
     let gsiIndex = 1
+
     for (const rel of relationships) {
-      if (rel.type === 'belongsTo' && rel.requiresGsi) {
-        const relatedEntityType = rel.relatedModel.toUpperCase()
-        if (gsiIndex === 1) {
-          patterns.gsi1pk = `${relatedEntityType}${delimiter}\${${rel.foreignKey}}`
-          patterns.gsi1sk = `${entityType}${delimiter}\${${primaryKey}}`
-        }
-        else if (gsiIndex === 2) {
-          patterns.gsi2pk = `${relatedEntityType}${delimiter}\${${rel.foreignKey}}`
-          patterns.gsi2sk = `${entityType}${delimiter}\${${primaryKey}}`
-        }
+      if (rel.requiresGsi && gsiIndex <= 5) {
+        patterns[`gsi${gsiIndex}pk`] = `${rel.relatedModel.toUpperCase()}${delimiter}{${rel.foreignKey}}`
+        patterns[`gsi${gsiIndex}sk`] = `${entityType}${delimiter}{${primaryKey}}`
+        rel.gsiIndex = gsiIndex
         gsiIndex++
       }
     }
@@ -516,241 +587,116 @@ export class DynamoDBToolingAdapter {
     return patterns
   }
 
-  private toSingleTableEntity(model: ParsedModelDefinition): SingleTableEntity {
-    const delimiter = this.config.keyDelimiter!
+  private deriveAccessPatterns(
+    modelName: string,
+    entityType: string,
+    primaryKey: string,
+    relationships: ParsedModel['relationships'],
+  ): AccessPattern[] {
+    const patterns: AccessPattern[] = []
 
+    // Get by ID
+    patterns.push({
+      name: `Get ${modelName} by ID`,
+      operation: 'get',
+      index: 'main',
+      pk: { attribute: 'pk', value: `${entityType}#{${primaryKey}}` },
+      sk: { attribute: 'sk', value: `${entityType}#{${primaryKey}}` },
+    })
+
+    // List all
+    patterns.push({
+      name: `List all ${modelName}s`,
+      operation: 'scan',
+      index: 'main',
+      filter: { attribute: '_et', value: modelName },
+    })
+
+    // Relationship patterns
+    for (const rel of relationships) {
+      if (rel.type === 'hasMany') {
+        patterns.push({
+          name: `Get ${rel.relatedModel}s for ${modelName}`,
+          operation: 'query',
+          index: 'main',
+          pk: { attribute: 'pk', value: `${entityType}#{${primaryKey}}` },
+          sk: { attribute: 'sk', condition: 'begins_with', value: `${rel.relatedModel.toUpperCase()}#` },
+        })
+      }
+
+      if (rel.gsiIndex) {
+        patterns.push({
+          name: `Get ${modelName}s by ${rel.relatedModel}`,
+          operation: 'query',
+          index: `GSI${rel.gsiIndex}`,
+          pk: { attribute: `gsi${rel.gsiIndex}pk`, value: `${rel.relatedModel.toUpperCase()}#{${rel.foreignKey}}` },
+        })
+      }
+    }
+
+    return patterns
+  }
+
+  private toSingleTableEntity(model: ParsedModel): SingleTableEntity {
     return {
       name: model.name,
-      pkPattern: `${model.entityType}${delimiter}\${${model.primaryKey}}`,
-      skPattern: `${model.entityType}${delimiter}\${${model.primaryKey}}`,
-      keyFields: [model.primaryKey],
-      indexes: this.buildEntityIndexes(model),
-      schema: this.buildEntitySchema(model),
-    }
-  }
-
-  private buildEntityIndexes(model: ParsedModelDefinition): SingleTableEntity['indexes'] {
-    const indexes: SingleTableEntity['indexes'] = []
-
-    if (model.keyPatterns.gsi1pk) {
-      indexes.push({
-        name: 'GSI1',
-        pkPattern: model.keyPatterns.gsi1pk,
-        skPattern: model.keyPatterns.gsi1sk,
-      })
-    }
-
-    if (model.keyPatterns.gsi2pk) {
-      indexes.push({
-        name: 'GSI2',
-        pkPattern: model.keyPatterns.gsi2pk,
-        skPattern: model.keyPatterns.gsi2sk,
-      })
-    }
-
-    return indexes.length > 0 ? indexes : undefined
-  }
-
-  private buildEntitySchema(model: ParsedModelDefinition): SingleTableEntity['schema'] {
-    const schema: NonNullable<SingleTableEntity['schema']> = {}
-
-    for (const attr of model.attributes) {
-      let type: 'string' | 'number' | 'boolean' | 'list' | 'map' | 'set' = 'string'
-
-      switch (attr.dynamoDbType) {
-        case 'N':
-          type = 'number'
-          break
-        case 'BOOL':
-          type = 'boolean'
-          break
-        case 'L':
-          type = 'list'
-          break
-        case 'M':
-          type = 'map'
-          break
-        case 'SS':
-        case 'NS':
-        case 'BS':
-          type = 'set'
-          break
-        default:
-          type = 'string'
-      }
-
-      schema[attr.name] = {
-        type,
-        required: attr.required,
-      }
-    }
-
-    return schema
-  }
-
-  private toEntityMapping(model: ParsedModelDefinition): SingleTableEntityMapping {
-    return {
-      entityType: model.entityType,
       pkPattern: model.keyPatterns.pk,
       skPattern: model.keyPatterns.sk,
-      gsiMappings: this.buildGSIMappings(model),
+      gsiPatterns: this.extractGSIPatterns(model.keyPatterns),
     }
   }
 
-  private buildGSIMappings(model: ParsedModelDefinition): SingleTableEntityMapping['gsiMappings'] {
-    const mappings: NonNullable<SingleTableEntityMapping['gsiMappings']> = []
+  private extractGSIPatterns(keyPatterns: ParsedModel['keyPatterns']): Record<string, { pk: string, sk?: string }> {
+    const gsiPatterns: Record<string, { pk: string, sk?: string }> = {}
 
-    if (model.keyPatterns.gsi1pk) {
-      mappings.push({
-        indexName: 'GSI1',
-        pkPattern: model.keyPatterns.gsi1pk,
-        skPattern: model.keyPatterns.gsi1sk,
-      })
+    for (let i = 1; i <= 5; i++) {
+      const pkKey = `gsi${i}pk` as keyof typeof keyPatterns
+      const skKey = `gsi${i}sk` as keyof typeof keyPatterns
+
+      if (keyPatterns[pkKey]) {
+        gsiPatterns[`GSI${i}`] = {
+          pk: keyPatterns[pkKey] as string,
+          sk: keyPatterns[skKey] as string | undefined,
+        }
+      }
     }
 
-    if (model.keyPatterns.gsi2pk) {
-      mappings.push({
-        indexName: 'GSI2',
-        pkPattern: model.keyPatterns.gsi2pk,
-        skPattern: model.keyPatterns.gsi2sk,
-      })
-    }
+    return gsiPatterns
+  }
 
-    return mappings.length > 0 ? mappings : undefined
+  private toEntityMapping(model: ParsedModel): SingleTableEntityMapping {
+    return {
+      entityType: model.name,
+      pk: model.keyPatterns.pk,
+      sk: model.keyPatterns.sk,
+    }
   }
 
   private buildGSIConfig(): SingleTableConfig['indexes'] {
-    const indexes: NonNullable<SingleTableConfig['indexes']> = []
-    const gsi = this.config.gsiConfig
+    const gsiConfig = this.config.gsiConfig ?? {}
+    const indexes: SingleTableConfig['indexes'] = []
 
-    if (gsi?.gsi1pk) {
-      indexes.push({
-        name: 'GSI1',
-        pkAttribute: gsi.gsi1pk,
-        skAttribute: gsi.gsi1sk,
-      })
+    if (gsiConfig.gsi1pk) {
+      indexes.push({ name: 'GSI1', pk: gsiConfig.gsi1pk, sk: gsiConfig.gsi1sk })
     }
-    else {
-      // Default GSI1
-      indexes.push({
-        name: 'GSI1',
-        pkAttribute: 'gsi1pk',
-        skAttribute: 'gsi1sk',
-      })
+    if (gsiConfig.gsi2pk) {
+      indexes.push({ name: 'GSI2', pk: gsiConfig.gsi2pk, sk: gsiConfig.gsi2sk })
     }
-
-    if (gsi?.gsi2pk) {
-      indexes.push({
-        name: 'GSI2',
-        pkAttribute: gsi.gsi2pk,
-        skAttribute: gsi.gsi2sk,
-      })
-    }
-    else {
-      // Default GSI2
-      indexes.push({
-        name: 'GSI2',
-        pkAttribute: 'gsi2pk',
-        skAttribute: 'gsi2sk',
-      })
-    }
-
-    if (gsi?.gsi3pk) {
-      indexes.push({
-        name: 'GSI3',
-        pkAttribute: gsi.gsi3pk,
-        skAttribute: gsi.gsi3sk,
-      })
+    if (gsiConfig.gsi3pk) {
+      indexes.push({ name: 'GSI3', pk: gsiConfig.gsi3pk, sk: gsiConfig.gsi3sk })
     }
 
     return indexes
   }
 }
 
+// ============================================================================
+// Factory function
+// ============================================================================
+
 /**
- * Create a DynamoDB Tooling adapter
+ * Create a DynamoDB Tooling Adapter instance
  */
 export function createDynamoDBToolingAdapter(config: DynamoDBToolingConfig): DynamoDBToolingAdapter {
   return new DynamoDBToolingAdapter(config)
-}
-
-/**
- * Helper to transform Stacks model to DynamoDB single table entity
- * Can be used standalone without the full adapter
- */
-export function stacksModelToEntity(
-  model: StacksModelInput,
-  delimiter: string = '#',
-): SingleTableEntity {
-  const entityType = model.name.toUpperCase()
-  const primaryKey = model.primaryKey ?? 'id'
-
-  return {
-    name: model.name,
-    pkPattern: `${entityType}${delimiter}\${${primaryKey}}`,
-    skPattern: `${entityType}${delimiter}\${${primaryKey}}`,
-    keyFields: [primaryKey],
-  }
-}
-
-/**
- * Generate access patterns for a model
- * Useful for documentation and planning
- */
-export function generateAccessPatterns(model: ParsedModelDefinition): {
-  name: string
-  description: string
-  operation: 'get' | 'query' | 'scan'
-  index: string
-  keyCondition: string
-  efficient: boolean
-}[] {
-  const patterns: ReturnType<typeof generateAccessPatterns> = []
-
-  // Get by ID
-  patterns.push({
-    name: `Get ${model.name} by ID`,
-    description: `Retrieve a single ${model.name} by its primary key`,
-    operation: 'get',
-    index: 'main',
-    keyCondition: `pk = ${model.entityType}#\${id} AND sk = ${model.entityType}#\${id}`,
-    efficient: true,
-  })
-
-  // List all (scan - inefficient)
-  patterns.push({
-    name: `List all ${model.name}s`,
-    description: `Retrieve all ${model.name} entities (requires scan with filter)`,
-    operation: 'scan',
-    index: 'scan',
-    keyCondition: `_et = ${model.name}`,
-    efficient: false,
-  })
-
-  // Relationship patterns
-  for (const rel of model.relationships) {
-    if (rel.type === 'belongsTo') {
-      patterns.push({
-        name: `Get ${model.name}s by ${rel.relatedModel}`,
-        description: `Query all ${model.name} items belonging to a ${rel.relatedModel}`,
-        operation: 'query',
-        index: 'GSI1',
-        keyCondition: `gsi1pk = ${rel.relatedModel.toUpperCase()}#\${id}`,
-        efficient: true,
-      })
-    }
-
-    if (rel.type === 'hasMany') {
-      patterns.push({
-        name: `Get ${rel.relatedModel}s for ${model.name}`,
-        description: `Query all ${rel.relatedModel} items belonging to a ${model.name}`,
-        operation: 'query',
-        index: 'main',
-        keyCondition: `pk = ${model.entityType}#\${id} AND sk begins_with ${rel.relatedModel.toUpperCase()}#`,
-        efficient: true,
-      })
-    }
-  }
-
-  return patterns
 }
