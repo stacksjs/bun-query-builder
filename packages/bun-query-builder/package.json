@@ -25,6 +25,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./dynamodb": {
+      "bun": "./src/dynamodb/index.ts",
+      "types": "./dist/dynamodb/index.d.ts",
+      "import": "./dist/dynamodb/index.js"
+    },
     "./*": {
       "bun": "./src/*",
       "import": "./dist/*"
