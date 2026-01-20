@@ -695,12 +695,14 @@ export class DynamoDBToolingAdapter {
 
     if (model.belongsToMany) {
       for (const related of model.belongsToMany) {
+        // Pivot entity name is alphabetically sorted for consistency
+        const names = [model.name, related].sort()
         relationships.push({
           type: 'belongsToMany',
           relatedModel: related,
           foreignKey: `${model.name.toLowerCase()}Id`,
           localKey: primaryKey,
-          pivotEntity: `${model.name}${related}`,
+          pivotEntity: names.join(''),
           requiresGsi: true,
         })
       }
@@ -870,4 +872,30 @@ export class DynamoDBToolingAdapter {
  */
 export function createDynamoDBToolingAdapter(config: DynamoDBToolingConfig): DynamoDBToolingAdapter {
   return new DynamoDBToolingAdapter(config)
+}
+
+/**
+ * Generate access patterns for a parsed model
+ * Standalone function for use outside the adapter
+ */
+export function generateAccessPatterns(model: ParsedModel): AccessPattern[] {
+  return model.accessPatterns
+}
+
+/**
+ * Convert a Stacks model definition to a single-table entity pattern
+ * Standalone function for creating entity patterns
+ */
+export function stacksModelToEntity(
+  model: { name: string; primaryKey?: string },
+  delimiter: string = '#',
+): { name: string; pkPattern: string; skPattern: string } {
+  const entityType = model.name.toUpperCase()
+  const primaryKey = model.primaryKey ?? 'id'
+
+  return {
+    name: model.name,
+    pkPattern: `${entityType}${delimiter}\${${primaryKey}}`,
+    skPattern: `${entityType}${delimiter}\${${primaryKey}}`,
+  }
 }
