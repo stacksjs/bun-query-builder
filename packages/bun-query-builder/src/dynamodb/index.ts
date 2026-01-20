@@ -100,9 +100,9 @@ export interface TransactWriteOperation {
 }
 
 /**
- * Query result
+ * DynamoDB query result
  */
-export interface QueryResult<T = any> {
+export interface DynamoDBQueryResult<T = any> {
   items: T[]
   count: number
   scannedCount?: number
@@ -530,13 +530,6 @@ class DynamoClient {
       tableName: config.table,
       endpoint: config.endpoint,
       credentials: config.credentials,
-      singleTable: {
-        enabled: true,
-        pkAttribute: config.pkAttribute ?? 'pk',
-        skAttribute: config.skAttribute ?? 'sk',
-        entityTypeAttribute: config.entityTypeAttribute ?? '_et',
-        keyDelimiter: config.keyDelimiter ?? '#',
-      },
     }
 
     this.driver = createDynamoDBDriver(driverConfig)

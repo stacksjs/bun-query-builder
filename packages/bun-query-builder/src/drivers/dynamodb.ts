@@ -298,6 +298,22 @@ export interface DynamoDBDriver {
 }
 
 /**
+ * Single table design configuration
+ */
+export interface SingleTableConfig {
+  /** Enable single table design mode */
+  enabled: boolean
+  /** Partition key attribute name (default: 'pk') */
+  pkAttribute?: string
+  /** Sort key attribute name (default: 'sk') */
+  skAttribute?: string
+  /** Entity type attribute name (default: '_et') */
+  entityTypeAttribute?: string
+  /** Key delimiter (default: '#') */
+  keyDelimiter?: string
+}
+
+/**
  * DynamoDB configuration options
  */
 export interface DynamoDBConfig {
@@ -317,6 +333,8 @@ export interface DynamoDBConfig {
   entityMappings?: SingleTableEntityMapping[]
   /** Default billing mode for new tables */
   defaultBillingMode?: 'PROVISIONED' | 'PAY_PER_REQUEST'
+  /** Single table design configuration */
+  singleTable?: SingleTableConfig
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { Database } from '../schemas/kysely'
 import { Database as BunDatabase } from 'bun:sqlite'
+// @ts-expect-error PrismaClient may not be generated yet
 import { PrismaClient } from '@prisma/client'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { Kysely, SqliteDialect } from 'kysely'

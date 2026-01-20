@@ -411,9 +411,13 @@ export class DynamoDBToolingAdapter {
       relationships,
       keyPatterns,
       accessPatterns,
+      traits: model.traits ?? {},
       hasTimestamps: model.traits?.useTimestamps ?? false,
       hasSoftDeletes: model.traits?.useSoftDeletes ?? false,
+      hasUuid: model.traits?.useUuid ?? false,
+      hasTtl: model.traits?.useTtl ?? false,
       hasVersioning: model.traits?.useVersioning ?? false,
+      original: model,
     }
   }
 
@@ -598,18 +602,26 @@ export class DynamoDBToolingAdapter {
     // Get by ID
     patterns.push({
       name: `Get ${modelName} by ID`,
+      description: `Retrieve a single ${modelName} by its primary key`,
+      entityType,
       operation: 'get',
       index: 'main',
-      pk: { attribute: 'pk', value: `${entityType}#{${primaryKey}}` },
-      sk: { attribute: 'sk', value: `${entityType}#{${primaryKey}}` },
+      keyCondition: `pk = :pk AND sk = :sk`,
+      examplePk: `${entityType}#123`,
+      exampleSk: `${entityType}#123`,
+      efficient: true,
     })
 
     // List all
     patterns.push({
       name: `List all ${modelName}s`,
+      description: `Scan all ${modelName} entities`,
+      entityType,
       operation: 'scan',
-      index: 'main',
-      filter: { attribute: '_et', value: modelName },
+      index: 'scan',
+      keyCondition: `_et = :entityType`,
+      examplePk: entityType,
+      efficient: false,
     })
 
     // Relationship patterns
@@ -617,19 +629,28 @@ export class DynamoDBToolingAdapter {
       if (rel.type === 'hasMany') {
         patterns.push({
           name: `Get ${rel.relatedModel}s for ${modelName}`,
+          description: `Query ${rel.relatedModel}s related to a ${modelName}`,
+          entityType,
           operation: 'query',
           index: 'main',
-          pk: { attribute: 'pk', value: `${entityType}#{${primaryKey}}` },
-          sk: { attribute: 'sk', condition: 'begins_with', value: `${rel.relatedModel.toUpperCase()}#` },
+          keyCondition: `pk = :pk AND begins_with(sk, :skPrefix)`,
+          examplePk: `${entityType}#123`,
+          exampleSk: `${rel.relatedModel.toUpperCase()}#`,
+          efficient: true,
         })
       }
 
       if (rel.gsiIndex) {
+        const gsiIndex = `GSI${rel.gsiIndex}` as 'GSI1' | 'GSI2' | 'GSI3' | 'GSI4' | 'GSI5'
         patterns.push({
           name: `Get ${modelName}s by ${rel.relatedModel}`,
+          description: `Query ${modelName}s by their related ${rel.relatedModel}`,
+          entityType,
           operation: 'query',
-          index: `GSI${rel.gsiIndex}`,
-          pk: { attribute: `gsi${rel.gsiIndex}pk`, value: `${rel.relatedModel.toUpperCase()}#{${rel.foreignKey}}` },
+          index: gsiIndex,
+          keyCondition: `gsi${rel.gsiIndex}pk = :pk`,
+          examplePk: `${rel.relatedModel.toUpperCase()}#123`,
+          efficient: true,
         })
       }
     }
@@ -638,37 +659,48 @@ export class DynamoDBToolingAdapter {
   }
 
   private toSingleTableEntity(model: ParsedModel): SingleTableEntity {
+    // Extract key fields from the pk pattern (e.g., "USER#{id}" -> ["id"])
+    const keyFields = this.extractKeyFields(model.keyPatterns.pk)
+
     return {
       name: model.name,
       pkPattern: model.keyPatterns.pk,
       skPattern: model.keyPatterns.sk,
-      gsiPatterns: this.extractGSIPatterns(model.keyPatterns),
+      keyFields,
+      indexes: this.extractGSIPatterns(model.keyPatterns),
     }
   }
 
-  private extractGSIPatterns(keyPatterns: ParsedModel['keyPatterns']): Record<string, { pk: string, sk?: string }> {
-    const gsiPatterns: Record<string, { pk: string, sk?: string }> = {}
+  private extractKeyFields(pattern: string): string[] {
+    const matches = pattern.match(/\{([^}]+)\}/g)
+    if (!matches) return []
+    return matches.map(m => m.slice(1, -1))
+  }
+
+  private extractGSIPatterns(keyPatterns: ParsedModel['keyPatterns']): SingleTableEntity['indexes'] {
+    const indexes: SingleTableEntity['indexes'] = []
 
     for (let i = 1; i <= 5; i++) {
       const pkKey = `gsi${i}pk` as keyof typeof keyPatterns
       const skKey = `gsi${i}sk` as keyof typeof keyPatterns
 
       if (keyPatterns[pkKey]) {
-        gsiPatterns[`GSI${i}`] = {
-          pk: keyPatterns[pkKey] as string,
-          sk: keyPatterns[skKey] as string | undefined,
-        }
+        indexes.push({
+          name: `GSI${i}`,
+          pkPattern: keyPatterns[pkKey] as string,
+          skPattern: keyPatterns[skKey] as string | undefined,
+        })
       }
     }
 
-    return gsiPatterns
+    return indexes.length > 0 ? indexes : undefined
   }
 
   private toEntityMapping(model: ParsedModel): SingleTableEntityMapping {
     return {
       entityType: model.name,
-      pk: model.keyPatterns.pk,
-      sk: model.keyPatterns.sk,
+      pkPattern: model.keyPatterns.pk,
+      skPattern: model.keyPatterns.sk,
     }
   }
 
@@ -677,13 +709,13 @@ export class DynamoDBToolingAdapter {
     const indexes: SingleTableConfig['indexes'] = []
 
     if (gsiConfig.gsi1pk) {
-      indexes.push({ name: 'GSI1', pk: gsiConfig.gsi1pk, sk: gsiConfig.gsi1sk })
+      indexes.push({ name: 'GSI1', pkAttribute: gsiConfig.gsi1pk, skAttribute: gsiConfig.gsi1sk })
     }
     if (gsiConfig.gsi2pk) {
-      indexes.push({ name: 'GSI2', pk: gsiConfig.gsi2pk, sk: gsiConfig.gsi2sk })
+      indexes.push({ name: 'GSI2', pkAttribute: gsiConfig.gsi2pk, skAttribute: gsiConfig.gsi2sk })
     }
     if (gsiConfig.gsi3pk) {
-      indexes.push({ name: 'GSI3', pk: gsiConfig.gsi3pk, sk: gsiConfig.gsi3sk })
+      indexes.push({ name: 'GSI3', pkAttribute: gsiConfig.gsi3pk, skAttribute: gsiConfig.gsi3sk })
     }
 
     return indexes
