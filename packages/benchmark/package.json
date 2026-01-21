@@ -21,7 +21,7 @@
     "drizzle-orm": "^0.45.1",
     "kysely": "^0.28.10",
     "mitata": "^1.0.34",
-    "prisma": "^7.3.0-integration-prisma6-fix-cloudflare-engine.3",
+    "prisma": "^7.3.0",
     "typeorm": "^0.3.28"
   },
   "devDependencies": {
