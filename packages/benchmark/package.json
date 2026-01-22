@@ -13,7 +13,7 @@
     "clean": "bun run src/clean.ts"
   },
   "dependencies": {
-    "@prisma/client": "^7.3.0-integration-prisma6-fix-cloudflare-engine.3",
+    "@prisma/client": "^7.4.0-integration-engines-7-3-0-19-feat-minor-fixes-on-qc-parameterization-c32a571f4d5d8fe47265c7a4515fcd51d88c7309.1",
     "better-sqlite3": "^12.6.2",
     "bun-query-builder": "workspace:*",
     "chalk": "^5.6.2",
@@ -21,7 +21,7 @@
     "drizzle-orm": "^0.45.1",
     "kysely": "^0.28.10",
     "mitata": "^1.0.34",
-    "prisma": "^7.3.0-integration-prisma6-fix-cloudflare-engine.3",
+    "prisma": "^7.4.0-integration-engines-7-3-0-19-feat-minor-fixes-on-qc-parameterization-c32a571f4d5d8fe47265c7a4515fcd51d88c7309.1",
     "typeorm": "^0.3.28"
   },
   "devDependencies": {
