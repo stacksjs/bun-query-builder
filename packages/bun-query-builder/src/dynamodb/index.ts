@@ -790,3 +790,9 @@ export type {
   DynamoDBDriver,
   SingleTableEntityMapping,
 } from '../drivers/dynamodb'
+
+// Re-export Model and client
+export { Model, configureModels } from './model'
+export { DynamoDBClient, createClient } from './client'
+export type { DynamoDBClientConfig, DynamoDBCredentials } from './client'
+export type { ModelConfig, ModelQueryBuilder } from './model'
