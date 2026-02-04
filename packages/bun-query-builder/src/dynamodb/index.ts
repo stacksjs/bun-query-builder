@@ -796,3 +796,31 @@ export { Model, configureModels } from './model'
 export { DynamoDBClient, createClient } from './client'
 export type { DynamoDBClientConfig, DynamoDBCredentials } from './client'
 export type { ModelConfig, ModelQueryBuilder } from './model'
+
+// Re-export migrations
+export {
+  DynamoDBMigrationDriver,
+  createMigrationDriver,
+  migrateModels,
+} from './migration-driver'
+export type { MigrationDriverConfig, MigrationResult } from './migration-driver'
+
+export {
+  buildMigrationPlan as buildDynamoDBMigrationPlan,
+  extractTableDefinition,
+  extractModelSchema,
+  convertSchemaToDefinition,
+  hashTableDefinition,
+  isDefinitionEqual,
+} from './migrations'
+export type {
+  DynamoDBMigrationPlan,
+  DynamoDBMigrationOperation,
+  DynamoDBMigrationOperationType,
+  DynamoDBMigrationState,
+  DynamoDBModelSchema,
+  DynamoDBGSIDefinition,
+  DynamoDBLSIDefinition,
+} from './migrations'
+
+export { DynamoDBMigrationTracker, MIGRATIONS_TABLE } from './migration-tracker'

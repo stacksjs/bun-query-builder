@@ -446,6 +446,27 @@ export class DynamoDBClient {
   async listTables(input?: { ExclusiveStartTableName?: string, Limit?: number }): Promise<{ TableNames: string[], LastEvaluatedTableName?: string }> {
     return this.execute('ListTables', input ?? {})
   }
+
+  /**
+   * UpdateTable - Update table settings (GSIs, throughput, etc.)
+   */
+  async updateTable(input: any): Promise<any> {
+    return this.execute('UpdateTable', input)
+  }
+
+  /**
+   * UpdateTimeToLive - Configure TTL on a table
+   */
+  async updateTimeToLive(input: any): Promise<any> {
+    return this.execute('UpdateTimeToLive', input)
+  }
+
+  /**
+   * DescribeTimeToLive - Get TTL settings for a table
+   */
+  async describeTimeToLive(tableName: string): Promise<any> {
+    return this.execute('DescribeTimeToLive', { TableName: tableName })
+  }
 }
 
 /**
