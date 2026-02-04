@@ -13,7 +13,7 @@
     "clean": "bun run src/clean.ts"
   },
   "dependencies": {
-    "@prisma/client": "^7.4.0-integration-parameterization.12",
+    "@prisma/client": "^7.4.0-integration-parameterization.14",
     "better-sqlite3": "^12.6.2",
     "bun-query-builder": "workspace:*",
     "chalk": "^5.6.2",
@@ -21,7 +21,7 @@
     "drizzle-orm": "^0.45.1",
     "kysely": "^0.28.11",
     "mitata": "^1.0.34",
-    "prisma": "^7.4.0-integration-parameterization.12",
+    "prisma": "^7.4.0-integration-parameterization.14",
     "typeorm": "^0.3.28"
   },
   "devDependencies": {
