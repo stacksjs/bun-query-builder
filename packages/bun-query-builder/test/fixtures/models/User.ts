@@ -1,6 +1,8 @@
 import type { ModelDefinition as Model } from '../../../src/orm'
 import { schema } from '@stacksjs/ts-validation'
 
+const roles = ['user', 'admin', 'moderator'] as const
+
 export default {
   name: 'User',
   table: 'users',
@@ -30,7 +32,6 @@ export default {
 
   attributes: {
     name: {
-      type: 'string',
       order: 1,
       fillable: true,
       validation: {
@@ -44,7 +45,6 @@ export default {
     },
 
     email: {
-      type: 'string',
       order: 2,
       unique: true,
       fillable: true,
@@ -59,7 +59,6 @@ export default {
     },
 
     password: {
-      type: 'string',
       order: 3,
       fillable: true,
       hidden: true,
@@ -74,7 +73,6 @@ export default {
     },
 
     avatar: {
-      type: 'string',
       order: 4,
       fillable: true,
       validation: {
@@ -84,7 +82,6 @@ export default {
     },
 
     bio: {
-      type: 'string',
       order: 5,
       fillable: true,
       validation: {
@@ -94,7 +91,6 @@ export default {
     },
 
     location: {
-      type: 'string',
       order: 6,
       fillable: true,
       validation: {
@@ -104,7 +100,6 @@ export default {
     },
 
     active: {
-      type: 'boolean',
       order: 7,
       fillable: true,
       validation: {
@@ -114,14 +109,12 @@ export default {
     },
 
     role: {
-      // Literal union type - enables narrow type inference
-      type: ['user', 'admin', 'moderator'] as const,
       order: 8,
       fillable: true,
       validation: {
-        rule: schema.string().required(),
+        rule: schema.enum(roles).required(),
       },
-      factory: (faker) => faker.helpers.arrayElement(['user', 'admin', 'moderator']),
+      factory: (faker): typeof roles[number] => faker.helpers.arrayElement([...roles]),
     },
   },
 
