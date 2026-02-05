@@ -2,7 +2,7 @@
  * Dynamic ORM for bun-query-builder
  *
  * Creates fully-featured model classes from Stacks-style model definitions
- * without any code generation. Just define your model and use it.
+ * without any code generation. Provides precise TypeScript inference.
  *
  * @example
  * ```ts
@@ -12,261 +12,271 @@
  *   name: 'User',
  *   table: 'users',
  *   attributes: {
- *     name: { fillable: true },
- *     email: { fillable: true, unique: true },
- *     password: { fillable: true, hidden: true },
+ *     name: { type: 'string', fillable: true },
+ *     email: { type: 'string', fillable: true, unique: true },
+ *     age: { type: 'number', fillable: true },
+ *     status: { type: ['active', 'inactive'] as const, fillable: true },
  *   }
- * })
+ * } as const)
  *
- * const users = User.where('active', true).get()
  * const user = User.find(1)
- * const newUser = User.create({ name: 'John', email: 'john@example.com' })
+ * user?.get('status') // type: 'active' | 'inactive'
  * ```
  */
 
-import { Database } from 'bun:sqlite'
+import { Database, type SQLQueryBindings } from 'bun:sqlite'
 
-// Types for model definition
-export interface ModelAttribute {
+// Binding helper type for SQL queries
+type Bindings = SQLQueryBindings[]
+
+// Primitive type mappings
+type PrimitiveTypeMap = {
+  string: string
+  number: number
+  boolean: boolean
+  date: Date
+  json: Record<string, unknown>
+}
+
+// Infer the actual TS type from attribute type definition
+type InferType<T> =
+  T extends keyof PrimitiveTypeMap ? PrimitiveTypeMap[T] :
+  T extends readonly (infer U)[] ? U :
+  T extends (infer U)[] ? U :
+  unknown
+
+// Attribute definition with explicit type
+export interface TypedAttribute<T = unknown> {
+  type?: T
   order?: number
   fillable?: boolean
   unique?: boolean
   hidden?: boolean
   guarded?: boolean
+  nullable?: boolean
+  default?: InferType<T>
   validation?: {
-    rule: any
+    rule: unknown
     message?: Record<string, string>
   }
-  factory?: (faker: any) => any
+  factory?: (faker: unknown) => InferType<T>
 }
 
+// Base model definition
 export interface ModelDefinition {
-  name: string
-  table: string
-  primaryKey?: string
-  autoIncrement?: boolean
-  connection?: string
-  traits?: {
-    useUuid?: boolean
-    useTimestamps?: boolean
-    useSoftDeletes?: boolean
-    useSearch?: {
-      displayable?: string[]
-      searchable?: string[]
-      sortable?: string[]
-      filterable?: string[]
+  readonly name: string
+  readonly table: string
+  readonly primaryKey?: string
+  readonly autoIncrement?: boolean
+  readonly connection?: string
+  readonly traits?: {
+    readonly useUuid?: boolean
+    readonly useTimestamps?: boolean
+    readonly useSoftDeletes?: boolean
+    readonly useSearch?: {
+      readonly displayable?: readonly string[]
+      readonly searchable?: readonly string[]
+      readonly sortable?: readonly string[]
+      readonly filterable?: readonly string[]
     }
-    useSeeder?: {
-      count: number
+    readonly useSeeder?: {
+      readonly count: number
     }
-    useApi?: {
-      uri: string
-      routes: string[]
+    readonly useApi?: {
+      readonly uri: string
+      readonly routes: readonly string[]
     }
   }
-  belongsTo?: string[]
-  hasMany?: string[]
-  hasOne?: string[]
-  attributes: Record<string, ModelAttribute>
-  get?: Record<string, (attributes: Record<string, any>) => any>
-  set?: Record<string, (attributes: Record<string, any>) => any>
+  readonly belongsTo?: readonly string[]
+  readonly hasMany?: readonly string[]
+  readonly hasOne?: readonly string[]
+  readonly attributes: {
+    readonly [key: string]: TypedAttribute<unknown>
+  }
+  readonly get?: Record<string, (attributes: Record<string, unknown>) => unknown>
+  readonly set?: Record<string, (attributes: Record<string, unknown>) => unknown>
 }
+
+// Extract attribute keys from definition
+type AttributeKeys<TDef extends ModelDefinition> = keyof TDef['attributes'] & string
+
+// Infer single attribute type
+type InferAttributeType<TAttr> =
+  TAttr extends { type: infer T } ? InferType<T> :
+  TAttr extends { factory: (faker: unknown) => infer R } ? R :
+  unknown
+
+// Build the full attributes type from definition
+type InferModelAttributes<TDef extends ModelDefinition> = {
+  [K in AttributeKeys<TDef>]: InferAttributeType<TDef['attributes'][K]>
+}
+
+// System fields added by traits
+type SystemFields<TDef extends ModelDefinition> =
+  { id: number } &
+  (TDef['traits'] extends { useUuid: true } ? { uuid: string } : {}) &
+  (TDef['traits'] extends { useTimestamps: true } ? { created_at: string; updated_at: string } : {}) &
+  (TDef['traits'] extends { useSoftDeletes: true } ? { deleted_at: string | null } : {})
+
+// Complete model type
+type ModelAttributes<TDef extends ModelDefinition> =
+  InferModelAttributes<TDef> & SystemFields<TDef>
+
+// All valid column names
+type ColumnName<TDef extends ModelDefinition> =
+  | AttributeKeys<TDef>
+  | 'id'
+  | (TDef['traits'] extends { useUuid: true } ? 'uuid' : never)
+  | (TDef['traits'] extends { useTimestamps: true } ? 'created_at' | 'updated_at' : never)
+  | (TDef['traits'] extends { useSoftDeletes: true } ? 'deleted_at' : never)
+
+// Hidden fields
+type HiddenKeys<TDef extends ModelDefinition> = {
+  [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { hidden: true } ? K : never
+}[AttributeKeys<TDef>]
+
+// Fillable fields
+type FillableKeys<TDef extends ModelDefinition> = {
+  [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { fillable: true } ? K : never
+}[AttributeKeys<TDef>]
 
 type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'in' | 'not in'
 
-// Global database instance
 let globalDb: Database | null = null
 
-/**
- * Configure the ORM with a database connection
- */
-export function configureOrm(options: {
-  database?: string | Database
-  verbose?: boolean
-}): void {
+export function configureOrm(options: { database?: string | Database; verbose?: boolean }): void {
   if (options.database instanceof Database) {
     globalDb = options.database
   } else {
-    globalDb = new Database(options.database || ':memory:', {
-      create: true,
-    })
+    globalDb = new Database(options.database || ':memory:', { create: true })
   }
 }
 
-/**
- * Get the current database instance
- */
 export function getDatabase(): Database {
   if (!globalDb) {
-    // Auto-create in-memory database if not configured
     globalDb = new Database(':memory:', { create: true })
   }
   return globalDb
 }
 
 /**
- * Model instance class - represents a single record
+ * Model instance - represents a single database record
  */
-class ModelInstance<T extends Record<string, any>> {
-  private _attributes: T
-  private _original: T
-  private _definition: ModelDefinition
-  private _hasSaved: boolean = false
+class ModelInstance<
+  TDef extends ModelDefinition,
+  TSelected extends ColumnName<TDef> = ColumnName<TDef>
+> {
+  private _attributes: Record<string, unknown>
+  private _original: Record<string, unknown>
+  private _definition: TDef
+  private _hasSaved = false
 
-  constructor(definition: ModelDefinition, attributes: Partial<T> = {}) {
+  constructor(definition: TDef, attributes: Partial<ModelAttributes<TDef>> = {}) {
     this._definition = definition
-    this._attributes = { ...attributes } as T
-    this._original = { ...attributes } as T
+    this._attributes = { ...attributes }
+    this._original = { ...attributes }
   }
 
-  // Dynamic getter for any attribute
-  get(key: keyof T): T[keyof T] {
-    // Check for custom getter
-    if (this._definition.get?.[key as string]) {
-      return this._definition.get[key as string](this._attributes)
+  get<K extends TSelected>(key: K): K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : never {
+    const getter = this._definition.get?.[key as string]
+    if (getter) {
+      return getter(this._attributes as Record<string, unknown>) as any
     }
-    return this._attributes[key]
+    return this._attributes[key as string] as any
   }
 
-  // Dynamic setter for any attribute
-  set(key: keyof T, value: any): void {
-    this._attributes[key] = value
+  set<K extends AttributeKeys<TDef>>(
+    key: K,
+    value: ModelAttributes<TDef>[K]
+  ): void {
+    this._attributes[key as string] = value
   }
 
-  // Get all attributes
-  get attributes(): T {
-    return { ...this._attributes }
+  get attributes(): Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>> {
+    return { ...this._attributes } as any
   }
 
-  // Get primary key value
-  get id(): number | undefined {
+  get id(): number {
     const pk = this._definition.primaryKey || 'id'
-    return this._attributes[pk as keyof T] as number | undefined
+    return this._attributes[pk] as number
   }
 
-  /**
-   * Check if model or specific attribute has been modified
-   */
-  isDirty(column?: keyof T): boolean {
+  isDirty<K extends AttributeKeys<TDef>>(column?: K): boolean {
     if (column) {
       return this._attributes[column] !== this._original[column]
     }
-    return Object.keys(this._attributes).some(
-      key => this._attributes[key as keyof T] !== this._original[key as keyof T]
-    )
+    return Object.keys(this._attributes).some(k => this._attributes[k] !== this._original[k])
   }
 
-  /**
-   * Check if model or specific attribute is unchanged
-   */
-  isClean(column?: keyof T): boolean {
+  isClean<K extends AttributeKeys<TDef>>(column?: K): boolean {
     return !this.isDirty(column)
   }
 
-  /**
-   * Check if model was changed after last save
-   */
-  wasChanged(column?: keyof T): boolean {
-    return this._hasSaved && this.isDirty(column)
+  getOriginal<K extends AttributeKeys<TDef>>(column: K): ModelAttributes<TDef>[K] {
+    return this._original[column] as any
   }
 
-  /**
-   * Get original attribute value(s)
-   */
-  getOriginal<K extends keyof T>(column?: K): K extends keyof T ? T[K] : T {
-    if (column) {
-      return this._original[column] as any
-    }
-    return { ...this._original } as any
-  }
-
-  /**
-   * Get changed attributes
-   */
-  getChanges(): Partial<T> {
-    const changes: Partial<T> = {}
+  getChanges(): Partial<InferModelAttributes<TDef>> {
+    const changes: Record<string, unknown> = {}
     for (const key of Object.keys(this._attributes)) {
-      if (this._attributes[key as keyof T] !== this._original[key as keyof T]) {
-        changes[key as keyof T] = this._attributes[key as keyof T]
+      if (this._attributes[key] !== this._original[key]) {
+        changes[key] = this._attributes[key]
       }
     }
-    return changes
+    return changes as any
   }
 
-  /**
-   * Fill attributes (respecting fillable/guarded)
-   */
-  fill(data: Partial<T>): this {
-    const fillable = Object.entries(this._definition.attributes)
-      .filter(([_, attr]) => attr.fillable)
-      .map(([key]) => key)
-
-    const guarded = Object.entries(this._definition.attributes)
-      .filter(([_, attr]) => attr.guarded)
-      .map(([key]) => key)
-
+  fill(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): this {
+    const attrs = this._definition.attributes
     for (const [key, value] of Object.entries(data)) {
-      if (!guarded.includes(key) && fillable.includes(key)) {
-        this._attributes[key as keyof T] = value as T[keyof T]
+      const attr = attrs[key]
+      if (attr?.fillable && !attr?.guarded) {
+        this._attributes[key] = value
       }
     }
     return this
   }
 
-  /**
-   * Force fill all attributes (ignoring fillable/guarded)
-   */
-  forceFill(data: Partial<T>): this {
-    for (const [key, value] of Object.entries(data)) {
-      this._attributes[key as keyof T] = value as T[keyof T]
-    }
+  forceFill(data: Partial<InferModelAttributes<TDef>>): this {
+    Object.assign(this._attributes, data)
     return this
   }
 
-  /**
-   * Save the model to database
-   */
   save(): this {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
 
-    // Apply setters
-    for (const [key, setter] of Object.entries(this._definition.set || {})) {
-      if (this.isDirty(key as keyof T)) {
-        this._attributes[key as keyof T] = setter(this._attributes)
+    const setters = this._definition.set || {}
+    for (const [key, setter] of Object.entries(setters)) {
+      if (this.isDirty(key as AttributeKeys<TDef>)) {
+        this._attributes[key] = setter(this._attributes as Record<string, unknown>)
       }
     }
 
-    if (this._attributes[pk as keyof T]) {
-      // Update existing record
+    if (this._attributes[pk]) {
       const changes = this.getChanges()
-      if (Object.keys(changes).length > 0) {
-        const sets = Object.keys(changes).map(k => `${k} = ?`).join(', ')
-        const values = [...Object.values(changes), this._attributes[pk as keyof T]]
+      const changeKeys = Object.keys(changes)
+      if (changeKeys.length > 0) {
+        const sets = changeKeys.map(k => `${k} = ?`).join(', ')
+        const values = [...Object.values(changes), this._attributes[pk]]
 
         if (this._definition.traits?.useTimestamps) {
           const now = new Date().toISOString()
           db.run(
             `UPDATE ${this._definition.table} SET ${sets}, updated_at = ? WHERE ${pk} = ?`,
-            [...Object.values(changes), now, this._attributes[pk as keyof T]]
+            [...Object.values(changes), now, this._attributes[pk]] as Bindings
           )
         } else {
-          db.run(
-            `UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`,
-            values
-          )
+          db.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, values as Bindings)
         }
       }
     } else {
-      // Insert new record
-      const fillable = Object.entries(this._definition.attributes)
-        .filter(([_, attr]) => attr.fillable)
-        .map(([key]) => key)
+      const attrs = this._definition.attributes
+      const data: Record<string, unknown> = {}
 
-      const data: Record<string, any> = {}
-      for (const key of fillable) {
-        if (this._attributes[key as keyof T] !== undefined) {
-          data[key] = this._attributes[key as keyof T]
+      for (const [key, attr] of Object.entries(attrs)) {
+        if (attr.fillable && this._attributes[key] !== undefined) {
+          data[key] = this._attributes[key]
         }
       }
 
@@ -282,14 +292,13 @@ class ModelInstance<T extends Record<string, any>> {
 
       const columns = Object.keys(data)
       const placeholders = columns.map(() => '?').join(', ')
-      const values = Object.values(data)
 
       const result = db.run(
         `INSERT INTO ${this._definition.table} (${columns.join(', ')}) VALUES (${placeholders})`,
-        values
+        Object.values(data) as Bindings
       )
 
-      this._attributes[pk as keyof T] = result.lastInsertRowid as T[keyof T]
+      this._attributes[pk] = result.lastInsertRowid
     }
 
     this._original = { ...this._attributes }
@@ -297,926 +306,562 @@ class ModelInstance<T extends Record<string, any>> {
     return this
   }
 
-  /**
-   * Update the model
-   */
-  update(data: Partial<T>): this {
+  update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): this {
     this.fill(data)
     return this.save()
   }
 
-  /**
-   * Delete the model
-   */
   delete(): boolean {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
-    const pkValue = this._attributes[pk as keyof T]
+    const pkValue = this._attributes[pk]
 
-    if (!pkValue) {
-      throw new Error('Cannot delete a model without a primary key')
-    }
+    if (!pkValue) throw new Error('Cannot delete a model without a primary key')
 
     if (this._definition.traits?.useSoftDeletes) {
       db.run(
         `UPDATE ${this._definition.table} SET deleted_at = ? WHERE ${pk} = ?`,
-        [new Date().toISOString(), pkValue]
+        [new Date().toISOString(), pkValue] as Bindings
       )
     } else {
-      db.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue])
+      db.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue] as Bindings)
     }
 
     return true
   }
 
-  /**
-   * Refresh the model from database
-   */
   refresh(): this {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
-    const pkValue = this._attributes[pk as keyof T]
+    const pkValue = this._attributes[pk]
 
-    if (!pkValue) {
-      throw new Error('Cannot refresh a model without a primary key')
-    }
+    if (!pkValue) throw new Error('Cannot refresh a model without a primary key')
 
-    const row = db.query(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`).get(pkValue)
+    const row = db.query(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`).get(pkValue as SQLQueryBindings) as Record<string, unknown> | null
     if (row) {
-      this._attributes = row as T
-      this._original = { ...row } as T
+      this._attributes = row
+      this._original = { ...row }
     }
 
     return this
   }
 
-  /**
-   * Convert to JSON (excluding hidden fields)
-   */
-  toJSON(): Partial<T> {
-    const hidden = Object.entries(this._definition.attributes)
-      .filter(([_, attr]) => attr.hidden)
-      .map(([key]) => key)
-
-    const json = { ...this._attributes }
-    for (const field of hidden) {
-      delete json[field as keyof T]
+  toJSON(): Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, HiddenKeys<TDef>> {
+    const hidden = new Set<string>()
+    for (const [key, attr] of Object.entries(this._definition.attributes)) {
+      if (attr.hidden) hidden.add(key)
     }
-    return json
+
+    const json: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(this._attributes)) {
+      if (!hidden.has(key)) json[key] = value
+    }
+    return json as any
   }
 }
 
 /**
- * Query builder class for model queries
+ * Query builder with precise type narrowing
  */
-class ModelQueryBuilder<T extends Record<string, any>> {
-  private _definition: ModelDefinition
-  private _wheres: { column: string; operator: WhereOperator; value: any; boolean: 'and' | 'or' }[] = []
+class ModelQueryBuilder<
+  TDef extends ModelDefinition,
+  TSelected extends ColumnName<TDef> = ColumnName<TDef>
+> {
+  private _definition: TDef
+  private _wheres: { column: string; operator: WhereOperator; value: unknown; boolean: 'and' | 'or' }[] = []
   private _orderBy: { column: string; direction: 'asc' | 'desc' }[] = []
   private _limit?: number
   private _offset?: number
   private _select: string[] = ['*']
-  private _with: string[] = []
 
-  constructor(definition: ModelDefinition) {
+  constructor(definition: TDef) {
     this._definition = definition
   }
 
-  /**
-   * Add a where clause
-   */
-  where(column: string, operatorOrValue: WhereOperator | any, value?: any): this {
+  where<K extends ColumnName<TDef>>(
+    column: K,
+    operatorOrValue: WhereOperator | (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown),
+    value?: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef, TSelected> {
     if (value === undefined) {
-      this._wheres.push({ column, operator: '=', value: operatorOrValue, boolean: 'and' })
+      this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'and' })
     } else {
-      this._wheres.push({ column, operator: operatorOrValue, value, boolean: 'and' })
+      this._wheres.push({ column: column as string, operator: operatorOrValue as WhereOperator, value, boolean: 'and' })
     }
     return this
   }
 
-  /**
-   * Add an OR where clause
-   */
-  orWhere(column: string, operatorOrValue: WhereOperator | any, value?: any): this {
+  orWhere<K extends ColumnName<TDef>>(
+    column: K,
+    operatorOrValue: WhereOperator | (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown),
+    value?: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef, TSelected> {
     if (value === undefined) {
-      this._wheres.push({ column, operator: '=', value: operatorOrValue, boolean: 'or' })
+      this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'or' })
     } else {
-      this._wheres.push({ column, operator: operatorOrValue, value, boolean: 'or' })
+      this._wheres.push({ column: column as string, operator: operatorOrValue as WhereOperator, value, boolean: 'or' })
     }
     return this
   }
 
-  /**
-   * Where column is in array
-   */
-  whereIn(column: string, values: any[]): this {
-    this._wheres.push({ column, operator: 'in', value: values, boolean: 'and' })
+  whereIn<K extends ColumnName<TDef>>(
+    column: K,
+    values: (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]
+  ): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'in', value: values, boolean: 'and' })
     return this
   }
 
-  /**
-   * Where column is not in array
-   */
-  whereNotIn(column: string, values: any[]): this {
-    this._wheres.push({ column, operator: 'not in', value: values, boolean: 'and' })
+  whereNotIn<K extends ColumnName<TDef>>(
+    column: K,
+    values: (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]
+  ): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'not in', value: values, boolean: 'and' })
     return this
   }
 
-  /**
-   * Where column is null
-   */
-  whereNull(column: string): this {
-    this._wheres.push({ column, operator: '=', value: null, boolean: 'and' })
+  whereNull<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: '=', value: null, boolean: 'and' })
     return this
   }
 
-  /**
-   * Where column is not null
-   */
-  whereNotNull(column: string): this {
-    this._wheres.push({ column, operator: '!=', value: null, boolean: 'and' })
+  whereNotNull<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: '!=', value: null, boolean: 'and' })
     return this
   }
 
-  /**
-   * Where column matches pattern
-   */
-  whereLike(column: string, pattern: string): this {
-    this._wheres.push({ column, operator: 'like', value: pattern, boolean: 'and' })
+  whereLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'like', value: pattern, boolean: 'and' })
     return this
   }
 
-  /**
-   * Order by column
-   */
-  orderBy(column: string, direction: 'asc' | 'desc' = 'asc'): this {
-    this._orderBy.push({ column, direction })
+  orderBy<K extends ColumnName<TDef>>(column: K, direction: 'asc' | 'desc' = 'asc'): ModelQueryBuilder<TDef, TSelected> {
+    this._orderBy.push({ column: column as string, direction })
     return this
   }
 
-  /**
-   * Order by descending
-   */
-  orderByDesc(column: string): this {
+  orderByDesc<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
     return this.orderBy(column, 'desc')
   }
 
-  /**
-   * Order by ascending
-   */
-  orderByAsc(column: string): this {
+  orderByAsc<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
     return this.orderBy(column, 'asc')
   }
 
-  /**
-   * Limit results
-   */
-  limit(count: number): this {
+  limit(count: number): ModelQueryBuilder<TDef, TSelected> {
     this._limit = count
     return this
   }
 
-  /**
-   * Alias for limit
-   */
-  take(count: number): this {
+  take(count: number): ModelQueryBuilder<TDef, TSelected> {
     return this.limit(count)
   }
 
-  /**
-   * Offset results
-   */
-  offset(count: number): this {
+  offset(count: number): ModelQueryBuilder<TDef, TSelected> {
     this._offset = count
     return this
   }
 
-  /**
-   * Alias for offset
-   */
-  skip(count: number): this {
+  skip(count: number): ModelQueryBuilder<TDef, TSelected> {
     return this.offset(count)
   }
 
-  /**
-   * Select specific columns
-   */
-  select(...columns: string[]): this {
-    this._select = columns
-    return this
+  select<K extends ColumnName<TDef>>(...columns: K[]): ModelQueryBuilder<TDef, K> {
+    this._select = columns as string[]
+    return this as unknown as ModelQueryBuilder<TDef, K>
   }
 
-  /**
-   * Eager load relations
-   */
-  with(...relations: string[]): this {
-    this._with.push(...relations)
-    return this
-  }
-
-  /**
-   * Build the SQL query
-   */
-  private buildQuery(): { sql: string; params: any[] } {
-    const params: any[] = []
+  private buildQuery(): { sql: string; params: unknown[] } {
+    const params: unknown[] = []
     let sql = `SELECT ${this._select.join(', ')} FROM ${this._definition.table}`
 
-    // Build WHERE clause
     if (this._wheres.length > 0) {
-      const whereClauses: string[] = []
+      const clauses: string[] = []
       for (let i = 0; i < this._wheres.length; i++) {
         const w = this._wheres[i]
-        let clause = ''
+        let clause: string
 
         if (w.value === null) {
           clause = w.operator === '=' ? `${w.column} IS NULL` : `${w.column} IS NOT NULL`
         } else if (w.operator === 'in' || w.operator === 'not in') {
-          const placeholders = w.value.map(() => '?').join(', ')
-          clause = `${w.column} ${w.operator.toUpperCase()} (${placeholders})`
-          params.push(...w.value)
+          const arr = w.value as unknown[]
+          clause = `${w.column} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
+          params.push(...arr)
         } else {
           clause = `${w.column} ${w.operator} ?`
           params.push(w.value)
         }
 
-        if (i === 0) {
-          whereClauses.push(clause)
-        } else {
-          whereClauses.push(`${w.boolean.toUpperCase()} ${clause}`)
-        }
+        clauses.push(i === 0 ? clause : `${w.boolean.toUpperCase()} ${clause}`)
       }
-      sql += ` WHERE ${whereClauses.join(' ')}`
+      sql += ` WHERE ${clauses.join(' ')}`
     }
 
-    // Build ORDER BY clause
     if (this._orderBy.length > 0) {
-      const orderClauses = this._orderBy.map(o => `${o.column} ${o.direction.toUpperCase()}`)
-      sql += ` ORDER BY ${orderClauses.join(', ')}`
+      sql += ` ORDER BY ${this._orderBy.map(o => `${o.column} ${o.direction.toUpperCase()}`).join(', ')}`
     }
 
-    // Build LIMIT/OFFSET
-    if (this._limit !== undefined) {
-      sql += ` LIMIT ${this._limit}`
-    }
-    if (this._offset !== undefined) {
-      sql += ` OFFSET ${this._offset}`
-    }
+    if (this._limit !== undefined) sql += ` LIMIT ${this._limit}`
+    if (this._offset !== undefined) sql += ` OFFSET ${this._offset}`
 
     return { sql, params }
   }
 
-  /**
-   * Execute query and get all results
-   */
-  get(): ModelInstance<T>[] {
+  get(): ModelInstance<TDef, TSelected>[] {
     const db = getDatabase()
     const { sql, params } = this.buildQuery()
-    const rows = db.query(sql).all(...params)
-    return rows.map(row => new ModelInstance<T>(this._definition, row as T))
+    const rows = db.query(sql).all(...(params as Bindings)) as Record<string, unknown>[]
+    return rows.map(row => new ModelInstance<TDef, TSelected>(this._definition, row as any))
   }
 
-  /**
-   * Get the first result
-   */
-  first(): ModelInstance<T> | undefined {
+  first(): ModelInstance<TDef, TSelected> | undefined {
     this._limit = 1
-    const results = this.get()
-    return results[0]
+    return this.get()[0]
   }
 
-  /**
-   * Get the first result or throw
-   */
-  firstOrFail(): ModelInstance<T> {
+  firstOrFail(): ModelInstance<TDef, TSelected> {
     const result = this.first()
-    if (!result) {
-      throw new Error(`No ${this._definition.name} found`)
-    }
+    if (!result) throw new Error(`No ${this._definition.name} found`)
     return result
   }
 
-  /**
-   * Get the last result
-   */
-  last(): ModelInstance<T> | undefined {
+  last(): ModelInstance<TDef, TSelected> | undefined {
     const pk = this._definition.primaryKey || 'id'
     this._orderBy = [{ column: pk, direction: 'desc' }]
     this._limit = 1
-    const results = this.get()
-    return results[0]
+    return this.get()[0]
   }
 
-  /**
-   * Count results
-   */
   count(): number {
     const db = getDatabase()
-    const params: any[] = []
+    const params: unknown[] = []
     let sql = `SELECT COUNT(*) as count FROM ${this._definition.table}`
 
     if (this._wheres.length > 0) {
-      const whereClauses: string[] = []
+      const clauses: string[] = []
       for (let i = 0; i < this._wheres.length; i++) {
         const w = this._wheres[i]
-        let clause = ''
+        let clause: string
 
         if (w.value === null) {
           clause = w.operator === '=' ? `${w.column} IS NULL` : `${w.column} IS NOT NULL`
         } else if (w.operator === 'in' || w.operator === 'not in') {
-          const placeholders = w.value.map(() => '?').join(', ')
-          clause = `${w.column} ${w.operator.toUpperCase()} (${placeholders})`
-          params.push(...w.value)
+          const arr = w.value as unknown[]
+          clause = `${w.column} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
+          params.push(...arr)
         } else {
           clause = `${w.column} ${w.operator} ?`
           params.push(w.value)
         }
 
-        if (i === 0) {
-          whereClauses.push(clause)
-        } else {
-          whereClauses.push(`${w.boolean.toUpperCase()} ${clause}`)
-        }
+        clauses.push(i === 0 ? clause : `${w.boolean.toUpperCase()} ${clause}`)
       }
-      sql += ` WHERE ${whereClauses.join(' ')}`
+      sql += ` WHERE ${clauses.join(' ')}`
     }
 
-    const result = db.query(sql).get(...params) as { count: number }
-    return result.count
+    return (db.query(sql).get(...(params as Bindings)) as { count: number }).count
   }
 
-  /**
-   * Check if any results exist
-   */
   exists(): boolean {
     return this.count() > 0
   }
 
-  /**
-   * Paginate results
-   */
-  paginate(page: number = 1, perPage: number = 15): {
-    data: ModelInstance<T>[]
-    total: number
-    page: number
-    perPage: number
-    lastPage: number
-  } {
+  paginate(page = 1, perPage = 15) {
     const total = this.count()
-    const lastPage = Math.ceil(total / perPage)
-
     this._limit = perPage
     this._offset = (page - 1) * perPage
-
-    const data = this.get()
-
     return {
-      data,
+      data: this.get(),
       total,
       page,
       perPage,
-      lastPage,
+      lastPage: Math.ceil(total / perPage),
     }
   }
 
-  /**
-   * Pluck a single column
-   */
-  pluck<K extends keyof T>(column: K): T[K][] {
+  pluck<K extends ColumnName<TDef>>(
+    column: K
+  ): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[] {
     this._select = [column as string]
-    const results = this.get()
-    return results.map(r => r.get(column))
+    return this.get().map(r => r.get(column as any)) as any
   }
 
-  /**
-   * Get max value of column
-   */
-  max(column: string): number {
+  max<K extends AttributeKeys<TDef>>(column: K): number {
     const db = getDatabase()
-    const result = db.query(`SELECT MAX(${column}) as max FROM ${this._definition.table}`).get() as { max: number }
-    return result.max || 0
+    return (db.query(`SELECT MAX(${column}) as v FROM ${this._definition.table}`).get() as { v: number }).v || 0
   }
 
-  /**
-   * Get min value of column
-   */
-  min(column: string): number {
+  min<K extends AttributeKeys<TDef>>(column: K): number {
     const db = getDatabase()
-    const result = db.query(`SELECT MIN(${column}) as min FROM ${this._definition.table}`).get() as { min: number }
-    return result.min || 0
+    return (db.query(`SELECT MIN(${column}) as v FROM ${this._definition.table}`).get() as { v: number }).v || 0
   }
 
-  /**
-   * Get average value of column
-   */
-  avg(column: string): number {
+  avg<K extends AttributeKeys<TDef>>(column: K): number {
     const db = getDatabase()
-    const result = db.query(`SELECT AVG(${column}) as avg FROM ${this._definition.table}`).get() as { avg: number }
-    return result.avg || 0
+    return (db.query(`SELECT AVG(${column}) as v FROM ${this._definition.table}`).get() as { v: number }).v || 0
   }
 
-  /**
-   * Get sum of column
-   */
-  sum(column: string): number {
+  sum<K extends AttributeKeys<TDef>>(column: K): number {
     const db = getDatabase()
-    const result = db.query(`SELECT SUM(${column}) as sum FROM ${this._definition.table}`).get() as { sum: number }
-    return result.sum || 0
+    return (db.query(`SELECT SUM(${column}) as v FROM ${this._definition.table}`).get() as { v: number }).v || 0
   }
 
-  /**
-   * Delete matching records
-   */
   delete(): number {
     const db = getDatabase()
-    const params: any[] = []
+    const params: unknown[] = []
     let sql = `DELETE FROM ${this._definition.table}`
 
     if (this._wheres.length > 0) {
-      const whereClauses: string[] = []
+      const clauses: string[] = []
       for (let i = 0; i < this._wheres.length; i++) {
         const w = this._wheres[i]
-        let clause = `${w.column} ${w.operator} ?`
+        clauses.push(i === 0 ? `${w.column} ${w.operator} ?` : `${w.boolean.toUpperCase()} ${w.column} ${w.operator} ?`)
         params.push(w.value)
-
-        if (i === 0) {
-          whereClauses.push(clause)
-        } else {
-          whereClauses.push(`${w.boolean.toUpperCase()} ${clause}`)
-        }
       }
-      sql += ` WHERE ${whereClauses.join(' ')}`
+      sql += ` WHERE ${clauses.join(' ')}`
     }
 
-    const result = db.run(sql, params)
-    return result.changes
+    return db.run(sql, params as Bindings).changes
   }
 
-  /**
-   * Update matching records
-   */
-  update(data: Partial<T>): number {
+  update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): number {
     const db = getDatabase()
-    const params: any[] = []
-
-    const sets = Object.keys(data).map(k => `${k} = ?`).join(', ')
-    params.push(...Object.values(data))
+    const entries = Object.entries(data)
+    const sets = entries.map(([k]) => `${k} = ?`).join(', ')
+    const params: unknown[] = entries.map(([, v]) => v)
 
     let sql = `UPDATE ${this._definition.table} SET ${sets}`
 
     if (this._wheres.length > 0) {
-      const whereClauses: string[] = []
+      const clauses: string[] = []
       for (let i = 0; i < this._wheres.length; i++) {
         const w = this._wheres[i]
-        let clause = `${w.column} ${w.operator} ?`
+        clauses.push(i === 0 ? `${w.column} ${w.operator} ?` : `${w.boolean.toUpperCase()} ${w.column} ${w.operator} ?`)
         params.push(w.value)
-
-        if (i === 0) {
-          whereClauses.push(clause)
-        } else {
-          whereClauses.push(`${w.boolean.toUpperCase()} ${clause}`)
-        }
       }
-      sql += ` WHERE ${whereClauses.join(' ')}`
+      sql += ` WHERE ${clauses.join(' ')}`
     }
 
-    const result = db.run(sql, params)
-    return result.changes
+    return db.run(sql, params as Bindings).changes
   }
 }
 
 /**
- * Create a model class from a definition
+ * Create a model class from a definition with full type inference
  */
-export function createModel<T extends Record<string, any> = Record<string, any>>(
-  definition: ModelDefinition
-) {
-  // Create a class with static methods
-  const ModelClass = class {
-    private static _definition = definition
+export function createModel<const TDef extends ModelDefinition>(definition: TDef) {
+  type Attrs = ModelAttributes<TDef>
+  type Cols = ColumnName<TDef>
+  type AttrKeys = AttributeKeys<TDef>
+  type Fillable = FillableKeys<TDef>
 
-    /**
-     * Create a new query builder
-     */
-    static query(): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition)
-    }
+  const model = {
+    query: () => new ModelQueryBuilder<TDef>(definition),
 
-    /**
-     * Start a where query
-     */
-    static where(column: string, operatorOrValue: WhereOperator | any, value?: any): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).where(column, operatorOrValue, value)
-    }
+    where<K extends Cols>(
+      column: K,
+      operatorOrValue: WhereOperator | (K extends keyof Attrs ? Attrs[K] : unknown),
+      value?: K extends keyof Attrs ? Attrs[K] : unknown
+    ) {
+      return new ModelQueryBuilder<TDef>(definition).where(column, operatorOrValue as any, value)
+    },
 
-    /**
-     * Start an orWhere query
-     */
-    static orWhere(column: string, operatorOrValue: WhereOperator | any, value?: any): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).orWhere(column, operatorOrValue, value)
-    }
+    orWhere<K extends Cols>(
+      column: K,
+      operatorOrValue: WhereOperator | (K extends keyof Attrs ? Attrs[K] : unknown),
+      value?: K extends keyof Attrs ? Attrs[K] : unknown
+    ) {
+      return new ModelQueryBuilder<TDef>(definition).orWhere(column, operatorOrValue as any, value)
+    },
 
-    /**
-     * Where in array
-     */
-    static whereIn(column: string, values: any[]): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).whereIn(column, values)
-    }
+    whereIn<K extends Cols>(column: K, values: (K extends keyof Attrs ? Attrs[K] : unknown)[]) {
+      return new ModelQueryBuilder<TDef>(definition).whereIn(column, values)
+    },
 
-    /**
-     * Where not in array
-     */
-    static whereNotIn(column: string, values: any[]): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).whereNotIn(column, values)
-    }
+    whereNotIn<K extends Cols>(column: K, values: (K extends keyof Attrs ? Attrs[K] : unknown)[]) {
+      return new ModelQueryBuilder<TDef>(definition).whereNotIn(column, values)
+    },
 
-    /**
-     * Where null
-     */
-    static whereNull(column: string): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).whereNull(column)
-    }
+    whereNull<K extends Cols>(column: K) {
+      return new ModelQueryBuilder<TDef>(definition).whereNull(column)
+    },
 
-    /**
-     * Where not null
-     */
-    static whereNotNull(column: string): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).whereNotNull(column)
-    }
+    whereNotNull<K extends Cols>(column: K) {
+      return new ModelQueryBuilder<TDef>(definition).whereNotNull(column)
+    },
 
-    /**
-     * Where like
-     */
-    static whereLike(column: string, pattern: string): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).whereLike(column, pattern)
-    }
+    whereLike<K extends Cols>(column: K, pattern: string) {
+      return new ModelQueryBuilder<TDef>(definition).whereLike(column, pattern)
+    },
 
-    /**
-     * Order by
-     */
-    static orderBy(column: string, direction: 'asc' | 'desc' = 'asc'): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).orderBy(column, direction)
-    }
+    orderBy<K extends Cols>(column: K, direction: 'asc' | 'desc' = 'asc') {
+      return new ModelQueryBuilder<TDef>(definition).orderBy(column, direction)
+    },
 
-    /**
-     * Order by descending
-     */
-    static orderByDesc(column: string): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).orderByDesc(column)
-    }
+    orderByDesc<K extends Cols>(column: K) {
+      return new ModelQueryBuilder<TDef>(definition).orderByDesc(column)
+    },
 
-    /**
-     * Select columns
-     */
-    static select(...columns: string[]): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).select(...columns)
-    }
+    select<K extends Cols>(...columns: K[]) {
+      return new ModelQueryBuilder<TDef>(definition).select(...columns)
+    },
 
-    /**
-     * Limit results
-     */
-    static limit(count: number): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).limit(count)
-    }
+    limit: (count: number) => new ModelQueryBuilder<TDef>(definition).limit(count),
+    take: (count: number) => new ModelQueryBuilder<TDef>(definition).take(count),
+    skip: (count: number) => new ModelQueryBuilder<TDef>(definition).skip(count),
 
-    /**
-     * Alias for limit
-     */
-    static take(count: number): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).take(count)
-    }
-
-    /**
-     * Skip/offset results
-     */
-    static skip(count: number): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).skip(count)
-    }
-
-    /**
-     * Eager load relations
-     */
-    static with(...relations: string[]): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).with(...relations)
-    }
-
-    /**
-     * Find by primary key
-     */
-    static find(id: number | string): ModelInstance<T> | undefined {
+    find(id: number | string): ModelInstance<TDef> | undefined {
       const db = getDatabase()
       const pk = definition.primaryKey || 'id'
-      const row = db.query(`SELECT * FROM ${definition.table} WHERE ${pk} = ?`).get(id)
-      return row ? new ModelInstance<T>(definition, row as T) : undefined
-    }
+      const row = db.query(`SELECT * FROM ${definition.table} WHERE ${pk} = ?`).get(id) as Record<string, unknown> | null
+      return row ? new ModelInstance<TDef>(definition, row as any) : undefined
+    },
 
-    /**
-     * Find by primary key or throw
-     */
-    static findOrFail(id: number | string): ModelInstance<T> {
+    findOrFail(id: number | string): ModelInstance<TDef> {
       const result = this.find(id)
-      if (!result) {
-        throw new Error(`${definition.name} with id ${id} not found`)
-      }
+      if (!result) throw new Error(`${definition.name} with id ${id} not found`)
       return result
-    }
+    },
 
-    /**
-     * Find multiple by primary keys
-     */
-    static findMany(ids: (number | string)[]): ModelInstance<T>[] {
+    findMany(ids: (number | string)[]): ModelInstance<TDef>[] {
       const db = getDatabase()
       const pk = definition.primaryKey || 'id'
-      const placeholders = ids.map(() => '?').join(', ')
-      const rows = db.query(`SELECT * FROM ${definition.table} WHERE ${pk} IN (${placeholders})`).all(...ids)
-      return rows.map(row => new ModelInstance<T>(definition, row as T))
-    }
+      const rows = db.query(`SELECT * FROM ${definition.table} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})`).all(...(ids as Bindings)) as Record<string, unknown>[]
+      return rows.map(row => new ModelInstance<TDef>(definition, row as any))
+    },
 
-    /**
-     * Get all records
-     */
-    static all(): ModelInstance<T>[] {
-      return new ModelQueryBuilder<T>(definition).get()
-    }
+    all: () => new ModelQueryBuilder<TDef>(definition).get(),
+    first: () => new ModelQueryBuilder<TDef>(definition).first(),
+    firstOrFail: () => new ModelQueryBuilder<TDef>(definition).firstOrFail(),
+    last: () => new ModelQueryBuilder<TDef>(definition).last(),
+    count: () => new ModelQueryBuilder<TDef>(definition).count(),
+    exists: () => new ModelQueryBuilder<TDef>(definition).exists(),
+    paginate: (page?: number, perPage?: number) => new ModelQueryBuilder<TDef>(definition).paginate(page, perPage),
 
-    /**
-     * Get the first record
-     */
-    static first(): ModelInstance<T> | undefined {
-      return new ModelQueryBuilder<T>(definition).first()
-    }
-
-    /**
-     * Get the first record or throw
-     */
-    static firstOrFail(): ModelInstance<T> {
-      return new ModelQueryBuilder<T>(definition).firstOrFail()
-    }
-
-    /**
-     * Get the last record
-     */
-    static last(): ModelInstance<T> | undefined {
-      return new ModelQueryBuilder<T>(definition).last()
-    }
-
-    /**
-     * Count all records
-     */
-    static count(): number {
-      return new ModelQueryBuilder<T>(definition).count()
-    }
-
-    /**
-     * Check if any records exist
-     */
-    static exists(): boolean {
-      return new ModelQueryBuilder<T>(definition).exists()
-    }
-
-    /**
-     * Paginate results
-     */
-    static paginate(page?: number, perPage?: number) {
-      return new ModelQueryBuilder<T>(definition).paginate(page, perPage)
-    }
-
-    /**
-     * Create a new record
-     */
-    static create(data: Partial<T>): ModelInstance<T> {
-      const instance = new ModelInstance<T>(definition, data)
+    create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): ModelInstance<TDef> {
+      const instance = new ModelInstance<TDef>(definition, data as any)
       instance.save()
       return instance
-    }
+    },
 
-    /**
-     * Create multiple records
-     */
-    static createMany(items: Partial<T>[]): ModelInstance<T>[] {
+    createMany(items: Partial<Pick<InferModelAttributes<TDef>, Fillable>>[]): ModelInstance<TDef>[] {
       return items.map(data => this.create(data))
-    }
+    },
 
-    /**
-     * Update or create a record
-     */
-    static updateOrCreate(
-      search: Partial<T>,
-      data: Partial<T>
-    ): ModelInstance<T> {
-      let query = new ModelQueryBuilder<T>(definition)
+    updateOrCreate(
+      search: Partial<Attrs>,
+      data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
+    ): ModelInstance<TDef> {
+      let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
-        query = query.where(key, value)
+        query = query.where(key as Cols, value as any)
       }
-
       const existing = query.first()
       if (existing) {
         existing.update(data)
         return existing
       }
+      return this.create({ ...search, ...data } as any)
+    },
 
-      return this.create({ ...search, ...data })
-    }
-
-    /**
-     * Find first or create a record
-     */
-    static firstOrCreate(
-      search: Partial<T>,
-      data: Partial<T>
-    ): ModelInstance<T> {
-      let query = new ModelQueryBuilder<T>(definition)
+    firstOrCreate(
+      search: Partial<Attrs>,
+      data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
+    ): ModelInstance<TDef> {
+      let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
-        query = query.where(key, value)
+        query = query.where(key as Cols, value as any)
       }
-
       const existing = query.first()
-      if (existing) {
-        return existing
-      }
+      return existing || this.create({ ...search, ...data } as any)
+    },
 
-      return this.create({ ...search, ...data })
-    }
-
-    /**
-     * Delete a record by ID
-     */
-    static destroy(id: number | string): boolean {
+    destroy(id: number | string): boolean {
       const db = getDatabase()
       const pk = definition.primaryKey || 'id'
-      const result = db.run(`DELETE FROM ${definition.table} WHERE ${pk} = ?`, [id])
-      return result.changes > 0
-    }
+      return db.run(`DELETE FROM ${definition.table} WHERE ${pk} = ?`, [id] as Bindings).changes > 0
+    },
 
-    /**
-     * Alias for destroy
-     */
-    static remove(id: number | string): boolean {
+    remove(id: number | string): boolean {
       return this.destroy(id)
-    }
+    },
 
-    /**
-     * Truncate the table
-     */
-    static truncate(): void {
-      const db = getDatabase()
-      db.run(`DELETE FROM ${definition.table}`)
-    }
+    truncate(): void {
+      getDatabase().run(`DELETE FROM ${definition.table}`)
+    },
 
-    /**
-     * Get the model definition
-     */
-    static getDefinition(): ModelDefinition {
-      return definition
-    }
+    getDefinition: () => definition,
+    getTable: () => definition.table,
 
-    /**
-     * Get the table name
-     */
-    static getTable(): string {
-      return definition.table
-    }
+    make(data: Partial<Attrs> = {}): ModelInstance<TDef> {
+      return new ModelInstance<TDef>(definition, data as any)
+    },
 
-    /**
-     * Create a new model instance (not saved to DB)
-     */
-    static make(data: Partial<T> = {}): ModelInstance<T> {
-      return new ModelInstance<T>(definition, data)
-    }
+    latest: (column: Cols = 'created_at' as Cols) => new ModelQueryBuilder<TDef>(definition).orderByDesc(column),
+    oldest: (column: Cols = 'created_at' as Cols) => new ModelQueryBuilder<TDef>(definition).orderBy(column, 'asc'),
 
-    /**
-     * Latest records
-     */
-    static latest(column: string = 'created_at'): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).orderByDesc(column)
-    }
+    max: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).max(column),
+    min: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).min(column),
+    avg: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).avg(column),
+    sum: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).sum(column),
 
-    /**
-     * Oldest records
-     */
-    static oldest(column: string = 'created_at'): ModelQueryBuilder<T> {
-      return new ModelQueryBuilder<T>(definition).orderBy(column, 'asc')
-    }
-
-    /**
-     * Max aggregation
-     */
-    static max(column: string): number {
-      return new ModelQueryBuilder<T>(definition).max(column)
-    }
-
-    /**
-     * Min aggregation
-     */
-    static min(column: string): number {
-      return new ModelQueryBuilder<T>(definition).min(column)
-    }
-
-    /**
-     * Avg aggregation
-     */
-    static avg(column: string): number {
-      return new ModelQueryBuilder<T>(definition).avg(column)
-    }
-
-    /**
-     * Sum aggregation
-     */
-    static sum(column: string): number {
-      return new ModelQueryBuilder<T>(definition).sum(column)
-    }
-
-    /**
-     * Pluck column values
-     */
-    static pluck<K extends keyof T>(column: K): T[K][] {
-      return new ModelQueryBuilder<T>(definition).pluck(column)
-    }
+    pluck<K extends Cols>(column: K) {
+      return new ModelQueryBuilder<TDef>(definition).pluck(column)
+    },
   }
 
-  // Add dynamic where methods for each column (whereEmail, whereName, etc.)
-  for (const [column] of Object.entries(definition.attributes)) {
-    const methodName = `where${column.charAt(0).toUpperCase()}${column.slice(1)}`
-    ;(ModelClass as any)[methodName] = function(value: any) {
-      return new ModelQueryBuilder<T>(definition).where(column, value)
-    }
-  }
+  // Wrap in Proxy to support dynamic whereColumn methods (e.g., whereEmail, whereName)
+  return new Proxy(model, {
+    get(target, prop) {
+      if (typeof prop === 'string' && prop.startsWith('where') && prop.length > 5) {
+        // Extract column name: whereEmail -> email, whereName -> name
+        const columnPascal = prop.slice(5) // Remove 'where' prefix
+        const column = columnPascal.charAt(0).toLowerCase() + columnPascal.slice(1)
 
-  return ModelClass
+        // Check if this column exists in attributes
+        if (column in definition.attributes || column === 'id' || column === definition.primaryKey) {
+          return (value: unknown) => new ModelQueryBuilder<TDef>(definition).where(column as Cols, value as any)
+        }
+      }
+      return Reflect.get(target, prop)
+    },
+  }) as typeof model & {
+    [K in AttrKeys as `where${Capitalize<K>}`]: (value: K extends keyof Attrs ? Attrs[K] : unknown) => ModelQueryBuilder<TDef>
+  }
 }
 
-/**
- * Create table from model definition
- */
 export function createTableFromModel(definition: ModelDefinition): void {
   const db = getDatabase()
   const pk = definition.primaryKey || 'id'
-
   const columns: string[] = []
 
-  // Add primary key
-  if (definition.autoIncrement !== false) {
-    columns.push(`${pk} INTEGER PRIMARY KEY AUTOINCREMENT`)
-  } else {
-    columns.push(`${pk} INTEGER PRIMARY KEY`)
-  }
+  columns.push(definition.autoIncrement !== false
+    ? `${pk} INTEGER PRIMARY KEY AUTOINCREMENT`
+    : `${pk} INTEGER PRIMARY KEY`)
 
-  // Add UUID if enabled
-  if (definition.traits?.useUuid) {
-    columns.push('uuid TEXT UNIQUE')
-  }
+  if (definition.traits?.useUuid) columns.push('uuid TEXT UNIQUE')
 
-  // Add attribute columns
   for (const [name, attr] of Object.entries(definition.attributes)) {
-    let colDef = name
-
-    // Determine column type from validation or default to TEXT
-    if (attr.validation?.rule) {
-      const rule = attr.validation.rule
-      if (typeof rule?.isNumber === 'function' || String(rule).includes('number')) {
-        colDef += ' REAL'
-      } else if (typeof rule?.isBoolean === 'function' || String(rule).includes('boolean')) {
-        colDef += ' INTEGER'
-      } else {
-        colDef += ' TEXT'
-      }
-    } else {
-      colDef += ' TEXT'
-    }
-
-    if (attr.unique) {
-      colDef += ' UNIQUE'
-    }
-
-    columns.push(colDef)
+    let colType = 'TEXT'
+    if (attr.type === 'number') colType = 'REAL'
+    else if (attr.type === 'boolean') colType = 'INTEGER'
+    columns.push(`${name} ${colType}${attr.unique ? ' UNIQUE' : ''}`)
   }
 
-  // Add timestamps if enabled
   if (definition.traits?.useTimestamps) {
-    columns.push('created_at TEXT')
-    columns.push('updated_at TEXT')
+    columns.push('created_at TEXT', 'updated_at TEXT')
   }
-
-  // Add soft deletes if enabled
   if (definition.traits?.useSoftDeletes) {
     columns.push('deleted_at TEXT')
   }
 
-  const sql = `CREATE TABLE IF NOT EXISTS ${definition.table} (${columns.join(', ')})`
-  db.run(sql)
+  db.run(`CREATE TABLE IF NOT EXISTS ${definition.table} (${columns.join(', ')})`)
 }
 
-/**
- * Create a @faker-js/faker compatible wrapper around ts-mocker
- * Maps: location -> address, adds datatype module
- */
 function createFakerCompatLayer(tsMocker: any): any {
   return new Proxy(tsMocker, {
     get(target, prop) {
-      // Map @faker-js/faker's 'location' to ts-mocker's 'address'
-      if (prop === 'location') {
-        return target.address
-      }
-      // Add datatype module compatibility
+      if (prop === 'location') return target.address
       if (prop === 'datatype') {
         return {
           boolean: () => target.random.boolean(),
@@ -1231,18 +876,10 @@ function createFakerCompatLayer(tsMocker: any): any {
   })
 }
 
-/**
- * Seed a model with fake data using ts-mocker
- */
-export async function seedModel(
-  definition: ModelDefinition,
-  count?: number,
-  faker?: any
-): Promise<void> {
+export async function seedModel(definition: ModelDefinition, count?: number, faker?: any): Promise<void> {
   const db = getDatabase()
   const seedCount = count ?? definition.traits?.useSeeder?.count ?? 10
 
-  // Try to import ts-mocker if not provided
   if (!faker) {
     try {
       const tsMocker = await import('ts-mocker')
@@ -1254,37 +891,26 @@ export async function seedModel(
   }
 
   for (let i = 0; i < seedCount; i++) {
-    const data: Record<string, any> = {}
+    const data: Record<string, unknown> = {}
 
-    // Generate data using factories
     for (const [name, attr] of Object.entries(definition.attributes)) {
-      if (attr.factory) {
-        data[name] = attr.factory(faker)
-      }
+      if (attr.factory) data[name] = (attr.factory as (f: unknown) => unknown)(faker)
     }
 
-    // Add timestamps
     if (definition.traits?.useTimestamps) {
       const now = new Date().toISOString()
       data.created_at = now
       data.updated_at = now
     }
 
-    // Add UUID
-    if (definition.traits?.useUuid) {
-      data.uuid = crypto.randomUUID()
-    }
+    if (definition.traits?.useUuid) data.uuid = crypto.randomUUID()
 
     const columns = Object.keys(data)
-    const placeholders = columns.map(() => '?').join(', ')
-    const values = Object.values(data)
-
     db.run(
-      `INSERT INTO ${definition.table} (${columns.join(', ')}) VALUES (${placeholders})`,
-      values
+      `INSERT INTO ${definition.table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+      Object.values(data) as Bindings
     )
   }
 }
 
-// Export types
 export type { ModelInstance, ModelQueryBuilder }

@@ -30,6 +30,7 @@ export default {
 
   attributes: {
     name: {
+      type: 'string',
       order: 1,
       fillable: true,
       validation: {
@@ -43,6 +44,7 @@ export default {
     },
 
     email: {
+      type: 'string',
       order: 2,
       unique: true,
       fillable: true,
@@ -57,6 +59,7 @@ export default {
     },
 
     password: {
+      type: 'string',
       order: 3,
       fillable: true,
       hidden: true,
@@ -71,6 +74,7 @@ export default {
     },
 
     avatar: {
+      type: 'string',
       order: 4,
       fillable: true,
       validation: {
@@ -80,6 +84,7 @@ export default {
     },
 
     bio: {
+      type: 'string',
       order: 5,
       fillable: true,
       validation: {
@@ -89,6 +94,7 @@ export default {
     },
 
     location: {
+      type: 'string',
       order: 6,
       fillable: true,
       validation: {
@@ -98,6 +104,7 @@ export default {
     },
 
     active: {
+      type: 'boolean',
       order: 7,
       fillable: true,
       validation: {
@@ -107,6 +114,8 @@ export default {
     },
 
     role: {
+      // Literal union type - enables narrow type inference
+      type: ['user', 'admin', 'moderator'] as const,
       order: 8,
       fillable: true,
       validation: {
