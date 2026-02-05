@@ -1,5 +1,5 @@
-import type { Model } from '../mocks/stacks'
-import { schema } from '../mocks/stacks'
+import type { ModelDefinition as Model } from '../../../src/orm'
+import { schema } from '@stacksjs/ts-validation'
 
 export default {
   name: 'Review',
