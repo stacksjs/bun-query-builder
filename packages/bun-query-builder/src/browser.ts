@@ -603,7 +603,9 @@ export const browserAuth = {
       throw new BrowserQueryError(error.message || 'Login failed', response.status)
     }
 
-    const data = await response.json()
+    const rawData = await response.json()
+    // Handle nested response { data: { token, user } } or flat { token, user }
+    const data = rawData.data || rawData
 
     // Store token in localStorage by default
     if (typeof localStorage !== 'undefined' && data.token) {
@@ -632,7 +634,9 @@ export const browserAuth = {
       throw new BrowserQueryError(error.message || 'Registration failed', response.status)
     }
 
-    const result = await response.json()
+    const rawResult = await response.json()
+    // Handle nested response { data: { token, user } } or flat { token, user }
+    const result = rawResult.data || rawResult
 
     // Store token in localStorage by default
     if (typeof localStorage !== 'undefined' && result.token) {
@@ -678,6 +682,11 @@ export const browserAuth = {
         method: 'GET',
         headers: await buildHeaders(),
       })
+
+      if (response.status === 401) {
+        browserConfig.onUnauthorized?.()
+        return null
+      }
 
       if (!response.ok) return null
 
