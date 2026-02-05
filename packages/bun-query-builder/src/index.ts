@@ -1,6 +1,7 @@
 export * from './actions'
 export * from './browser'
 export * from './client'
+export * from './model'
 export * from './config'
 export * from './drivers'
 export * from './dynamodb-client'
