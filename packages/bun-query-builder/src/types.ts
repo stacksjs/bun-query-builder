@@ -5,8 +5,9 @@
  * - 'postgres': Uses `RANDOM()`, supports JSON operators (e.g. `@>`), `FOR SHARE`, `FOR UPDATE`, CTEs
  * - 'mysql': Uses `RAND()`, shared locks via `LOCK IN SHARE MODE`
  * - 'sqlite': Lightweight engine; some features are limited or emulated
+ * - 'browser': Browser-compatible mode that uses fetch() API calls instead of direct database connections
  */
-export type SupportedDialect = 'postgres' | 'mysql' | 'sqlite'
+export type SupportedDialect = 'postgres' | 'mysql' | 'sqlite' | 'browser'
 
 /**
  * # `TransactionBackoffConfig`
@@ -244,6 +245,29 @@ export interface DatabaseConfig {
 }
 
 /**
+ * # `BrowserConfig`
+ *
+ * Configuration for browser mode that uses fetch() API instead of direct database connections.
+ * This enables the query builder to work in browser environments by translating queries to REST API calls.
+ */
+export interface BrowserConfig {
+  /** Base URL for API requests (e.g., 'http://localhost:3000/api') */
+  baseUrl: string
+  /** Function to get the current auth token for Authorization header */
+  getToken?: () => string | null | Promise<string | null>
+  /** Callback when a 401 Unauthorized response is received */
+  onUnauthorized?: () => void
+  /** Custom headers to include with every request */
+  headers?: Record<string, string>
+  /** Request timeout in milliseconds (default: 30000) */
+  timeout?: number
+  /** Transform response data before returning (e.g., unwrap { data: [...] }) */
+  transformResponse?: <T>(response: any) => T
+  /** Transform request data before sending */
+  transformRequest?: <T>(data: T) => any
+}
+
+/**
  * # `QueryBuilderConfig`
  *
  * Global configuration for the query builder.
@@ -266,6 +290,9 @@ export interface QueryBuilderConfig {
   dialect: SupportedDialect
 
   database: DatabaseConfig
+
+  /** Browser-mode configuration for fetch()-based API calls */
+  browser?: BrowserConfig
 
   /** Timestamp column naming conventions. */
   timestamps: TimestampConfig
