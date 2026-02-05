@@ -18,10 +18,9 @@
  *   }
  * })
  *
- * // Now use Laravel-style API
- * const users = await User.where('active', true).get()
- * const user = await User.find(1)
- * const newUser = await User.create({ name: 'John', email: 'john@example.com' })
+ * const users = User.where('active', true).get()
+ * const user = User.find(1)
+ * const newUser = User.create({ name: 'John', email: 'john@example.com' })
  * ```
  */
 
@@ -70,7 +69,7 @@ export interface ModelDefinition {
   hasOne?: string[]
   attributes: Record<string, ModelAttribute>
   get?: Record<string, (attributes: Record<string, any>) => any>
-  set?: Record<string, (attributes: Record<string, any>) => any | Promise<any>>
+  set?: Record<string, (attributes: Record<string, any>) => any>
 }
 
 type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'in' | 'not in'
@@ -227,15 +226,14 @@ class ModelInstance<T extends Record<string, any>> {
   /**
    * Save the model to database
    */
-  async save(): Promise<this> {
+  save(): this {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
 
     // Apply setters
     for (const [key, setter] of Object.entries(this._definition.set || {})) {
       if (this.isDirty(key as keyof T)) {
-        const result = setter(this._attributes)
-        this._attributes[key as keyof T] = result instanceof Promise ? await result : result
+        this._attributes[key as keyof T] = setter(this._attributes)
       }
     }
 
@@ -302,7 +300,7 @@ class ModelInstance<T extends Record<string, any>> {
   /**
    * Update the model
    */
-  async update(data: Partial<T>): Promise<this> {
+  update(data: Partial<T>): this {
     this.fill(data)
     return this.save()
   }
@@ -310,7 +308,7 @@ class ModelInstance<T extends Record<string, any>> {
   /**
    * Delete the model
    */
-  async delete(): Promise<boolean> {
+  delete(): boolean {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
     const pkValue = this._attributes[pk as keyof T]
@@ -334,7 +332,7 @@ class ModelInstance<T extends Record<string, any>> {
   /**
    * Refresh the model from database
    */
-  async refresh(): Promise<this> {
+  refresh(): this {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
     const pkValue = this._attributes[pk as keyof T]
@@ -570,7 +568,7 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Execute query and get all results
    */
-  async get(): Promise<ModelInstance<T>[]> {
+  get(): ModelInstance<T>[] {
     const db = getDatabase()
     const { sql, params } = this.buildQuery()
     const rows = db.query(sql).all(...params)
@@ -580,17 +578,17 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Get the first result
    */
-  async first(): Promise<ModelInstance<T> | undefined> {
+  first(): ModelInstance<T> | undefined {
     this._limit = 1
-    const results = await this.get()
+    const results = this.get()
     return results[0]
   }
 
   /**
    * Get the first result or throw
    */
-  async firstOrFail(): Promise<ModelInstance<T>> {
-    const result = await this.first()
+  firstOrFail(): ModelInstance<T> {
+    const result = this.first()
     if (!result) {
       throw new Error(`No ${this._definition.name} found`)
     }
@@ -600,18 +598,18 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Get the last result
    */
-  async last(): Promise<ModelInstance<T> | undefined> {
+  last(): ModelInstance<T> | undefined {
     const pk = this._definition.primaryKey || 'id'
     this._orderBy = [{ column: pk, direction: 'desc' }]
     this._limit = 1
-    const results = await this.get()
+    const results = this.get()
     return results[0]
   }
 
   /**
    * Count results
    */
-  async count(): Promise<number> {
+  count(): number {
     const db = getDatabase()
     const params: any[] = []
     let sql = `SELECT COUNT(*) as count FROM ${this._definition.table}`
@@ -649,27 +647,27 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Check if any results exist
    */
-  async exists(): Promise<boolean> {
-    return (await this.count()) > 0
+  exists(): boolean {
+    return this.count() > 0
   }
 
   /**
    * Paginate results
    */
-  async paginate(page: number = 1, perPage: number = 15): Promise<{
+  paginate(page: number = 1, perPage: number = 15): {
     data: ModelInstance<T>[]
     total: number
     page: number
     perPage: number
     lastPage: number
-  }> {
-    const total = await this.count()
+  } {
+    const total = this.count()
     const lastPage = Math.ceil(total / perPage)
 
     this._limit = perPage
     this._offset = (page - 1) * perPage
 
-    const data = await this.get()
+    const data = this.get()
 
     return {
       data,
@@ -683,16 +681,16 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Pluck a single column
    */
-  async pluck<K extends keyof T>(column: K): Promise<T[K][]> {
+  pluck<K extends keyof T>(column: K): T[K][] {
     this._select = [column as string]
-    const results = await this.get()
+    const results = this.get()
     return results.map(r => r.get(column))
   }
 
   /**
    * Get max value of column
    */
-  async max(column: string): Promise<number> {
+  max(column: string): number {
     const db = getDatabase()
     const result = db.query(`SELECT MAX(${column}) as max FROM ${this._definition.table}`).get() as { max: number }
     return result.max || 0
@@ -701,7 +699,7 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Get min value of column
    */
-  async min(column: string): Promise<number> {
+  min(column: string): number {
     const db = getDatabase()
     const result = db.query(`SELECT MIN(${column}) as min FROM ${this._definition.table}`).get() as { min: number }
     return result.min || 0
@@ -710,7 +708,7 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Get average value of column
    */
-  async avg(column: string): Promise<number> {
+  avg(column: string): number {
     const db = getDatabase()
     const result = db.query(`SELECT AVG(${column}) as avg FROM ${this._definition.table}`).get() as { avg: number }
     return result.avg || 0
@@ -719,7 +717,7 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Get sum of column
    */
-  async sum(column: string): Promise<number> {
+  sum(column: string): number {
     const db = getDatabase()
     const result = db.query(`SELECT SUM(${column}) as sum FROM ${this._definition.table}`).get() as { sum: number }
     return result.sum || 0
@@ -728,7 +726,7 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Delete matching records
    */
-  async delete(): Promise<number> {
+  delete(): number {
     const db = getDatabase()
     const params: any[] = []
     let sql = `DELETE FROM ${this._definition.table}`
@@ -756,7 +754,7 @@ class ModelQueryBuilder<T extends Record<string, any>> {
   /**
    * Update matching records
    */
-  async update(data: Partial<T>): Promise<number> {
+  update(data: Partial<T>): number {
     const db = getDatabase()
     const params: any[] = []
 
@@ -904,7 +902,7 @@ export function createModel<T extends Record<string, any> = Record<string, any>>
     /**
      * Find by primary key
      */
-    static async find(id: number | string): Promise<ModelInstance<T> | undefined> {
+    static find(id: number | string): ModelInstance<T> | undefined {
       const db = getDatabase()
       const pk = definition.primaryKey || 'id'
       const row = db.query(`SELECT * FROM ${definition.table} WHERE ${pk} = ?`).get(id)
@@ -914,8 +912,8 @@ export function createModel<T extends Record<string, any> = Record<string, any>>
     /**
      * Find by primary key or throw
      */
-    static async findOrFail(id: number | string): Promise<ModelInstance<T>> {
-      const result = await this.find(id)
+    static findOrFail(id: number | string): ModelInstance<T> {
+      const result = this.find(id)
       if (!result) {
         throw new Error(`${definition.name} with id ${id} not found`)
       }
@@ -925,7 +923,7 @@ export function createModel<T extends Record<string, any> = Record<string, any>>
     /**
      * Find multiple by primary keys
      */
-    static async findMany(ids: (number | string)[]): Promise<ModelInstance<T>[]> {
+    static findMany(ids: (number | string)[]): ModelInstance<T>[] {
       const db = getDatabase()
       const pk = definition.primaryKey || 'id'
       const placeholders = ids.map(() => '?').join(', ')
@@ -936,83 +934,83 @@ export function createModel<T extends Record<string, any> = Record<string, any>>
     /**
      * Get all records
      */
-    static async all(): Promise<ModelInstance<T>[]> {
+    static all(): ModelInstance<T>[] {
       return new ModelQueryBuilder<T>(definition).get()
     }
 
     /**
      * Get the first record
      */
-    static async first(): Promise<ModelInstance<T> | undefined> {
+    static first(): ModelInstance<T> | undefined {
       return new ModelQueryBuilder<T>(definition).first()
     }
 
     /**
      * Get the first record or throw
      */
-    static async firstOrFail(): Promise<ModelInstance<T>> {
+    static firstOrFail(): ModelInstance<T> {
       return new ModelQueryBuilder<T>(definition).firstOrFail()
     }
 
     /**
      * Get the last record
      */
-    static async last(): Promise<ModelInstance<T> | undefined> {
+    static last(): ModelInstance<T> | undefined {
       return new ModelQueryBuilder<T>(definition).last()
     }
 
     /**
      * Count all records
      */
-    static async count(): Promise<number> {
+    static count(): number {
       return new ModelQueryBuilder<T>(definition).count()
     }
 
     /**
      * Check if any records exist
      */
-    static async exists(): Promise<boolean> {
+    static exists(): boolean {
       return new ModelQueryBuilder<T>(definition).exists()
     }
 
     /**
      * Paginate results
      */
-    static async paginate(page?: number, perPage?: number) {
+    static paginate(page?: number, perPage?: number) {
       return new ModelQueryBuilder<T>(definition).paginate(page, perPage)
     }
 
     /**
      * Create a new record
      */
-    static async create(data: Partial<T>): Promise<ModelInstance<T>> {
+    static create(data: Partial<T>): ModelInstance<T> {
       const instance = new ModelInstance<T>(definition, data)
-      await instance.save()
+      instance.save()
       return instance
     }
 
     /**
      * Create multiple records
      */
-    static async createMany(items: Partial<T>[]): Promise<ModelInstance<T>[]> {
-      return Promise.all(items.map(data => this.create(data)))
+    static createMany(items: Partial<T>[]): ModelInstance<T>[] {
+      return items.map(data => this.create(data))
     }
 
     /**
      * Update or create a record
      */
-    static async updateOrCreate(
+    static updateOrCreate(
       search: Partial<T>,
       data: Partial<T>
-    ): Promise<ModelInstance<T>> {
+    ): ModelInstance<T> {
       let query = new ModelQueryBuilder<T>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key, value)
       }
 
-      const existing = await query.first()
+      const existing = query.first()
       if (existing) {
-        await existing.update(data)
+        existing.update(data)
         return existing
       }
 
@@ -1022,16 +1020,16 @@ export function createModel<T extends Record<string, any> = Record<string, any>>
     /**
      * Find first or create a record
      */
-    static async firstOrCreate(
+    static firstOrCreate(
       search: Partial<T>,
       data: Partial<T>
-    ): Promise<ModelInstance<T>> {
+    ): ModelInstance<T> {
       let query = new ModelQueryBuilder<T>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key, value)
       }
 
-      const existing = await query.first()
+      const existing = query.first()
       if (existing) {
         return existing
       }
@@ -1042,7 +1040,7 @@ export function createModel<T extends Record<string, any> = Record<string, any>>
     /**
      * Delete a record by ID
      */
-    static async destroy(id: number | string): Promise<boolean> {
+    static destroy(id: number | string): boolean {
       const db = getDatabase()
       const pk = definition.primaryKey || 'id'
       const result = db.run(`DELETE FROM ${definition.table} WHERE ${pk} = ?`, [id])
@@ -1052,14 +1050,14 @@ export function createModel<T extends Record<string, any> = Record<string, any>>
     /**
      * Alias for destroy
      */
-    static async remove(id: number | string): Promise<boolean> {
+    static remove(id: number | string): boolean {
       return this.destroy(id)
     }
 
     /**
      * Truncate the table
      */
-    static async truncate(): Promise<void> {
+    static truncate(): void {
       const db = getDatabase()
       db.run(`DELETE FROM ${definition.table}`)
     }
@@ -1102,35 +1100,35 @@ export function createModel<T extends Record<string, any> = Record<string, any>>
     /**
      * Max aggregation
      */
-    static async max(column: string): Promise<number> {
+    static max(column: string): number {
       return new ModelQueryBuilder<T>(definition).max(column)
     }
 
     /**
      * Min aggregation
      */
-    static async min(column: string): Promise<number> {
+    static min(column: string): number {
       return new ModelQueryBuilder<T>(definition).min(column)
     }
 
     /**
      * Avg aggregation
      */
-    static async avg(column: string): Promise<number> {
+    static avg(column: string): number {
       return new ModelQueryBuilder<T>(definition).avg(column)
     }
 
     /**
      * Sum aggregation
      */
-    static async sum(column: string): Promise<number> {
+    static sum(column: string): number {
       return new ModelQueryBuilder<T>(definition).sum(column)
     }
 
     /**
      * Pluck column values
      */
-    static async pluck<K extends keyof T>(column: K): Promise<T[K][]> {
+    static pluck<K extends keyof T>(column: K): T[K][] {
       return new ModelQueryBuilder<T>(definition).pluck(column)
     }
   }
