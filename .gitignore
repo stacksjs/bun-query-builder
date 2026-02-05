@@ -23,3 +23,4 @@ packages/benchmark/benchmark.db-wal
 *.sql
 *.csv
 users.json
+/packages/bun-query-builder/.qb

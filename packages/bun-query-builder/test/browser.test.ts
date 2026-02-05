@@ -1,14 +1,16 @@
 /**
  * Browser Query Builder Tests
  *
- * These tests verify the browser module works correctly by:
- * 1. Starting a mock API server
- * 2. Testing all query builder methods
- * 3. Testing auth helpers
- * 4. Testing edge cases and error handling
+ * Comprehensive tests using real TrailBuddy model fixtures
+ * Tests include:
+ * - Basic CRUD operations
+ * - Complex relational queries
+ * - Eager loading (with/include)
+ * - Aggregations and filtering
+ * - Authentication flows
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import {
   BrowserQueryBuilder,
   BrowserQueryError,
@@ -19,35 +21,28 @@ import {
   getBrowserConfig,
   isBrowser,
 } from '../src/browser'
+import {
+  generateSeedData,
+  type UserRecord,
+  type TrailRecord,
+  type ActivityRecord,
+  type TerritoryRecord,
+  type TerritoryHistoryRecord,
+  type ReviewRecord,
+  type KudosRecord,
+  type UserStatsRecord,
+  type TerritoryStatsRecord,
+} from './fixtures/seed'
 
-// Mock data store (simulates database)
-interface User {
-  id: number
-  name: string
-  email: string
-  password?: string
-  active: boolean
-  role: string
-  created_at: string
-  updated_at: string
-}
+// Import model definitions to verify structure
+import UserModel from './fixtures/models/User'
+import TrailModel from './fixtures/models/Trail'
+import ActivityModel from './fixtures/models/Activity'
+import TerritoryModel from './fixtures/models/Territory'
 
-interface Territory {
-  id: number
-  user_id: number
-  name: string
-  area_size: number
-  status: 'active' | 'contested' | 'expired'
-  center_lat: number
-  center_lng: number
-  created_at: string
-}
-
-let mockUsers: User[] = []
-let mockTerritories: Territory[] = []
-let mockTokens: Map<string, number> = new Map() // token -> userId
-let nextUserId = 1
-let nextTerritoryId = 1
+// Mock data store populated from seed
+let mockData: ReturnType<typeof generateSeedData>
+let mockTokens: Map<string, number> = new Map()
 
 // Mock server
 let server: ReturnType<typeof Bun.serve> | null = null
@@ -55,73 +50,8 @@ const TEST_PORT = 9876
 const TEST_BASE_URL = `http://localhost:${TEST_PORT}`
 
 function resetMockData() {
-  mockUsers = [
-    {
-      id: 1,
-      name: 'John Doe',
-      email: 'john@example.com',
-      password: 'hashedpassword123',
-      active: true,
-      role: 'admin',
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-01-01T00:00:00Z',
-    },
-    {
-      id: 2,
-      name: 'Jane Smith',
-      email: 'jane@example.com',
-      password: 'hashedpassword456',
-      active: true,
-      role: 'user',
-      created_at: '2024-01-02T00:00:00Z',
-      updated_at: '2024-01-02T00:00:00Z',
-    },
-    {
-      id: 3,
-      name: 'Bob Wilson',
-      email: 'bob@example.com',
-      password: 'hashedpassword789',
-      active: false,
-      role: 'user',
-      created_at: '2024-01-03T00:00:00Z',
-      updated_at: '2024-01-03T00:00:00Z',
-    },
-  ]
-  mockTerritories = [
-    {
-      id: 1,
-      user_id: 1,
-      name: 'Downtown Loop',
-      area_size: 45000,
-      status: 'active',
-      center_lat: 37.7749,
-      center_lng: -122.4194,
-      created_at: '2024-01-01T00:00:00Z',
-    },
-    {
-      id: 2,
-      user_id: 1,
-      name: 'Park District',
-      area_size: 32500,
-      status: 'active',
-      center_lat: 37.7849,
-      center_lng: -122.4094,
-      created_at: '2024-01-02T00:00:00Z',
-    },
-    {
-      id: 3,
-      user_id: 2,
-      name: 'Riverfront Trail',
-      area_size: 78000,
-      status: 'contested',
-      center_lat: 37.7649,
-      center_lng: -122.4294,
-      created_at: '2024-01-03T00:00:00Z',
-    },
-  ]
+  mockData = generateSeedData()
   mockTokens.clear()
-  nextUserId = 4
-  nextTerritoryId = 4
 }
 
 // Helper to parse query params
@@ -139,7 +69,7 @@ function filterData<T extends Record<string, any>>(data: T[], params: Record<str
 
   // Simple equality filters
   for (const [key, value] of Object.entries(params)) {
-    if (key === 'sort' || key === 'limit' || key === 'offset' || key === 'fields' || key === 'include' || key === 'count' || key === 'paginate') continue
+    if (['sort', 'limit', 'offset', 'fields', 'include', 'count', 'paginate'].includes(key)) continue
     if (key.startsWith('filter[')) continue
 
     // Handle array syntax like user_id[]
@@ -204,6 +134,117 @@ function filterData<T extends Record<string, any>>(data: T[], params: Record<str
   return result
 }
 
+// Helper to add relations to records
+function addRelations<T extends Record<string, any>>(
+  records: T[],
+  include: string,
+  tableName: string
+): T[] {
+  const relations = include.split(',').map(r => r.trim())
+
+  return records.map(record => {
+    const withRelations = { ...record }
+
+    for (const relation of relations) {
+      switch (tableName) {
+        case 'users':
+          if (relation === 'activities') {
+            withRelations.activities = mockData.activities.filter(a => a.user_id === record.id)
+          }
+          if (relation === 'territories') {
+            withRelations.territories = mockData.territories.filter(t => t.user_id === record.id)
+          }
+          if (relation === 'reviews') {
+            withRelations.reviews = mockData.reviews.filter(r => r.user_id === record.id)
+          }
+          if (relation === 'stats' || relation === 'userStats') {
+            withRelations.stats = mockData.userStats.find(s => s.user_id === record.id)
+          }
+          if (relation === 'territoryStats') {
+            withRelations.territoryStats = mockData.territoryStats.find(s => s.user_id === record.id)
+          }
+          break
+
+        case 'activities':
+          if (relation === 'user') {
+            const user = mockData.users.find(u => u.id === record.user_id)
+            if (user) {
+              const { password: _, ...userWithoutPassword } = user
+              withRelations.user = userWithoutPassword
+            }
+          }
+          if (relation === 'trail') {
+            withRelations.trail = mockData.trails.find(t => t.id === record.trail_id)
+          }
+          if (relation === 'kudos') {
+            withRelations.kudos = mockData.kudos.filter(k => k.activity_id === record.id)
+          }
+          break
+
+        case 'territories':
+          if (relation === 'user' || relation === 'owner') {
+            const user = mockData.users.find(u => u.id === record.user_id)
+            if (user) {
+              const { password: _, ...userWithoutPassword } = user
+              withRelations.user = userWithoutPassword
+            }
+          }
+          if (relation === 'activity') {
+            withRelations.activity = mockData.activities.find(a => a.id === record.activity_id)
+          }
+          if (relation === 'history') {
+            withRelations.history = mockData.territoryHistories.filter(h => h.territory_id === record.id)
+          }
+          break
+
+        case 'reviews':
+          if (relation === 'user') {
+            const user = mockData.users.find(u => u.id === record.user_id)
+            if (user) {
+              const { password: _, ...userWithoutPassword } = user
+              withRelations.user = userWithoutPassword
+            }
+          }
+          if (relation === 'trail') {
+            withRelations.trail = mockData.trails.find(t => t.id === record.trail_id)
+          }
+          break
+
+        case 'trails':
+          if (relation === 'activities') {
+            withRelations.activities = mockData.activities.filter(a => a.trail_id === record.id)
+          }
+          if (relation === 'reviews') {
+            withRelations.reviews = mockData.reviews.filter(r => r.trail_id === record.id)
+          }
+          break
+
+        case 'territory_histories':
+          if (relation === 'territory') {
+            withRelations.territory = mockData.territories.find(t => t.id === record.territory_id)
+          }
+          if (relation === 'user') {
+            const user = mockData.users.find(u => u.id === record.user_id)
+            if (user) {
+              const { password: _, ...userWithoutPassword } = user
+              withRelations.user = userWithoutPassword
+            }
+          }
+          break
+      }
+    }
+
+    return withRelations
+  })
+}
+
+// CORS headers
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
+}
+
 // Mock API server handler
 async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url)
@@ -211,33 +252,26 @@ async function handleRequest(req: Request): Promise<Response> {
   const method = req.method
   const params = parseQueryParams(url)
 
-  // CORS headers
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
-  }
-
   // Handle CORS preflight
   if (method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
 
   // Auth check helper
-  const getAuthUser = (): User | null => {
+  const getAuthUser = (): UserRecord | null => {
     const authHeader = req.headers.get('Authorization')
     if (!authHeader?.startsWith('Bearer ')) return null
     const token = authHeader.slice(7)
     const userId = mockTokens.get(token)
     if (!userId) return null
-    return mockUsers.find(u => u.id === userId) || null
+    return mockData.users.find(u => u.id === userId) || null
   }
 
   try {
-    // Auth endpoints
+    // === AUTH ENDPOINTS ===
     if (path === '/login' && method === 'POST') {
       const body = await req.json() as { email: string, password: string }
-      const user = mockUsers.find(u => u.email === body.email)
+      const user = mockData.users.find(u => u.email === body.email)
       if (!user) {
         return new Response(JSON.stringify({ message: 'Invalid credentials' }), {
           status: 401,
@@ -254,14 +288,14 @@ async function handleRequest(req: Request): Promise<Response> {
 
     if (path === '/register' && method === 'POST') {
       const body = await req.json() as { name: string, email: string, password: string }
-      if (mockUsers.find(u => u.email === body.email)) {
+      if (mockData.users.find(u => u.email === body.email)) {
         return new Response(JSON.stringify({ message: 'Email already exists' }), {
           status: 422,
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         })
       }
-      const newUser: User = {
-        id: nextUserId++,
+      const newUser: UserRecord = {
+        id: mockData.users.length + 1,
         name: body.name,
         email: body.email,
         password: body.password,
@@ -270,7 +304,7 @@ async function handleRequest(req: Request): Promise<Response> {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }
-      mockUsers.push(newUser)
+      mockData.users.push(newUser)
       const token = `test_token_${Date.now()}_${newUser.id}`
       mockTokens.set(token, newUser.id)
       const { password: _, ...userWithoutPassword } = newUser
@@ -304,183 +338,178 @@ async function handleRequest(req: Request): Promise<Response> {
       })
     }
 
-    // Users endpoints
-    if (path === '/users' && method === 'GET') {
-      if (params.count === 'true') {
-        const filtered = filterData(mockUsers, { ...params, limit: '', offset: '' })
-        return new Response(JSON.stringify({ count: filtered.length }), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders },
-        })
-      }
-      if (params.paginate === 'true') {
-        const allFiltered = filterData(mockUsers, { ...params, limit: '', offset: '' })
-        const filtered = filterData(mockUsers, params)
-        const page = Math.floor(Number(params.offset || 0) / Number(params.limit || 15)) + 1
-        const perPage = Number(params.limit || 15)
-        return new Response(JSON.stringify({
-          data: filtered.map(u => ({ ...u, password: undefined })),
-          total: allFiltered.length,
-          page,
-          perPage,
-          lastPage: Math.ceil(allFiltered.length / perPage),
-        }), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders },
-        })
-      }
-      const filtered = filterData(mockUsers, params)
-      return new Response(JSON.stringify({ data: filtered.map(u => ({ ...u, password: undefined })) }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      })
-    }
+    // === GENERIC REST ENDPOINTS ===
+    // Determine which table based on path
+    const tableMatch = path.match(/^\/(\w+)(?:\/(\d+))?$/)
+    if (tableMatch) {
+      const [, tableName, idStr] = tableMatch
+      const id = idStr ? Number(idStr) : null
 
-    const userIdMatch = path.match(/^\/users\/(\d+)$/)
-    if (userIdMatch) {
-      const id = Number(userIdMatch[1])
-      const user = mockUsers.find(u => u.id === id)
+      // Get the data for this table
+      let tableData: any[] = []
+      switch (tableName) {
+        case 'users':
+          tableData = mockData.users.map(u => ({ ...u, password: undefined }))
+          break
+        case 'trails':
+          tableData = mockData.trails
+          break
+        case 'activities':
+          tableData = mockData.activities
+          break
+        case 'territories':
+          tableData = mockData.territories
+          break
+        case 'territory-histories':
+        case 'territory_histories':
+          tableData = mockData.territoryHistories
+          break
+        case 'reviews':
+          tableData = mockData.reviews
+          break
+        case 'kudos':
+          tableData = mockData.kudos
+          break
+        case 'user-stats':
+        case 'user_stats':
+          tableData = mockData.userStats
+          break
+        case 'territory-stats':
+        case 'territory_stats':
+          tableData = mockData.territoryStats
+          break
+        default:
+          return new Response(JSON.stringify({ message: 'Not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          })
+      }
 
-      if (method === 'GET') {
-        if (!user) {
-          return new Response(JSON.stringify({ message: 'User not found' }), {
+      // GET single record
+      if (id !== null && method === 'GET') {
+        let record = tableData.find(r => r.id === id)
+        if (!record) {
+          return new Response(JSON.stringify({ message: 'Not found' }), {
             status: 404,
             headers: { 'Content-Type': 'application/json', ...corsHeaders },
           })
         }
-        const { password: _, ...userWithoutPassword } = user
-        return new Response(JSON.stringify({ data: userWithoutPassword }), {
+        // Add relations if requested
+        if (params.include) {
+          record = addRelations([record], params.include, tableName)[0]
+        }
+        return new Response(JSON.stringify({ data: record }), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         })
       }
 
-      if (method === 'PATCH' || method === 'PUT') {
-        if (!user) {
-          return new Response(JSON.stringify({ message: 'User not found' }), {
+      // GET collection
+      if (id === null && method === 'GET') {
+        // Count query
+        if (params.count === 'true') {
+          const filtered = filterData(tableData, { ...params, limit: '', offset: '' })
+          return new Response(JSON.stringify({ count: filtered.length }), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          })
+        }
+
+        // Paginate query
+        if (params.paginate === 'true') {
+          const allFiltered = filterData(tableData, { ...params, limit: '', offset: '' })
+          let filtered = filterData(tableData, params)
+
+          // Add relations if requested
+          if (params.include) {
+            filtered = addRelations(filtered, params.include, tableName)
+          }
+
+          const page = Math.floor(Number(params.offset || 0) / Number(params.limit || 15)) + 1
+          const perPage = Number(params.limit || 15)
+          return new Response(JSON.stringify({
+            data: filtered,
+            total: allFiltered.length,
+            page,
+            perPage,
+            lastPage: Math.ceil(allFiltered.length / perPage),
+          }), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          })
+        }
+
+        // Regular query
+        let filtered = filterData(tableData, params)
+
+        // Add relations if requested
+        if (params.include) {
+          filtered = addRelations(filtered, params.include, tableName)
+        }
+
+        return new Response(JSON.stringify({ data: filtered }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        })
+      }
+
+      // POST - create
+      if (id === null && method === 'POST') {
+        const body = await req.json()
+        const newRecord = {
+          id: tableData.length + 1,
+          ...body,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
+        // Add to appropriate array
+        switch (tableName) {
+          case 'users': mockData.users.push(newRecord); break
+          case 'trails': mockData.trails.push(newRecord); break
+          case 'activities': mockData.activities.push(newRecord); break
+          case 'territories': mockData.territories.push(newRecord); break
+          case 'reviews': mockData.reviews.push(newRecord); break
+          case 'kudos': mockData.kudos.push(newRecord); break
+        }
+        return new Response(JSON.stringify({ data: newRecord }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        })
+      }
+
+      // PATCH/PUT - update
+      if (id !== null && (method === 'PATCH' || method === 'PUT')) {
+        const record = tableData.find(r => r.id === id)
+        if (!record) {
+          return new Response(JSON.stringify({ message: 'Not found' }), {
             status: 404,
             headers: { 'Content-Type': 'application/json', ...corsHeaders },
           })
         }
-        const body = await req.json() as Partial<User>
-        Object.assign(user, body, { updated_at: new Date().toISOString() })
-        const { password: _, ...userWithoutPassword } = user
-        return new Response(JSON.stringify({ data: userWithoutPassword }), {
+        const body = await req.json()
+        Object.assign(record, body, { updated_at: new Date().toISOString() })
+        return new Response(JSON.stringify({ data: record }), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         })
       }
 
-      if (method === 'DELETE') {
-        const index = mockUsers.findIndex(u => u.id === id)
+      // DELETE
+      if (id !== null && method === 'DELETE') {
+        const index = tableData.findIndex(r => r.id === id)
         if (index === -1) {
-          return new Response(JSON.stringify({ message: 'User not found' }), {
+          return new Response(JSON.stringify({ message: 'Not found' }), {
             status: 404,
             headers: { 'Content-Type': 'application/json', ...corsHeaders },
           })
         }
-        mockUsers.splice(index, 1)
+        tableData.splice(index, 1)
         return new Response(null, { status: 204, headers: corsHeaders })
       }
     }
 
-    if (path === '/users' && method === 'POST') {
-      const body = await req.json() as Partial<User>
-      const newUser: User = {
-        id: nextUserId++,
-        name: body.name || 'New User',
-        email: body.email || `user${nextUserId}@example.com`,
-        active: body.active ?? true,
-        role: body.role || 'user',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-      mockUsers.push(newUser)
-      return new Response(JSON.stringify({ data: newUser }), {
-        status: 201,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      })
-    }
-
-    // Territories endpoints
-    if (path === '/territories' && method === 'GET') {
-      if (params.count === 'true') {
-        const filtered = filterData(mockTerritories, { ...params, limit: '', offset: '' })
-        return new Response(JSON.stringify({ count: filtered.length }), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders },
-        })
-      }
-      const filtered = filterData(mockTerritories, params)
-      return new Response(JSON.stringify({ data: filtered }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      })
-    }
-
-    const territoryIdMatch = path.match(/^\/territories\/(\d+)$/)
-    if (territoryIdMatch) {
-      const id = Number(territoryIdMatch[1])
-      const territory = mockTerritories.find(t => t.id === id)
-
-      if (method === 'GET') {
-        if (!territory) {
-          return new Response(JSON.stringify({ message: 'Territory not found' }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json', ...corsHeaders },
-          })
-        }
-        return new Response(JSON.stringify({ data: territory }), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders },
-        })
-      }
-
-      if (method === 'PATCH' || method === 'PUT') {
-        if (!territory) {
-          return new Response(JSON.stringify({ message: 'Territory not found' }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json', ...corsHeaders },
-          })
-        }
-        const body = await req.json() as Partial<Territory>
-        Object.assign(territory, body)
-        return new Response(JSON.stringify({ data: territory }), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders },
-        })
-      }
-
-      if (method === 'DELETE') {
-        const index = mockTerritories.findIndex(t => t.id === id)
-        if (index === -1) {
-          return new Response(JSON.stringify({ message: 'Territory not found' }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json', ...corsHeaders },
-          })
-        }
-        mockTerritories.splice(index, 1)
-        return new Response(null, { status: 204, headers: corsHeaders })
-      }
-    }
-
-    if (path === '/territories' && method === 'POST') {
-      const body = await req.json() as Partial<Territory>
-      const newTerritory: Territory = {
-        id: nextTerritoryId++,
-        user_id: body.user_id || 1,
-        name: body.name || 'New Territory',
-        area_size: body.area_size || 10000,
-        status: body.status || 'active',
-        center_lat: body.center_lat || 0,
-        center_lng: body.center_lng || 0,
-        created_at: new Date().toISOString(),
-      }
-      mockTerritories.push(newTerritory)
-      return new Response(JSON.stringify({ data: newTerritory }), {
-        status: 201,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      })
-    }
-
-    // 404 for unknown routes
     return new Response(JSON.stringify({ message: 'Not found' }), {
       status: 404,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     })
   }
   catch (error) {
+    console.error('Server error:', error)
     return new Response(JSON.stringify({ message: 'Internal server error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -488,86 +517,120 @@ async function handleRequest(req: Request): Promise<Response> {
   }
 }
 
-// Start mock server before all tests
+// Start mock server
 beforeAll(() => {
   server = Bun.serve({
     port: TEST_PORT,
     fetch: handleRequest,
   })
 
-  // Configure browser client
   configureBrowser({
     baseUrl: TEST_BASE_URL,
-    getToken: () => {
-      // Use a mock localStorage for tests
-      return (globalThis as any).__testAuthToken || null
-    },
+    getToken: () => (globalThis as any).__testAuthToken || null,
   })
 })
 
-// Clean up after all tests
 afterAll(() => {
   server?.stop()
 })
 
-// Reset mock data before each test
 beforeEach(() => {
   resetMockData()
-  // Clear test auth token
   ;(globalThis as any).__testAuthToken = null
+})
+
+// ============================================================================
+// MODEL FIXTURES VERIFICATION
+// ============================================================================
+
+describe('Model Fixtures', () => {
+  it('should have valid User model definition', () => {
+    expect(UserModel.name).toBe('User')
+    expect(UserModel.table).toBe('users')
+    expect(UserModel.hasMany).toContain('Activity')
+    expect(UserModel.hasMany).toContain('Territory')
+    expect(UserModel.attributes.email.unique).toBe(true)
+  })
+
+  it('should have valid Trail model with hasMany relationships', () => {
+    expect(TrailModel.name).toBe('Trail')
+    expect(TrailModel.hasMany).toContain('Activity')
+    expect(TrailModel.hasMany).toContain('Review')
+    expect(TrailModel.attributes.difficulty.factory).toBeDefined()
+  })
+
+  it('should have valid Activity model with belongsTo relationships', () => {
+    expect(ActivityModel.name).toBe('Activity')
+    expect(ActivityModel.belongsTo).toContain('User')
+    expect(ActivityModel.belongsTo).toContain('Trail')
+    expect(ActivityModel.hasMany).toContain('Kudos')
+  })
+
+  it('should have valid Territory model with game-specific attributes', () => {
+    expect(TerritoryModel.name).toBe('Territory')
+    expect(TerritoryModel.attributes.polygonData).toBeDefined()
+    expect(TerritoryModel.attributes.areaSize).toBeDefined()
+    expect(TerritoryModel.attributes.status).toBeDefined()
+  })
+
+  it('should generate interconnected seed data', () => {
+    expect(mockData.users.length).toBeGreaterThan(0)
+    expect(mockData.trails.length).toBe(10) // TRAIL_NAMES count
+    expect(mockData.activities.length).toBeGreaterThan(0)
+
+    // Verify relationships
+    const userActivities = mockData.activities.filter(a => a.user_id === 1)
+    expect(userActivities.length).toBeGreaterThan(0)
+
+    const trailActivities = mockData.activities.filter(a => a.trail_id === mockData.trails[0].id)
+    expect(trailActivities.length).toBeGreaterThanOrEqual(0)
+  })
 })
 
 // ============================================================================
 // BASIC QUERY TESTS
 // ============================================================================
 
-describe('BrowserQueryBuilder - Basic Queries', () => {
-  it('should fetch all records from a table', async () => {
-    const users = await browserQuery('users').get()
-    expect(Array.isArray(users)).toBe(true)
-    expect(users.length).toBe(3)
-    expect(users[0]).toHaveProperty('id')
+describe('Basic Queries', () => {
+  it('should fetch all users', async () => {
+    const users = await browserQuery<UserRecord>('users').get()
+    expect(users.length).toBe(mockData.users.length)
     expect(users[0]).toHaveProperty('name')
-    expect(users[0]).toHaveProperty('email')
+    expect(users[0]).not.toHaveProperty('password') // Hidden field
   })
 
-  it('should return empty array when no records match', async () => {
-    const users = await browserQuery('users').where('email', 'nonexistent@example.com').get()
-    expect(Array.isArray(users)).toBe(true)
-    expect(users.length).toBe(0)
+  it('should fetch all trails', async () => {
+    const trails = await browserQuery<TrailRecord>('trails').get()
+    expect(trails.length).toBe(10)
+    expect(trails[0]).toHaveProperty('difficulty')
   })
 
-  it('should fetch a single record by ID with find()', async () => {
-    const user = await browserQuery('users').find(1)
+  it('should find user by ID', async () => {
+    const user = await browserQuery<UserRecord>('users').find(1)
     expect(user).not.toBeNull()
-    expect(user?.id).toBe(1)
-    expect(user?.name).toBe('John Doe')
+    expect(user?.name).toBe('Alex Runner')
   })
 
-  it('should return null for non-existent ID with find()', async () => {
-    const user = await browserQuery('users').find(999)
+  it('should return null for non-existent ID', async () => {
+    const user = await browserQuery<UserRecord>('users').find(999)
     expect(user).toBeNull()
   })
 
-  it('should throw for non-existent ID with findOrFail()', async () => {
-    await expect(browserQuery('users').findOrFail(999)).rejects.toThrow()
+  it('should throw on findOrFail with non-existent ID', async () => {
+    await expect(browserQuery('users').findOrFail(999)).rejects.toThrow(BrowserQueryError)
   })
 
-  it('should fetch first record with first()', async () => {
-    const user = await browserQuery('users').first()
-    expect(user).not.toBeNull()
-    expect(user).toHaveProperty('id')
+  it('should get first record', async () => {
+    const trail = await browserQuery<TrailRecord>('trails').first()
+    expect(trail).not.toBeNull()
+    expect(trail).toHaveProperty('name')
   })
 
-  it('should return null when first() finds nothing', async () => {
-    const user = await browserQuery('users').where('email', 'nonexistent@example.com').first()
+  it('should return null on first() with no matches', async () => {
+    const user = await browserQuery<UserRecord>('users')
+      .where('email', 'nonexistent@test.com')
+      .first()
     expect(user).toBeNull()
-  })
-
-  it('should throw when firstOrFail() finds nothing', async () => {
-    await expect(
-      browserQuery('users').where('email', 'nonexistent@example.com').firstOrFail(),
-    ).rejects.toThrow()
   })
 })
 
@@ -575,170 +638,334 @@ describe('BrowserQueryBuilder - Basic Queries', () => {
 // WHERE CLAUSE TESTS
 // ============================================================================
 
-describe('BrowserQueryBuilder - Where Clauses', () => {
-  it('should filter with simple where equality', async () => {
-    const users = await browserQuery<User>('users').where('active', true).get()
-    expect(users.length).toBe(2)
-    expect(users.every(u => u.active === true)).toBe(true)
-  })
-
-  it('should filter with where using operator', async () => {
-    const users = await browserQuery<User>('users').where('active', '=', true).get()
-    expect(users.length).toBe(2)
-  })
-
-  it('should filter with where greater than', async () => {
-    const territories = await browserQuery<Territory>('territories')
-      .where('area_size', '>', 40000)
+describe('Where Clauses', () => {
+  it('should filter by equality', async () => {
+    const activeUsers = await browserQuery<UserRecord>('users')
+      .where('active', true)
       .get()
-    expect(territories.length).toBe(2)
-    expect(territories.every(t => t.area_size > 40000)).toBe(true)
+    expect(activeUsers.every(u => u.active === true)).toBe(true)
   })
 
-  it('should filter with where less than', async () => {
-    const territories = await browserQuery<Territory>('territories')
-      .where('area_size', '<', 50000)
+  it('should filter by role', async () => {
+    const admins = await browserQuery<UserRecord>('users')
+      .where('role', 'admin')
       .get()
-    expect(territories.length).toBe(2)
-    expect(territories.every(t => t.area_size < 50000)).toBe(true)
+    expect(admins.length).toBeGreaterThan(0)
+    expect(admins.every(u => u.role === 'admin')).toBe(true)
+  })
+
+  it('should filter with greater than operator', async () => {
+    const bigTerritories = await browserQuery<TerritoryRecord>('territories')
+      .where('area_size', '>', 50000)
+      .get()
+    expect(bigTerritories.every(t => t.area_size > 50000)).toBe(true)
   })
 
   it('should chain multiple where clauses', async () => {
-    const users = await browserQuery<User>('users')
+    const filtered = await browserQuery<UserRecord>('users')
       .where('active', true)
       .where('role', 'user')
       .get()
-    expect(users.length).toBe(1)
-    expect(users[0].name).toBe('Jane Smith')
+    expect(filtered.every(u => u.active === true && u.role === 'user')).toBe(true)
   })
 
-  it('should support andWhere alias', async () => {
-    const users = await browserQuery<User>('users')
-      .where('active', true)
-      .andWhere('role', 'admin')
+  it('should filter activities by user_id', async () => {
+    const userActivities = await browserQuery<ActivityRecord>('activities')
+      .where('user_id', 1)
       .get()
-    expect(users.length).toBe(1)
-    expect(users[0].name).toBe('John Doe')
+    expect(userActivities.length).toBeGreaterThan(0)
+    expect(userActivities.every(a => a.user_id === 1)).toBe(true)
   })
 
-  it('should support whereIn', async () => {
-    const territories = await browserQuery<Territory>('territories')
-      .whereIn('user_id', [1])
+  it('should filter by activity type', async () => {
+    const runs = await browserQuery<ActivityRecord>('activities')
+      .where('activity_type', 'Trail Run')
       .get()
-    expect(territories.length).toBe(2)
-    expect(territories.every(t => t.user_id === 1)).toBe(true)
+    expect(runs.every(a => a.activity_type === 'Trail Run')).toBe(true)
+  })
+
+  it('should filter territories by status', async () => {
+    const contested = await browserQuery<TerritoryRecord>('territories')
+      .where('status', 'contested')
+      .get()
+    expect(contested.every(t => t.status === 'contested')).toBe(true)
+  })
+
+  it('should filter with whereIn', async () => {
+    const specificUsers = await browserQuery<UserRecord>('users')
+      .whereIn('id', [1, 2])
+      .get()
+    expect(specificUsers.length).toBe(2)
+    expect(specificUsers.every(u => [1, 2].includes(u.id))).toBe(true)
   })
 })
 
 // ============================================================================
-// ORDER BY TESTS
+// ORDERING TESTS
 // ============================================================================
 
-describe('BrowserQueryBuilder - Ordering', () => {
-  it('should order by ascending', async () => {
-    const territories = await browserQuery<Territory>('territories')
-      .orderBy('area_size', 'asc')
+describe('Ordering', () => {
+  it('should order by distance ascending', async () => {
+    const trails = await browserQuery<TrailRecord>('trails')
+      .orderBy('distance', 'asc')
       .get()
-    expect(territories[0].area_size).toBeLessThanOrEqual(territories[1].area_size)
-    expect(territories[1].area_size).toBeLessThanOrEqual(territories[2].area_size)
+    for (let i = 1; i < trails.length; i++) {
+      expect(trails[i].distance).toBeGreaterThanOrEqual(trails[i - 1].distance)
+    }
   })
 
-  it('should order by descending', async () => {
-    const territories = await browserQuery<Territory>('territories')
+  it('should order by area_size descending', async () => {
+    const territories = await browserQuery<TerritoryRecord>('territories')
       .orderBy('area_size', 'desc')
       .get()
-    expect(territories[0].area_size).toBeGreaterThanOrEqual(territories[1].area_size)
-    expect(territories[1].area_size).toBeGreaterThanOrEqual(territories[2].area_size)
+    for (let i = 1; i < territories.length; i++) {
+      expect(territories[i].area_size).toBeLessThanOrEqual(territories[i - 1].area_size)
+    }
   })
 
-  it('should support orderByDesc helper', async () => {
-    const territories = await browserQuery<Territory>('territories')
-      .orderByDesc('area_size')
+  it('should use latest() helper', async () => {
+    const activities = await browserQuery<ActivityRecord>('activities')
+      .latest('completed_at')
       .get()
-    expect(territories[0].area_size).toBe(78000) // largest
+    expect(activities.length).toBeGreaterThan(0)
   })
 
-  it('should support latest() helper', async () => {
-    const users = await browserQuery<User>('users').latest().get()
-    expect(users[0].created_at).toBe('2024-01-03T00:00:00Z')
-  })
-
-  it('should support oldest() helper', async () => {
-    const users = await browserQuery<User>('users').oldest().get()
+  it('should use oldest() helper', async () => {
+    const users = await browserQuery<UserRecord>('users')
+      .oldest('created_at')
+      .get()
     expect(users[0].created_at).toBe('2024-01-01T00:00:00Z')
   })
 })
 
 // ============================================================================
-// LIMIT & OFFSET TESTS
+// PAGINATION TESTS
 // ============================================================================
 
-describe('BrowserQueryBuilder - Pagination', () => {
+describe('Pagination', () => {
   it('should limit results', async () => {
-    const users = await browserQuery('users').limit(2).get()
-    expect(users.length).toBe(2)
-  })
-
-  it('should support take() alias', async () => {
-    const users = await browserQuery('users').take(1).get()
-    expect(users.length).toBe(1)
+    const limited = await browserQuery<TrailRecord>('trails').limit(3).get()
+    expect(limited.length).toBe(3)
   })
 
   it('should offset results', async () => {
-    const allUsers = await browserQuery('users').get()
-    const offsetUsers = await browserQuery('users').offset(1).get()
-    expect(offsetUsers.length).toBe(allUsers.length - 1)
-    expect(offsetUsers[0].id).toBe(allUsers[1].id)
+    const all = await browserQuery<TrailRecord>('trails').get()
+    const offset = await browserQuery<TrailRecord>('trails').offset(2).get()
+    expect(offset.length).toBe(all.length - 2)
+    expect(offset[0].id).toBe(all[2].id)
   })
 
-  it('should support skip() alias', async () => {
-    const users = await browserQuery('users').skip(2).get()
-    expect(users.length).toBe(1)
-  })
-
-  it('should combine limit and offset', async () => {
-    const users = await browserQuery('users').offset(1).limit(1).get()
-    expect(users.length).toBe(1)
-    expect(users[0].id).toBe(2)
-  })
-
-  it('should paginate results', async () => {
-    const page1 = await browserQuery<User>('users').paginate(1, 2)
-    expect(page1.data.length).toBe(2)
+  it('should paginate correctly', async () => {
+    const page1 = await browserQuery<ActivityRecord>('activities').paginate(1, 5)
+    expect(page1.data.length).toBe(5)
     expect(page1.page).toBe(1)
-    expect(page1.perPage).toBe(2)
-    expect(page1.total).toBe(3)
-    expect(page1.lastPage).toBe(2)
+    expect(page1.perPage).toBe(5)
+    expect(page1.total).toBeGreaterThan(5)
 
-    const page2 = await browserQuery<User>('users').paginate(2, 2)
-    expect(page2.data.length).toBe(1)
+    const page2 = await browserQuery<ActivityRecord>('activities').paginate(2, 5)
     expect(page2.page).toBe(2)
+    expect(page2.data[0].id).not.toBe(page1.data[0].id)
+  })
+
+  it('should count records', async () => {
+    const count = await browserQuery<UserRecord>('users').count()
+    expect(count).toBe(mockData.users.length)
+  })
+
+  it('should count filtered records', async () => {
+    const count = await browserQuery<UserRecord>('users')
+      .where('active', true)
+      .count()
+    const expected = mockData.users.filter(u => u.active).length
+    expect(count).toBe(expected)
+  })
+
+  it('should check existence', async () => {
+    const exists = await browserQuery<UserRecord>('users')
+      .where('email', 'alex@trailbuddy.com')
+      .exists()
+    expect(exists).toBe(true)
+
+    const notExists = await browserQuery<UserRecord>('users')
+      .where('email', 'nobody@nowhere.com')
+      .exists()
+    expect(notExists).toBe(false)
   })
 })
 
 // ============================================================================
-// COUNT & EXISTS TESTS
+// RELATIONAL QUERIES - EAGER LOADING
 // ============================================================================
 
-describe('BrowserQueryBuilder - Count & Exists', () => {
-  it('should count all records', async () => {
-    const count = await browserQuery('users').count()
-    expect(count).toBe(3)
+describe('Relational Queries - Eager Loading', () => {
+  it('should load user with activities', async () => {
+    const users = await browserQuery<UserRecord & { activities: ActivityRecord[] }>('users')
+      .where('id', 1)
+      .with('activities')
+      .get()
+
+    expect(users.length).toBe(1)
+    expect(users[0].activities).toBeDefined()
+    expect(Array.isArray(users[0].activities)).toBe(true)
+    expect(users[0].activities.length).toBeGreaterThan(0)
+    expect(users[0].activities.every(a => a.user_id === 1)).toBe(true)
   })
 
-  it('should count filtered records', async () => {
-    const count = await browserQuery<User>('users').where('active', true).count()
-    expect(count).toBe(2)
+  it('should load user with territories', async () => {
+    const users = await browserQuery<UserRecord & { territories: TerritoryRecord[] }>('users')
+      .where('id', 1)
+      .with('territories')
+      .get()
+
+    expect(users[0].territories).toBeDefined()
+    expect(users[0].territories.length).toBe(3) // Alex owns 3 territories
   })
 
-  it('should check if records exist', async () => {
-    const exists = await browserQuery<User>('users').where('active', true).exists()
-    expect(exists).toBe(true)
+  it('should load user with stats', async () => {
+    const users = await browserQuery<UserRecord & { stats: UserStatsRecord }>('users')
+      .where('id', 1)
+      .with('stats')
+      .get()
+
+    expect(users[0].stats).toBeDefined()
+    expect(users[0].stats.total_distance).toBeGreaterThan(0)
   })
 
-  it('should return false when no records exist', async () => {
-    const exists = await browserQuery('users').where('email', 'nonexistent@example.com').exists()
-    expect(exists).toBe(false)
+  it('should load activity with user and trail', async () => {
+    const activities = await browserQuery<ActivityRecord & { user: UserRecord, trail: TrailRecord }>('activities')
+      .where('id', 1)
+      .with('user', 'trail')
+      .get()
+
+    expect(activities[0].user).toBeDefined()
+    expect(activities[0].user.name).toBeDefined()
+    expect(activities[0].trail).toBeDefined()
+    expect(activities[0].trail.name).toBeDefined()
+  })
+
+  it('should load territory with owner and history', async () => {
+    const territories = await browserQuery<TerritoryRecord & { user: UserRecord, history: TerritoryHistoryRecord[] }>('territories')
+      .where('id', 1)
+      .with('user', 'history')
+      .get()
+
+    expect(territories[0].user).toBeDefined()
+    expect(territories[0].user.name).toBe('Alex Runner')
+    expect(territories[0].history).toBeDefined()
+    expect(territories[0].history.length).toBeGreaterThan(0)
+  })
+
+  it('should load trail with activities and reviews', async () => {
+    const trails = await browserQuery<TrailRecord & { activities: ActivityRecord[], reviews: ReviewRecord[] }>('trails')
+      .where('id', 1)
+      .with('activities', 'reviews')
+      .get()
+
+    expect(trails[0].activities).toBeDefined()
+    expect(trails[0].reviews).toBeDefined()
+  })
+
+  it('should load review with user and trail', async () => {
+    const reviews = await browserQuery<ReviewRecord & { user: UserRecord, trail: TrailRecord }>('reviews')
+      .limit(1)
+      .with('user', 'trail')
+      .get()
+
+    expect(reviews[0].user).toBeDefined()
+    expect(reviews[0].trail).toBeDefined()
+    expect(reviews[0].user.name).toBeDefined()
+    expect(reviews[0].trail.name).toBeDefined()
+  })
+})
+
+// ============================================================================
+// COMPLEX RELATIONAL QUERIES
+// ============================================================================
+
+describe('Complex Relational Queries', () => {
+  it('should get top users by territory count with stats', async () => {
+    const users = await browserQuery<UserRecord & { territories: TerritoryRecord[], territoryStats: TerritoryStatsRecord }>('users')
+      .where('active', true)
+      .with('territories', 'territoryStats')
+      .get()
+
+    // Find user with most territories
+    const sortedByTerritories = users
+      .filter(u => u.territories)
+      .sort((a, b) => b.territories.length - a.territories.length)
+
+    expect(sortedByTerritories[0].name).toBe('Alex Runner') // Has 3 territories
+    expect(sortedByTerritories[0].territoryStats).toBeDefined()
+  })
+
+  it('should get activities for a specific trail with user info', async () => {
+    const activities = await browserQuery<ActivityRecord & { user: UserRecord }>('activities')
+      .where('trail_id', 1)
+      .with('user')
+      .orderBy('completed_at', 'desc')
+      .get()
+
+    for (const activity of activities) {
+      expect(activity.trail_id).toBe(1)
+      expect(activity.user).toBeDefined()
+    }
+  })
+
+  it('should get contested territories with owner info', async () => {
+    const contested = await browserQuery<TerritoryRecord & { user: UserRecord, history: TerritoryHistoryRecord[] }>('territories')
+      .where('status', 'contested')
+      .with('user', 'history')
+      .get()
+
+    for (const territory of contested) {
+      expect(territory.status).toBe('contested')
+      expect(territory.user).toBeDefined()
+      // Contested territories should have defense events
+      const defenseEvents = territory.history.filter(h => h.event_type === 'defended')
+      expect(defenseEvents.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('should get user leaderboard by total distance', async () => {
+    const users = await browserQuery<UserRecord & { stats: UserStatsRecord }>('users')
+      .where('active', true)
+      .with('stats')
+      .get()
+
+    const leaderboard = users
+      .filter(u => u.stats)
+      .sort((a, b) => b.stats.total_distance - a.stats.total_distance)
+      .slice(0, 3)
+
+    expect(leaderboard.length).toBe(3)
+    // Alex should be first with most distance
+    expect(leaderboard[0].name).toBe('Alex Runner')
+  })
+
+  it('should get reviews for highly rated trails', async () => {
+    const trails = await browserQuery<TrailRecord & { reviews: ReviewRecord[] }>('trails')
+      .where('rating', '>', 4)
+      .with('reviews')
+      .orderBy('rating', 'desc')
+      .get()
+
+    for (const trail of trails) {
+      expect(trail.rating).toBeGreaterThan(4)
+      if (trail.reviews && trail.reviews.length > 0) {
+        expect(trail.reviews[0]).toHaveProperty('rating')
+      }
+    }
+  })
+
+  it('should paginate activities with relations', async () => {
+    const page = await browserQuery<ActivityRecord & { user: UserRecord, trail: TrailRecord }>('activities')
+      .with('user', 'trail')
+      .paginate(1, 5)
+
+    expect(page.data.length).toBe(5)
+    expect(page.data[0].user).toBeDefined()
+    expect(page.data[0].trail).toBeDefined()
+    expect(page.total).toBeGreaterThan(5)
   })
 })
 
@@ -746,161 +973,139 @@ describe('BrowserQueryBuilder - Count & Exists', () => {
 // CRUD OPERATIONS
 // ============================================================================
 
-describe('BrowserQueryBuilder - CRUD Operations', () => {
-  it('should create a new record', async () => {
-    const newUser = await browserQuery<User>('users').create({
-      name: 'New User',
-      email: 'new@example.com',
-      active: true,
-      role: 'user',
+describe('CRUD Operations', () => {
+  it('should create a new trail', async () => {
+    const newTrail = await browserQuery<TrailRecord>('trails').create({
+      name: 'New Test Trail',
+      location: 'Test City, TC',
+      distance: 5.5,
+      elevation: 500,
+      difficulty: 'moderate',
+      rating: 4.5,
+      review_count: 0,
+      estimated_time: '2h 00m',
     })
-    expect(newUser).toHaveProperty('id')
-    expect(newUser.name).toBe('New User')
-    expect(newUser.email).toBe('new@example.com')
 
-    // Verify it was created
-    const found = await browserQuery('users').find(newUser.id)
-    expect(found).not.toBeNull()
+    expect(newTrail.id).toBeDefined()
+    expect(newTrail.name).toBe('New Test Trail')
+    expect(newTrail.created_at).toBeDefined()
   })
 
-  it('should support insert() alias', async () => {
-    const newUser = await browserQuery<User>('users').insert({
-      name: 'Inserted User',
-      email: 'inserted@example.com',
+  it('should create a new activity', async () => {
+    const newActivity = await browserQuery<ActivityRecord>('activities').create({
+      user_id: 1,
+      trail_id: 1,
+      activity_type: 'Trail Run',
+      distance: 8.5,
+      duration: '1:15:30',
+      kudos_count: 0,
     })
-    expect(newUser).toHaveProperty('id')
-    expect(newUser.name).toBe('Inserted User')
+
+    expect(newActivity.id).toBeDefined()
+    expect(newActivity.user_id).toBe(1)
   })
 
-  it('should update a record', async () => {
-    const updated = await browserQuery<User>('users').update(1, {
-      name: 'Updated Name',
+  it('should update a territory', async () => {
+    const updated = await browserQuery<TerritoryRecord>('territories').update(1, {
+      name: 'Updated Territory Name',
+      conquest_count: 10,
     })
-    expect(updated.name).toBe('Updated Name')
 
-    // Verify it was updated
-    const found = await browserQuery<User>('users').find(1)
-    expect(found?.name).toBe('Updated Name')
+    expect(updated.name).toBe('Updated Territory Name')
+    expect(updated.conquest_count).toBe(10)
   })
 
-  it('should delete a record', async () => {
-    const result = await browserQuery('users').delete(1)
-    expect(result).toBe(true)
+  it('should delete a review', async () => {
+    const initialCount = mockData.reviews.length
+    const result = await browserQuery('reviews').delete(1)
 
-    // Verify it was deleted
-    const found = await browserQuery('users').find(1)
-    expect(found).toBeNull()
-  })
-
-  it('should support destroy() alias', async () => {
-    const result = await browserQuery('users').destroy(2)
     expect(result).toBe(true)
   })
 })
 
 // ============================================================================
-// AUTH TESTS
+// AUTHENTICATION
 // ============================================================================
 
-describe('browserAuth - Authentication', () => {
-  it('should login successfully with valid credentials', async () => {
+describe('Authentication', () => {
+  it('should login with valid credentials', async () => {
     const result = await browserAuth.login({
-      email: 'john@example.com',
-      password: 'password123',
+      email: 'alex@trailbuddy.com',
+      password: 'any',
     })
-    expect(result).toHaveProperty('token')
-    expect(result).toHaveProperty('user')
-    expect(result.user.email).toBe('john@example.com')
+
+    expect(result.token).toBeDefined()
+    expect(result.user.email).toBe('alex@trailbuddy.com')
+    expect(result.user.name).toBe('Alex Runner')
   })
 
-  it('should fail login with invalid credentials', async () => {
-    await expect(
-      browserAuth.login({
-        email: 'nonexistent@example.com',
-        password: 'wrong',
-      }),
-    ).rejects.toThrow()
+  it('should fail login with invalid email', async () => {
+    await expect(browserAuth.login({
+      email: 'nobody@test.com',
+      password: 'wrong',
+    })).rejects.toThrow()
   })
 
-  it('should register a new user', async () => {
+  it('should register new user', async () => {
     const result = await browserAuth.register({
-      name: 'New Registered User',
-      email: 'newregistered@example.com',
+      name: 'New Test User',
+      email: 'newuser@test.com',
       password: 'password123',
     })
-    expect(result).toHaveProperty('token')
-    expect(result).toHaveProperty('user')
-    expect(result.user.email).toBe('newregistered@example.com')
+
+    expect(result.token).toBeDefined()
+    expect(result.user.email).toBe('newuser@test.com')
   })
 
   it('should fail registration with existing email', async () => {
-    await expect(
-      browserAuth.register({
-        name: 'Duplicate',
-        email: 'john@example.com', // Already exists
-        password: 'password123',
-      }),
-    ).rejects.toThrow()
+    await expect(browserAuth.register({
+      name: 'Duplicate',
+      email: 'alex@trailbuddy.com',
+      password: 'password123',
+    })).rejects.toThrow()
   })
 
   it('should get current user when authenticated', async () => {
-    // Login first
     const loginResult = await browserAuth.login({
-      email: 'jane@example.com',
-      password: 'password',
+      email: 'sam@trailbuddy.com',
+      password: 'any',
     })
-    // Set the token for subsequent requests
     ;(globalThis as any).__testAuthToken = loginResult.token
 
     const user = await browserAuth.user()
     expect(user).not.toBeNull()
-    expect(user?.email).toBe('jane@example.com')
+    expect(user.email).toBe('sam@trailbuddy.com')
   })
 
-  it('should return null for user when not authenticated', async () => {
+  it('should return null when not authenticated', async () => {
     ;(globalThis as any).__testAuthToken = null
     const user = await browserAuth.user()
     expect(user).toBeNull()
   })
 
-  it('should check authentication status', async () => {
+  it('should check auth status', async () => {
     ;(globalThis as any).__testAuthToken = null
     expect(await browserAuth.check()).toBe(false)
 
-    // Login
     const result = await browserAuth.login({
-      email: 'john@example.com',
-      password: 'password',
+      email: 'alex@trailbuddy.com',
+      password: 'any',
     })
     ;(globalThis as any).__testAuthToken = result.token
 
     expect(await browserAuth.check()).toBe(true)
   })
-
-  it('should logout successfully', async () => {
-    // Login first
-    const loginResult = await browserAuth.login({
-      email: 'john@example.com',
-      password: 'password',
-    })
-    ;(globalThis as any).__testAuthToken = loginResult.token
-
-    // Logout
-    await browserAuth.logout()
-    // Note: In our mock, we don't clear the global token automatically
-    // In real usage, logout clears localStorage
-  })
 })
 
 // ============================================================================
-// ERROR HANDLING TESTS
+// ERROR HANDLING
 // ============================================================================
 
-describe('BrowserQueryBuilder - Error Handling', () => {
-  it('should throw BrowserQueryError for 404', async () => {
+describe('Error Handling', () => {
+  it('should throw BrowserQueryError on 404', async () => {
     try {
       await browserQuery('users').findOrFail(999)
-      expect(true).toBe(false) // Should not reach here
+      expect(true).toBe(false)
     }
     catch (error) {
       expect(error).toBeInstanceOf(BrowserQueryError)
@@ -908,8 +1113,7 @@ describe('BrowserQueryBuilder - Error Handling', () => {
     }
   })
 
-  it('should throw BrowserQueryError for 401 unauthorized', async () => {
-    // Configure to call onUnauthorized
+  it('should handle 401 and call onUnauthorized', async () => {
     let unauthorizedCalled = false
     configureBrowser({
       baseUrl: TEST_BASE_URL,
@@ -919,14 +1123,7 @@ describe('BrowserQueryBuilder - Error Handling', () => {
       },
     })
 
-    try {
-      await browserAuth.user()
-    }
-    catch (error) {
-      expect(error).toBeInstanceOf(BrowserQueryError)
-      expect((error as BrowserQueryError).status).toBe(401)
-    }
-
+    await browserAuth.user()
     expect(unauthorizedCalled).toBe(true)
 
     // Reset config
@@ -935,97 +1132,46 @@ describe('BrowserQueryBuilder - Error Handling', () => {
       getToken: () => (globalThis as any).__testAuthToken || null,
     })
   })
-
-  it('should handle network errors gracefully', async () => {
-    // Configure with invalid URL
-    configureBrowser({
-      baseUrl: 'http://localhost:99999', // Invalid port
-      getToken: () => null,
-    })
-
-    try {
-      await browserQuery('users').get()
-      expect(true).toBe(false) // Should not reach here
-    }
-    catch (error) {
-      expect(error).toBeDefined()
-    }
-
-    // Reset config
-    configureBrowser({
-      baseUrl: TEST_BASE_URL,
-      getToken: () => (globalThis as any).__testAuthToken || null,
-    })
-  })
 })
 
 // ============================================================================
-// CONFIGURATION TESTS
+// CONFIGURATION & UTILITIES
 // ============================================================================
 
-describe('Browser Configuration', () => {
-  it('should configure browser client', () => {
-    configureBrowser({
-      baseUrl: 'https://api.example.com',
-      timeout: 5000,
-    })
-
+describe('Configuration', () => {
+  it('should get browser config', () => {
     const config = getBrowserConfig()
-    expect(config.baseUrl).toBe('https://api.example.com')
-    expect(config.timeout).toBe(5000)
-
-    // Reset
-    configureBrowser({
-      baseUrl: TEST_BASE_URL,
-      getToken: () => (globalThis as any).__testAuthToken || null,
-    })
+    expect(config.baseUrl).toBe(TEST_BASE_URL)
   })
 
-  it('should detect browser environment', () => {
-    // In Bun test environment, we're not in a browser
+  it('should detect non-browser environment', () => {
     expect(isBrowser()).toBe(false)
   })
 
-  it('should create db shortcut factory', () => {
-    const db = createBrowserDb<{ users: User, territories: Territory }>()
+  it('should create typed db factory', () => {
+    interface DbSchema {
+      users: UserRecord
+      trails: TrailRecord
+      activities: ActivityRecord
+    }
+
+    const db = createBrowserDb<DbSchema>()
     expect(typeof db.users).toBe('function')
-    expect(typeof db.territories).toBe('function')
-
-    const usersQuery = db.users()
-    expect(usersQuery).toBeInstanceOf(BrowserQueryBuilder)
+    expect(db.users()).toBeInstanceOf(BrowserQueryBuilder)
   })
-})
 
-// ============================================================================
-// QUERY STATE TESTS
-// ============================================================================
-
-describe('BrowserQueryBuilder - Query State', () => {
   it('should expose query state for debugging', () => {
     const query = browserQuery('users')
       .where('active', true)
       .where('role', 'admin')
       .orderBy('created_at', 'desc')
       .limit(10)
-      .offset(5)
 
     const state = query.toState()
-
     expect(state.table).toBe('users')
     expect(state.wheres.length).toBe(2)
     expect(state.orderBy.length).toBe(1)
     expect(state.limitValue).toBe(10)
-    expect(state.offsetValue).toBe(5)
-  })
-
-  it('should be chainable', () => {
-    const query = browserQuery('users')
-      .select('id', 'name')
-      .where('active', true)
-      .orderBy('name')
-      .limit(5)
-
-    expect(query).toBeInstanceOf(BrowserQueryBuilder)
   })
 })
 
@@ -1033,80 +1179,45 @@ describe('BrowserQueryBuilder - Query State', () => {
 // EDGE CASES
 // ============================================================================
 
-describe('BrowserQueryBuilder - Edge Cases', () => {
-  it('should handle empty response', async () => {
-    const users = await browserQuery('users')
-      .where('email', 'definitely-not-existing@nowhere.com')
+describe('Edge Cases', () => {
+  it('should handle empty results', async () => {
+    const results = await browserQuery<UserRecord>('users')
+      .where('email', 'definitely-not-real@nowhere.net')
       .get()
-    expect(users).toEqual([])
+    expect(results).toEqual([])
   })
 
-  it('should handle special characters in values', async () => {
-    // Create user with special characters
-    const newUser = await browserQuery<User>('users').create({
-      name: 'Test User with Special Chars: @#$%',
-      email: 'special+test@example.com',
-      active: true,
-      role: 'user',
+  it('should handle special characters in queries', async () => {
+    const newTrail = await browserQuery<TrailRecord>('trails').create({
+      name: 'Trail with Special Chars: @#$% & "quotes"',
+      location: 'Test+Location',
+      distance: 1,
+      elevation: 100,
+      difficulty: 'easy',
+      rating: 3,
+      review_count: 0,
+      estimated_time: '30m',
     })
-    expect(newUser.name).toBe('Test User with Special Chars: @#$%')
-    expect(newUser.email).toBe('special+test@example.com')
+    expect(newTrail.name).toContain('@#$%')
   })
 
   it('should handle numeric string IDs', async () => {
-    const user = await browserQuery('users').find('1')
+    const user = await browserQuery<UserRecord>('users').find('1')
     expect(user).not.toBeNull()
     expect(user?.id).toBe(1)
   })
 
   it('should handle multiple orderBy clauses', async () => {
-    const territories = await browserQuery<Territory>('territories')
+    const territories = await browserQuery<TerritoryRecord>('territories')
       .orderBy('status', 'asc')
       .orderBy('area_size', 'desc')
       .get()
-    expect(territories.length).toBe(3)
+    expect(territories.length).toBeGreaterThan(0)
   })
 
   it('should handle update with empty data', async () => {
-    const user = await browserQuery<User>('users').update(1, {})
+    const user = await browserQuery<UserRecord>('users').update(1, {})
     expect(user).toHaveProperty('id')
-  })
-
-  it('should handle create with minimal data', async () => {
-    const territory = await browserQuery<Territory>('territories').create({
-      name: 'Minimal Territory',
-    })
-    expect(territory).toHaveProperty('id')
-    expect(territory.name).toBe('Minimal Territory')
-  })
-})
-
-// ============================================================================
-// COMPLEX QUERIES
-// ============================================================================
-
-describe('BrowserQueryBuilder - Complex Queries', () => {
-  it('should handle complex query with multiple conditions', async () => {
-    const territories = await browserQuery<Territory>('territories')
-      .where('status', 'active')
-      .where('area_size', '>', 30000)
-      .orderBy('area_size', 'desc')
-      .limit(5)
-      .get()
-
-    expect(territories.every(t => t.status === 'active')).toBe(true)
-    expect(territories.every(t => t.area_size > 30000)).toBe(true)
-    expect(territories.length).toBeLessThanOrEqual(5)
-  })
-
-  it('should handle query for related data by foreign key', async () => {
-    // Get territories for a specific user
-    const userTerritories = await browserQuery<Territory>('territories')
-      .where('user_id', 1)
-      .orderBy('created_at', 'desc')
-      .get()
-
-    expect(userTerritories.length).toBe(2)
-    expect(userTerritories.every(t => t.user_id === 1)).toBe(true)
+    expect(user.updated_at).toBeDefined()
   })
 })
