@@ -25,6 +25,9 @@ jobs:
       - name: Setup Pantry
         uses: home-lang/pantry-setup@v1
 
+      - name: Install Dependencies
+        run: bun install
+
       - name: Publish
         run: pantry npm:publish --access public
         env:
