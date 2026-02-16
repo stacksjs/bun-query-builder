@@ -25,6 +25,9 @@ jobs:
       - name: Setup Pantry
         uses: home-lang/pantry-setup@v1
 
+      - name: Install Dependencies
+        run: bun install
+
       - name: Publish
         run: pantry npm:publish --access public
         env:
@@ -32,5 +35,12 @@ jobs:
 
       - name: Create GitHub Release
         uses: stacksjs/action-releaser@v1.2.9
+        with:
+          files: |
+            packages/bun-query-builder/bin/qbx-linux-x64.zip
+            packages/bun-query-builder/bin/qbx-linux-arm64.zip
+            packages/bun-query-builder/bin/qbx-windows-x64.zip
+            packages/bun-query-builder/bin/qbx-darwin-x64.zip
+            packages/bun-query-builder/bin/qbx-darwin-arm64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

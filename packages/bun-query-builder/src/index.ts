@@ -16,3 +16,8 @@ export * from './orm'
 export * from './schema'
 export * from './seeder'
 export * from './types'
+
+// Resolve ambiguous re-exports by explicitly choosing which module's version to use
+export type { WhereOperator } from './browser'
+export type { ModelQueryBuilder } from './dynamodb'
+export { type ModelDefinition, defineModel } from './model'

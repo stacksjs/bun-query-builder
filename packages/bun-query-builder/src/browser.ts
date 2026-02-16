@@ -549,7 +549,7 @@ export class BrowserQueryBuilder<T = any> {
         return null
       }
       const result = await handleResponse<{ data: T } | T>(response)
-      return 'data' in result && !Array.isArray(result.data) ? result.data : result as T
+      return ('data' in (result as object) && !Array.isArray((result as any).data) ? (result as any).data : result) as T
     }
     catch {
       return null
@@ -602,7 +602,7 @@ export class BrowserQueryBuilder<T = any> {
       body: JSON.stringify(body),
     })
     const result = await handleResponse<{ data: T } | T>(response)
-    return 'data' in result && !Array.isArray(result.data) ? result.data : result as T
+    return ('data' in (result as object) && !Array.isArray((result as any).data) ? (result as any).data : result) as T
   }
 
   /**
@@ -624,7 +624,7 @@ export class BrowserQueryBuilder<T = any> {
       body: JSON.stringify(body),
     })
     const result = await handleResponse<{ data: T } | T>(response)
-    return 'data' in result && !Array.isArray(result.data) ? result.data : result as T
+    return ('data' in (result as object) && !Array.isArray((result as any).data) ? (result as any).data : result) as T
   }
 
   /**

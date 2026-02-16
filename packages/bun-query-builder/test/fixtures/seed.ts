@@ -162,6 +162,11 @@ const TRAIL_NAMES = [
   'Pine Forest Trail', 'Meadow View Loop', 'Rocky Ridge Path', 'River Run Trail',
 ]
 
+/** Round a number to one decimal place */
+function roundOneDecimal(value: number): number {
+  return Math.round(value * 10) / 10
+}
+
 /**
  * Generate complete seed data with proper relationships
  */
@@ -240,10 +245,10 @@ export function generateSeedData() {
       id: index + 1,
       name,
       location: `${loc.city}, ${loc.state}`,
-      distance: Math.round((3 + Math.random() * 15) * 10) / 10,
+      distance: roundOneDecimal(3 + Math.random() * 15),
       elevation: Math.round(200 + Math.random() * 2000),
       difficulty: (['easy', 'moderate', 'hard'] as const)[index % 3],
-      rating: Math.round((3.5 + Math.random() * 1.5) * 10) / 10,
+      rating: roundOneDecimal(3.5 + Math.random() * 1.5),
       review_count: Math.floor(50 + Math.random() * 500),
       estimated_time: `${Math.floor(1 + Math.random() * 4)}h ${Math.floor(Math.random() * 4) * 15}m`,
       image: `https://images.unsplash.com/photo-155163281156${index}?w=800`,
@@ -268,16 +273,26 @@ export function generateSeedData() {
       const trail = trails[Math.floor(Math.random() * trails.length)]
       const type = activityTypes[Math.floor(Math.random() * activityTypes.length)]
       const dayOffset = Math.floor(Math.random() * 30)
+      const distanceVariation = 0.8 + Math.random() * 0.4
+      const activityDistance = roundOneDecimal(trail.distance * distanceVariation)
+      const activityElevation = Math.round(trail.elevation * distanceVariation)
+      const durationHours = Math.floor(Math.random() * 3)
+      const durationMins = String(Math.floor(Math.random() * 60)).padStart(2, '0')
+      const durationSecs = String(Math.floor(Math.random() * 60)).padStart(2, '0')
+      const paceRaw = 6 + Math.random() * 10
+      const paceBase = Math.floor(paceRaw)
+      const paceMins = String(Math.floor(Math.random() * 60)).padStart(2, '0')
+      const kudosCount = Math.floor(Math.random() * 50)
       activities.push({
         id: activityId++,
         user_id: user.id,
         trail_id: trail.id,
         activity_type: type,
-        distance: Math.round(trail.distance * (0.8 + Math.random() * 0.4) * 10) / 10,
-        duration: `${Math.floor(Math.random() * 3)}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}`,
-        pace: `${Math.floor(6 + Math.random() * 10)}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}`,
-        elevation: Math.round(trail.elevation * (0.8 + Math.random() * 0.4)),
-        kudos_count: Math.floor(Math.random() * 50),
+        distance: activityDistance,
+        duration: `${durationHours}:${durationMins}:${durationSecs}`,
+        pace: `${paceBase}:${paceMins}`,
+        elevation: activityElevation,
+        kudos_count: kudosCount,
         notes: i % 3 === 0 ? 'Great conditions today!' : undefined,
         completed_at: new Date(now.getTime() - dayOffset * 24 * 60 * 60 * 1000).toISOString(),
         created_at: new Date(now.getTime() - dayOffset * 24 * 60 * 60 * 1000).toISOString(),
@@ -396,11 +411,13 @@ export function generateSeedData() {
     const reviewCount = user.id === 1 ? 5 : 3
     for (let i = 0; i < reviewCount; i++) {
       const trail = trails[(user.id + i) % trails.length]
+      const ratingBase = 3 + Math.random() * 3
+      const reviewRating = Math.floor(ratingBase)
       reviews.push({
         id: reviewId++,
         user_id: user.id,
         trail_id: trail.id,
-        rating: Math.floor(3 + Math.random() * 3),
+        rating: reviewRating,
         title: ['Amazing trail!', 'Great views', 'Nice workout', 'Beautiful scenery', 'Worth the climb'][i % 5],
         content: `This is a ${trail.difficulty} trail that I really enjoyed. The views from the top are incredible and the path is well maintained.`,
         visit_date: `2024-01-${String(10 + i).padStart(2, '0')}`,

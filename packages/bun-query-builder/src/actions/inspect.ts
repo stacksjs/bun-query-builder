@@ -211,9 +211,11 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
 
       const maxNameLength = Math.max(...columns.map(c => c.name.length), 10)
       const maxTypeLength = Math.max(...columns.map(c => c.type.length), 10)
+      const namePadding = maxNameLength + 2
+      const typePadding = maxTypeLength + 2
 
-      const header = `${'Name'.padEnd(maxNameLength + 2)
-        + 'Type'.padEnd(maxTypeLength + 2)
+      const header = `${'Name'.padEnd(namePadding)
+        + 'Type'.padEnd(typePadding)
         + 'Nullable'.padEnd(10)
         + 'Default'.padEnd(20)
       }Flags`
@@ -222,8 +224,8 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       console.log('-'.repeat(header.length))
 
       for (const col of columns) {
-        const name = col.name.padEnd(maxNameLength + 2)
-        const type = col.type.padEnd(maxTypeLength + 2)
+        const name = col.name.padEnd(namePadding)
+        const type = col.type.padEnd(typePadding)
         const nullable = (col.nullable ? 'YES' : 'NO').padEnd(10)
         const defaultVal = String(col.default || '').padEnd(20)
         const flags = [

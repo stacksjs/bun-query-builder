@@ -28,7 +28,9 @@ export async function loadModels(options: LoadModelsOptions): Promise<ModelRecor
     // This is necessary because dynamic import() caches modules by path
     const cacheBuster = `?t=${Date.now()}-${Math.random().toString(36).slice(2)}`
     const mod = await import(`${full}${cacheBuster}`)
-    const def: ModelDefinition = mod.default ?? mod
+    const rawDef = mod.default ?? mod
+    // Support both direct model definitions and wrapped models from defineModel()
+    const def: ModelDefinition = (rawDef as any).definition ?? (rawDef as any).getDefinition?.() ?? rawDef
     const fileName = basename(entry, ext)
     const name = def.name ?? fileName
     result[name] = {

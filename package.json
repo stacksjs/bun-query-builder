@@ -76,7 +76,8 @@
   "devDependencies": {
     "@stacksjs/docs": "^0.70.23",
     "@stacksjs/launchpad": "^0.6.4",
-    "better-dx": "^0.2.5"
+    "better-dx": "^0.2.5",
+    "ts-mocker": "^0.1.5"
   },
   "overrides": {
     "unconfig": "0.3.10"
