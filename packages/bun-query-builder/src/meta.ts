@@ -28,7 +28,10 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
   const scopesByTable: Required<SchemaMeta>['scopes'] = {}
 
   for (const name of Object.keys(models)) {
-    const m = models[name]
+    // Support both direct model definitions and wrapped models from defineModel()
+    // defineModel() from model.ts wraps the definition in { definition, getDefinition, ... }
+    const rawModel = models[name]
+    const m = (rawModel as any).definition ?? (rawModel as any).getDefinition?.() ?? rawModel
     const table = (m.table as string) || `${String(m.name).toLowerCase()}s`
     modelToTable[name] = table
     tableToModel[table] = name

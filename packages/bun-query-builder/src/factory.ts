@@ -5,7 +5,9 @@ export type BuildDatabaseSchema<MRecord extends ModelRecord> = DatabaseSchema<MR
 export function buildDatabaseSchema<MRecord extends ModelRecord>(models: MRecord): BuildDatabaseSchema<MRecord> {
   const schema: any = {}
   for (const modelName of Object.keys(models)) {
-    const m = models[modelName]
+    // Support both direct model definitions and wrapped models from defineModel()
+    const rawModel = models[modelName]
+    const m = (rawModel as any).definition ?? (rawModel as any).getDefinition?.() ?? rawModel
     const table: string = (m.table as string) || `${String(m.name).toLowerCase()}s`
     const attrs = m.attributes ?? {}
     const columns: Record<string, unknown> = {}
