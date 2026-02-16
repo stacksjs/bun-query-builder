@@ -97,7 +97,7 @@ export function defineModel<const TDef extends BrowserModelDefinition>(definitio
     },
   }
 
-  return serverModel as ReturnType<typeof createBrowserModel<TDef>>
+  return serverModel as unknown as ReturnType<typeof createBrowserModel<TDef>>
 }
 
 /**

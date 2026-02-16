@@ -882,7 +882,7 @@ export async function seedModel(definition: ModelDefinition, count?: number, fak
 
   if (!faker) {
     try {
-      const tsMocker = await import('ts-mocker')
+      const tsMocker = await (import('ts-mocker' as string) as Promise<{ faker: any }>)
       faker = createFakerCompatLayer(tsMocker.faker)
     } catch {
       console.warn('ts-mocker not found. Install it for seeding support.')
