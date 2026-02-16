@@ -144,7 +144,8 @@ export async function dbInfo(): Promise<DatabaseInfo> {
       const maxNameLength = Math.max(...tables.map(t => t.name.length))
 
       // Header
-      const header = 'Table'.padEnd(maxNameLength + 2) + 'Rows'.padStart(12) + 'Columns'.padStart(10) + 'Indexes'.padStart(10)
+      const padding = maxNameLength + 2
+      const header = 'Table'.padEnd(padding) + 'Rows'.padStart(12) + 'Columns'.padStart(10) + 'Indexes'.padStart(10)
       console.log(header)
       console.log('-'.repeat(header.length))
 
