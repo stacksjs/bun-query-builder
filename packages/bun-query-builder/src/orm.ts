@@ -71,30 +71,68 @@ export interface ModelDefinition {
   readonly connection?: string
   readonly traits?: {
     readonly useUuid?: boolean
-    readonly useTimestamps?: boolean
-    readonly useSoftDeletes?: boolean
-    readonly useSearch?: {
+    readonly useTimestamps?: boolean | object
+    readonly timestampable?: boolean | object
+    readonly useSoftDeletes?: boolean | object
+    readonly softDeletable?: boolean | object
+    readonly useSearch?: boolean | {
       readonly displayable?: readonly string[]
       readonly searchable?: readonly string[]
       readonly sortable?: readonly string[]
       readonly filterable?: readonly string[]
     }
-    readonly useSeeder?: {
+    readonly useSeeder?: boolean | {
       readonly count: number
     }
-    readonly useApi?: {
-      readonly uri: string
-      readonly routes: readonly string[]
+    readonly seedable?: boolean | {
+      readonly count: number
     }
+    readonly useApi?: boolean | {
+      readonly uri?: string
+      readonly routes?: readonly string[]
+      readonly middleware?: readonly string[]
+    }
+    readonly useAuth?: boolean | {
+      readonly usePasskey?: boolean
+      readonly useTwoFactor?: boolean
+    }
+    readonly authenticatable?: boolean | object
+    readonly observe?: boolean | readonly string[]
+    readonly billable?: boolean
+    readonly likeable?: boolean | object
+    readonly taggable?: boolean
+    readonly categorizable?: boolean
+    readonly commentables?: boolean
+    readonly useActivityLog?: boolean | object
+    readonly useSocials?: readonly string[]
   }
   readonly belongsTo?: readonly string[]
   readonly hasMany?: readonly string[]
   readonly hasOne?: readonly string[]
+  readonly belongsToMany?: readonly (string | object)[]
+  readonly hasOneThrough?: readonly (string | object)[]
+  readonly hasManyThrough?: readonly (string | object)[]
+  readonly morphOne?: string | object
+  readonly morphMany?: readonly (string | object)[]
+  readonly morphTo?: object
+  readonly morphToMany?: readonly string[]
+  readonly morphedByMany?: readonly string[]
   readonly attributes: {
     readonly [key: string]: TypedAttribute<unknown>
   }
   readonly get?: Record<string, (attributes: Record<string, unknown>) => unknown>
   readonly set?: Record<string, (attributes: Record<string, unknown>) => unknown>
+  readonly scopes?: Record<string, (value: unknown) => unknown>
+  readonly indexes?: readonly object[]
+  readonly dashboard?: { readonly highlight?: boolean | number }
+  readonly hooks?: {
+    readonly beforeCreate?: (data: any) => void | Promise<void>
+    readonly afterCreate?: (model: any) => void | Promise<void>
+    readonly beforeUpdate?: (model: any, data: any) => void | Promise<void>
+    readonly afterUpdate?: (model: any) => void | Promise<void>
+    readonly beforeDelete?: (model: any) => void | Promise<void>
+    readonly afterDelete?: (model: any) => void | Promise<void>
+  }
 }
 
 // Extract attribute keys from definition
@@ -139,6 +177,39 @@ type HiddenKeys<TDef extends ModelDefinition> = {
 type FillableKeys<TDef extends ModelDefinition> = {
   [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { fillable: true } ? K : never
 }[AttributeKeys<TDef>]
+
+// Infer relation names from model definition
+type InferBelongsToNames<TDef> =
+  TDef extends { belongsTo: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never
+
+type InferHasManyNames<TDef> =
+  TDef extends { hasMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never
+
+type InferHasOneNames<TDef> =
+  TDef extends { hasOne: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never
+
+type InferBelongsToManyNames<TDef> =
+  TDef extends { belongsToMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+
+type InferHasOneThroughNames<TDef> =
+  TDef extends { hasOneThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+
+type InferHasManyThroughNames<TDef> =
+  TDef extends { hasManyThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+
+export type InferRelationNames<TDef> =
+  | InferBelongsToNames<TDef>
+  | InferHasManyNames<TDef>
+  | InferHasOneNames<TDef>
+  | InferBelongsToManyNames<TDef>
+  | InferHasOneThroughNames<TDef>
+  | InferHasManyThroughNames<TDef>
 
 type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'in' | 'not in'
 
@@ -242,9 +313,10 @@ class ModelInstance<
     return this
   }
 
-  save(): this {
+  async save(): Promise<this> {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
+    const hooks = this._definition.hooks
 
     const setters = this._definition.set || {}
     for (const [key, setter] of Object.entries(setters)) {
@@ -254,6 +326,9 @@ class ModelInstance<
     }
 
     if (this._attributes[pk]) {
+      // Update
+      await hooks?.beforeUpdate?.(this, this.getChanges())
+
       const changes = this.getChanges()
       const changeKeys = Object.keys(changes)
       if (changeKeys.length > 0) {
@@ -270,7 +345,10 @@ class ModelInstance<
           db.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, values as Bindings)
         }
       }
+
+      await hooks?.afterUpdate?.(this)
     } else {
+      // Create
       const attrs = this._definition.attributes
       const data: Record<string, unknown> = {}
 
@@ -290,6 +368,8 @@ class ModelInstance<
         data.uuid = crypto.randomUUID()
       }
 
+      await hooks?.beforeCreate?.(data)
+
       const columns = Object.keys(data)
       const placeholders = columns.map(() => '?').join(', ')
 
@@ -299,6 +379,8 @@ class ModelInstance<
       )
 
       this._attributes[pk] = result.lastInsertRowid
+
+      await hooks?.afterCreate?.(this)
     }
 
     this._original = { ...this._attributes }
@@ -306,17 +388,20 @@ class ModelInstance<
     return this
   }
 
-  update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): this {
+  async update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): Promise<this> {
     this.fill(data)
     return this.save()
   }
 
-  delete(): boolean {
+  async delete(): Promise<boolean> {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
     const pkValue = this._attributes[pk]
+    const hooks = this._definition.hooks
 
     if (!pkValue) throw new Error('Cannot delete a model without a primary key')
+
+    await hooks?.beforeDelete?.(this)
 
     if (this._definition.traits?.useSoftDeletes) {
       db.run(
@@ -326,6 +411,8 @@ class ModelInstance<
     } else {
       db.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue] as Bindings)
     }
+
+    await hooks?.afterDelete?.(this)
 
     return true
   }
@@ -373,6 +460,7 @@ class ModelQueryBuilder<
   private _limit?: number
   private _offset?: number
   private _select: string[] = ['*']
+  private _withRelations: string[] = []
 
   constructor(definition: TDef) {
     this._definition = definition
@@ -469,6 +557,17 @@ class ModelQueryBuilder<
   select<K extends ColumnName<TDef>>(...columns: K[]): ModelQueryBuilder<TDef, K> {
     this._select = columns as string[]
     return this as unknown as ModelQueryBuilder<TDef, K>
+  }
+
+  with<R extends InferRelationNames<TDef>>(
+    ...relations: R[]
+  ): ModelQueryBuilder<TDef, TSelected> {
+    this._withRelations = relations as string[]
+    return this
+  }
+
+  getWithRelations(): string[] {
+    return this._withRelations
   }
 
   private buildQuery(): { sql: string; params: unknown[] } {
@@ -706,6 +805,10 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
       return new ModelQueryBuilder<TDef>(definition).select(...columns)
     },
 
+    with<R extends InferRelationNames<TDef>>(...relations: R[]) {
+      return new ModelQueryBuilder<TDef>(definition).with(...relations)
+    },
+
     limit: (count: number) => new ModelQueryBuilder<TDef>(definition).limit(count),
     take: (count: number) => new ModelQueryBuilder<TDef>(definition).take(count),
     skip: (count: number) => new ModelQueryBuilder<TDef>(definition).skip(count),
@@ -738,36 +841,36 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     exists: () => new ModelQueryBuilder<TDef>(definition).exists(),
     paginate: (page?: number, perPage?: number) => new ModelQueryBuilder<TDef>(definition).paginate(page, perPage),
 
-    create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): ModelInstance<TDef> {
+    async create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): Promise<ModelInstance<TDef>> {
       const instance = new ModelInstance<TDef>(definition, data as any)
-      instance.save()
+      await instance.save()
       return instance
     },
 
-    createMany(items: Partial<Pick<InferModelAttributes<TDef>, Fillable>>[]): ModelInstance<TDef>[] {
-      return items.map(data => this.create(data))
+    async createMany(items: Partial<Pick<InferModelAttributes<TDef>, Fillable>>[]): Promise<ModelInstance<TDef>[]> {
+      return Promise.all(items.map(data => this.create(data)))
     },
 
-    updateOrCreate(
+    async updateOrCreate(
       search: Partial<Attrs>,
       data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
-    ): ModelInstance<TDef> {
+    ): Promise<ModelInstance<TDef>> {
       let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key as Cols, value as any)
       }
       const existing = query.first()
       if (existing) {
-        existing.update(data)
+        await existing.update(data)
         return existing
       }
       return this.create({ ...search, ...data } as any)
     },
 
-    firstOrCreate(
+    async firstOrCreate(
       search: Partial<Attrs>,
       data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
-    ): ModelInstance<TDef> {
+    ): Promise<ModelInstance<TDef>> {
       let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key as Cols, value as any)
@@ -878,7 +981,8 @@ function createFakerCompatLayer(tsMocker: any): any {
 
 export async function seedModel(definition: ModelDefinition, count?: number, faker?: any): Promise<void> {
   const db = getDatabase()
-  const seedCount = count ?? definition.traits?.useSeeder?.count ?? 10
+  const seeder = definition.traits?.useSeeder
+  const seedCount = count ?? (typeof seeder === 'object' && seeder ? seeder.count : 10)
 
   if (!faker) {
     try {
@@ -913,4 +1017,14 @@ export async function seedModel(definition: ModelDefinition, count?: number, fak
   }
 }
 
-export type { ModelInstance, ModelQueryBuilder }
+export type {
+  ModelInstance,
+  ModelQueryBuilder,
+  ModelAttributes,
+  InferModelAttributes,
+  SystemFields,
+  ColumnName,
+  AttributeKeys,
+  FillableKeys,
+  HiddenKeys,
+}
