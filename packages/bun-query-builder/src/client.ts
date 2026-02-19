@@ -4260,6 +4260,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const rows = await runWithHooks<any[]>(q, 'select')
           return Array.isArray(rows) ? rows[0] : rows
         },
+        async executeTakeFirstOrThrow() {
+          const rows = await runWithHooks<any[]>(q, 'select')
+          const first = Array.isArray(rows) ? rows[0] : rows
+          if (!first)
+            throw new Error('Record not found')
+          return first
+        },
         async get() {
           return runWithHooks<any[]>(q, 'select')
         },
@@ -4576,7 +4583,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         returningAll() {
           const returningSql = `${sqlText} RETURNING *`
           const q = (_sql as any).unsafe(returningSql, params)
-          return createSubQueryBuilder(q) as any
+          return {
+            toSQL: () => makeExecutableQuery(q, returningSql) as any,
+            execute: () => runWithHooks<any[]>(q, 'insert'),
+            async executeTakeFirst() {
+              const result = await runWithHooks<any[]>(q, 'insert')
+              return Array.isArray(result) ? result[0] : result
+            },
+            async executeTakeFirstOrThrow() {
+              const result = await runWithHooks<any[]>(q, 'insert')
+              const first = Array.isArray(result) ? result[0] : result
+              if (!first)
+                throw new Error('Insert with RETURNING failed')
+              return first
+            },
+          } as any
         },
       } as any as TypedInsertQueryBuilder<DB, TTable>
     },
@@ -4679,7 +4700,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         },
         returningAll() {
           const q = _sql`${built} RETURNING *`
-          return createSubQueryBuilder(q) as any
+          return {
+            toSQL: () => makeExecutableQuery(q) as any,
+            execute: () => runWithHooks<any[]>(q, 'update'),
+            async executeTakeFirst() {
+              const result = await runWithHooks<any[]>(q, 'update')
+              return Array.isArray(result) ? result[0] : result
+            },
+            async executeTakeFirstOrThrow() {
+              const result = await runWithHooks<any[]>(q, 'update')
+              const first = Array.isArray(result) ? result[0] : result
+              if (!first)
+                throw new Error('Update with RETURNING failed')
+              return first
+            },
+          } as any
         },
       }
     },
@@ -4773,7 +4808,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         },
         returningAll() {
           const q = _sql`${built} RETURNING *`
-          return createSubQueryBuilder(q) as any
+          return {
+            toSQL: () => makeExecutableQuery(q) as any,
+            execute: () => runWithHooks<any[]>(q, 'delete'),
+            async executeTakeFirst() {
+              const result = await runWithHooks<any[]>(q, 'delete')
+              return Array.isArray(result) ? result[0] : result
+            },
+            async executeTakeFirstOrThrow() {
+              const result = await runWithHooks<any[]>(q, 'delete')
+              const first = Array.isArray(result) ? result[0] : result
+              if (!first)
+                throw new Error('Delete with RETURNING failed')
+              return first
+            },
+          } as any
         },
       }
     },

@@ -314,7 +314,7 @@ class ModelInstance<
     return this
   }
 
-  async save(): Promise<this> {
+  save(): this {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
     const hooks = this._definition.hooks
@@ -328,7 +328,7 @@ class ModelInstance<
 
     if (this._attributes[pk]) {
       // Update
-      await hooks?.beforeUpdate?.(this, this.getChanges())
+      hooks?.beforeUpdate?.(this, this.getChanges())
 
       const changes = this.getChanges()
       const changeKeys = Object.keys(changes)
@@ -347,7 +347,7 @@ class ModelInstance<
         }
       }
 
-      await hooks?.afterUpdate?.(this)
+      hooks?.afterUpdate?.(this)
     } else {
       // Create
       const attrs = this._definition.attributes
@@ -369,7 +369,7 @@ class ModelInstance<
         data.uuid = crypto.randomUUID()
       }
 
-      await hooks?.beforeCreate?.(data)
+      hooks?.beforeCreate?.(data)
 
       const columns = Object.keys(data)
       const placeholders = columns.map(() => '?').join(', ')
@@ -381,7 +381,7 @@ class ModelInstance<
 
       this._attributes[pk] = result.lastInsertRowid
 
-      await hooks?.afterCreate?.(this)
+      hooks?.afterCreate?.(this)
     }
 
     this._original = { ...this._attributes }
@@ -389,12 +389,12 @@ class ModelInstance<
     return this
   }
 
-  async update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): Promise<this> {
+  update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): this {
     this.fill(data)
     return this.save()
   }
 
-  async delete(): Promise<boolean> {
+  delete(): boolean {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
     const pkValue = this._attributes[pk]
@@ -402,7 +402,7 @@ class ModelInstance<
 
     if (!pkValue) throw new Error('Cannot delete a model without a primary key')
 
-    await hooks?.beforeDelete?.(this)
+    hooks?.beforeDelete?.(this)
 
     if (this._definition.traits?.useSoftDeletes) {
       db.run(
@@ -413,7 +413,7 @@ class ModelInstance<
       db.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue] as Bindings)
     }
 
-    await hooks?.afterDelete?.(this)
+    hooks?.afterDelete?.(this)
 
     return true
   }
@@ -842,36 +842,36 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     exists: () => new ModelQueryBuilder<TDef>(definition).exists(),
     paginate: (page?: number, perPage?: number) => new ModelQueryBuilder<TDef>(definition).paginate(page, perPage),
 
-    async create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): Promise<ModelInstance<TDef>> {
+    create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): ModelInstance<TDef> {
       const instance = new ModelInstance<TDef>(definition, data as any)
-      await instance.save()
+      instance.save()
       return instance
     },
 
-    async createMany(items: Partial<Pick<InferModelAttributes<TDef>, Fillable>>[]): Promise<ModelInstance<TDef>[]> {
-      return Promise.all(items.map(data => this.create(data)))
+    createMany(items: Partial<Pick<InferModelAttributes<TDef>, Fillable>>[]): ModelInstance<TDef>[] {
+      return items.map(data => this.create(data))
     },
 
-    async updateOrCreate(
+    updateOrCreate(
       search: Partial<Attrs>,
       data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
-    ): Promise<ModelInstance<TDef>> {
+    ): ModelInstance<TDef> {
       let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key as Cols, value as any)
       }
       const existing = query.first()
       if (existing) {
-        await existing.update(data)
+        existing.update(data)
         return existing
       }
       return this.create({ ...search, ...data } as any)
     },
 
-    async firstOrCreate(
+    firstOrCreate(
       search: Partial<Attrs>,
       data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
-    ): Promise<ModelInstance<TDef>> {
+    ): ModelInstance<TDef> {
       let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key as Cols, value as any)
