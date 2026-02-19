@@ -1185,6 +1185,7 @@ export interface BaseSelectQueryBuilder<
   toSQL: () => string
   execute: () => Promise<SelectedRow<DB, TTable, TSelected>[]>
   executeTakeFirst: () => Promise<SelectedRow<DB, TTable, TSelected> | undefined>
+  executeTakeFirstOrThrow: () => Promise<SelectedRow<DB, TTable, TSelected>>
   // Laravel-style retrieval helpers
   /**
    * # `get`
@@ -1312,6 +1313,9 @@ export interface InsertQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * ```
    */
   execute: () => Promise<number | DB[TTable]['columns'] | DB[TTable]['columns'][]>
+  returningAll: () => SelectQueryBuilder<DB, TTable, DB[TTable]['columns']>
+  executeTakeFirst: () => Promise<DB[TTable]['columns'] | undefined>
+  executeTakeFirstOrThrow: () => Promise<DB[TTable]['columns']>
 }
 
 export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
@@ -1371,7 +1375,9 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * ```
    */
   execute: () => Promise<number>
-  executeTakeFirst?: () => Promise<{ numUpdatedRows?: number }>
+  returningAll: () => SelectQueryBuilder<DB, TTable, DB[TTable]['columns']>
+  executeTakeFirst: () => Promise<{ numUpdatedRows?: number }>
+  executeTakeFirstOrThrow: () => Promise<{ numUpdatedRows: number }>
 }
 
 export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
@@ -1420,7 +1426,9 @@ export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * ```
    */
   execute: () => Promise<number>
-  executeTakeFirst?: () => Promise<{ numDeletedRows?: number }>
+  returningAll: () => SelectQueryBuilder<DB, TTable, DB[TTable]['columns']>
+  executeTakeFirst: () => Promise<{ numDeletedRows?: number }>
+  executeTakeFirstOrThrow: () => Promise<{ numDeletedRows: number }>
 }
 
 export interface TableQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
@@ -3950,6 +3958,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const rows = await runWithHooks<any[]>(built, 'select', { signal: abortSignal, timeoutMs })
         return Array.isArray(rows) ? rows[0] : rows
       },
+      async executeTakeFirstOrThrow() {
+        const result = await (this as any).executeTakeFirst()
+        if (!result)
+          throw new Error('Record not found')
+        return result
+      },
       async first() {
         const rows = await runWithHooks<any[]>(sql`${built} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
@@ -4553,6 +4567,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const result = await runWithHooks(built, 'insert')
           return result
         },
+        async executeTakeFirstOrThrow() {
+          const result = await runWithHooks(built, 'insert')
+          if (!result)
+            throw new Error('Insert failed')
+          return result
+        },
+        returningAll() {
+          const returningSql = `${sqlText} RETURNING *`
+          const q = (_sql as any).unsafe(returningSql, params)
+          return createSubQueryBuilder(q) as any
+        },
       } as any as TypedInsertQueryBuilder<DB, TTable>
     },
     updateTable(table) {
@@ -4642,6 +4667,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         execute() {
           return runWithHooks<number>(built, 'update')
         },
+        async executeTakeFirst() {
+          const result = await runWithHooks<number>(built, 'update')
+          return { numUpdatedRows: result }
+        },
+        async executeTakeFirstOrThrow() {
+          const result = await runWithHooks<number>(built, 'update')
+          if (result === 0)
+            throw new Error('No rows updated')
+          return { numUpdatedRows: result }
+        },
+        returningAll() {
+          const q = _sql`${built} RETURNING *`
+          return createSubQueryBuilder(q) as any
+        },
       }
     },
     deleteFrom(table) {
@@ -4721,6 +4760,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           catch {}
 
           return result
+        },
+        async executeTakeFirst() {
+          const result = await runWithHooks<number>(built, 'delete')
+          return { numDeletedRows: result }
+        },
+        async executeTakeFirstOrThrow() {
+          const result = await runWithHooks<number>(built, 'delete')
+          if (result === 0)
+            throw new Error('No rows deleted')
+          return { numDeletedRows: result }
+        },
+        returningAll() {
+          const q = _sql`${built} RETURNING *`
+          return createSubQueryBuilder(q) as any
         },
       }
     },

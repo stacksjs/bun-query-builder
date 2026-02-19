@@ -25,6 +25,7 @@
  */
 
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
+import type { Faker } from 'ts-mocker'
 
 // Binding helper type for SQL queries
 type Bindings = SQLQueryBindings[]
@@ -59,7 +60,7 @@ export interface TypedAttribute<T = unknown> {
     rule: unknown
     message?: Record<string, string>
   }
-  factory?: (faker: unknown) => InferType<T>
+  factory?: (faker: Faker) => InferType<T>
 }
 
 // Base model definition
@@ -141,7 +142,7 @@ type AttributeKeys<TDef extends ModelDefinition> = keyof TDef['attributes'] & st
 // Infer single attribute type
 type InferAttributeType<TAttr> =
   TAttr extends { type: infer T } ? InferType<T> :
-  TAttr extends { factory: (faker: unknown) => infer R } ? R :
+  TAttr extends { factory: (faker: Faker) => infer R } ? R :
   unknown
 
 // Build the full attributes type from definition
@@ -1022,6 +1023,7 @@ export type {
   ModelQueryBuilder,
   ModelAttributes,
   InferModelAttributes,
+  InferAttributeType,
   SystemFields,
   ColumnName,
   AttributeKeys,

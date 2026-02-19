@@ -39,6 +39,8 @@ import type { BrowserConfig } from './types'
 // Type inference system (mirrors orm.ts)
 // ============================================================================
 
+import type { Faker } from 'ts-mocker'
+
 // Primitive type mappings
 type PrimitiveTypeMap = {
   string: string
@@ -69,7 +71,7 @@ export interface BrowserTypedAttribute<T = unknown> {
     rule: unknown
     message?: Record<string, string>
   }
-  factory?: (faker: unknown) => InferType<T>
+  factory?: (faker: Faker) => InferType<T>
 }
 
 // Base model definition for browser

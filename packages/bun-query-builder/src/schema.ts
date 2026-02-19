@@ -1,3 +1,4 @@
+import type { Faker } from 'ts-mocker'
 // Minimal schema/type definitions to describe models and attributes
 
 /**
@@ -39,7 +40,7 @@ export interface Attribute {
   hidden?: boolean
   fillable?: boolean
   guarded?: boolean
-  factory?: (faker: unknown) => any
+  factory?: (faker: Faker) => any
   validation: {
     rule: ValidationType
     message?: ValidatorMessage
