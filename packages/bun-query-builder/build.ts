@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dts } from 'bun-plugin-dtsx'
 
 await Bun.build({
-  entrypoints: ['src/index.ts'],
+  entrypoints: ['src/index.ts', 'src/browser.ts', 'src/dynamodb/index.ts'],
   outdir: './dist',
   target: 'bun',
   plugins: [dts()],

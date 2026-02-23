@@ -21,22 +21,18 @@
   ],
   "exports": {
     ".": {
-      "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
     "./browser": {
-      "bun": "./src/browser.ts",
       "types": "./dist/browser.d.ts",
       "import": "./dist/browser.js"
     },
     "./dynamodb": {
-      "bun": "./src/dynamodb/index.ts",
       "types": "./dist/dynamodb/index.d.ts",
       "import": "./dist/dynamodb/index.js"
     },
     "./*": {
-      "bun": "./src/*",
       "import": "./dist/*"
     }
   },
