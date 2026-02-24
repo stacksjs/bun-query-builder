@@ -2079,6 +2079,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     return (_sql as any).unsafe(conditions.join(' AND '), allParams)
   }
 
+  // eslint-disable-next-line pickier/no-unused-vars
   function applyWhere(columns: Record<string, unknown>, q: any, expr?: WhereExpression<any>) {
     if (!expr)
       return q
@@ -2205,7 +2206,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     }
   }
 
+  // eslint-disable-next-line pickier/no-unused-vars
   function makeSelect<TTable extends keyof DB & string>(table: TTable): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT * FROM ${TTable}`>
+  // eslint-disable-next-line pickier/no-unused-vars
   function makeSelect<TTable extends keyof DB & string>(table: TTable, columns: string[]): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`>
   function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): any {
     // Use the sql instance from state (allows tests to inject mockSql)

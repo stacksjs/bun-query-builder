@@ -22,6 +22,7 @@ export interface DumpOptions {
 /**
  * Export data from a table
  */
+// eslint-disable-next-line pickier/no-unused-vars
 export async function exportData(tableName: string, options: ExportOptions = {}): Promise<void> {
   const format = options.format || 'json'
   const output = options.output || `${tableName}.${format}`

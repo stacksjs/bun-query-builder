@@ -999,7 +999,7 @@ export async function seedModel(definition: ModelDefinition, count?: number, fak
     const data: Record<string, unknown> = {}
 
     for (const [name, attr] of Object.entries(definition.attributes)) {
-      if (attr.factory) data[name] = (attr.factory as (f: unknown) => unknown)(faker)
+      if (attr.factory) data[name] = (attr.factory as (_f: unknown) => unknown)(faker)
     }
 
     if (definition.traits?.useTimestamps) {

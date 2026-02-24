@@ -35,7 +35,7 @@ const newUser: Partial<Users> = {
   email: 'alice@example.com',
   name: 'Alice',
 }
-const sql1 = db.insertInto('users').values(newUser).toSQL()
+const _sql1 = db.insertInto('users').values(newUser).toSQL()
 // Update with typed where
 db.updateTable('users').set({ name: 'Updated Name' }).where({ id: 1 }).toSQL()
 
@@ -51,7 +51,7 @@ const usersQ = db
   .limit(10)
   // .toSQL()
 
-const usersQHover = usersQ.rows
+const _usersQHover = usersQ.rows
 // const usersRowsPromise = usersQ.execute() // Commented out to prevent DB operations
 
 // Join across typed tables
@@ -61,7 +61,7 @@ const postsWithUsersQ = db
   .where({ id: 1 })
   .orderBy('created_at', 'desc')
 type PostsWithUsersSelected = SelectedOf<typeof postsWithUsersQ>
-const postsWithUsersSelectedExample: PostsWithUsersSelected | undefined = undefined
+const _postsWithUsersSelectedExample: PostsWithUsersSelected | undefined = undefined
 // const postsWithUsersRowsPromise = postsWithUsersQ.execute() // Commented out to prevent DB operations
 
 // Aggregates are typed by table
@@ -78,15 +78,15 @@ const newPost: Partial<Posts> = { title: 'Hello', body: 'World', user_id: 1, pub
 db.insertInto('posts').values(newPost).toSQL()
 
 const newComment: Partial<Comments> = { post_id: 1, author: 'Bob', body: 'Nice post!' }
-const sql = db.insertInto('comments').values(newComment).toSQL()
+const _sql = db.insertInto('comments').values(newComment).toSQL()
 
 // Returning examples to hover precise row shapes
 const insertUserQ = db.insertInto('users').values(newUser).returning('id', 'email')
-const insertUserHover = insertUserQ.rows
+const _insertUserHover = insertUserQ.rows
 // const insertedUsersPromise = insertUserQ.execute() // Commented out to prevent DB operations
 
 const updateUserQ = db.updateTable('users').set({ name: 'Updated Name' }).where({ id: 1 }).returning('id', 'created_at')
-const updateUserHover = updateUserQ.rows
+const _updateUserHover = updateUserQ.rows
 // const updatedUsersPromise = updateUserQ.execute() // Commented out to prevent DB operations
 
 // No explicit types needed: hover these locals to see fully inferred row shapes
@@ -111,17 +111,17 @@ void typedRows
 // Dynamic whereX/orWhereX examples based on model attributes
 const usersByNameQ = db.selectFrom('users').whereName('Alice').limit(5)
 type UsersByName = SelectedOf<typeof usersByNameQ>
-const usersByNameHover = usersByNameQ.rows
+const _usersByNameHover = usersByNameQ.rows
 // const usersByName = usersByNameQ.get() // Commented out to prevent DB operations
 
 const usersByEmailQ = db.selectFrom('users').whereEmail('alice@example.com').orWhereEmail('bob@example.com')
 type UsersByEmail = SelectedOf<typeof usersByEmailQ>
-const usersByEmailHover = usersByEmailQ.rows
+const _usersByEmailHover = usersByEmailQ.rows
 // const usersByEmail = usersByEmailQ.first() // Commented out to prevent DB operations
 
 // Snake_case columns via camelCase method name
 const usersRecentQ = db.selectFrom('users').whereCreatedAt(new Date('2024-01-01')).orderBy('created_at', 'desc')
-const usersRecentHover = usersRecentQ.rows
+const _usersRecentHover = usersRecentQ.rows
 // db.selectFrom('users').where
 
 // Note: Uncommenting the following lines would produce TypeScript errors as intended

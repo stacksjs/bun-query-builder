@@ -40,9 +40,9 @@ if (user) {
 }
 
 // 2. pluck() returns typed arrays
-const names = User.pluck('name') // Hover: string[]
-const ages = User.pluck('age') // Hover: number[]
-const roles = User.pluck('role') // Hover: ('admin' | 'user' | 'moderator')[]
+const _names = User.pluck('name') // Hover: string[]
+const _ages = User.pluck('age') // Hover: number[]
+const _roles = User.pluck('role') // Hover: ('admin' | 'user' | 'moderator')[]
 
 // 3. where() only accepts valid columns
 User.where('name', 'John') // OK

@@ -707,7 +707,7 @@ export class DynamoDBDriverImpl implements DynamoDBDriver {
         return { L: [] }
       }
       // Check if it's a set (all same type)
-      const firstType = typeof value[0]
+      const _firstType = typeof value[0]
       const isStringSet = value.every(v => typeof v === 'string')
       const isNumberSet = value.every(v => typeof v === 'number')
 
