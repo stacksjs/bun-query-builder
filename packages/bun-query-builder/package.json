@@ -78,9 +78,9 @@
   },
   "dependencies": {
     "@stacksjs/clapp": "^0.2.0",
-    "@stacksjs/ts-validation": "^0.4.9",
+    "@stacksjs/ts-validation": "^0.4.10",
     "dynamodb-tooling": "^0.3.2",
-    "ts-mocker": "^0.1.5"
+    "ts-mocker": "^0.1.6"
   },
   "devDependencies": {
     "bunfig": "^0.15.6"
