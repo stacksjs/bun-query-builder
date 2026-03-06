@@ -72,13 +72,13 @@
     "typecheck": "bun --bun tsc"
   },
   "dependencies": {
-    "@stacksjs/ts-validation": "^0.4.9"
+    "@stacksjs/ts-validation": "^0.4.10"
   },
   "devDependencies": {
     "@stacksjs/docs": "^0.70.23",
     "@stacksjs/launchpad": "^0.6.4",
     "better-dx": "^0.2.6",
-    "ts-mocker": "^0.1.6"
+    "ts-mocker": "^0.1.7"
   },
   "overrides": {
     "unconfig": "0.3.10"
