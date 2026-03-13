@@ -2,7 +2,7 @@
 
 ## About
 
-A simple yet performant query builder for TypeScript. Built with Bun.
+A fully-typed, model-driven SQL query builder for Bun's native database drivers (SQLite via `bun:sqlite`, Postgres via `Bun.sql`). It provides a fluent Kysely/Laravel-style API with type-safe table/column inference from model definitions, relations with eager loading, query scopes, model hooks, built-in LRU caching, soft deletes, transactions with retries, migrations, seeders, and a CLI for introspection, seeding, and schema management.
 
 ## Linting
 
