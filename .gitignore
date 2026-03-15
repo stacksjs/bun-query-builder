@@ -25,3 +25,4 @@ packages/benchmark/benchmark.db-wal
 users.json
 /packages/bun-query-builder/.qb
 /pantry
+/.qb

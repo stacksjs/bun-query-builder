@@ -29,6 +29,7 @@ function snakeCase(str: string): string {
 let migrationCounter = 0
 let migrationsCreatedCount = 0
 let migrationsUpdatedCount = 0
+let useDeterministicNames = true
 
 /**
  * Find workspace root by looking for package.json
@@ -64,13 +65,16 @@ function createMigrationFile(statement: string, fileName: string): boolean {
 
   const sqlDir = ensureSqlDirectory()
 
-  // Always create a new migration file with unique timestamp
-  // Each model change should be a separate migration
-  const baseTimestamp = Math.floor(Date.now() / 1000)
-  const timestamp = baseTimestamp + migrationCounter
   migrationCounter++
 
-  const fullFileName = `${timestamp}-${fileName}.sql`
+  // For framework/fresh migrations: use deterministic zero-padded sequence numbers
+  // so the same models always produce the same filenames (clean git diffs).
+  // For user diff migrations: use timestamps since they're additive/incremental.
+  const sequence = useDeterministicNames
+    ? String(migrationCounter).padStart(10, '0')
+    : String(Math.floor(Date.now() / 1000) + migrationCounter)
+
+  const fullFileName = `${sequence}-${fileName}.sql`
   const filePath = join(sqlDir, fullFileName)
 
   writeFileSync(filePath, statement)
@@ -172,9 +176,33 @@ function detectEnumFromValidationRule(rule: unknown): string[] | undefined {
   if (rule && typeof rule === 'object') {
     const ruleObj = rule as any
     // Look for arrays of string/number values that could be enum values
-    const possibleValues = ruleObj.enumValues || ruleObj._values || ruleObj.values
+    const possibleValues = ruleObj.allowedValues || ruleObj.enumValues || ruleObj._values || ruleObj.values
     if (Array.isArray(possibleValues) && possibleValues.length > 0) {
       return possibleValues.map((v: any) => String(v))
+    }
+  }
+
+  return undefined
+}
+
+/**
+ * Extract the max value from a validation rule's rules array.
+ * Supports formats: { name: 'max', params: { max: 500 } }, { name: 'max', args: [500] }, etc.
+ */
+function extractMaxFromRules(ruleObj: any): number | undefined {
+  if (!ruleObj?.rules || !Array.isArray(ruleObj.rules))
+    return undefined
+
+  for (const r of ruleObj.rules) {
+    if (r?.name === 'max' || r?.name === 'maxLength') {
+      if (r.params && typeof r.params.max === 'number')
+        return r.params.max
+      if (Array.isArray(r.args) && typeof r.args[0] === 'number')
+        return r.args[0]
+      if (typeof r.value === 'number')
+        return r.value
+      if (typeof r.expectedValue === 'number')
+        return r.expectedValue
     }
   }
 
@@ -193,8 +221,11 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
 
     switch (name) {
       case 'string':
-      case 'text':
-        return 'string'
+      case 'text': {
+        // Check if the validation has a max > 255 — if so, use text type instead of varchar(255)
+        const maxValue = extractMaxFromRules(ruleObj)
+        return maxValue && maxValue > 255 ? 'text' : 'string'
+      }
       case 'integer':
       case 'int':
         return 'integer'
@@ -475,6 +506,7 @@ export function generateSql(plan: MigrationPlan): string[] {
   migrationCounter = 0
   migrationsCreatedCount = 0
   migrationsUpdatedCount = 0
+  useDeterministicNames = true // Framework migrations use deterministic sequence names
 
   const statements: string[] = []
   const driver = getDialectDriver(plan.dialect)
@@ -648,6 +680,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   migrationCounter = 0
   migrationsCreatedCount = 0
   migrationsUpdatedCount = 0
+  useDeterministicNames = false // User diff migrations use timestamps
 
   const chunks: string[] = []
   const driver = getDialectDriver(next.dialect)
