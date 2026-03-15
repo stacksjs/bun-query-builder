@@ -250,6 +250,20 @@ export interface InferenceOptions {
   dialect: SupportedDialect
 }
 
+/**
+ * Normalize belongsTo declaration into a flat list of model names.
+ * Handles both array format ['Order', 'Customer'] and record format { order: 'Order' }.
+ */
+function normalizeBelongsTo(belongsTo: unknown): string[] {
+  if (!belongsTo)
+    return []
+  if (Array.isArray(belongsTo))
+    return belongsTo as string[]
+  if (typeof belongsTo === 'object')
+    return Object.values(belongsTo as Record<string, string>)
+  return []
+}
+
 export function buildMigrationPlan(models: ModelRecord, options: InferenceOptions): MigrationPlan {
   const meta = buildSchemaMeta(models)
   const tables: TablePlan[] = []
@@ -339,18 +353,56 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         enumValues,
       }
 
-      // Foreign key inference for *_id referencing another model's table
-      if (columnName.endsWith('_id')) {
+      // Foreign key inference for *_id columns
+      // Only infer FK when:
+      //   1. foreignKey is explicitly true, OR
+      //   2. The model declares a belongsTo relationship matching the inferred model name
+      // Skip when foreignKey is explicitly false
+      if (columnName.endsWith('_id') && attr.foreignKey !== false) {
         const base = columnName.replace(/_id$/, '')
         const maybeModel = base.charAt(0).toUpperCase() + base.slice(1)
         const refTable = meta.modelToTable[maybeModel]
         if (refTable) {
-          const refPk = meta.primaryKeys[refTable] ?? 'id'
-          col.references = { table: refTable, column: refPk }
+          // Check if there's a matching belongsTo relationship or explicit foreignKey: true
+          const belongsToList = normalizeBelongsTo(model.belongsTo)
+          const hasBelongsTo = belongsToList.includes(maybeModel)
+
+          if (attr.foreignKey === true || hasBelongsTo) {
+            const refPk = meta.primaryKeys[refTable] ?? 'id'
+            col.references = { table: refTable, column: refPk }
+          }
         }
       }
 
       columns.push(col)
+    }
+
+    // Auto-generate FK columns from belongsTo relationships
+    // If a model declares belongsTo: ['Order', 'Customer'], automatically add
+    // order_id and customer_id columns with FK constraints (unless already defined in attributes)
+    const belongsToModels = normalizeBelongsTo(model.belongsTo)
+    for (const relatedModel of belongsToModels) {
+      const fkColumnName = `${snakeCase(relatedModel)}_id`
+
+      // Skip if the column was already defined in attributes
+      if (columns.some(c => c.name === fkColumnName))
+        continue
+
+      const refTable = meta.modelToTable[relatedModel]
+      if (!refTable)
+        continue
+
+      const refPk = meta.primaryKeys[refTable] ?? 'id'
+
+      columns.push({
+        name: fkColumnName,
+        type: 'bigint',
+        isPrimaryKey: false,
+        isUnique: false,
+        isNullable: true,
+        hasDefault: false,
+        references: { table: refTable, column: refPk },
+      })
     }
 
     // Handle useTimestamps trait - add created_at and updated_at columns

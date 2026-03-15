@@ -40,6 +40,8 @@ export interface Attribute {
   hidden?: boolean
   fillable?: boolean
   guarded?: boolean
+  /** Set to false to prevent auto-inference of foreign key from *Id naming convention */
+  foreignKey?: boolean
   factory?: (faker: Faker) => any
   validation: {
     rule: ValidationType

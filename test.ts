@@ -7,7 +7,7 @@ import type { SelectQueryBuilder } from './packages/bun-query-builder/src'
 import Comment from './examples/models/Comment'
 import Post from './examples/models/Post'
 import User from './examples/models/User'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModels } from './src'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModels } from './packages/bun-query-builder/src'
 
 // Define models as a typed record
 const models = defineModels({ User, Post, Comment })
