@@ -13,15 +13,17 @@
     "clean": "bun run src/clean.ts"
   },
   "dependencies": {
-    "@prisma/client": "^7.4.2",
+    "@prisma/adapter-better-sqlite3": "^7.5.0",
+    "@prisma/client": "6",
     "better-sqlite3": "^12.6.2",
     "bun-query-builder": "workspace:*",
     "chalk": "^5.6.2",
     "cli-table3": "^0.6.5",
     "drizzle-orm": "^0.45.1",
     "kysely": "^0.28.11",
+    "kysely-bun-sqlite": "^0.4.0",
     "mitata": "^1.0.34",
-    "prisma": "^7.4.2",
+    "prisma": "6",
     "typeorm": "^0.3.28"
   },
   "devDependencies": {

@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, avg, count, desc, eq, gt, lt } from 'drizzle-orm'
 import { bench, group, run } from 'mitata'
 import {
   closeAll,
@@ -19,7 +19,7 @@ console.log('Starting advanced query benchmarks...\n')
 
 group('JOIN: Users with their posts', () => {
   bench('bun-query-builder', async () => {
-    await (bunQB as any).selectFrom('users').innerJoin('posts', 'users.id', '=', 'posts.user_id').select(['users.id', 'users.name', 'posts.title']).limit(100).get()
+    await (bunQB as any).selectFrom('users').innerJoin('posts', 'users.id', '=', 'posts.user_id').select(['users.id', 'users.name', 'users.email', 'posts.title']).limit(100).get()
   })
 
   bench('Kysely', async () => {
@@ -69,7 +69,7 @@ group('AGGREGATE: Average age', () => {
   })
 
   bench('Drizzle', async () => {
-    await drizzle.select({ avg: users.age }).from(users)
+    await drizzle.select({ avg: avg(users.age) }).from(users)
   })
 
   bench('Prisma', async () => {
@@ -102,7 +102,7 @@ group('WHERE: Complex conditions', () => {
   bench('Drizzle', async () => {
     await drizzle.select()
       .from(users)
-      .where(eq(users.active, true))
+      .where(and(eq(users.active, true), gt(users.age, 25), lt(users.age, 40)))
   })
 
   bench('Prisma', async () => {
@@ -137,7 +137,7 @@ group('ORDER BY + LIMIT', () => {
   bench('Drizzle', async () => {
     await drizzle.select()
       .from(posts)
-      .orderBy(posts.createdAt)
+      .orderBy(desc(posts.createdAt))
       .limit(50)
   })
 
@@ -165,10 +165,11 @@ group('GROUP BY + HAVING', () => {
   bench('Drizzle', async () => {
     await drizzle.select({
       userId: posts.userId,
-      count: posts.id,
+      postCount: count(posts.id),
     })
       .from(posts)
       .groupBy(posts.userId)
+      .having(gt(count(posts.id), 3))
   })
 
   bench('Prisma', async () => {

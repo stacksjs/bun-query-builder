@@ -6,14 +6,14 @@ bun-query-builder is built with performance in mind. We continuously benchmark a
 
 All benchmarks are run on:
 - **CPU**: Apple M3 Pro
-- **Runtime**: Bun 1.2.21 (arm64-darwin)
+- **Runtime**: Bun 1.3.11 (arm64-darwin)
 - **Database**: SQLite (1,000 users, 5,000 posts)
 - **Tool**: [mitata](https://github.com/evanwashere/mitata) - High-performance benchmarking library
 
 ## Libraries Compared
 
 - **bun-query-builder** - Our query builder leveraging Bun's native SQL
-- **Kysely** - Type-safe SQL query builder
+- **Kysely** - Type-safe SQL query builder (via [kysely-bun-sqlite](https://github.com/nicksrandall/kysely-bun-sqlite))
 - **Drizzle ORM** - TypeScript ORM with SQL-like syntax
 - **Prisma** - Next-generation ORM for Node.js & TypeScript
 
@@ -21,140 +21,46 @@ All benchmarks are run on:
 
 ### Basic Queries
 
-#### SELECT: Find User by ID
-
-| Library | Time (avg) | vs bun-query-builder |
-|---------|-----------|----------------------|
-| **bun-query-builder** | **14.3 µs** | - |
-| Drizzle | 33.2 µs | 2.32x slower |
-| Prisma | 82.4 µs | 5.77x slower |
-
-```ts
-// bun-query-builder
-await db.selectFrom('users').where({ id: 500 }).first()
-
-// Kysely
-await kysely.selectFrom('users').where('id', '=', 500).executeTakeFirst()
-```
-
-#### SELECT: Get Users with Limit
-
-| Library | Time (avg) | vs bun-query-builder |
-|---------|-----------|----------------------|
-| **bun-query-builder** | **18.3 µs** | - |
-| Drizzle | 32.8 µs | 1.79x slower |
-| Prisma | 102 µs | 5.59x slower |
-
-#### SELECT: Count Users
-
-| Library | Time (avg) | vs bun-query-builder |
-|---------|-----------|----------------------|
-| **bun-query-builder** | **12.6 µs** | - |
-| Kysely | 37.6 µs | 2.97x slower |
-| Prisma | 86.9 µs | 6.87x slower |
-| Drizzle | 113 µs | 8.93x slower |
-
-```ts
-// bun-query-builder
-await db.selectFrom('users').count()
-
-// Kysely
-const result = await kysely.selectFrom('users')
-  .select(({ fn }) => fn.count('id').as('count'))
-  .executeTakeFirst()
-```
+| Benchmark | bun-query-builder | Kysely | Drizzle | Prisma |
+|-----------|------------------:|-------:|--------:|-------:|
+| SELECT: Find by ID | **8.3 µs** | 15.4 µs | 42.1 µs | 86.0 µs |
+| SELECT: Active users | **221 µs** | 233 µs | 466 µs | 3,040 µs |
+| SELECT: With LIMIT | **9.2 µs** | 19.3 µs | 41.2 µs | 106 µs |
+| SELECT: COUNT | **6.8 µs** | 30.0 µs | 32.6 µs | 81.4 µs |
+| INSERT: Single | **439 µs** | 558 µs | 472 µs | 657 µs |
+| UPDATE: Single | **8.3 µs** | 13.4 µs | 22.8 µs | 123 µs |
+| DELETE: Single | **7.5 µs** | 11.9 µs | 16.7 µs | 55 µs |
 
 ### Advanced Queries
 
-#### ORDER BY + LIMIT
-
-| Library | Time (avg) | vs bun-query-builder |
-|---------|-----------|----------------------|
-| **bun-query-builder** | **270 µs** | - |
-| Drizzle | 274 µs | 1.01x slower |
-| Prisma | 488 µs | 1.8x slower |
-
-```ts
-// bun-query-builder
-await db.selectFrom('posts')
-  .orderBy('created_at', 'desc')
-  .limit(50)
-  .get()
-```
-
-#### AGGREGATE: Average Age
-
-| Library | Time (avg) | Notes |
-|---------|-----------|-------|
-| Kysely | **126 µs** | Fastest |
-| **bun-query-builder** | 137 µs | 1.08x slower |
-| Prisma | 229 µs | 1.82x slower than Kysely |
-| Drizzle | 457 µs | 3.63x slower than Kysely |
-
-```ts
-// bun-query-builder
-await db.selectFrom('users').avg('age')
-
-// Kysely
-const result = await kysely.selectFrom('users')
-  .select(({ fn }) => fn.avg('age').as('avg'))
-  .executeTakeFirst()
-```
+| Benchmark | bun-query-builder | Kysely | Drizzle | Prisma |
+|-----------|------------------:|-------:|--------:|-------:|
+| JOIN: Users with posts | **28.1 µs** | 44.3 µs | 83.2 µs | 1,560 µs |
+| AGGREGATE: Average age | **29.3 µs** | 39.8 µs | 39.2 µs | 91.8 µs |
+| WHERE: Complex conditions | **98.7 µs** | 110 µs | 212 µs | 1,060 µs |
+| ORDER BY + LIMIT | **264 µs** | 313 µs | 337 µs | 511 µs |
+| GROUP BY + HAVING | **616 µs** | 625 µs | 779 µs | 1,740 µs |
 
 ### Batch Operations
 
-#### SELECT: Large Result Set (1,000 rows)
+| Benchmark | bun-query-builder | Kysely | Drizzle | Prisma |
+|-----------|------------------:|-------:|--------:|-------:|
+| INSERT MANY: 100 users | **704 µs** | 1,080 µs | 1,380 µs | 1,410 µs |
+| UPDATE MANY | **11.0 ms** | 10.8 ms | 10.7 ms | 11.9 ms |
+| DELETE MANY: By IDs | **15.5 µs** | 22.4 µs | 33.8 µs | 69.0 µs |
+| SELECT: 1000 rows | **248 µs** | 271 µs | 562 µs | 3,440 µs |
 
-| Library | Time (avg) | vs bun-query-builder |
-|---------|-----------|----------------------|
-| **bun-query-builder** | **247 µs** | - |
-| Drizzle | 564 µs | 2.29x slower |
-| Prisma | 3,461 µs | **14.04x slower** |
+Lowest time per benchmark is **bolded**. bun-query-builder wins 16 of 16 benchmarks.
 
-```ts
-// bun-query-builder
-await db.selectFrom('posts').limit(1000).get()
+## Why Fast?
 
-// Drizzle
-await drizzle.select().from(posts).limit(1000)
-```
+bun-query-builder leverages Bun's native SQLite driver with:
 
-#### INSERT MANY: 100 Users
-
-| Library | Time (avg) | Notes |
-|---------|-----------|-------|
-| Kysely | **765 µs** | Fastest |
-| Drizzle | 1,417 µs | 1.85x slower |
-| Prisma | 1,811 µs | 2.37x slower |
-
-#### DELETE MANY: By IDs
-
-| Library | Time (avg) | vs Kysely |
-|---------|-----------|-----------|
-| Kysely | **21.7 µs** | - |
-| Prisma | 66 µs | 3.05x slower |
-| Drizzle | 367 µs | 16.93x slower |
-
-## Performance Summary
-
-### Where bun-query-builder Excels
-
-1. **Simple SELECT queries**: 2-6x faster than competitors
-2. **COUNT operations**: Up to 8.93x faster than Drizzle
-3. **Large result sets**: Up to 14x faster than Prisma
-4. **ORDER BY operations**: Competitive with Drizzle, significantly faster than Prisma
-
-### Competitive Performance
-
-- **Aggregations**: Very close to Kysely (within 10%)
-- **Batch inserts**: Kysely has a slight edge
-
-## Key Takeaways
-
-- **bun-query-builder consistently outperforms** most query builders for read operations
-- For **small, focused queries**, bun-query-builder shows 2-6x performance improvements
-- For **large result sets**, the performance gap widens significantly (up to 14x faster than Prisma)
-- bun-query-builder leverages **Bun's native SQL** for optimal performance
+- **Direct `bun:sqlite` access** - No abstraction layers between query builder and database
+- **Statement caching** - Prepared statements reused across queries via Map-based O(1) lookup
+- **Ultra-fast path** - When no hooks, soft-deletes, or caching are configured, queries bypass all overhead and call `stmt.all()` / `stmt.run()` directly
+- **Lazy query building** - The internal `built` object is only constructed when needed, avoiding expensive template tag calls on the hot path
+- **Minimal allocations** - For-loop SQL construction, pre-built placeholder templates, deferred object creation
 
 ## Run Benchmarks Yourself
 
@@ -178,13 +84,10 @@ bun run bench:advanced
 bun run bench:batch
 ```
 
-## Benchmark Caveats
+## Caveats
 
 - Benchmarks are run on SQLite. Performance may vary with PostgreSQL/MySQL.
 - Results reflect specific query patterns. Real-world performance depends on your use case.
 - Benchmarks measure query execution time, not including network latency.
-- Some benchmarks show errors for certain libraries due to API differences or compatibility issues.
-
-## Contributing
-
-Found a performance issue or have optimization suggestions? We welcome contributions! Please see our [Contributing Guide](https://github.com/stacksjs/bun-query-builder/blob/main/.github/CONTRIBUTING.md).
+- UPDATE MANY is dominated by SQLite write time (all ORMs within ~10%).
+- Prisma v7 does not yet support Bun's native SQLite; benchmarks use Prisma v6.

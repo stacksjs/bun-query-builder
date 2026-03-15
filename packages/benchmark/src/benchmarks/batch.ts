@@ -1,3 +1,4 @@
+import { gt, inArray } from 'drizzle-orm'
 import { bench, group, run } from 'mitata'
 import {
   closeAll,
@@ -80,6 +81,7 @@ group('UPDATE MANY: Batch update by age range', () => {
   bench('Drizzle', async () => {
     await drizzle.update(users)
       .set({ active: false })
+      .where(gt(users.age, 60))
   })
 
   bench('Prisma', async () => {
@@ -102,8 +104,8 @@ group('DELETE MANY: By IDs', () => {
   })
 
   bench('Drizzle', async () => {
-    const _ids = Array.from({ length: 10 }, (_, i) => 800 + i)
-    await drizzle.delete(users)
+    const ids = Array.from({ length: 10 }, (_, i) => 800 + i)
+    await drizzle.delete(users).where(inArray(users.id, ids))
   })
 
   bench('Prisma', async () => {

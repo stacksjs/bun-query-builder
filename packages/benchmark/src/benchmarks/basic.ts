@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { count, eq } from 'drizzle-orm'
 import { bench, group, run } from 'mitata'
 import {
   closeAll,
@@ -107,7 +107,7 @@ group('SELECT: Count users', () => {
   })
 
   bench('Drizzle', async () => {
-    await drizzle.select({ count: users.id }).from(users)
+    await drizzle.select({ count: count(users.id) }).from(users)
   })
 
   if (hasTypeORM) {
@@ -229,7 +229,7 @@ group('DELETE: Single user', () => {
   }
 
   bench('Prisma', async () => {
-    await prisma.user.delete({ where: { id: 999 } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: 999 } })
   })
 })
 

@@ -3,9 +3,10 @@ import { Database as BunDatabase } from 'bun:sqlite'
 // @ts-ignore PrismaClient may not be generated yet
 import { PrismaClient } from '@prisma/client'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
-import { Kysely, SqliteDialect } from 'kysely'
+import { Kysely } from 'kysely'
+import { BunSqliteDialect } from 'kysely-bun-sqlite'
 import { DataSource } from 'typeorm'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../../../bun-query-builder/src/index'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, setConfig } from '../../../bun-query-builder/src/index'
 import { models } from '../schemas/bun-qb'
 import * as drizzleSchema from '../schemas/drizzle'
 import { Post as TypeORMPost, User as TypeORMUser } from '../schemas/typeorm'
@@ -13,6 +14,10 @@ import { Post as TypeORMPost, User as TypeORMUser } from '../schemas/typeorm'
 const DB_PATH = './benchmark.db'
 
 export function createBunQBClient() {
+  // Set dialect to sqlite so getPlaceholder() returns '?' directly,
+  // avoiding unnecessary $N -> ? conversion overhead
+  setConfig({ dialect: 'sqlite' })
+
   const schema = buildDatabaseSchema(models as any)
   const meta = buildSchemaMeta(models as any)
   // Use BunDatabase directly for better performance (same as Kysely)
@@ -149,11 +154,18 @@ export function createBunQBClient() {
     }
   }
   sql.unsafe = (query: string, params?: any[]) => {
-    const sqliteQuery = convertPlaceholders(query)
-    // Only prepare complete statements, not fragments
+    // Skip conversion when no $ present (fast path for sqlite dialect)
+    const sqliteQuery = query.includes('$') ? convertPlaceholders(query) : query
+
+    // Determine statement type by first non-space char (avoids trim/toUpperCase allocations)
+    let i = 0
+    while (i < sqliteQuery.length && sqliteQuery.charCodeAt(i) <= 32) i++
+    const firstChar = sqliteQuery.charCodeAt(i) | 32 // lowercase
+
+    // Prepare statement (cache for complete statements)
     let stmt: any = null
-    if (isCompleteStatement(query)) {
-      // Check cache first
+    // Complete statements start with s(elect), i(nsert), u(pdate), d(elete)
+    if (firstChar === 115 || firstChar === 105 || firstChar === 117 || firstChar === 100) {
       stmt = statementCache.get(sqliteQuery)
       if (!stmt) {
         stmt = db.query(sqliteQuery)
@@ -162,8 +174,7 @@ export function createBunQBClient() {
     }
 
     const hasParams = params && params.length > 0
-    // Use .run() for mutations (INSERT/UPDATE/DELETE), .all() for SELECT
-    const isSelect = isSelectQuery(query)
+    const isSelect = firstChar === 115 // 's' for SELECT
     const executeFunc = stmt
       ? (isSelect
           ? (hasParams ? () => stmt.all(...params!) : () => stmt.all())
@@ -181,12 +192,21 @@ export function createBunQBClient() {
       values: () => params || [],
       raw: () => query,
       toString: () => query,
-      // Direct statement access for ultra-fast path (bypasses execute function overhead)
       _stmt: stmt,
       _params: params || [],
       _sqliteQuery: sqliteQuery,
     }
   }
+  // Fast statement-only lookup for ultra-fast path (avoids object allocation in unsafe())
+  sql._prepareStatement = (query: string): any => {
+    let stmt = statementCache.get(query)
+    if (!stmt) {
+      stmt = db.query(query)
+      statementCache.set(query, stmt)
+    }
+    return stmt
+  }
+
   return createQueryBuilder<typeof schema>({
     schema,
     meta,
@@ -195,12 +215,12 @@ export function createBunQBClient() {
 }
 
 export function createKyselyClient() {
-  const dialect = new SqliteDialect({
-    database: new BunDatabase(DB_PATH) as any,
-  })
-
+  // Use the official kysely-bun-sqlite adapter (community-maintained)
+  // This is the recommended way to use Kysely with bun:sqlite
   return new Kysely<Database>({
-    dialect,
+    dialect: new BunSqliteDialect({
+      database: new BunDatabase(DB_PATH),
+    }),
   })
 }
 
@@ -228,6 +248,8 @@ export async function createTypeORMClient() {
 }
 
 export function createPrismaClient() {
+  // Note: Prisma v7 requires driver adapters (better-sqlite3 or libsql),
+  // but neither works under Bun yet. Using Prisma v6 which has built-in SQLite support.
   return new PrismaClient()
 }
 

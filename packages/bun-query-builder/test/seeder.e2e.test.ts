@@ -8,16 +8,29 @@ import { config } from '../src/config'
 import { createQueryBuilder } from '../src/index'
 import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 
+// Check if Postgres is available with correct credentials before running E2E tests
+let pgAvailable = false
+try {
+  const { getOrCreateBunSql } = await import('../src/db')
+  const sql = getOrCreateBunSql()
+  const result = await sql`SELECT 1 as ok`
+  pgAvailable = Array.isArray(result) && result.length > 0
+}
+catch {
+  pgAvailable = false
+}
+
 let testWorkspace: string
 
 beforeAll(async () => {
   if (config.debug)
     config.debug.captureText = true
 
-  // Set up database
-  await setupDatabase()
+  // Set up database only if Postgres is available
+  if (pgAvailable)
+    await setupDatabase()
 
-  // Create test workspace
+  // Create test workspace (always — needed by error handling tests too)
   testWorkspace = join(tmpdir(), `qb-e2e-${Date.now()}`)
   mkdirSync(testWorkspace, { recursive: true })
 
@@ -58,16 +71,18 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  // Clean up database
-  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
+  // Clean up database only if Postgres was available
+  if (pgAvailable) {
+    await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
+  }
 
-  // Clean up workspace
-  if (existsSync(testWorkspace)) {
+  // Always clean up workspace
+  if (testWorkspace && existsSync(testWorkspace)) {
     rmSync(testWorkspace, { recursive: true, force: true })
   }
 })
 
-describe('End-to-End Seeding Workflow', () => {
+describe.skipIf(!pgAvailable)('End-to-End Seeding Workflow', () => {
   it('complete workflow: create, seed, verify', async () => {
     const qb = createQueryBuilder()
 

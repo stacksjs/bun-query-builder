@@ -385,23 +385,20 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       }
 
       // Foreign key inference for *_id columns
-      // Only infer FK when:
+      // Infer FK when:
       //   1. foreignKey is explicitly true, OR
-      //   2. The model declares a belongsTo relationship matching the inferred model name
+      //   2. The model declares a belongsTo relationship matching the inferred model name, OR
+      //   3. A model with the inferred name exists in the models record (convention-based)
       // Skip when foreignKey is explicitly false
       if (columnName.endsWith('_id') && attr.foreignKey !== false) {
         const base = columnName.replace(/_id$/, '')
-        const maybeModel = base.charAt(0).toUpperCase() + base.slice(1)
+        // Try PascalCase first (user_id -> User), then try camelCase variants
+        const maybeModel = base.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase())
         const refTable = meta.modelToTable[maybeModel]
         if (refTable) {
-          // Check if there's a matching belongsTo relationship or explicit foreignKey: true
-          const belongsToList = normalizeBelongsTo(model.belongsTo)
-          const hasBelongsTo = belongsToList.includes(maybeModel)
-
-          if (attr.foreignKey === true || hasBelongsTo) {
-            const refPk = meta.primaryKeys[refTable] ?? 'id'
-            col.references = { table: refTable, column: refPk }
-          }
+          // When the referenced model exists in the schema, auto-infer FK
+          const refPk = meta.primaryKeys[refTable] ?? 'id'
+          col.references = { table: refTable, column: refPk }
         }
       }
 

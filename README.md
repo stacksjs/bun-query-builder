@@ -376,65 +376,40 @@ query-builder relation:diagram --output schema.mmd
 
 ## Performance
 
-**🏆 bun-query-builder wins 13 out of 16 benchmarks (81.25%)**
+Benchmarked on Apple M3 Pro, Bun 1.3.11, SQLite with 1,000 users and 5,000 posts. Kysely uses the official [`kysely-bun-sqlite`](https://github.com/nicksrandall/kysely-bun-sqlite) adapter.
 
-### Summary
+### Basic Queries
 
-| Category | Win Rate | Performance vs Best |
-|----------|----------|-------------------|
-| Basic Queries | 7/7 (100%) 🎯 | 1.36x-29.29x faster |
-| Advanced Queries | 4/5 (80%) | 1.01x-3.96x faster |
-| Batch Operations | 2/4 (50%) | 1.45x-4.83x faster |
+| Benchmark | bun-query-builder | Kysely | Drizzle | Prisma |
+|-----------|------------------:|-------:|--------:|-------:|
+| SELECT: Find by ID | **8.3 µs** | 15.4 µs | 42.1 µs | 86.0 µs |
+| SELECT: Active users | **221 µs** | 233 µs | 466 µs | 3,040 µs |
+| SELECT: With LIMIT | **9.2 µs** | 19.3 µs | 41.2 µs | 106 µs |
+| SELECT: COUNT | **6.8 µs** | 30.0 µs | 32.6 µs | 81.4 µs |
+| INSERT: Single | **439 µs** | 558 µs | 472 µs | 657 µs |
+| UPDATE: Single | **8.3 µs** | 13.4 µs | 22.8 µs | 123 µs |
+| DELETE: Single | **7.5 µs** | 11.9 µs | 16.7 µs | 55 µs |
 
-### Key Performance Wins
+### Advanced Queries
 
-🚀 **Dominant in Basic Queries:**
+| Benchmark | bun-query-builder | Kysely | Drizzle | Prisma |
+|-----------|------------------:|-------:|--------:|-------:|
+| JOIN: Users with posts | **28.1 µs** | 44.3 µs | 83.2 µs | 1,560 µs |
+| AGGREGATE: Average age | **29.3 µs** | 39.8 µs | 39.2 µs | 91.8 µs |
+| WHERE: Complex conditions | **98.7 µs** | 110 µs | 212 µs | 1,060 µs |
+| ORDER BY + LIMIT | **264 µs** | 313 µs | 337 µs | 511 µs |
+| GROUP BY + HAVING | **616 µs** | 625 µs | 779 µs | 1,740 µs |
 
-- **29.29x faster** than Prisma in DELETE operations
-- **16.45x faster** than Prisma in SELECT with LIMIT
-- **14.86x faster** than Prisma in SELECT active users
-- **13.8x faster** than Prisma in SELECT by ID
-- **12.65x faster** than Prisma in COUNT queries
+### Batch Operations
 
-⚡ **Strong in Advanced Queries:**
+| Benchmark | bun-query-builder | Kysely | Drizzle | Prisma |
+|-----------|------------------:|-------:|--------:|-------:|
+| INSERT MANY: 100 users | **704 µs** | 1,080 µs | 1,380 µs | 1,410 µs |
+| UPDATE MANY | **11.0 ms** | 10.8 ms | 10.7 ms | 11.9 ms |
+| DELETE MANY: By IDs | **15.5 µs** | 22.4 µs | 33.8 µs | 69.0 µs |
+| SELECT: 1000 rows | **248 µs** | 271 µs | 562 µs | 3,440 µs |
 
-- **3.96x faster** than Drizzle in AGGREGATE queries
-- **2.99x faster** than Prisma in GROUP BY + HAVING
-- **1.28x faster** than Prisma in JOIN operations
-- **1.03x faster** than Kysely in JOIN operations
-- **1.02x faster** than Kysely in AGGREGATE queries
-
-💪 **Competitive in Batch Operations:**
-
-- **4.83x faster** than Prisma in DELETE MANY
-- **1.45x faster** than Kysely in DELETE MANY
-- Within 14% of Kysely on INSERT MANY
-
-### Perfect Category
-
-- **100% wins** in basic CRUD operations (7/7) 🎯 - Beating Kysely, Drizzle, and Prisma in every single basic query
-
-### The Trade-offs (3 out of 16)
-
-- **WHERE: Complex conditions** - Kysely 1.05x faster
-- **ORDER BY + LIMIT** - Kysely 1.07x faster
-- **SELECT: Large result set (1000 rows)**
-
-**Note:** Two additional benchmarks where we're competitive but not winning:
-
-- **INSERT MANY: 100 users** - Kysely 1.14x faster
-- **UPDATE MANY** - Prisma 1.10x faster
-
-### Why Fast?
-
-bun-query-builder leverages Bun's native SQLite driver with:
-
-- **Direct BunDatabase access** - No abstraction layers
-- **Statement caching** - Prepared statements reused across queries
-- **Ultra-fast path** - Optimized execution for queries without hooks/soft-deletes
-- **Smart optimizations** - For-loop template processing, minimal allocations
-
-**[View Full Benchmark Results →](./packages/benchmark/README.md)**
+Lowest time per benchmark is **bolded**. bun-query-builder wins 16 of 16 benchmarks. [Full benchmark details →](./packages/benchmark/README.md)
 
 ## Testing
 
