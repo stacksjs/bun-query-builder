@@ -2,7 +2,7 @@ import type { PickierConfig } from 'pickier'
 
 const config: PickierConfig = {
   verbose: false,
-  ignores: ['**/node_modules/**', '**/dist/**', '**/build/**', 'fixtures/**'],
+  ignores: ['CLAUDE.md', '*/CHANGELOG.md', '**/node_modules/**', '**/dist/**', '**/build/**', 'fixtures/**'],
 
   lint: {
     extensions: ['ts', 'js', 'tsx', 'jsx'],
