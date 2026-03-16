@@ -252,7 +252,8 @@ export function buildMigrationPlan(
       tableName,
       details: { definition: target },
     })
-  } else {
+  }
+else {
     // Compare and generate diff operations
 
     // Check for key schema changes (requires table recreation)
@@ -332,7 +333,8 @@ export function buildMigrationPlan(
             viewType: target.streamSpecification?.viewType || 'NEW_AND_OLD_IMAGES',
           },
         })
-      } else {
+      }
+else {
         operations.push({
           type: 'DISABLE_STREAM',
           tableName,

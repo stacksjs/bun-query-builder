@@ -1631,7 +1631,8 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * @example
    * ```ts
    * const reserved = await db.reserve()
-   * try { await reserved.selectFrom('users').get() } finally { reserved.release() }
+   * try { await reserved.selectFrom('users').get() }
+finally { reserved.release() }
    * ```
    */
   reserve: () => Promise<(QueryBuilder<DB> & { release: () => void })>
@@ -4692,7 +4693,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               let placeholders = '?'
               params[0] = firstRow[keys[0]]
               for (let c = 1; c < colCount; c++) {
-                cols += ',' + keys[c]
+                cols += `,${keys[c]}`
                 placeholders += ',?'
                 params[c] = firstRow[keys[c]]
               }

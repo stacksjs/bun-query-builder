@@ -738,16 +738,20 @@ describe('Dynamic ORM', () => {
       // Add foreign key columns manually (since our createTable doesn't handle them)
       try {
         db.run('ALTER TABLE activities ADD COLUMN user_id INTEGER')
-      } catch { /* column may exist */ }
+      }
+catch { /* column may exist */ }
       try {
         db.run('ALTER TABLE activities ADD COLUMN trail_id INTEGER')
-      } catch { /* column may exist */ }
+      }
+catch { /* column may exist */ }
       try {
         db.run('ALTER TABLE reviews ADD COLUMN user_id INTEGER')
-      } catch { /* column may exist */ }
+      }
+catch { /* column may exist */ }
       try {
         db.run('ALTER TABLE reviews ADD COLUMN trail_id INTEGER')
-      } catch { /* column may exist */ }
+      }
+catch { /* column may exist */ }
 
       // Create test data
       User.createMany([

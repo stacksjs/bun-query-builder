@@ -90,7 +90,8 @@ export class DynamoDBMigrationDriver {
       }
 
       this.log(`[Migration] Successfully applied ${result.operations.length} operations to ${plan.tableName}`)
-    } catch (error: any) {
+    }
+catch (error: any) {
       result.success = false
       result.error = error.message
       console.error(`[Migration] Failed to execute migration for ${plan.tableName}:`, error)
@@ -425,7 +426,8 @@ export class DynamoDBMigrationDriver {
         }
 
         this.log(`[Migration] Table status: ${status}, waiting...`)
-      } catch {
+      }
+catch {
         // Table might not exist yet
       }
       await new Promise(resolve => setTimeout(resolve, 2000))
@@ -451,7 +453,8 @@ export class DynamoDBMigrationDriver {
 
         const status = gsi?.IndexStatus || 'CREATING'
         this.log(`[Migration] GSI status: ${status}, waiting...`)
-      } catch {
+      }
+catch {
         // Continue waiting
       }
       await new Promise(resolve => setTimeout(resolve, 5000))
@@ -473,7 +476,8 @@ export class DynamoDBMigrationDriver {
       if (tableInfo.Table) {
         currentDefinition = this.tableInfoToDefinition(tableInfo.Table)
       }
-    } catch (error: any) {
+    }
+catch (error: any) {
       if (!error.message?.includes('ResourceNotFoundException') && !error.message?.includes('not found')) {
         throw error
       }
@@ -504,7 +508,8 @@ export class DynamoDBMigrationDriver {
       try {
         const result = await this.migrateModel(ModelClass)
         results.push(result)
-      } catch (error: any) {
+      }
+catch (error: any) {
         results.push({
           tableName: ModelClass.tableName || 'unknown',
           success: false,
@@ -544,7 +549,8 @@ export class DynamoDBMigrationDriver {
     for (const key of tableInfo.KeySchema || []) {
       if (key.KeyType === 'HASH') {
         keySchema.partitionKey = key.AttributeName
-      } else if (key.KeyType === 'RANGE') {
+      }
+else if (key.KeyType === 'RANGE') {
         keySchema.sortKey = key.AttributeName
       }
     }
@@ -563,7 +569,8 @@ export class DynamoDBMigrationDriver {
       for (const key of gsi.KeySchema || []) {
         if (key.KeyType === 'HASH') {
           gsiKeySchema.partitionKey = key.AttributeName
-        } else if (key.KeyType === 'RANGE') {
+        }
+else if (key.KeyType === 'RANGE') {
           gsiKeySchema.sortKey = key.AttributeName
         }
       }

@@ -479,7 +479,8 @@ describe('Error Handling and Edge Cases', () => {
     // Try to use non-existent method
     try {
       await qb.nonExistentMethod()
-    } catch (error) {
+    }
+catch (error) {
       console.log('Caught expected error:', error.message)
     }
   }

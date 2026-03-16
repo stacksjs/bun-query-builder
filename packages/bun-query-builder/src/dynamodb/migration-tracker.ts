@@ -47,7 +47,8 @@ export class DynamoDBMigrationTracker {
       // Check if table exists
       await this.client.describeTable(MIGRATIONS_TABLE)
       this.initialized = true
-    } catch (error: any) {
+    }
+catch (error: any) {
       if (error.message?.includes('ResourceNotFoundException') || error.message?.includes('not found')) {
         // Create the migrations table
         console.log(`[Migration] Creating migrations table: ${MIGRATIONS_TABLE}`)
@@ -67,7 +68,8 @@ export class DynamoDBMigrationTracker {
         // Wait for table to be active
         await this.waitForTableActive(MIGRATIONS_TABLE)
         this.initialized = true
-      } else {
+      }
+else {
         throw error
       }
     }
@@ -83,7 +85,8 @@ export class DynamoDBMigrationTracker {
         if (result.Table?.TableStatus === 'ACTIVE') {
           return
         }
-      } catch {
+      }
+catch {
         // Table might not exist yet, continue waiting
       }
       await new Promise(resolve => setTimeout(resolve, 1000))

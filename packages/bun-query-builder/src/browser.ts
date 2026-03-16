@@ -781,7 +781,8 @@ class BrowserModelQueryBuilder<
   ): BrowserModelQueryBuilder<TDef, TSelected> {
     if (value === undefined) {
       this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'and' })
-    } else {
+    }
+else {
       this._wheres.push({ column: column as string, operator: operatorOrValue as WhereOperator, value, boolean: 'and' })
     }
     return this
@@ -794,7 +795,8 @@ class BrowserModelQueryBuilder<
   ): BrowserModelQueryBuilder<TDef, TSelected> {
     if (value === undefined) {
       this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'or' })
-    } else {
+    }
+else {
       this._wheres.push({ column: column as string, operator: operatorOrValue as WhereOperator, value, boolean: 'or' })
     }
     return this
@@ -886,13 +888,17 @@ class BrowserModelQueryBuilder<
     for (const where of this._wheres) {
       if (where.operator === '=') {
         params.append(where.column, String(where.value))
-      } else if ((where.operator === 'in' || where.operator === 'not in') && Array.isArray(where.value)) {
+      }
+else if ((where.operator === 'in' || where.operator === 'not in') && Array.isArray(where.value)) {
         params.append(`${where.column}[]`, where.value.join(','))
-      } else if (where.operator === 'is' && where.value === null) {
+      }
+else if (where.operator === 'is' && where.value === null) {
         params.append(`filter[${where.column}][is]`, 'null')
-      } else if (where.operator === 'is not' && where.value === null) {
+      }
+else if (where.operator === 'is not' && where.value === null) {
         params.append(`filter[${where.column}][is_not]`, 'null')
-      } else {
+      }
+else {
         params.append(`filter[${where.column}][${where.operator}]`, String(where.value))
       }
     }
@@ -960,7 +966,8 @@ class BrowserModelQueryBuilder<
       const result = await handleResponse<{ data: Record<string, unknown> } | Record<string, unknown>>(response)
       const row = 'data' in result && !Array.isArray(result.data) ? result.data : result as Record<string, unknown>
       return new BrowserModelInstance<TDef, TSelected>(this._definition, row as any)
-    } catch {
+    }
+catch {
       return null
     }
   }

@@ -219,7 +219,8 @@ let globalDb: Database | null = null
 export function configureOrm(options: { database?: string | Database; verbose?: boolean }): void {
   if (options.database instanceof Database) {
     globalDb = options.database
-  } else {
+  }
+else {
     globalDb = new Database(options.database || ':memory:', { create: true })
   }
 }
@@ -342,13 +343,15 @@ class ModelInstance<
             `UPDATE ${this._definition.table} SET ${sets}, updated_at = ? WHERE ${pk} = ?`,
             [...Object.values(changes), now, this._attributes[pk]] as Bindings
           )
-        } else {
+        }
+else {
           db.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, values as Bindings)
         }
       }
 
       hooks?.afterUpdate?.(this)
-    } else {
+    }
+else {
       // Create
       const attrs = this._definition.attributes
       const data: Record<string, unknown> = {}
@@ -409,7 +412,8 @@ class ModelInstance<
         `UPDATE ${this._definition.table} SET deleted_at = ? WHERE ${pk} = ?`,
         [new Date().toISOString(), pkValue] as Bindings
       )
-    } else {
+    }
+else {
       db.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue] as Bindings)
     }
 
@@ -474,7 +478,8 @@ class ModelQueryBuilder<
   ): ModelQueryBuilder<TDef, TSelected> {
     if (value === undefined) {
       this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'and' })
-    } else {
+    }
+else {
       this._wheres.push({ column: column as string, operator: operatorOrValue as WhereOperator, value, boolean: 'and' })
     }
     return this
@@ -487,7 +492,8 @@ class ModelQueryBuilder<
   ): ModelQueryBuilder<TDef, TSelected> {
     if (value === undefined) {
       this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'or' })
-    } else {
+    }
+else {
       this._wheres.push({ column: column as string, operator: operatorOrValue as WhereOperator, value, boolean: 'or' })
     }
     return this
@@ -583,11 +589,13 @@ class ModelQueryBuilder<
 
         if (w.value === null) {
           clause = w.operator === '=' ? `${w.column} IS NULL` : `${w.column} IS NOT NULL`
-        } else if (w.operator === 'in' || w.operator === 'not in') {
+        }
+else if (w.operator === 'in' || w.operator === 'not in') {
           const arr = w.value as unknown[]
           clause = `${w.column} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
           params.push(...arr)
-        } else {
+        }
+else {
           clause = `${w.column} ${w.operator} ?`
           params.push(w.value)
         }
@@ -645,11 +653,13 @@ class ModelQueryBuilder<
 
         if (w.value === null) {
           clause = w.operator === '=' ? `${w.column} IS NULL` : `${w.column} IS NOT NULL`
-        } else if (w.operator === 'in' || w.operator === 'not in') {
+        }
+else if (w.operator === 'in' || w.operator === 'not in') {
           const arr = w.value as unknown[]
           clause = `${w.column} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
           params.push(...arr)
-        } else {
+        }
+else {
           clause = `${w.column} ${w.operator} ?`
           params.push(w.value)
         }
@@ -989,7 +999,8 @@ export async function seedModel(definition: ModelDefinition, count?: number, fak
     try {
       const tsMocker = await (import('ts-mocker' as string) as Promise<{ faker: any }>)
       faker = createFakerCompatLayer(tsMocker.faker)
-    } catch {
+    }
+catch {
       console.warn('ts-mocker not found. Install it for seeding support.')
       return
     }
