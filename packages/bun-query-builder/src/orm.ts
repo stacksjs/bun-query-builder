@@ -344,14 +344,14 @@ class ModelInstance<
             [...Object.values(changes), now, this._attributes[pk]] as Bindings
           )
         }
-else {
+    else {
           db.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, values as Bindings)
         }
       }
 
       hooks?.afterUpdate?.(this)
     }
-else {
+    else {
       // Create
       const attrs = this._definition.attributes
       const data: Record<string, unknown> = {}
@@ -413,7 +413,7 @@ else {
         [new Date().toISOString(), pkValue] as Bindings
       )
     }
-else {
+    else {
       db.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue] as Bindings)
     }
 
@@ -438,6 +438,27 @@ else {
     return this
   }
 
+  /**
+   * Create a copy of this model without the primary key (ready to save as new).
+   *
+   * @example
+   * ```ts
+   * const original = User.find(1)
+   * const copy = original.replicate()
+   * copy.set('email', 'new@example.com')
+   * copy.save() // inserts as a new record
+   * ```
+   */
+  replicate(): ModelInstance<TDef, TSelected> {
+    const pk = this._definition.primaryKey || 'id'
+    const attrs = { ...this._attributes }
+    delete attrs[pk]
+    delete attrs.uuid
+    delete attrs.created_at
+    delete attrs.updated_at
+    return new ModelInstance<TDef, TSelected>(this._definition, attrs as any)
+  }
+
   toJSON(): Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, HiddenKeys<TDef>> {
     const hidden = new Set<string>()
     for (const [key, attr] of Object.entries(this._definition.attributes)) {
@@ -449,6 +470,11 @@ else {
       if (!hidden.has(key)) json[key] = value
     }
     return json as any
+  }
+
+  /** Alias for toJSON() */
+  toArray(): Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, HiddenKeys<TDef>> {
+    return this.toJSON()
   }
 }
 
@@ -479,7 +505,7 @@ class ModelQueryBuilder<
     if (value === undefined) {
       this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'and' })
     }
-else {
+    else {
       this._wheres.push({ column: column as string, operator: operatorOrValue as WhereOperator, value, boolean: 'and' })
     }
     return this
@@ -493,7 +519,7 @@ else {
     if (value === undefined) {
       this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'or' })
     }
-else {
+    else {
       this._wheres.push({ column: column as string, operator: operatorOrValue as WhereOperator, value, boolean: 'or' })
     }
     return this
@@ -527,6 +553,47 @@ else {
 
   whereLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
     this._wheres.push({ column: column as string, operator: 'like', value: pattern, boolean: 'and' })
+    return this
+  }
+
+  whereBetween<K extends ColumnName<TDef>>(
+    column: K,
+    range: [min: unknown, max: unknown],
+  ): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: '>=', value: range[0], boolean: 'and' })
+    this._wheres.push({ column: column as string, operator: '<=', value: range[1], boolean: 'and' })
+    return this
+  }
+
+  whereNotBetween<K extends ColumnName<TDef>>(
+    column: K,
+    range: [min: unknown, max: unknown],
+  ): ModelQueryBuilder<TDef, TSelected> {
+    // NOT BETWEEN is equivalent to (col < min OR col > max)
+    this._wheres.push({ column: column as string, operator: '<', value: range[0], boolean: 'and' })
+    this._wheres.push({ column: column as string, operator: '>', value: range[1], boolean: 'or' })
+    return this
+  }
+
+  /**
+   * Conditionally apply a query modification.
+   * When the condition is truthy, the callback is invoked with the builder.
+   *
+   * @example
+   * ```ts
+   * User.query()
+   *   .when(status, (q) => q.where('status', status))
+   *   .when(search, (q) => q.whereLike('name', `%${search}%`))
+   *   .get()
+   * ```
+   */
+  when(
+    condition: unknown,
+    callback: (builder: ModelQueryBuilder<TDef, TSelected>) => ModelQueryBuilder<TDef, TSelected>,
+  ): ModelQueryBuilder<TDef, TSelected> {
+    if (condition) {
+      return callback(this)
+    }
     return this
   }
 
@@ -577,32 +644,40 @@ else {
     return this._withRelations
   }
 
+  /**
+   * Build WHERE clause string and push params into the given array.
+   * Shared by buildQuery, count, aggregates, delete, and update.
+   */
+  private buildWhereClauses(params: unknown[]): string {
+    const clauses: string[] = []
+    for (let i = 0; i < this._wheres.length; i++) {
+      const w = this._wheres[i]
+      let clause: string
+
+      if (w.value === null) {
+        clause = w.operator === '=' ? `${w.column} IS NULL` : `${w.column} IS NOT NULL`
+      }
+      else if (w.operator === 'in' || w.operator === 'not in') {
+        const arr = w.value as unknown[]
+        clause = `${w.column} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
+        params.push(...arr)
+      }
+      else {
+        clause = `${w.column} ${w.operator} ?`
+        params.push(w.value)
+      }
+
+      clauses.push(i === 0 ? clause : `${w.boolean.toUpperCase()} ${clause}`)
+    }
+    return clauses.join(' ')
+  }
+
   private buildQuery(): { sql: string; params: unknown[] } {
     const params: unknown[] = []
     let sql = `SELECT ${this._select.join(', ')} FROM ${this._definition.table}`
 
     if (this._wheres.length > 0) {
-      const clauses: string[] = []
-      for (let i = 0; i < this._wheres.length; i++) {
-        const w = this._wheres[i]
-        let clause: string
-
-        if (w.value === null) {
-          clause = w.operator === '=' ? `${w.column} IS NULL` : `${w.column} IS NOT NULL`
-        }
-else if (w.operator === 'in' || w.operator === 'not in') {
-          const arr = w.value as unknown[]
-          clause = `${w.column} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
-          params.push(...arr)
-        }
-else {
-          clause = `${w.column} ${w.operator} ?`
-          params.push(w.value)
-        }
-
-        clauses.push(i === 0 ? clause : `${w.boolean.toUpperCase()} ${clause}`)
-      }
-      sql += ` WHERE ${clauses.join(' ')}`
+      sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
     if (this._orderBy.length > 0) {
@@ -613,6 +688,19 @@ else {
     if (this._offset !== undefined) sql += ` OFFSET ${this._offset}`
 
     return { sql, params }
+  }
+
+  /**
+   * Return the raw SQL and parameters for debugging without executing.
+   *
+   * @example
+   * ```ts
+   * const { sql, params } = User.where('active', true).toSql()
+   * console.log(sql) // SELECT * FROM users WHERE active = ?
+   * ```
+   */
+  toSql(): { sql: string; params: unknown[] } {
+    return this.buildQuery()
   }
 
   get(): ModelInstance<TDef, TSelected>[] {
@@ -646,27 +734,7 @@ else {
     let sql = `SELECT COUNT(*) as count FROM ${this._definition.table}`
 
     if (this._wheres.length > 0) {
-      const clauses: string[] = []
-      for (let i = 0; i < this._wheres.length; i++) {
-        const w = this._wheres[i]
-        let clause: string
-
-        if (w.value === null) {
-          clause = w.operator === '=' ? `${w.column} IS NULL` : `${w.column} IS NOT NULL`
-        }
-else if (w.operator === 'in' || w.operator === 'not in') {
-          const arr = w.value as unknown[]
-          clause = `${w.column} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
-          params.push(...arr)
-        }
-else {
-          clause = `${w.column} ${w.operator} ?`
-          params.push(w.value)
-        }
-
-        clauses.push(i === 0 ? clause : `${w.boolean.toUpperCase()} ${clause}`)
-      }
-      sql += ` WHERE ${clauses.join(' ')}`
+      sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
     return (db.query(sql).get(...(params as Bindings)) as { count: number }).count
@@ -676,16 +744,115 @@ else {
     return this.count() > 0
   }
 
+  doesntExist(): boolean {
+    return this.count() === 0
+  }
+
+  /**
+   * Get a single record, throwing if zero or more than one match.
+   *
+   * @example
+   * ```ts
+   * const admin = User.where('role', 'admin').sole()
+   * ```
+   */
+  sole(): ModelInstance<TDef, TSelected> {
+    this._limit = 2 // fetch 2 to detect duplicates
+    const results = this.get()
+    if (results.length === 0) throw new Error(`No ${this._definition.name} found`)
+    if (results.length > 1) throw new Error(`Expected one ${this._definition.name}, found multiple`)
+    return results[0]
+  }
+
+  /**
+   * Increment a numeric column by the given amount.
+   *
+   * @example
+   * ```ts
+   * Post.where('id', 1).increment('views')
+   * Post.where('id', 1).increment('views', 5)
+   * ```
+   */
+  increment<K extends AttributeKeys<TDef>>(column: K, amount = 1): number {
+    const db = getDatabase()
+    const params: unknown[] = [amount]
+
+    let sql = `UPDATE ${this._definition.table} SET ${column as string} = ${column as string} + ?`
+
+    if (this._definition.traits?.useTimestamps) {
+      sql += `, updated_at = ?`
+      params.push(new Date().toISOString())
+    }
+
+    if (this._wheres.length > 0) {
+      const clauses = this.buildWhereClauses(params)
+      sql += ` WHERE ${clauses}`
+    }
+
+    return db.run(sql, params as Bindings).changes
+  }
+
+  /**
+   * Decrement a numeric column by the given amount.
+   *
+   * @example
+   * ```ts
+   * Product.where('id', 1).decrement('stock')
+   * Product.where('id', 1).decrement('stock', 3)
+   * ```
+   */
+  decrement<K extends AttributeKeys<TDef>>(column: K, amount = 1): number {
+    return this.increment(column, -amount)
+  }
+
+  /**
+   * Process results in chunks to avoid memory issues with large datasets.
+   *
+   * @example
+   * ```ts
+   * User.query().chunk(100, (users) => {
+   *   for (const user of users) { ... }
+   * })
+   * ```
+   */
+  chunk(size: number, callback: (items: ModelInstance<TDef, TSelected>[]) => void | false): void {
+    let page = 0
+    while (true) {
+      const builder = new ModelQueryBuilder<TDef, TSelected>(this._definition)
+      // Copy wheres and orders
+      builder._wheres = [...this._wheres]
+      builder._orderBy = [...this._orderBy]
+      builder._select = [...this._select]
+      builder._limit = size
+      builder._offset = page * size
+
+      const results = builder.get()
+      if (results.length === 0) break
+
+      const result = callback(results)
+      if (result === false) break
+      if (results.length < size) break
+
+      page++
+    }
+  }
+
   paginate(page = 1, perPage = 15) {
     const total = this.count()
+    const lastPage = Math.ceil(total / perPage)
     this._limit = perPage
     this._offset = (page - 1) * perPage
+    const data = this.get()
     return {
-      data: this.get(),
+      data,
       total,
       page,
       perPage,
-      lastPage: Math.ceil(total / perPage),
+      lastPage,
+      hasMorePages: page < lastPage,
+      isEmpty: data.length === 0,
+      from: data.length > 0 ? (page - 1) * perPage + 1 : null,
+      to: data.length > 0 ? (page - 1) * perPage + data.length : null,
     }
   }
 
@@ -696,24 +863,32 @@ else {
     return this.get().map(r => r.get(column as any)) as any
   }
 
-  max<K extends AttributeKeys<TDef>>(column: K): number {
+  private aggregate(fn: string, column: string): number {
     const db = getDatabase()
-    return (db.query(`SELECT MAX(${column}) as v FROM ${this._definition.table}`).get() as { v: number }).v || 0
+    const params: unknown[] = []
+    let sql = `SELECT ${fn}(${column}) as v FROM ${this._definition.table}`
+
+    if (this._wheres.length > 0) {
+      sql += ` WHERE ${this.buildWhereClauses(params)}`
+    }
+
+    return (db.query(sql).get(...(params as Bindings)) as { v: number }).v || 0
+  }
+
+  max<K extends AttributeKeys<TDef>>(column: K): number {
+    return this.aggregate('MAX', column as string)
   }
 
   min<K extends AttributeKeys<TDef>>(column: K): number {
-    const db = getDatabase()
-    return (db.query(`SELECT MIN(${column}) as v FROM ${this._definition.table}`).get() as { v: number }).v || 0
+    return this.aggregate('MIN', column as string)
   }
 
   avg<K extends AttributeKeys<TDef>>(column: K): number {
-    const db = getDatabase()
-    return (db.query(`SELECT AVG(${column}) as v FROM ${this._definition.table}`).get() as { v: number }).v || 0
+    return this.aggregate('AVG', column as string)
   }
 
   sum<K extends AttributeKeys<TDef>>(column: K): number {
-    const db = getDatabase()
-    return (db.query(`SELECT SUM(${column}) as v FROM ${this._definition.table}`).get() as { v: number }).v || 0
+    return this.aggregate('SUM', column as string)
   }
 
   delete(): number {
@@ -722,13 +897,7 @@ else {
     let sql = `DELETE FROM ${this._definition.table}`
 
     if (this._wheres.length > 0) {
-      const clauses: string[] = []
-      for (let i = 0; i < this._wheres.length; i++) {
-        const w = this._wheres[i]
-        clauses.push(i === 0 ? `${w.column} ${w.operator} ?` : `${w.boolean.toUpperCase()} ${w.column} ${w.operator} ?`)
-        params.push(w.value)
-      }
-      sql += ` WHERE ${clauses.join(' ')}`
+      sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
     return db.run(sql, params as Bindings).changes
@@ -740,16 +909,14 @@ else {
     const sets = entries.map(([k]) => `${k} = ?`).join(', ')
     const params: unknown[] = entries.map(([, v]) => v)
 
-    let sql = `UPDATE ${this._definition.table} SET ${sets}`
+    if (this._definition.traits?.useTimestamps) {
+      params.push(new Date().toISOString())
+    }
+
+    let sql = `UPDATE ${this._definition.table} SET ${sets}${this._definition.traits?.useTimestamps ? ', updated_at = ?' : ''}`
 
     if (this._wheres.length > 0) {
-      const clauses: string[] = []
-      for (let i = 0; i < this._wheres.length; i++) {
-        const w = this._wheres[i]
-        clauses.push(i === 0 ? `${w.column} ${w.operator} ?` : `${w.boolean.toUpperCase()} ${w.column} ${w.operator} ?`)
-        params.push(w.value)
-      }
-      sql += ` WHERE ${clauses.join(' ')}`
+      sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
     return db.run(sql, params as Bindings).changes
@@ -832,7 +999,7 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     },
 
     findOrFail(id: number | string): ModelInstance<TDef> {
-      const result = this.find(id)
+      const result = model.find(id)
       if (!result) throw new Error(`${definition.name} with id ${id} not found`)
       return result
     },
@@ -850,7 +1017,16 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     last: () => new ModelQueryBuilder<TDef>(definition).last(),
     count: () => new ModelQueryBuilder<TDef>(definition).count(),
     exists: () => new ModelQueryBuilder<TDef>(definition).exists(),
+    doesntExist: () => new ModelQueryBuilder<TDef>(definition).doesntExist(),
     paginate: (page?: number, perPage?: number) => new ModelQueryBuilder<TDef>(definition).paginate(page, perPage),
+
+    whereBetween<K extends Cols>(column: K, range: [min: unknown, max: unknown]) {
+      return new ModelQueryBuilder<TDef>(definition).whereBetween(column, range)
+    },
+
+    whereNotBetween<K extends Cols>(column: K, range: [min: unknown, max: unknown]) {
+      return new ModelQueryBuilder<TDef>(definition).whereNotBetween(column, range)
+    },
 
     create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): ModelInstance<TDef> {
       const instance = new ModelInstance<TDef>(definition, data as any)

@@ -4714,6 +4714,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
           else {
             // Multi-row path
+            const columnList = keys.map(k => quoteId(k)).join(',')
             sqlText = `INSERT INTO ${quoteId(table)}(${columnList})VALUES`
             let pidx = 0
             for (let r = 0; r < rowCount; r++) {
