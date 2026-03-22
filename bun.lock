@@ -54,9 +54,6 @@
       },
     },
   },
-  "overrides": {
-    "unconfig": "0.3.10",
-  },
   "packages": {
     "@bun-query-builder/benchmark": ["@bun-query-builder/benchmark@workspace:packages/benchmark"],
 

@@ -79,9 +79,6 @@
     "better-dx": "^0.2.7",
     "ts-mocker": "^0.1.7"
   },
-  "overrides": {
-    "unconfig": "0.3.10"
-  },
   "workspaces": [
     "packages/*"
   ],

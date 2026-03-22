@@ -1,5 +1,5 @@
 dependencies:
-  bun: ^1.3.4
+  bun: ^1.3.11
   mysql: latest
   postgres: latest
   sqlite: latest
