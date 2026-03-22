@@ -4,7 +4,7 @@
  * Provides a single `defineModel` function that works in both server and browser contexts.
  * No code generation needed - the same model definition works everywhere.
  *
- * - Server: Provides database query capabilities via ORM
+ * - Server: Provides database query capabilities via the dynamic ORM (createModel)
  * - Browser: Provides API query capabilities via fetch
  *
  * @example
@@ -32,6 +32,7 @@
  */
 
 import { createBrowserModel, isBrowser, type BrowserModelDefinition } from './browser'
+import { createModel, type ModelDefinition as OrmModelDefinition } from './orm'
 
 // Re-export the browser model types for convenience
 export type { BrowserModelDefinition as ModelDefinition }
@@ -47,8 +48,9 @@ function isClientSide(): boolean {
  * Define an isomorphic model that works in both server and browser.
  *
  * In the browser, this creates a model that uses fetch() to call your API.
- * On the server, this returns the definition for ORM generation AND provides
- * query methods that work directly with the database.
+ * On the server, this uses the dynamic ORM (createModel) to provide fully
+ * typed query methods that work directly with the database — no code
+ * generation needed.
  *
  * @param definition - The model definition
  * @returns An isomorphic model with query methods
@@ -59,45 +61,19 @@ export function defineModel<const TDef extends BrowserModelDefinition>(definitio
     return createBrowserModel(definition)
   }
 
-  // On server, return a model that:
-  // 1. Exposes the definition for build-time ORM generation
-  // 2. Provides query methods that will use the generated ORM
-  //
-  // Note: The actual ORM implementation is injected at runtime by the
-  // Stacks framework. This is a placeholder that gets replaced.
-  const serverModel = {
-    // Expose definition for build tools
+  // On server, use the dynamic ORM directly — no code generation needed.
+  // createModel() provides all typed query methods (where, find, create, etc.)
+  // backed by bun:sqlite at runtime.
+  const serverModel = createModel(definition as unknown as TDef & OrmModelDefinition)
+
+  // Merge the raw definition onto the model so build tools (migration generators,
+  // route generators, dashboard generators) can still introspect it.
+  return Object.assign(serverModel as unknown as Record<string, unknown>, {
     definition,
     getDefinition: () => definition,
     getTable: () => definition.table,
     getName: () => definition.name,
-
-    // Query methods - these will be overridden by the actual ORM
-    // For now, throw helpful errors if called before ORM is initialized
-    all: async () => {
-      throw new Error(`[defineModel] Server ORM not initialized for ${definition.name}. Make sure to run model generation.`)
-    },
-    find: async (_id: number | string) => {
-      throw new Error(`[defineModel] Server ORM not initialized for ${definition.name}. Make sure to run model generation.`)
-    },
-    first: async () => {
-      throw new Error(`[defineModel] Server ORM not initialized for ${definition.name}. Make sure to run model generation.`)
-    },
-    where: (_column: string, _operatorOrValue: any, _value?: any) => {
-      throw new Error(`[defineModel] Server ORM not initialized for ${definition.name}. Make sure to run model generation.`)
-    },
-    create: async (_data: any) => {
-      throw new Error(`[defineModel] Server ORM not initialized for ${definition.name}. Make sure to run model generation.`)
-    },
-    update: async (_id: number | string, _data: any) => {
-      throw new Error(`[defineModel] Server ORM not initialized for ${definition.name}. Make sure to run model generation.`)
-    },
-    delete: async (_id: number | string) => {
-      throw new Error(`[defineModel] Server ORM not initialized for ${definition.name}. Make sure to run model generation.`)
-    },
-  }
-
-  return serverModel as unknown as ReturnType<typeof createBrowserModel<TDef>>
+  }) as unknown as ReturnType<typeof createBrowserModel<TDef>>
 }
 
 /**
