@@ -27,6 +27,15 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { Faker } from 'ts-mocker'
 
+// Lazy reference to model registry to avoid circular dependency
+let _getModel: ((name: string) => any) | null = null
+function getModelFromRegistry(name: string): any {
+  if (!_getModel) {
+    try { _getModel = require('./model').getModel } catch { _getModel = () => undefined }
+  }
+  return _getModel!(name)
+}
+
 // Binding helper type for SQL queries
 type Bindings = SQLQueryBindings[]
 
@@ -127,12 +136,12 @@ export interface ModelDefinition {
   readonly indexes?: readonly object[]
   readonly dashboard?: { readonly highlight?: boolean | number }
   readonly hooks?: {
-    readonly beforeCreate?: (data: any) => void | Promise<void>
-    readonly afterCreate?: (model: any) => void | Promise<void>
-    readonly beforeUpdate?: (model: any, data: any) => void | Promise<void>
-    readonly afterUpdate?: (model: any) => void | Promise<void>
-    readonly beforeDelete?: (model: any) => void | Promise<void>
-    readonly afterDelete?: (model: any) => void | Promise<void>
+    readonly beforeCreate?: (data: Record<string, unknown>) => void | Promise<void>
+    readonly afterCreate?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }) => void | Promise<void>
+    readonly beforeUpdate?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }, data: Record<string, unknown>) => void | Promise<void>
+    readonly afterUpdate?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }) => void | Promise<void>
+    readonly beforeDelete?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }) => void | Promise<void>
+    readonly afterDelete?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }) => void | Promise<void>
   }
 }
 
@@ -154,8 +163,12 @@ type InferModelAttributes<TDef extends ModelDefinition> = {
 type SystemFields<TDef extends ModelDefinition> =
   { id: number } &
   (TDef['traits'] extends { useUuid: true } ? { uuid: string } : {}) &
-  (TDef['traits'] extends { useTimestamps: true } ? { created_at: string; updated_at: string } : {}) &
-  (TDef['traits'] extends { useSoftDeletes: true } ? { deleted_at: string | null } : {})
+  (TDef['traits'] extends { useTimestamps: true } ? { created_at: string; updated_at: string | null } : {}) &
+  (TDef['traits'] extends { timestampable: true | object } ? { created_at: string; updated_at: string | null } : {}) &
+  (TDef['traits'] extends { useSoftDeletes: true } ? { deleted_at: string | null } : {}) &
+  (TDef['traits'] extends { softDeletable: true | object } ? { deleted_at: string | null } : {}) &
+  (TDef['traits'] extends { useAuth: true | object } ? { two_factor_secret: string | null; public_key: string | null } : {}) &
+  (TDef['traits'] extends { billable: true | object } ? { stripe_id: string | null } : {})
 
 // Complete model type
 type ModelAttributes<TDef extends ModelDefinition> =
@@ -167,7 +180,11 @@ type ColumnName<TDef extends ModelDefinition> =
   | 'id'
   | (TDef['traits'] extends { useUuid: true } ? 'uuid' : never)
   | (TDef['traits'] extends { useTimestamps: true } ? 'created_at' | 'updated_at' : never)
+  | (TDef['traits'] extends { timestampable: true | object } ? 'created_at' | 'updated_at' : never)
   | (TDef['traits'] extends { useSoftDeletes: true } ? 'deleted_at' : never)
+  | (TDef['traits'] extends { softDeletable: true | object } ? 'deleted_at' : never)
+  | (TDef['traits'] extends { useAuth: true | object } ? 'two_factor_secret' | 'public_key' : never)
+  | (TDef['traits'] extends { billable: true | object } ? 'stripe_id' : never)
 
 // Hidden fields
 type HiddenKeys<TDef extends ModelDefinition> = {
@@ -177,6 +194,11 @@ type HiddenKeys<TDef extends ModelDefinition> = {
 // Fillable fields
 type FillableKeys<TDef extends ModelDefinition> = {
   [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { fillable: true } ? K : never
+}[AttributeKeys<TDef>]
+
+// Numeric attribute columns — constrains aggregate methods (sum, avg, etc.)
+type NumericColumns<TDef extends ModelDefinition> = {
+  [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { type: 'number' } ? K : never
 }[AttributeKeys<TDef>]
 
 // Infer relation names from model definition
@@ -243,6 +265,7 @@ class ModelInstance<
   private _original: Record<string, unknown>
   private _definition: TDef
   private _hasSaved = false
+  private _relations: Record<string, ModelInstance<any, any>[] | ModelInstance<any, any> | null> = {}
 
   constructor(definition: TDef, attributes: Partial<ModelAttributes<TDef>> = {}) {
     this._definition = definition
@@ -263,6 +286,29 @@ class ModelInstance<
     value: ModelAttributes<TDef>[K]
   ): void {
     this._attributes[key as string] = value
+  }
+
+  /**
+   * Get a loaded relation by name.
+   * Returns the related instance(s) if the relation was loaded via .with(),
+   * or undefined if the relation wasn't loaded.
+   */
+  getRelation(name: string): ModelInstance<any, any>[] | ModelInstance<any, any> | null | undefined {
+    return this._relations[name]
+  }
+
+  /**
+   * Set loaded relation data (used internally by eager loading).
+   */
+  setRelation(name: string, data: ModelInstance<any, any>[] | ModelInstance<any, any> | null): void {
+    this._relations[name] = data
+  }
+
+  /**
+   * Get all loaded relations.
+   */
+  getLoadedRelations(): Record<string, ModelInstance<any, any>[] | ModelInstance<any, any> | null> {
+    return { ...this._relations }
   }
 
   get attributes(): Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>> {
@@ -469,6 +515,19 @@ class ModelInstance<
     for (const [key, value] of Object.entries(this._attributes)) {
       if (!hidden.has(key)) json[key] = value
     }
+
+    for (const [relName, relData] of Object.entries(this._relations)) {
+      if (Array.isArray(relData)) {
+        json[relName] = relData.map(r => r.toJSON())
+      }
+      else if (relData) {
+        json[relName] = relData.toJSON()
+      }
+      else {
+        json[relName] = null
+      }
+    }
+
     return json as any
   }
 
@@ -476,6 +535,104 @@ class ModelInstance<
   toArray(): Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, HiddenKeys<TDef>> {
     return this.toJSON()
   }
+}
+
+/**
+ * Convert PascalCase model name to snake_case for foreign key convention.
+ * e.g., 'OrderItem' -> 'order_item', 'User' -> 'user'
+ */
+function toSnakeCase(str: string): string {
+  return str.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+}
+
+/**
+ * Convert PascalCase model name to its conventional table name (snake_case, pluralized).
+ * e.g., 'OrderItem' -> 'order_items', 'User' -> 'users', 'Category' -> 'categories'
+ */
+function toTableName(modelName: string): string {
+  const snake = toSnakeCase(modelName)
+  // Simple pluralization
+  if (snake.endsWith('y') && !snake.endsWith('ay') && !snake.endsWith('ey') && !snake.endsWith('oy') && !snake.endsWith('uy')) {
+    return snake.slice(0, -1) + 'ies'
+  }
+  if (snake.endsWith('s') || snake.endsWith('x') || snake.endsWith('ch') || snake.endsWith('sh')) {
+    return snake + 'es'
+  }
+  return snake + 's'
+}
+
+/**
+ * Resolve a relation from its name and the parent model's definition.
+ * Uses the model registry to find the related model's definition.
+ */
+function resolveRelation(definition: ModelDefinition, relationName: string): {
+  type: 'hasMany' | 'hasOne' | 'belongsTo' | 'belongsToMany'
+  relatedModelName: string
+  relatedTable: string
+  foreignKey: string
+  localKey: string
+} | null {
+  const parentName = definition.name
+  const parentPk = definition.primaryKey || 'id'
+
+  // Check hasMany
+  if (definition.hasMany) {
+    for (const rel of definition.hasMany) {
+      const modelName = typeof rel === 'string' ? rel : ''
+      if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
+        const relatedModel = getModelFromRegistry(modelName)
+        const relatedTable = relatedModel?.getTable?.() || toTableName(modelName)
+        const foreignKey = toSnakeCase(parentName) + '_id'
+        return { type: 'hasMany', relatedModelName: modelName, relatedTable, foreignKey, localKey: parentPk }
+      }
+    }
+  }
+
+  // Check hasOne
+  if (definition.hasOne) {
+    for (const rel of definition.hasOne) {
+      const modelName = typeof rel === 'string' ? rel : ''
+      if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
+        const relatedModel = getModelFromRegistry(modelName)
+        const relatedTable = relatedModel?.getTable?.() || toTableName(modelName)
+        const foreignKey = toSnakeCase(parentName) + '_id'
+        return { type: 'hasOne', relatedModelName: modelName, relatedTable, foreignKey, localKey: parentPk }
+      }
+    }
+  }
+
+  // Check belongsTo
+  if (definition.belongsTo) {
+    for (const rel of definition.belongsTo) {
+      const modelName = typeof rel === 'string' ? rel : ''
+      if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
+        const relatedModel = getModelFromRegistry(modelName)
+        const relatedTable = relatedModel?.getTable?.() || toTableName(modelName)
+        const relatedPk = relatedModel?.getDefinition?.()?.primaryKey || 'id'
+        const foreignKey = toSnakeCase(modelName) + '_id'
+        return { type: 'belongsTo', relatedModelName: modelName, relatedTable, foreignKey, localKey: relatedPk }
+      }
+    }
+  }
+
+  // Check belongsToMany
+  if (definition.belongsToMany) {
+    for (const rel of definition.belongsToMany) {
+      const modelName = typeof rel === 'string' ? rel : (rel as any)?.model || ''
+      if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
+        const relatedModel = getModelFromRegistry(modelName)
+        const relatedTable = relatedModel?.getTable?.() || toTableName(modelName)
+        // Pivot table convention: alphabetical order of both table names
+        const tables = [definition.table, relatedTable].sort()
+        // eslint-disable-next-line no-unused-vars
+        const pivotTable = (typeof rel === 'object' && (rel as any).pivotTable) || tables.join('_')
+        const foreignKey = toSnakeCase(parentName) + '_id'
+        return { type: 'belongsToMany', relatedModelName: modelName, relatedTable, foreignKey, localKey: parentPk }
+      }
+    }
+  }
+
+  return null
 }
 
 /**
@@ -703,11 +860,100 @@ class ModelQueryBuilder<
     return this.buildQuery()
   }
 
+  /**
+   * Eager load relations onto a set of already-fetched instances.
+   * Uses separate queries per relation (N+1 prevention via batch loading).
+   */
+  private eagerLoadRelations(instances: ModelInstance<TDef, TSelected>[]): void {
+    if (instances.length === 0 || this._withRelations.length === 0) return
+
+    const db = getDatabase()
+    const pk = this._definition.primaryKey || 'id'
+
+    for (const relationName of this._withRelations) {
+      const rel = resolveRelation(this._definition as ModelDefinition, relationName)
+      if (!rel) continue
+
+      if (rel.type === 'hasMany' || rel.type === 'hasOne') {
+        // Get parent IDs
+        const parentIds = instances.map(i => i.get(pk as any)).filter(id => id != null)
+        if (parentIds.length === 0) continue
+
+        const placeholders = parentIds.map(() => '?').join(', ')
+        const rows = db.query(
+          `SELECT * FROM ${rel.relatedTable} WHERE ${rel.foreignKey} IN (${placeholders})`,
+        ).all(...(parentIds as any[])) as Record<string, unknown>[]
+
+        // Try to get the related model's definition for proper instances
+        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+
+        if (rel.type === 'hasMany') {
+          // Group by foreign key
+          const grouped = new Map<unknown, Record<string, unknown>[]>()
+          for (const row of rows) {
+            const fkVal = row[rel.foreignKey]
+            if (!grouped.has(fkVal)) grouped.set(fkVal, [])
+            grouped.get(fkVal)!.push(row)
+          }
+          for (const instance of instances) {
+            const related = grouped.get(instance.get(pk as any)) || []
+            instance.setRelation(relationName, related.map(r => new ModelInstance(relDef as any, r as any)))
+          }
+        }
+        else {
+          // hasOne - single record per parent
+          const byFk = new Map<unknown, Record<string, unknown>>()
+          for (const row of rows) {
+            byFk.set(row[rel.foreignKey], row)
+          }
+          for (const instance of instances) {
+            const row = byFk.get(instance.get(pk as any))
+            instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any) : null)
+          }
+        }
+      }
+
+      if (rel.type === 'belongsTo') {
+        // Get foreign key values from instances
+        const fkValues = instances.map(i => (i as any)._attributes[rel.foreignKey]).filter(v => v != null)
+        const uniqueFkValues = [...new Set(fkValues)]
+        if (uniqueFkValues.length === 0) continue
+
+        const placeholders = uniqueFkValues.map(() => '?').join(', ')
+        const rows = db.query(
+          `SELECT * FROM ${rel.relatedTable} WHERE ${rel.localKey} IN (${placeholders})`,
+        ).all(...(uniqueFkValues as any[])) as Record<string, unknown>[]
+
+        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+
+        const byPk = new Map<unknown, Record<string, unknown>>()
+        for (const row of rows) {
+          byPk.set(row[rel.localKey], row)
+        }
+
+        for (const instance of instances) {
+          const fkVal = (instance as any)._attributes[rel.foreignKey]
+          const row = byPk.get(fkVal)
+          instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any) : null)
+        }
+      }
+    }
+  }
+
   get(): ModelInstance<TDef, TSelected>[] {
     const db = getDatabase()
     const { sql, params } = this.buildQuery()
     const rows = db.query(sql).all(...(params as Bindings)) as Record<string, unknown>[]
-    return rows.map(row => new ModelInstance<TDef, TSelected>(this._definition, row as any))
+    const instances = rows.map(row => new ModelInstance<TDef, TSelected>(this._definition, row as any))
+
+    // Eager load relations
+    if (this._withRelations.length > 0) {
+      this.eagerLoadRelations(instances)
+    }
+
+    return instances
   }
 
   first(): ModelInstance<TDef, TSelected> | undefined {
@@ -773,7 +1019,7 @@ class ModelQueryBuilder<
    * Post.where('id', 1).increment('views', 5)
    * ```
    */
-  increment<K extends AttributeKeys<TDef>>(column: K, amount = 1): number {
+  increment<K extends NumericColumns<TDef>>(column: K, amount = 1): number {
     const db = getDatabase()
     const params: unknown[] = [amount]
 
@@ -801,7 +1047,7 @@ class ModelQueryBuilder<
    * Product.where('id', 1).decrement('stock', 3)
    * ```
    */
-  decrement<K extends AttributeKeys<TDef>>(column: K, amount = 1): number {
+  decrement<K extends NumericColumns<TDef>>(column: K, amount = 1): number {
     return this.increment(column, -amount)
   }
 
@@ -819,10 +1065,11 @@ class ModelQueryBuilder<
     let page = 0
     while (true) {
       const builder = new ModelQueryBuilder<TDef, TSelected>(this._definition)
-      // Copy wheres and orders
+      // Copy wheres, orders, and relations
       builder._wheres = [...this._wheres]
       builder._orderBy = [...this._orderBy]
       builder._select = [...this._select]
+      builder._withRelations = [...this._withRelations]
       builder._limit = size
       builder._offset = page * size
 
@@ -883,11 +1130,11 @@ class ModelQueryBuilder<
     return this.aggregate('MIN', column as string)
   }
 
-  avg<K extends AttributeKeys<TDef>>(column: K): number {
+  avg<K extends NumericColumns<TDef>>(column: K): number {
     return this.aggregate('AVG', column as string)
   }
 
-  sum<K extends AttributeKeys<TDef>>(column: K): number {
+  sum<K extends NumericColumns<TDef>>(column: K): number {
     return this.aggregate('SUM', column as string)
   }
 
@@ -931,6 +1178,7 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
   type Cols = ColumnName<TDef>
   type AttrKeys = AttributeKeys<TDef>
   type Fillable = FillableKeys<TDef>
+  type Numeric = NumericColumns<TDef>
 
   const model = {
     query: () => new ModelQueryBuilder<TDef>(definition),
@@ -1092,8 +1340,8 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
 
     max: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).max(column),
     min: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).min(column),
-    avg: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).avg(column),
-    sum: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).sum(column),
+    avg: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).avg(column),
+    sum: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).sum(column),
 
     pluck<K extends Cols>(column: K) {
       return new ModelQueryBuilder<TDef>(definition).pluck(column)
@@ -1148,7 +1396,7 @@ export function createTableFromModel(definition: ModelDefinition): void {
   db.run(`CREATE TABLE IF NOT EXISTS ${definition.table} (${columns.join(', ')})`)
 }
 
-function createFakerCompatLayer(tsMocker: any): any {
+function createFakerCompatLayer(tsMocker: Record<string, unknown>): Record<string, unknown> {
   return new Proxy(tsMocker, {
     get(target, prop) {
       if (prop === 'location') return target.address
@@ -1166,14 +1414,14 @@ function createFakerCompatLayer(tsMocker: any): any {
   })
 }
 
-export async function seedModel(definition: ModelDefinition, count?: number, faker?: any): Promise<void> {
+export async function seedModel(definition: ModelDefinition, count?: number, faker?: Record<string, unknown>): Promise<void> {
   const db = getDatabase()
   const seeder = definition.traits?.useSeeder
   const seedCount = count ?? (typeof seeder === 'object' && seeder ? seeder.count : 10)
 
   if (!faker) {
     try {
-      const tsMocker = await (import('ts-mocker' as string) as Promise<{ faker: any }>)
+      const tsMocker = await (import('ts-mocker' as string) as Promise<{ faker: Record<string, unknown> }>)
       faker = createFakerCompatLayer(tsMocker.faker)
     }
 catch {

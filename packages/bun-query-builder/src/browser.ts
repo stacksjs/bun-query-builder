@@ -81,13 +81,35 @@ export interface BrowserModelDefinition {
   readonly primaryKey?: string
   readonly traits?: {
     readonly useUuid?: boolean
-    readonly useTimestamps?: boolean
-    readonly useSoftDeletes?: boolean
-    readonly useApi?: {
-      readonly uri: string
+    readonly useTimestamps?: boolean | object
+    readonly timestampable?: boolean | object
+    readonly useSoftDeletes?: boolean | object
+    readonly softDeletable?: boolean | object
+    readonly useApi?: boolean | {
+      readonly uri?: string
       readonly routes?: readonly string[]
+      readonly middleware?: readonly string[]
     }
+    readonly useAuth?: boolean | object
+    readonly billable?: boolean | object
+    readonly useSearch?: boolean | object
+    readonly useSeeder?: boolean | object
+    readonly seedable?: boolean | object
+    readonly authenticatable?: boolean | object
+    readonly observe?: boolean | readonly string[]
+    readonly likeable?: boolean | object
+    readonly taggable?: boolean
+    readonly categorizable?: boolean
+    readonly commentables?: boolean
+    readonly useActivityLog?: boolean | object
+    readonly useSocials?: readonly string[]
   }
+  readonly belongsTo?: readonly string[]
+  readonly hasMany?: readonly string[]
+  readonly hasOne?: readonly string[]
+  readonly belongsToMany?: readonly (string | object)[]
+  readonly hasOneThrough?: readonly (string | object)[]
+  readonly hasManyThrough?: readonly (string | object)[]
   readonly attributes: {
     readonly [key: string]: BrowserTypedAttribute<unknown>
   }
@@ -111,8 +133,12 @@ type InferBrowserModelAttributes<TDef extends BrowserModelDefinition> = {
 type BrowserSystemFields<TDef extends BrowserModelDefinition> =
   { id: number } &
   (TDef['traits'] extends { useUuid: true } ? { uuid: string } : {}) &
-  (TDef['traits'] extends { useTimestamps: true } ? { created_at: string; updated_at: string } : {}) &
-  (TDef['traits'] extends { useSoftDeletes: true } ? { deleted_at: string | null } : {})
+  (TDef['traits'] extends { useTimestamps: true } ? { created_at: string; updated_at: string | null } : {}) &
+  (TDef['traits'] extends { timestampable: true | object } ? { created_at: string; updated_at: string | null } : {}) &
+  (TDef['traits'] extends { useSoftDeletes: true } ? { deleted_at: string | null } : {}) &
+  (TDef['traits'] extends { softDeletable: true | object } ? { deleted_at: string | null } : {}) &
+  (TDef['traits'] extends { useAuth: true | object } ? { two_factor_secret: string | null; public_key: string | null } : {}) &
+  (TDef['traits'] extends { billable: true | object } ? { stripe_id: string | null } : {})
 
 // Complete model type
 type BrowserModelAttributes<TDef extends BrowserModelDefinition> =
@@ -124,7 +150,11 @@ type BrowserColumnName<TDef extends BrowserModelDefinition> =
   | 'id'
   | (TDef['traits'] extends { useUuid: true } ? 'uuid' : never)
   | (TDef['traits'] extends { useTimestamps: true } ? 'created_at' | 'updated_at' : never)
+  | (TDef['traits'] extends { timestampable: true | object } ? 'created_at' | 'updated_at' : never)
   | (TDef['traits'] extends { useSoftDeletes: true } ? 'deleted_at' : never)
+  | (TDef['traits'] extends { softDeletable: true | object } ? 'deleted_at' : never)
+  | (TDef['traits'] extends { useAuth: true | object } ? 'two_factor_secret' | 'public_key' : never)
+  | (TDef['traits'] extends { billable: true | object } ? 'stripe_id' : never)
 
 // Hidden fields
 type BrowserHiddenKeys<TDef extends BrowserModelDefinition> = {
@@ -135,6 +165,44 @@ type BrowserHiddenKeys<TDef extends BrowserModelDefinition> = {
 type BrowserFillableKeys<TDef extends BrowserModelDefinition> = {
   [K in BrowserAttributeKeys<TDef>]: TDef['attributes'][K] extends { fillable: true } ? K : never
 }[BrowserAttributeKeys<TDef>]
+
+// Numeric columns — constrains aggregate-like column parameters
+type BrowserNumericColumns<TDef extends BrowserModelDefinition> = {
+  [K in BrowserAttributeKeys<TDef>]: TDef['attributes'][K] extends { type: 'number' } ? K : never
+}[BrowserAttributeKeys<TDef>]
+
+// Relation name inference for browser models
+type BrowserBelongsToNames<TDef> =
+  TDef extends { belongsTo: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never
+
+type BrowserHasManyNames<TDef> =
+  TDef extends { hasMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never
+
+type BrowserHasOneNames<TDef> =
+  TDef extends { hasOne: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never
+
+type BrowserBelongsToManyNames<TDef> =
+  TDef extends { belongsToMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+
+type BrowserHasOneThroughNames<TDef> =
+  TDef extends { hasOneThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+
+type BrowserHasManyThroughNames<TDef> =
+  TDef extends { hasManyThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+
+type BrowserRelationNames<TDef> =
+  | BrowserBelongsToNames<TDef>
+  | BrowserHasManyNames<TDef>
+  | BrowserHasOneNames<TDef>
+  | BrowserBelongsToManyNames<TDef>
+  | BrowserHasOneThroughNames<TDef>
+  | BrowserHasManyThroughNames<TDef>
 
 // ============================================================================
 // Browser configuration
@@ -242,7 +310,7 @@ export type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'in'
 interface WhereClause {
   column: string
   operator: WhereOperator
-  value: any
+  value: unknown
   boolean: 'and' | 'or'
 }
 
@@ -771,7 +839,7 @@ class BrowserModelQueryBuilder<
   }
 
   private getTablePath(): string {
-    return this._definition.traits?.useApi?.uri || this._definition.table
+    return (typeof this._definition.traits?.useApi === 'object' && this._definition.traits.useApi?.uri) || this._definition.table
   }
 
   where<K extends BrowserColumnName<TDef>>(
@@ -869,8 +937,10 @@ else {
     return this as unknown as BrowserModelQueryBuilder<TDef, K>
   }
 
-  with(...relations: string[]): BrowserModelQueryBuilder<TDef, TSelected> {
-    this._withRelations.push(...relations)
+  with<R extends BrowserRelationNames<TDef> extends never ? string : BrowserRelationNames<TDef>>(
+    ...relations: R[]
+  ): BrowserModelQueryBuilder<TDef, TSelected> {
+    this._withRelations.push(...(relations as string[]))
     return this
   }
 
@@ -1164,7 +1234,7 @@ export function createBrowserModel<const TDef extends BrowserModelDefinition>(de
     },
 
     async create(data: Partial<Pick<InferBrowserModelAttributes<TDef>, Fillable>>): Promise<BrowserModelInstance<TDef>> {
-      const tablePath = definition.traits?.useApi?.uri || definition.table
+      const tablePath = (typeof definition.traits?.useApi === 'object' && definition.traits.useApi?.uri) || definition.table
       const url = `${browserConfig.baseUrl}/${tablePath}`
       const body = browserConfig.transformRequest ? browserConfig.transformRequest(data) : data
       const response = await fetch(url, {
@@ -1178,7 +1248,7 @@ export function createBrowserModel<const TDef extends BrowserModelDefinition>(de
     },
 
     async update(id: number | string, data: Partial<Pick<InferBrowserModelAttributes<TDef>, Fillable>>): Promise<BrowserModelInstance<TDef>> {
-      const tablePath = definition.traits?.useApi?.uri || definition.table
+      const tablePath = (typeof definition.traits?.useApi === 'object' && definition.traits.useApi?.uri) || definition.table
       const url = `${browserConfig.baseUrl}/${tablePath}/${id}`
       const body = browserConfig.transformRequest ? browserConfig.transformRequest(data) : data
       const response = await fetch(url, {
@@ -1192,7 +1262,7 @@ export function createBrowserModel<const TDef extends BrowserModelDefinition>(de
     },
 
     async delete(id: number | string): Promise<boolean> {
-      const tablePath = definition.traits?.useApi?.uri || definition.table
+      const tablePath = (typeof definition.traits?.useApi === 'object' && definition.traits.useApi?.uri) || definition.table
       const url = `${browserConfig.baseUrl}/${tablePath}/${id}`
       const response = await fetch(url, {
         method: 'DELETE',
@@ -1234,7 +1304,7 @@ export const browserAuth = {
   /**
    * Login and store token
    */
-  async login(credentials: { email: string, password: string }): Promise<{ user: any, token: string }> {
+  async login(credentials: { email: string, password: string }): Promise<{ user: Record<string, unknown>, token: string }> {
     const response = await fetch(`${browserConfig.baseUrl}/login`, {
       method: 'POST',
       headers: {
@@ -1265,7 +1335,7 @@ export const browserAuth = {
   /**
    * Register a new user
    */
-  async register(data: { name: string, email: string, password: string }): Promise<{ user: any, token: string }> {
+  async register(data: { name: string, email: string, password: string }): Promise<{ user: Record<string, unknown>, token: string }> {
     const response = await fetch(`${browserConfig.baseUrl}/register`, {
       method: 'POST',
       headers: {
@@ -1320,7 +1390,7 @@ export const browserAuth = {
   /**
    * Get current authenticated user
    */
-  async user(): Promise<any | null> {
+  async user(): Promise<Record<string, unknown> | null> {
     const token = await getAuthToken()
     if (!token) return null
 
