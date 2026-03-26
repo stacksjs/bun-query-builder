@@ -260,9 +260,11 @@ export function configureOrm(options: { database?: string | Database; verbose?: 
   if (options.database instanceof Database) {
     globalDb = options.database
   }
-else {
+  else {
     globalDb = new Database(options.database || ':memory:', { create: true })
   }
+  // Clear prepared statement cache when database changes
+  preparedStatementCache.clear()
 }
 
 export function getDatabase(): Database {
@@ -280,7 +282,7 @@ class ModelInstance<
   TSelected extends ColumnName<TDef> = ColumnName<TDef>
 > {
   private _attributes: Record<string, unknown>
-  private _original: Record<string, unknown>
+  private _original: Record<string, unknown> | null // null = copy-on-write (identical to _attributes)
   private _definition: TDef
   private _hasSaved = false
   private _relations: Record<string, ModelInstance<any, any>[] | ModelInstance<any, any> | null> = {}
@@ -288,7 +290,13 @@ class ModelInstance<
   constructor(definition: TDef, attributes: Partial<ModelAttributes<TDef>> = {}) {
     this._definition = definition
     this._attributes = { ...attributes }
-    this._original = { ...attributes }
+    this._original = null // deferred — only copied on first mutation
+  }
+
+  /** Get the original attributes, creating the snapshot on first access after a mutation. */
+  private getOriginalAttributes(): Record<string, unknown> {
+    if (this._original === null) this._original = { ...this._attributes }
+    return this._original
   }
 
   get<K extends TSelected>(key: K): K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : never {
@@ -303,6 +311,8 @@ class ModelInstance<
     key: K,
     value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
   ): void {
+    // Snapshot original on first mutation (copy-on-write)
+    if (this._original === null) this._original = { ...this._attributes }
     this._attributes[key as string] = value
   }
 
@@ -339,10 +349,12 @@ class ModelInstance<
   }
 
   isDirty(column?: ColumnName<TDef>): boolean {
+    // If _original is null, no mutations have happened — nothing is dirty
+    if (this._original === null) return false
     if (column) {
-      return this._attributes[column as string] !== this._original[column as string]
+      return this._attributes[column as string] !== this._original![column as string]
     }
-    return Object.keys(this._attributes).some(k => this._attributes[k] !== this._original[k])
+    return Object.keys(this._attributes).some(k => this._attributes[k] !== this._original![k])
   }
 
   isClean(column?: ColumnName<TDef>): boolean {
@@ -350,10 +362,12 @@ class ModelInstance<
   }
 
   getOriginal<K extends ColumnName<TDef>>(column: K): K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown {
-    return this._original[column as string] as any
+    const orig = this.getOriginalAttributes()
+    return orig[column as string] as any
   }
 
   getChanges(): Partial<InferModelAttributes<TDef>> {
+    if (this._original === null) return {} as any // no mutations
     const changes: Record<string, unknown> = {}
     for (const key of Object.keys(this._attributes)) {
       if (this._attributes[key] !== this._original[key]) {
@@ -555,10 +569,11 @@ class ModelInstance<
   }
 }
 
-// Memoization caches for hot-path string conversions
+// Memoization caches for hot-path string conversions and query plans
 const snakeCaseCache = new Map<string, string>()
 const tableNameCache = new Map<string, string>()
 const relationCache = new Map<string, ReturnType<typeof resolveRelation>>()
+const preparedStatementCache = new Map<string, ReturnType<Database['prepare']>>()
 
 /**
  * Convert PascalCase model name to snake_case for foreign key convention.
@@ -1203,8 +1218,22 @@ class ModelQueryBuilder<
   pluck<K extends ColumnName<TDef>>(
     column: K
   ): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[] {
-    this._select = [column as string]
-    return this.get().map(r => r.get(column as any)) as any
+    // Raw query — avoid creating ModelInstance objects just to extract one column
+    const db = getDatabase()
+    const params: unknown[] = []
+    let sql = `SELECT ${column as string} FROM ${this._definition.table}`
+
+    if (this._wheres.length > 0) {
+      sql += ` WHERE ${this.buildWhereClauses(params)}`
+    }
+    if (this._orderBy.length > 0) {
+      sql += ` ORDER BY ${this._orderBy.map(o => `${o.column} ${o.direction.toUpperCase()}`).join(', ')}`
+    }
+    if (this._limit !== undefined) sql += ` LIMIT ${this._limit}`
+    if (this._offset !== undefined) sql += ` OFFSET ${this._offset}`
+
+    const rows = db.query(sql).all(...(params as Bindings)) as Record<string, unknown>[]
+    return rows.map(r => r[column as string]) as any
   }
 
   private aggregate(fn: string, column: string): number | null {
@@ -1366,7 +1395,14 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     find(id: number | string): ModelInstance<TDef> | undefined {
       const db = getDatabase()
       const pk = definition.primaryKey || 'id'
-      const row = db.query(`SELECT * FROM ${definition.table} WHERE ${pk} = ?`).get(id) as Record<string, unknown> | null
+      const sql = `SELECT * FROM ${definition.table} WHERE ${pk} = ?`
+      // Use prepared statement cache for repeated find() calls
+      let stmt = preparedStatementCache.get(sql)
+      if (!stmt) {
+        stmt = db.prepare(sql)
+        preparedStatementCache.set(sql, stmt)
+      }
+      const row = stmt.get(id) as Record<string, unknown> | null
       return row ? new ModelInstance<TDef>(definition, row as any) : undefined
     },
 
