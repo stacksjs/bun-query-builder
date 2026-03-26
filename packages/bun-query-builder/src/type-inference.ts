@@ -86,14 +86,14 @@ interface InferableModelDefinition {
     readonly useAuth?: boolean | object
     readonly billable?: boolean | object
   }
-  readonly belongsTo?: readonly string[]
-  readonly hasMany?: readonly string[]
-  readonly hasOne?: readonly string[]
-  readonly belongsToMany?: readonly (string | object)[]
-  readonly hasOneThrough?: readonly (string | object)[]
-  readonly hasManyThrough?: readonly (string | object)[]
-  readonly morphOne?: string | object
-  readonly morphMany?: readonly (string | object)[]
+  readonly belongsTo?: readonly string[] | Readonly<Record<string, string>>
+  readonly hasMany?: readonly string[] | Readonly<Record<string, string>>
+  readonly hasOne?: readonly string[] | Readonly<Record<string, string>>
+  readonly belongsToMany?: readonly (string | object)[] | Readonly<Record<string, string | object>>
+  readonly hasOneThrough?: readonly (string | object)[] | Readonly<Record<string, string | object>>
+  readonly hasManyThrough?: readonly (string | object)[] | Readonly<Record<string, string | object>>
+  readonly morphOne?: string | object | Readonly<Record<string, string>>
+  readonly morphMany?: readonly (string | object)[] | Readonly<Record<string, string | object>>
   readonly morphTo?: object
   readonly morphToMany?: readonly string[]
   readonly morphedByMany?: readonly string[]
@@ -349,28 +349,40 @@ export type InferGuardedKeys<TModel> =
 // ============================================================================
 
 type InferBelongsToNames<TDef> =
-  TDef extends { belongsTo: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never
+  (TDef extends { belongsTo: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never)
+  | (TDef extends { belongsTo: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferHasManyNames<TDef> =
-  TDef extends { hasMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never
+  (TDef extends { hasMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never)
+  | (TDef extends { hasMany: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferHasOneNames<TDef> =
-  TDef extends { hasOne: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never
+  (TDef extends { hasOne: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never)
+  | (TDef extends { hasOne: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferBelongsToManyNames<TDef> =
-  TDef extends { belongsToMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+  (TDef extends { belongsToMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
+  | (TDef extends { belongsToMany: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferHasOneThroughNames<TDef> =
-  TDef extends { hasOneThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+  (TDef extends { hasOneThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
+  | (TDef extends { hasOneThrough: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferHasManyThroughNames<TDef> =
-  TDef extends { hasManyThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+  (TDef extends { hasManyThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
+  | (TDef extends { hasManyThrough: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 // ============================================================================
 // Relation cardinality inference
@@ -382,20 +394,40 @@ type InferHasManyThroughNames<TDef> =
  */
 export type RelationCardinality<TModel, R extends string> =
   ResolveDefinition<TModel> extends infer TDef
-    ? (TDef extends { hasMany: readonly (infer M)[] }
+    ? // hasMany array syntax
+    (TDef extends { hasMany: readonly (infer M)[] }
         ? Lowercase<M & string> extends R ? 'many' : never
         : never)
+    // hasMany object syntax
+    | (TDef extends { hasMany: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'many' : never : never
+        : never)
+    // hasOne array syntax
     | (TDef extends { hasOne: readonly (infer M)[] }
         ? Lowercase<M & string> extends R ? 'one' : never
         : never)
+    // hasOne object syntax
+    | (TDef extends { hasOne: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'one' : never : never
+        : never)
+    // belongsTo array syntax
     | (TDef extends { belongsTo: readonly (infer M)[] }
         ? Lowercase<M & string> extends R ? 'one' : never
         : never)
+    // belongsTo object syntax
+    | (TDef extends { belongsTo: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'one' : never : never
+        : never)
+    // belongsToMany array syntax
     | (TDef extends { belongsToMany: readonly (infer M)[] }
         ? M extends string
           ? Lowercase<M> extends R ? 'many' : never
           : M extends { model: infer N extends string }
             ? Lowercase<N> extends R ? 'many' : never
             : never
+        : never)
+    // belongsToMany object syntax
+    | (TDef extends { belongsToMany: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'many' : never : never
         : never)
     : never

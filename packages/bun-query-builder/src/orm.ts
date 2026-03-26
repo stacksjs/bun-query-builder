@@ -122,14 +122,14 @@ export interface ModelDefinition {
     readonly useActivityLog?: boolean | object
     readonly useSocials?: readonly string[]
   }
-  readonly belongsTo?: readonly string[]
-  readonly hasMany?: readonly string[]
-  readonly hasOne?: readonly string[]
-  readonly belongsToMany?: readonly (string | object)[]
-  readonly hasOneThrough?: readonly (string | object)[]
-  readonly hasManyThrough?: readonly (string | object)[]
-  readonly morphOne?: string | object
-  readonly morphMany?: readonly (string | object)[]
+  readonly belongsTo?: readonly string[] | Readonly<Record<string, string>>
+  readonly hasMany?: readonly string[] | Readonly<Record<string, string>>
+  readonly hasOne?: readonly string[] | Readonly<Record<string, string>>
+  readonly belongsToMany?: readonly (string | object)[] | Readonly<Record<string, string | object>>
+  readonly hasOneThrough?: readonly (string | object)[] | Readonly<Record<string, string | object>>
+  readonly hasManyThrough?: readonly (string | object)[] | Readonly<Record<string, string | object>>
+  readonly morphOne?: string | object | Readonly<Record<string, string>>
+  readonly morphMany?: readonly (string | object)[] | Readonly<Record<string, string | object>>
   readonly morphTo?: object
   readonly morphToMany?: readonly string[]
   readonly morphedByMany?: readonly string[]
@@ -207,30 +207,42 @@ type NumericColumns<TDef extends ModelDefinition> = {
   [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { type: 'number' } ? K : never
 }[AttributeKeys<TDef>]
 
-// Infer relation names from model definition
+// Infer relation names from model definition (supports both array and object syntax)
 type InferBelongsToNames<TDef> =
-  TDef extends { belongsTo: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never
+  (TDef extends { belongsTo: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never)
+  | (TDef extends { belongsTo: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferHasManyNames<TDef> =
-  TDef extends { hasMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never
+  (TDef extends { hasMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never)
+  | (TDef extends { hasMany: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferHasOneNames<TDef> =
-  TDef extends { hasOne: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never
+  (TDef extends { hasOne: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never)
+  | (TDef extends { hasOne: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferBelongsToManyNames<TDef> =
-  TDef extends { belongsToMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+  (TDef extends { belongsToMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
+  | (TDef extends { belongsToMany: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferHasOneThroughNames<TDef> =
-  TDef extends { hasOneThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+  (TDef extends { hasOneThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
+  | (TDef extends { hasOneThrough: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type InferHasManyThroughNames<TDef> =
-  TDef extends { hasManyThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+  (TDef extends { hasManyThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
+  | (TDef extends { hasManyThrough: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 export type InferRelationNames<TDef> =
   | InferBelongsToNames<TDef>
@@ -570,6 +582,10 @@ function toTableName(modelName: string): string {
 /**
  * Resolve a relation from its name and the parent model's definition.
  * Uses the model registry to find the related model's definition.
+ *
+ * Supports both syntaxes:
+ *   Array syntax:  hasMany: ['Order']        → relation name is 'order', model is 'Order'
+ *   Object syntax: hasMany: { orders: 'Order' } → relation name is 'orders', model is 'Order'
  */
 function resolveRelation(definition: ModelDefinition, relationName: string): {
   type: 'hasMany' | 'hasOne' | 'belongsTo' | 'belongsToMany'
@@ -581,61 +597,78 @@ function resolveRelation(definition: ModelDefinition, relationName: string): {
   const parentName = definition.name
   const parentPk = definition.primaryKey || 'id'
 
-  // Check hasMany
-  if (definition.hasMany) {
-    for (const rel of definition.hasMany) {
-      const modelName = typeof rel === 'string' ? rel : ''
-      if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
-        const relatedModel = getModelFromRegistry(modelName)
-        const relatedTable = relatedModel?.getTable?.() || toTableName(modelName)
-        const foreignKey = toSnakeCase(parentName) + '_id'
-        return { type: 'hasMany', relatedModelName: modelName, relatedTable, foreignKey, localKey: parentPk }
+  /**
+   * Search a relation field for a matching relation name.
+   * Handles both array format (['Order']) and object format ({ orders: 'Order' }).
+   * Returns the model name if found, or null otherwise.
+   */
+  function findModelName(
+    rel: readonly (string | object)[] | Readonly<Record<string, string | object>> | undefined,
+  ): string | null {
+    if (!rel) return null
+
+    // Array syntax: hasMany: ['Order'] → relation name is lowercased model name
+    if (Array.isArray(rel)) {
+      for (const item of rel) {
+        const modelName = typeof item === 'string' ? item : (item as any)?.model || ''
+        if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
+          return modelName
+        }
+      }
+      return null
+    }
+
+    // Object syntax: hasMany: { orders: 'Order' } → relation name is the key
+    if (typeof rel === 'object') {
+      for (const [key, value] of Object.entries(rel)) {
+        if (key === relationName || key.toLowerCase() === relationName.toLowerCase()) {
+          return typeof value === 'string' ? value : (value as any)?.model || (value as any)?.target || key
+        }
       }
     }
+
+    return null
+  }
+
+  // Check hasMany
+  const hasManyModel = findModelName(definition.hasMany)
+  if (hasManyModel) {
+    const relatedModel = getModelFromRegistry(hasManyModel)
+    const relatedTable = relatedModel?.getTable?.() || toTableName(hasManyModel)
+    const foreignKey = toSnakeCase(parentName) + '_id'
+    return { type: 'hasMany', relatedModelName: hasManyModel, relatedTable, foreignKey, localKey: parentPk }
   }
 
   // Check hasOne
-  if (definition.hasOne) {
-    for (const rel of definition.hasOne) {
-      const modelName = typeof rel === 'string' ? rel : ''
-      if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
-        const relatedModel = getModelFromRegistry(modelName)
-        const relatedTable = relatedModel?.getTable?.() || toTableName(modelName)
-        const foreignKey = toSnakeCase(parentName) + '_id'
-        return { type: 'hasOne', relatedModelName: modelName, relatedTable, foreignKey, localKey: parentPk }
-      }
-    }
+  const hasOneModel = findModelName(definition.hasOne)
+  if (hasOneModel) {
+    const relatedModel = getModelFromRegistry(hasOneModel)
+    const relatedTable = relatedModel?.getTable?.() || toTableName(hasOneModel)
+    const foreignKey = toSnakeCase(parentName) + '_id'
+    return { type: 'hasOne', relatedModelName: hasOneModel, relatedTable, foreignKey, localKey: parentPk }
   }
 
   // Check belongsTo
-  if (definition.belongsTo) {
-    for (const rel of definition.belongsTo) {
-      const modelName = typeof rel === 'string' ? rel : ''
-      if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
-        const relatedModel = getModelFromRegistry(modelName)
-        const relatedTable = relatedModel?.getTable?.() || toTableName(modelName)
-        const relatedPk = relatedModel?.getDefinition?.()?.primaryKey || 'id'
-        const foreignKey = toSnakeCase(modelName) + '_id'
-        return { type: 'belongsTo', relatedModelName: modelName, relatedTable, foreignKey, localKey: relatedPk }
-      }
-    }
+  const belongsToModel = findModelName(definition.belongsTo)
+  if (belongsToModel) {
+    const relatedModel = getModelFromRegistry(belongsToModel)
+    const relatedTable = relatedModel?.getTable?.() || toTableName(belongsToModel)
+    const relatedPk = relatedModel?.getDefinition?.()?.primaryKey || 'id'
+    const foreignKey = toSnakeCase(belongsToModel) + '_id'
+    return { type: 'belongsTo', relatedModelName: belongsToModel, relatedTable, foreignKey, localKey: relatedPk }
   }
 
   // Check belongsToMany
-  if (definition.belongsToMany) {
-    for (const rel of definition.belongsToMany) {
-      const modelName = typeof rel === 'string' ? rel : (rel as any)?.model || ''
-      if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
-        const relatedModel = getModelFromRegistry(modelName)
-        const relatedTable = relatedModel?.getTable?.() || toTableName(modelName)
-        // Pivot table convention: alphabetical order of both table names
-        const tables = [definition.table, relatedTable].sort()
-        // eslint-disable-next-line no-unused-vars
-        const pivotTable = (typeof rel === 'object' && (rel as any).pivotTable) || tables.join('_')
-        const foreignKey = toSnakeCase(parentName) + '_id'
-        return { type: 'belongsToMany', relatedModelName: modelName, relatedTable, foreignKey, localKey: parentPk }
-      }
-    }
+  const belongsToManyModel = findModelName(definition.belongsToMany)
+  if (belongsToManyModel) {
+    const relatedModel = getModelFromRegistry(belongsToManyModel)
+    const relatedTable = relatedModel?.getTable?.() || toTableName(belongsToManyModel)
+    // Pivot table convention: alphabetical order of both table names
+    const tables = [definition.table, relatedTable].sort()
+    // eslint-disable-next-line no-unused-vars
+    const _pivotTable = tables.join('_')
+    const foreignKey = toSnakeCase(parentName) + '_id'
+    return { type: 'belongsToMany', relatedModelName: belongsToManyModel, relatedTable, foreignKey, localKey: parentPk }
   }
 
   return null

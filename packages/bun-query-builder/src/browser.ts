@@ -104,12 +104,12 @@ export interface BrowserModelDefinition {
     readonly useActivityLog?: boolean | object
     readonly useSocials?: readonly string[]
   }
-  readonly belongsTo?: readonly string[]
-  readonly hasMany?: readonly string[]
-  readonly hasOne?: readonly string[]
-  readonly belongsToMany?: readonly (string | object)[]
-  readonly hasOneThrough?: readonly (string | object)[]
-  readonly hasManyThrough?: readonly (string | object)[]
+  readonly belongsTo?: readonly string[] | Readonly<Record<string, string>>
+  readonly hasMany?: readonly string[] | Readonly<Record<string, string>>
+  readonly hasOne?: readonly string[] | Readonly<Record<string, string>>
+  readonly belongsToMany?: readonly (string | object)[] | Readonly<Record<string, string | object>>
+  readonly hasOneThrough?: readonly (string | object)[] | Readonly<Record<string, string | object>>
+  readonly hasManyThrough?: readonly (string | object)[] | Readonly<Record<string, string | object>>
   readonly attributes: {
     readonly [key: string]: BrowserTypedAttribute<unknown>
   }
@@ -171,30 +171,42 @@ type BrowserNumericColumns<TDef extends BrowserModelDefinition> = {
   [K in BrowserAttributeKeys<TDef>]: TDef['attributes'][K] extends { type: 'number' } ? K : never
 }[BrowserAttributeKeys<TDef>]
 
-// Relation name inference for browser models
+// Relation name inference for browser models (supports both array and object syntax)
 type BrowserBelongsToNames<TDef> =
-  TDef extends { belongsTo: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never
+  (TDef extends { belongsTo: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never)
+  | (TDef extends { belongsTo: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type BrowserHasManyNames<TDef> =
-  TDef extends { hasMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never
+  (TDef extends { hasMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never)
+  | (TDef extends { hasMany: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type BrowserHasOneNames<TDef> =
-  TDef extends { hasOne: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never
+  (TDef extends { hasOne: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : never : never)
+  | (TDef extends { hasOne: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type BrowserBelongsToManyNames<TDef> =
-  TDef extends { belongsToMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+  (TDef extends { belongsToMany: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
+  | (TDef extends { belongsToMany: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type BrowserHasOneThroughNames<TDef> =
-  TDef extends { hasOneThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+  (TDef extends { hasOneThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
+  | (TDef extends { hasOneThrough: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type BrowserHasManyThroughNames<TDef> =
-  TDef extends { hasManyThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+  (TDef extends { hasManyThrough: readonly (infer R)[] }
+    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
+  | (TDef extends { hasManyThrough: Readonly<Record<infer K, unknown>> }
+    ? K extends string ? K : never : never)
 
 type BrowserRelationNames<TDef> =
   | BrowserBelongsToNames<TDef>
