@@ -555,12 +555,21 @@ class ModelInstance<
   }
 }
 
+// Memoization caches for hot-path string conversions
+const snakeCaseCache = new Map<string, string>()
+const tableNameCache = new Map<string, string>()
+const relationCache = new Map<string, ReturnType<typeof resolveRelation>>()
+
 /**
  * Convert PascalCase model name to snake_case for foreign key convention.
  * e.g., 'OrderItem' -> 'order_item', 'User' -> 'user'
  */
 function toSnakeCase(str: string): string {
-  return str.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+  let cached = snakeCaseCache.get(str)
+  if (cached !== undefined) return cached
+  cached = str.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+  snakeCaseCache.set(str, cached)
+  return cached
 }
 
 /**
@@ -568,15 +577,20 @@ function toSnakeCase(str: string): string {
  * e.g., 'OrderItem' -> 'order_items', 'User' -> 'users', 'Category' -> 'categories'
  */
 function toTableName(modelName: string): string {
+  let cached = tableNameCache.get(modelName)
+  if (cached !== undefined) return cached
   const snake = toSnakeCase(modelName)
-  // Simple pluralization
   if (snake.endsWith('y') && !snake.endsWith('ay') && !snake.endsWith('ey') && !snake.endsWith('oy') && !snake.endsWith('uy')) {
-    return snake.slice(0, -1) + 'ies'
+    cached = snake.slice(0, -1) + 'ies'
   }
-  if (snake.endsWith('s') || snake.endsWith('x') || snake.endsWith('ch') || snake.endsWith('sh')) {
-    return snake + 'es'
+  else if (snake.endsWith('s') || snake.endsWith('x') || snake.endsWith('ch') || snake.endsWith('sh')) {
+    cached = snake + 'es'
   }
-  return snake + 's'
+  else {
+    cached = snake + 's'
+  }
+  tableNameCache.set(modelName, cached)
+  return cached
 }
 
 /**
@@ -938,7 +952,13 @@ class ModelQueryBuilder<
     const pk = this._definition.primaryKey || 'id'
 
     for (const relationName of this._withRelations) {
-      const rel = resolveRelation(this._definition as ModelDefinition, relationName)
+      // Cache relation resolution per model+relation pair
+      const cacheKey = `${this._definition.name}:${relationName}`
+      let rel = relationCache.get(cacheKey)
+      if (rel === undefined) {
+        rel = resolveRelation(this._definition as ModelDefinition, relationName)
+        relationCache.set(cacheKey, rel)
+      }
       if (!rel) continue
 
       if (rel.type === 'hasMany' || rel.type === 'hasOne') {
@@ -1447,7 +1467,7 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     avg: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).avg(column),
     sum: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).sum(column),
 
-    pluck<K extends Cols>(column: K) {
+    pluck<K extends ColumnName<TDef>>(column: K): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[] {
       return new ModelQueryBuilder<TDef>(definition).pluck(column)
     },
   }
@@ -1456,19 +1476,17 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
   return new Proxy(model, {
     get(target, prop) {
       if (typeof prop === 'string' && prop.startsWith('where') && prop.length > 5) {
-        // Extract column name: whereEmail -> email, whereName -> name
-        const columnPascal = prop.slice(5) // Remove 'where' prefix
+        const columnPascal = prop.slice(5)
         const column = columnPascal.charAt(0).toLowerCase() + columnPascal.slice(1)
 
-        // Check if this column exists in attributes
         if (column in definition.attributes || column === 'id' || column === definition.primaryKey) {
-          return (value: unknown) => new ModelQueryBuilder<TDef>(definition).where(column as Cols, value as any)
+          return (value: unknown) => new ModelQueryBuilder<TDef>(definition).where(column as ColumnName<TDef>, value as any)
         }
       }
       return Reflect.get(target, prop)
     },
   }) as Omit<typeof model, 'where' | 'orWhere'> & StaticWhereOverloads<TDef> & {
-    [K in AttrKeys as `where${Capitalize<K>}`]: (value: K extends keyof Attrs ? Attrs[K] : unknown) => ModelQueryBuilder<TDef>
+    [K in AttributeKeys<TDef> as `where${Capitalize<K>}`]: (value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) => ModelQueryBuilder<TDef>
   }
 }
 

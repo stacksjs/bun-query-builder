@@ -4,15 +4,14 @@
     "types": [
       "bun"
     ],
-    "noEmit": true,
-    "isolatedDeclarations": true
+    "noEmit": true
   },
   "include": [
     "src",
-    "bin",
-    "test"
+    "bin"
   ],
   "exclude": [
+    "test",
     "test/outputs"
   ]
 }
