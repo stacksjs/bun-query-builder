@@ -119,10 +119,8 @@ if (user) {
   user.set('name', 'New Name')    // OK — attribute key
   user.set('email', 'new@test.com')  // OK
 
-  // @ts-expect-error — 'id' is not an attribute key (it's a system field)
+  // System fields are valid targets for set() (widened to ColumnName)
   user.set('id', 999)
-
-  // @ts-expect-error — 'uuid' is not an attribute key
   user.set('uuid', 'xxx')
 }
 

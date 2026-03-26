@@ -72,6 +72,12 @@ export interface TypedAttribute<T = unknown> {
   factory?: (faker: Faker) => InferType<T>
 }
 
+/** Structural type for model instances passed to lifecycle hooks. */
+// eslint-disable-next-line ts/no-empty-object-type
+export interface ModelHookInstance extends Record<string, unknown> {
+  get(key: string): unknown
+}
+
 // Base model definition
 export interface ModelDefinition {
   readonly name: string
@@ -137,11 +143,11 @@ export interface ModelDefinition {
   readonly dashboard?: { readonly highlight?: boolean | number }
   readonly hooks?: {
     readonly beforeCreate?: (data: Record<string, unknown>) => void | Promise<void>
-    readonly afterCreate?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }) => void | Promise<void>
-    readonly beforeUpdate?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }, data: Record<string, unknown>) => void | Promise<void>
-    readonly afterUpdate?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }) => void | Promise<void>
-    readonly beforeDelete?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }) => void | Promise<void>
-    readonly afterDelete?: (model: { get: (key: string) => unknown; attributes: Record<string, unknown>; id: number }) => void | Promise<void>
+    readonly afterCreate?: (model: ModelHookInstance) => void | Promise<void>
+    readonly beforeUpdate?: (model: ModelHookInstance, data: Record<string, unknown>) => void | Promise<void>
+    readonly afterUpdate?: (model: ModelHookInstance) => void | Promise<void>
+    readonly beforeDelete?: (model: ModelHookInstance) => void | Promise<void>
+    readonly afterDelete?: (model: ModelHookInstance) => void | Promise<void>
   }
 }
 
@@ -281,9 +287,9 @@ class ModelInstance<
     return this._attributes[key as string] as any
   }
 
-  set<K extends AttributeKeys<TDef>>(
+  set<K extends ColumnName<TDef>>(
     key: K,
-    value: ModelAttributes<TDef>[K]
+    value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
   ): void {
     this._attributes[key as string] = value
   }
@@ -320,19 +326,19 @@ class ModelInstance<
     return this._attributes[pk] as number
   }
 
-  isDirty<K extends AttributeKeys<TDef>>(column?: K): boolean {
+  isDirty(column?: ColumnName<TDef>): boolean {
     if (column) {
-      return this._attributes[column] !== this._original[column]
+      return this._attributes[column as string] !== this._original[column as string]
     }
     return Object.keys(this._attributes).some(k => this._attributes[k] !== this._original[k])
   }
 
-  isClean<K extends AttributeKeys<TDef>>(column?: K): boolean {
+  isClean(column?: ColumnName<TDef>): boolean {
     return !this.isDirty(column)
   }
 
-  getOriginal<K extends AttributeKeys<TDef>>(column: K): ModelAttributes<TDef>[K] {
-    return this._original[column] as any
+  getOriginal<K extends ColumnName<TDef>>(column: K): K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown {
+    return this._original[column as string] as any
   }
 
   getChanges(): Partial<InferModelAttributes<TDef>> {
@@ -368,14 +374,14 @@ class ModelInstance<
 
     const setters = this._definition.set || {}
     for (const [key, setter] of Object.entries(setters)) {
-      if (this.isDirty(key as AttributeKeys<TDef>)) {
+      if (this.isDirty(key as ColumnName<TDef>)) {
         this._attributes[key] = setter(this._attributes as Record<string, unknown>)
       }
     }
 
     if (this._attributes[pk]) {
       // Update
-      hooks?.beforeUpdate?.(this, this.getChanges())
+      hooks?.beforeUpdate?.(this as unknown as ModelHookInstance, this.getChanges())
 
       const changes = this.getChanges()
       const changeKeys = Object.keys(changes)
@@ -395,7 +401,7 @@ class ModelInstance<
         }
       }
 
-      hooks?.afterUpdate?.(this)
+      hooks?.afterUpdate?.(this as unknown as ModelHookInstance)
     }
     else {
       // Create
@@ -430,7 +436,7 @@ class ModelInstance<
 
       this._attributes[pk] = result.lastInsertRowid
 
-      hooks?.afterCreate?.(this)
+      hooks?.afterCreate?.(this as unknown as ModelHookInstance)
     }
 
     this._original = { ...this._attributes }
@@ -451,7 +457,7 @@ class ModelInstance<
 
     if (!pkValue) throw new Error('Cannot delete a model without a primary key')
 
-    hooks?.beforeDelete?.(this)
+    hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
 
     if (this._definition.traits?.useSoftDeletes) {
       db.run(
@@ -463,7 +469,7 @@ class ModelInstance<
       db.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue] as Bindings)
     }
 
-    hooks?.afterDelete?.(this)
+    hooks?.afterDelete?.(this as unknown as ModelHookInstance)
 
     return true
   }
@@ -654,10 +660,24 @@ class ModelQueryBuilder<
     this._definition = definition
   }
 
+  // Two-arg form: .where('column', value)
   where<K extends ColumnName<TDef>>(
     column: K,
-    operatorOrValue: WhereOperator | (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown),
-    value?: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+    value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef, TSelected>
+
+  // Three-arg form: .where('column', operator, value)
+  where<K extends ColumnName<TDef>>(
+    column: K,
+    operator: WhereOperator,
+    value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef, TSelected>
+
+  // Implementation signature (hidden from consumers):
+  where<K extends ColumnName<TDef>>(
+    column: K,
+    operatorOrValue: WhereOperator | unknown,
+    value?: unknown
   ): ModelQueryBuilder<TDef, TSelected> {
     if (value === undefined) {
       this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'and' })
@@ -668,10 +688,24 @@ class ModelQueryBuilder<
     return this
   }
 
+  // Two-arg form: .orWhere('column', value)
   orWhere<K extends ColumnName<TDef>>(
     column: K,
-    operatorOrValue: WhereOperator | (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown),
-    value?: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+    value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef, TSelected>
+
+  // Three-arg form: .orWhere('column', operator, value)
+  orWhere<K extends ColumnName<TDef>>(
+    column: K,
+    operator: WhereOperator,
+    value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef, TSelected>
+
+  // Implementation signature (hidden from consumers):
+  orWhere<K extends ColumnName<TDef>>(
+    column: K,
+    operatorOrValue: WhereOperator | unknown,
+    value?: unknown
   ): ModelQueryBuilder<TDef, TSelected> {
     if (value === undefined) {
       this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'or' })
@@ -715,7 +749,7 @@ class ModelQueryBuilder<
 
   whereBetween<K extends ColumnName<TDef>>(
     column: K,
-    range: [min: unknown, max: unknown],
+    range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown],
   ): ModelQueryBuilder<TDef, TSelected> {
     this._wheres.push({ column: column as string, operator: '>=', value: range[0], boolean: 'and' })
     this._wheres.push({ column: column as string, operator: '<=', value: range[1], boolean: 'and' })
@@ -724,7 +758,7 @@ class ModelQueryBuilder<
 
   whereNotBetween<K extends ColumnName<TDef>>(
     column: K,
-    range: [min: unknown, max: unknown],
+    range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown],
   ): ModelQueryBuilder<TDef, TSelected> {
     // NOT BETWEEN is equivalent to (col < min OR col > max)
     this._wheres.push({ column: column as string, operator: '<', value: range[0], boolean: 'and' })
@@ -1084,7 +1118,17 @@ class ModelQueryBuilder<
     }
   }
 
-  paginate(page = 1, perPage = 15) {
+  paginate(page = 1, perPage = 15): {
+    data: ModelInstance<TDef, TSelected>[]
+    total: number
+    page: number
+    perPage: number
+    lastPage: number
+    hasMorePages: boolean
+    isEmpty: boolean
+    from: number | null
+    to: number | null
+  } {
     const total = this.count()
     const lastPage = Math.ceil(total / perPage)
     this._limit = perPage
@@ -1110,7 +1154,7 @@ class ModelQueryBuilder<
     return this.get().map(r => r.get(column as any)) as any
   }
 
-  private aggregate(fn: string, column: string): number {
+  private aggregate(fn: string, column: string): number | null {
     const db = getDatabase()
     const params: unknown[] = []
     let sql = `SELECT ${fn}(${column}) as v FROM ${this._definition.table}`
@@ -1119,23 +1163,23 @@ class ModelQueryBuilder<
       sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
-    return (db.query(sql).get(...(params as Bindings)) as { v: number }).v || 0
+    return (db.query(sql).get(...(params as Bindings)) as { v: number | null }).v
   }
 
-  max<K extends AttributeKeys<TDef>>(column: K): number {
+  max<K extends ColumnName<TDef>>(column: K): number | null {
     return this.aggregate('MAX', column as string)
   }
 
-  min<K extends AttributeKeys<TDef>>(column: K): number {
+  min<K extends ColumnName<TDef>>(column: K): number | null {
     return this.aggregate('MIN', column as string)
   }
 
   avg<K extends NumericColumns<TDef>>(column: K): number {
-    return this.aggregate('AVG', column as string)
+    return this.aggregate('AVG', column as string) || 0
   }
 
   sum<K extends NumericColumns<TDef>>(column: K): number {
-    return this.aggregate('SUM', column as string)
+    return this.aggregate('SUM', column as string) || 0
   }
 
   delete(): number {
@@ -1171,6 +1215,33 @@ class ModelQueryBuilder<
 }
 
 /**
+ * Overloaded where/orWhere signatures for static model methods.
+ * Object literals cannot have overloaded methods, so we express them as an interface
+ * and intersect with the concrete model object via a type assertion.
+ */
+interface StaticWhereOverloads<TDef extends ModelDefinition> {
+  where<K extends ColumnName<TDef>>(
+    column: K,
+    value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef>
+  where<K extends ColumnName<TDef>>(
+    column: K,
+    operator: WhereOperator,
+    value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef>
+
+  orWhere<K extends ColumnName<TDef>>(
+    column: K,
+    value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef>
+  orWhere<K extends ColumnName<TDef>>(
+    column: K,
+    operator: WhereOperator,
+    value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef>
+}
+
+/**
  * Create a model class from a definition with full type inference
  */
 export function createModel<const TDef extends ModelDefinition>(definition: TDef) {
@@ -1183,20 +1254,20 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
   const model = {
     query: () => new ModelQueryBuilder<TDef>(definition),
 
-    where<K extends Cols>(
-      column: K,
-      operatorOrValue: WhereOperator | (K extends keyof Attrs ? Attrs[K] : unknown),
-      value?: K extends keyof Attrs ? Attrs[K] : unknown
+    where(
+      column: Cols,
+      operatorOrValue: unknown,
+      value?: unknown
     ) {
-      return new ModelQueryBuilder<TDef>(definition).where(column, operatorOrValue as any, value)
+      return new ModelQueryBuilder<TDef>(definition).where(column, operatorOrValue as any, value as any)
     },
 
-    orWhere<K extends Cols>(
-      column: K,
-      operatorOrValue: WhereOperator | (K extends keyof Attrs ? Attrs[K] : unknown),
-      value?: K extends keyof Attrs ? Attrs[K] : unknown
+    orWhere(
+      column: Cols,
+      operatorOrValue: unknown,
+      value?: unknown
     ) {
-      return new ModelQueryBuilder<TDef>(definition).orWhere(column, operatorOrValue as any, value)
+      return new ModelQueryBuilder<TDef>(definition).orWhere(column, operatorOrValue as any, value as any)
     },
 
     whereIn<K extends Cols>(column: K, values: (K extends keyof Attrs ? Attrs[K] : unknown)[]) {
@@ -1268,12 +1339,12 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     doesntExist: () => new ModelQueryBuilder<TDef>(definition).doesntExist(),
     paginate: (page?: number, perPage?: number) => new ModelQueryBuilder<TDef>(definition).paginate(page, perPage),
 
-    whereBetween<K extends Cols>(column: K, range: [min: unknown, max: unknown]) {
-      return new ModelQueryBuilder<TDef>(definition).whereBetween(column, range)
+    whereBetween<K extends Cols>(column: K, range: [min: K extends keyof Attrs ? Attrs[K] : unknown, max: K extends keyof Attrs ? Attrs[K] : unknown]) {
+      return new ModelQueryBuilder<TDef>(definition).whereBetween(column, range as any)
     },
 
-    whereNotBetween<K extends Cols>(column: K, range: [min: unknown, max: unknown]) {
-      return new ModelQueryBuilder<TDef>(definition).whereNotBetween(column, range)
+    whereNotBetween<K extends Cols>(column: K, range: [min: K extends keyof Attrs ? Attrs[K] : unknown, max: K extends keyof Attrs ? Attrs[K] : unknown]) {
+      return new ModelQueryBuilder<TDef>(definition).whereNotBetween(column, range as any)
     },
 
     create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): ModelInstance<TDef> {
@@ -1338,8 +1409,8 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     latest: (column: Cols = 'created_at' as Cols) => new ModelQueryBuilder<TDef>(definition).orderByDesc(column),
     oldest: (column: Cols = 'created_at' as Cols) => new ModelQueryBuilder<TDef>(definition).orderBy(column, 'asc'),
 
-    max: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).max(column),
-    min: <K extends AttrKeys>(column: K) => new ModelQueryBuilder<TDef>(definition).min(column),
+    max: <K extends Cols>(column: K) => new ModelQueryBuilder<TDef>(definition).max(column),
+    min: <K extends Cols>(column: K) => new ModelQueryBuilder<TDef>(definition).min(column),
     avg: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).avg(column),
     sum: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).sum(column),
 
@@ -1363,7 +1434,7 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
       }
       return Reflect.get(target, prop)
     },
-  }) as typeof model & {
+  }) as Omit<typeof model, 'where' | 'orWhere'> & StaticWhereOverloads<TDef> & {
     [K in AttrKeys as `where${Capitalize<K>}`]: (value: K extends keyof Attrs ? Attrs[K] : unknown) => ModelQueryBuilder<TDef>
   }
 }
@@ -1398,15 +1469,18 @@ export function createTableFromModel(definition: ModelDefinition): void {
 
 function createFakerCompatLayer(tsMocker: Record<string, unknown>): Record<string, unknown> {
   return new Proxy(tsMocker, {
-    get(target, prop) {
+    get(target, prop: string) {
       if (prop === 'location') return target.address
       if (prop === 'datatype') {
+        const rng = target.random as Record<string, (...args: unknown[]) => unknown> | undefined
+        const num = target.number as Record<string, (...args: unknown[]) => unknown> | undefined
+        const str = target.string as Record<string, (...args: unknown[]) => unknown> | undefined
         return {
-          boolean: () => target.random.boolean(),
-          number: (opts?: { min?: number; max?: number }) => target.number.int(opts),
-          float: (opts?: { min?: number; max?: number }) => target.number.float(opts),
+          boolean: () => rng?.boolean?.(),
+          number: (opts?: { min?: number; max?: number }) => num?.int?.(opts),
+          float: (opts?: { min?: number; max?: number }) => num?.float?.(opts),
           uuid: () => crypto.randomUUID(),
-          string: (length?: number) => target.string.alphanumeric(length ?? 10),
+          string: (length?: number) => str?.alphanumeric?.(length ?? 10),
         }
       }
       return target[prop]

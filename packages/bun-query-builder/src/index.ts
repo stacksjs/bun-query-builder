@@ -45,4 +45,5 @@ export type {
   ModelRowLoose,
   ModelCreateData,
   ModelCreateDataLoose,
+  RelationCardinality,
 } from './type-inference'

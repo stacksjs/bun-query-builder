@@ -371,3 +371,31 @@ type InferHasOneThroughNames<TDef> =
 type InferHasManyThroughNames<TDef> =
   TDef extends { hasManyThrough: readonly (infer R)[] }
     ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never
+
+// ============================================================================
+// Relation cardinality inference
+// ============================================================================
+
+/**
+ * Determine the cardinality of a relation on a model.
+ * hasMany → 'many', hasOne/belongsTo → 'one'
+ */
+export type RelationCardinality<TModel, R extends string> =
+  ResolveDefinition<TModel> extends infer TDef
+    ? (TDef extends { hasMany: readonly (infer M)[] }
+        ? Lowercase<M & string> extends R ? 'many' : never
+        : never)
+    | (TDef extends { hasOne: readonly (infer M)[] }
+        ? Lowercase<M & string> extends R ? 'one' : never
+        : never)
+    | (TDef extends { belongsTo: readonly (infer M)[] }
+        ? Lowercase<M & string> extends R ? 'one' : never
+        : never)
+    | (TDef extends { belongsToMany: readonly (infer M)[] }
+        ? M extends string
+          ? Lowercase<M> extends R ? 'many' : never
+          : M extends { model: infer N extends string }
+            ? Lowercase<N> extends R ? 'many' : never
+            : never
+        : never)
+    : never
