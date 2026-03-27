@@ -13,17 +13,17 @@
     "clean": "bun run src/clean.ts"
   },
   "dependencies": {
-    "@prisma/adapter-better-sqlite3": "^7.6.0-integration-aqrln-lsxnxnwlrzwk.1",
-    "@prisma/client": "6",
+    "@prisma/adapter-better-sqlite3": "^7.6.0",
+    "@prisma/client": "6.19.2",
     "better-sqlite3": "^12.8.0",
     "bun-query-builder": "workspace:*",
     "chalk": "^5.6.2",
     "cli-table3": "^0.6.5",
-    "drizzle-orm": "^0.45.1",
-    "kysely": "^0.28.13",
+    "drizzle-orm": "^0.45.2",
+    "kysely": "^0.28.14",
     "kysely-bun-sqlite": "^0.4.0",
     "mitata": "^1.0.34",
-    "prisma": "6",
+    "prisma": "6.19.2",
     "typeorm": "^0.3.28"
   },
   "devDependencies": {
