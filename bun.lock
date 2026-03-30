@@ -17,7 +17,7 @@
       "name": "@bun-query-builder/benchmark",
       "version": "0.1.13",
       "dependencies": {
-        "@prisma/adapter-better-sqlite3": "^7.6.0-integration-aqrln-lsxnxnwlrzwk.1",
+        "@prisma/adapter-better-sqlite3": "^7.6.0",
         "@prisma/client": "6",
         "better-sqlite3": "^12.8.0",
         "bun-query-builder": "workspace:*",
@@ -95,15 +95,15 @@
 
     "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "", {}, "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="],
 
-    "@prisma/adapter-better-sqlite3": ["@prisma/adapter-better-sqlite3@7.6.0-integration-aqrln-lsxnxnwlrzwk.1", "", { "dependencies": { "@prisma/driver-adapter-utils": "7.6.0-integration-aqrln-lsxnxnwlrzwk.1", "better-sqlite3": "^12.6.0" } }, "sha512-srWIQngmJQonolNe5wdikN2esRO+iQAOij8SGEh0sR9D6WhGlCYJh+J9Adrqrcd6Z5VfCV1iRNbFfnoy3r/pPQ=="],
+    "@prisma/adapter-better-sqlite3": ["@prisma/adapter-better-sqlite3@7.6.0", "", { "dependencies": { "@prisma/driver-adapter-utils": "7.6.0", "better-sqlite3": "^12.6.0" } }, "sha512-V0bU2nbFwwqCgzIEFDCmywNoqH9ilCYa6S32hGQxIgRbkgFC2eTl4+AJ6G+jfP0BZs3LXUirreoGNbSY/zbUGQ=="],
 
     "@prisma/client": ["@prisma/client@6.19.2", "", { "peerDependencies": { "prisma": "*", "typescript": ">=5.1.0" }, "optionalPeers": ["prisma", "typescript"] }, "sha512-gR2EMvfK/aTxsuooaDA32D8v+us/8AAet+C3J1cc04SW35FPdZYgLF+iN4NDLUgAaUGTKdAB0CYenu1TAgGdMg=="],
 
     "@prisma/config": ["@prisma/config@6.19.2", "", { "dependencies": { "c12": "3.1.0", "deepmerge-ts": "7.1.5", "effect": "3.18.4", "empathic": "2.0.0" } }, "sha512-kadBGDl+aUswv/zZMk9Mx0C8UZs1kjao8H9/JpI4Wh4SHZaM7zkTwiKn/iFLfRg+XtOAo/Z/c6pAYhijKl0nzQ=="],
 
-    "@prisma/debug": ["@prisma/debug@7.6.0-integration-aqrln-lsxnxnwlrzwk.1", "", {}, "sha512-PxDN4oRfF6cpb1d2Chy8tRYvEauSs2wuevffUASwJomCRrnLtLFfYtwAAo3JZObXArL75QTV7nBxQmFyS/HX+g=="],
+    "@prisma/debug": ["@prisma/debug@7.6.0", "", {}, "sha512-LpHr3qos4lQZ6sxwjStf59YBht7m9/QF7NSQsMH6qGENWZu2w3UkQUGn1h5iRkDjnWRj3VHykOu9qFhps4ADvA=="],
 
-    "@prisma/driver-adapter-utils": ["@prisma/driver-adapter-utils@7.6.0-integration-aqrln-lsxnxnwlrzwk.1", "", { "dependencies": { "@prisma/debug": "7.6.0-integration-aqrln-lsxnxnwlrzwk.1" } }, "sha512-VwuW39wTkTNeDo+pdwR81VfZ9P24LQlefEDD8fBih3Pjpo9Ve+qukUHE3/Ki8fTm6UXbcB9WFBhPg5OX/+UdBg=="],
+    "@prisma/driver-adapter-utils": ["@prisma/driver-adapter-utils@7.6.0", "", { "dependencies": { "@prisma/debug": "7.6.0" } }, "sha512-D8j3p0RnhLuufMaRLX6QqtGgPC5Ao3l5oFP6Q5AL0rTHi4vna+NzGEipwCsfvcSvaGFCbsH3lsTMbb4WvY+ovA=="],
 
     "@prisma/engines": ["@prisma/engines@6.19.2", "", { "dependencies": { "@prisma/debug": "6.19.2", "@prisma/engines-version": "7.1.1-3.c2990dca591cba766e3b7ef5d9e8a84796e47ab7", "@prisma/fetch-engine": "6.19.2", "@prisma/get-platform": "6.19.2" } }, "sha512-TTkJ8r+uk/uqczX40wb+ODG0E0icVsMgwCTyTHXehaEfb0uo80M9g1aW1tEJrxmFHeOZFXdI2sTA1j1AgcHi4A=="],
 
