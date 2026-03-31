@@ -130,6 +130,7 @@ if (user) {
 if (user) {
   const role = user.get('role')
   // role should be 'admin' | 'user'
+  // eslint-disable-next-line pickier/no-unused-vars
   const check: 'admin' | 'user' = role  // OK — type matches
 }
 

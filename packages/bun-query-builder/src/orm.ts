@@ -28,10 +28,16 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { Faker } from 'ts-mocker'
 
 // Lazy reference to model registry to avoid circular dependency
+// eslint-disable-next-line pickier/no-unused-vars
 let _getModel: ((name: string) => any) | null = null
 function getModelFromRegistry(name: string): any {
   if (!_getModel) {
-    try { _getModel = require('./model').getModel } catch { _getModel = () => undefined }
+    try {
+      _getModel = require('./model').getModel
+    }
+    catch {
+      _getModel = () => undefined
+    }
   }
   return _getModel!(name)
 }
@@ -599,10 +605,10 @@ function toTableName(modelName: string): string {
     cached = snake.slice(0, -1) + 'ies'
   }
   else if (snake.endsWith('s') || snake.endsWith('x') || snake.endsWith('ch') || snake.endsWith('sh')) {
-    cached = snake + 'es'
+    cached = `${snake}es`
   }
   else {
-    cached = snake + 's'
+    cached = `${snake}s`
   }
   tableNameCache.set(modelName, cached)
   return cached
