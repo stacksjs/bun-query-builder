@@ -5,6 +5,7 @@ bun-query-builder is built with performance in mind. We continuously benchmark a
 ## Methodology
 
 All benchmarks are run on:
+
 - **CPU**: Apple M3 Pro
 - **Runtime**: Bun 1.3.11 (arm64-darwin)
 - **Database**: SQLite (1,000 users, 5,000 posts)
@@ -52,7 +53,7 @@ All benchmarks are run on:
 
 Lowest time per benchmark is **bolded**. bun-query-builder wins 16 of 16 benchmarks.
 
-## Why Fast?
+## Why Fast
 
 bun-query-builder leverages Bun's native SQLite driver with:
 

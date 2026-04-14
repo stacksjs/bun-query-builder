@@ -298,6 +298,7 @@ query-builder db:info
 ```
 
 Shows:
+
 - Database dialect
 - Total tables
 - Row counts per table
@@ -388,6 +389,7 @@ query-builder console
 ```
 
 Features:
+
 - Execute queries interactively
 - Access to full query builder API
 - Built-in commands: `.help`, `.tables`, `.exit`
@@ -466,6 +468,7 @@ query-builder validate:schema [<dir>]
 ```
 
 Checks for:
+
 - Missing tables
 - Missing columns
 - Type mismatches
@@ -663,7 +666,7 @@ query-builder db:fresh
 query-builder console
 query-builder tinker  # alias
 
-# Inside the console, you can run:
+# Inside the console, you can run
 # > await qb.selectFrom('users').where({ active: true }).get()
 # > .tables  # list all tables
 # > .help    # show available commands
@@ -722,8 +725,8 @@ query-builder file ./migrations/seed.sql
 query-builder file ./scripts/cleanup.sql --params "[30]"  # 30 days retention
 
 # Execute parameterized queries (use with caution)
-query-builder unsafe "SELECT * FROM users WHERE team = $1" --params "[\"Engineering\"]"
-query-builder unsafe "SELECT * FROM projects WHERE owner = $1 AND status = $2" --params "[\"Chris\",\"active\"]"
+query-builder unsafe "SELECT _ FROM users WHERE team = $1" --params "[\"Engineering\"]"
+query-builder unsafe "SELECT _ FROM projects WHERE owner = $1 AND status = $2" --params "[\"Chris\",\"active\"]"
 ```
 
 ### Performance Analysis
@@ -735,12 +738,12 @@ query-builder benchmark --iterations 5000
 query-builder benchmark --operations select,insert,count
 
 # Analyze query performance
-query-builder explain "SELECT * FROM users WHERE active = true"
-query-builder explain "SELECT u.*, p.name as project_name FROM users u JOIN projects p ON p.user_id = u.id WHERE u.role = 'admin'"
+query-builder explain "SELECT _ FROM users WHERE active = true"
+query-builder explain "SELECT u._, p.name as project_name FROM users u JOIN projects p ON p.user_id = u.id WHERE u.role = 'admin'"
 
 # Compare different query strategies
-query-builder explain "SELECT * FROM users WHERE name LIKE '%Chris%'"
-query-builder explain "SELECT * FROM users WHERE name ILIKE 'chris%'"  # PostgreSQL
+query-builder explain "SELECT _ FROM users WHERE name LIKE '%Chris%'"
+query-builder explain "SELECT _ FROM users WHERE name ILIKE 'chris%'"  # PostgreSQL
 ```
 
 ## Best Practices
@@ -775,7 +778,7 @@ query-builder introspect ./app/Models --json | jq '.tables | keys'
 query-builder sql ./app/Models users --where '{"team":"Chris Team"}' --limit 5
 
 # Good: Check performance impact
-query-builder explain "SELECT * FROM users u JOIN projects p ON p.user_id = u.id WHERE u.active = true"
+query-builder explain "SELECT _ FROM users u JOIN projects p ON p.user_id = u.id WHERE u.active = true"
 query-builder benchmark --operations select,join
 
 # Good: Manage cache during development
@@ -783,7 +786,7 @@ query-builder cache:clear
 query-builder cache:stats
 
 # Avoid: Direct SQL without parameterization
-query-builder unsafe "SELECT * FROM users WHERE name = 'Chris'" # Risky!
+query-builder unsafe "SELECT _ FROM users WHERE name = 'Chris'" # Risky!
 
 # Better: Use parameters
 query-builder unsafe "SELECT * FROM users WHERE name = $1" --params '["Chris"]'
@@ -799,7 +802,7 @@ query-builder unsafe "SELECT * FROM users WHERE name = $1" --params '["Chris"]'
 - **Cache Management**: Clear cache after deployments with `cache:clear`
 
 ```bash
-#!/bin/bash
+# !/bin/bash
 # deployment-health-check.sh
 
 echo "Waiting for database..."
@@ -879,10 +882,10 @@ if [[ ! "$USER_ID" =~ ^[0-9]+$ ]]; then
   echo "Invalid user ID"
   exit 1
 fi
-query-builder unsafe "SELECT * FROM users WHERE id = $1" --params "[\"$USER_ID\"]"
+query-builder unsafe "SELECT _ FROM users WHERE id = $1" --params "[\"$USER_ID\"]"
 
 # Production audit logging
-echo "$(date): CLI operation by $(whoami): $*" >> /var/log/query-builder.log
+echo "$(date): CLI operation by $(whoami): $_" >> /var/log/query-builder.log
 ```
 
 ### Troubleshooting
@@ -901,7 +904,7 @@ query-builder ping || echo "Database unreachable - check network/credentials"
 
 # Debugging performance issues
 query-builder benchmark --iterations 100
-query-builder explain "SELECT * FROM large_table WHERE unindexed_column = 'value'"
+query-builder explain "SELECT _ FROM large_table WHERE unindexed_column = 'value'"
 
 # Debugging schema mismatches
 query-builder validate:schema ./app/Models
@@ -971,5 +974,5 @@ query-builder file ./migrations/seed.sql --params "[\"role\", \"admin\"]"
 ### Explain a complex statement
 
 ```bash
-query-builder explain "SELECT * FROM users WHERE active = true ORDER BY created_at DESC LIMIT 10"
+query-builder explain "SELECT _ FROM users WHERE active = true ORDER BY created_at DESC LIMIT 10"
 ```

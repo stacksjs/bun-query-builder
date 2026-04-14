@@ -136,7 +136,7 @@ await db
 // Conditional delete (Chris's data cleanup)
 await db
   .deleteFrom('sessions')
-  .where(['last_activity', '<', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)])
+  .where(['last_activity', '<', new Date(Date.now() - 30 _ 24 _ 60 _ 60 _ 1000)])
   .execute()
 ```
 
@@ -381,10 +381,10 @@ query-builder file ./scripts/analytics.sql --output results.json
 
 ```bash
 # Performance analysis for Chris's dashboard queries
-query-builder explain "SELECT * FROM users JOIN teams ON users.team_id = teams.id WHERE users.active = true"
+query-builder explain "SELECT _ FROM users JOIN teams ON users.team_id = teams.id WHERE users.active = true"
 
 # Avery's e-commerce query optimization
-query-builder explain "SELECT p.*, c.name as category_name FROM products p JOIN categories c ON p.category_id = c.id WHERE p.featured = true"
+query-builder explain "SELECT p._, c.name as category_name FROM products p JOIN categories c ON p.category_id = c.id WHERE p.featured = true"
 
 # Buddy's complex analytics query analysis
 query-builder explain --analyze "SELECT u.name, COUNT(p.id) as post_count FROM users u LEFT JOIN posts p ON u.id = p.author_id GROUP BY u.id, u.name HAVING COUNT(p.id) > 5"
@@ -394,7 +394,7 @@ query-builder explain --analyze "SELECT u.name, COUNT(p.id) as post_count FROM u
 
 ```bash
 # Parameterized queries (use with caution)
-query-builder unsafe "SELECT * FROM users WHERE id = $1 AND team_id = $2" --params "[1, 3]"
+query-builder unsafe "SELECT _ FROM users WHERE id = $1 AND team_id = $2" --params "[1, 3]"
 
 # Bulk operations with transaction support
 query-builder file ./scripts/bulk_update.sql --transaction --batch-size 1000
@@ -412,7 +412,7 @@ query-builder sql ./models analytics --format table  # Pretty table in terminal
 query-builder ping --timeout 2000 --exit-code  # Returns proper exit codes
 
 # Performance monitoring
-query-builder explain --format json "SELECT COUNT(*) FROM users" | jq '.["Execution Time"]'
+query-builder explain --format json "SELECT COUNT(_) FROM users" | jq '.["Execution Time"]'
 
 # Database connectivity testing
 query-builder wait-ready --attempts 5 --delay 1000 --fail-fast
@@ -425,19 +425,24 @@ query-builder introspect ./models --compare-with production_schema.json
 
 ```yaml
 # GitHub Actions example
+
 - name: Wait for Database
+
   run: query-builder wait-ready --attempts 20 --delay 1000
 
 - name: Run Migrations
+
   run: |
     query-builder file ./migrations/001_users.sql
     query-builder file ./migrations/002_teams.sql
     query-builder file ./migrations/003_posts.sql
 
 - name: Validate Schema
+
   run: query-builder introspect ./models --validate-only
 
 - name: Health Check
+
   run: query-builder ping --timeout 5000
 ```
 

@@ -160,7 +160,7 @@ await createUser({ name: 'Alice' })
 You can pass options to override defaults:
 
 ```ts
-const createWithRetry = db.transactional(async (tx) => { /* ... */ }, { retries: 3 })
+const createWithRetry = db.transactional(async (tx) => { /_ ... _/ }, { retries: 3 })
 ```
 
 ## Error Handling and Logging
@@ -168,7 +168,7 @@ const createWithRetry = db.transactional(async (tx) => { /* ... */ }, { retries:
 Use `onRetry` and `logger` to observe transaction lifecycle.
 
 ```ts
-await db.transaction(async (tx) => { /* ... */ }, {
+await db.transaction(async (tx) => { /_ ... _/ }, {
   logger: (e) => {
     if (e.type === 'retry')
       console.warn('retry', e.attempt)
@@ -405,15 +405,15 @@ await db.commitDistributed('stage_a')
 
 ## FAQ
 
-### Why did my transaction retry?
+### Why did my transaction retry
 
 Detected a retriable error (deadlock/serialization or matching `sqlStates`).
 
-### How can I set isolation per operation?
+### How can I set isolation per operation
 
 Pass `isolation` in the transaction options.
 
-### Can I run read-only transactions?
+### Can I run read-only transactions
 
 Yes. Pass `{ readOnly: true }` to `transaction` when your database supports it (e.g., PostgreSQL).
 
@@ -423,7 +423,7 @@ await db.transaction(async (tx) => {
 }, { readOnly: true })
 ```
 
-### Can I nest transactions?
+### Can I nest transactions
 
 Use `savepoint` within a transaction. Starting a new top-level transaction inside another is not supported.
 

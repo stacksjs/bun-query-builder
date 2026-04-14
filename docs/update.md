@@ -3,60 +3,16 @@ title: Update Queries
 description: Update records in your database with type-safe queries.
 ---
 
-# Update Queries
-
-Update records with type-safe queries and automatic timestamp handling.
-
-## Basic Update
-
-```typescript
-import { createQueryBuilder } from 'bun-query-builder'
-
-const db = createQueryBuilder<typeof schema>({ schema, meta })
-
-// Update a single record by ID
-await db.update('users', 1, {
-  name: 'Updated Name',
-})
-
-// Update with where clause
-await db
-  .updateFrom('users')
-  .set({ active: false })
-  .where({ email: 'old@example.com' })
-  .execute()
-```
-
-## Update Multiple Records
-
-```typescript
-// Update all matching records
-await db
-  .updateFrom('users')
-  .set({ status: 'inactive' })
-  .where('last_login', '<', '2024-01-01')
-  .execute()
-
-// Update with multiple conditions
-await db
-  .updateFrom('users')
-  .set({ verified: true })
-  .where({ active: true })
-  .andWhere({ email_verified: true })
-  .execute()
-```
-
-## Update Many by Condition
-
-```typescript
 // Update many records matching conditions
 await db.updateMany('users', { active: false }, { status: 'archived' })
 // Updates all users where active = false, setting status = 'archived'
+
 ```
 
 ## Increment and Decrement
 
 ```typescript
+
 // Increment a column value
 await db
   .updateFrom('posts')
@@ -70,6 +26,7 @@ await db
   .decrement('stock', 5)
   .where({ id: 456 })
   .execute()
+
 ```
 
 ## Update with Timestamps
@@ -77,11 +34,13 @@ await db
 If your model has timestamps enabled, `updated_at` is automatically updated:
 
 ```typescript
+
 // updated_at is automatically set
 await db.update('users', 1, {
   name: 'New Name',
 })
 // Equivalent to: SET name = 'New Name', updated_at = NOW()
+
 ```
 
 ## Update with Returning
@@ -89,6 +48,7 @@ await db.update('users', 1, {
 Get the updated record back:
 
 ```typescript
+
 const updated = await db
   .updateFrom('users')
   .set({ name: 'Updated Name' })
@@ -98,6 +58,7 @@ const updated = await db
 
 console.log(updated)
 // { id: 1, name: 'Updated Name', updated_at: '2024-01-15T...' }
+
 ```
 
 ## Conditional Updates
@@ -105,6 +66,7 @@ console.log(updated)
 Update only if conditions are met:
 
 ```typescript
+
 // Update only active users
 const result = await db
   .updateFrom('users')
@@ -114,6 +76,7 @@ const result = await db
   .execute()
 
 console.log(`Updated ${result.changes} records`)
+
 ```
 
 ## Model Hooks
@@ -121,6 +84,7 @@ console.log(`Updated ${result.changes} records`)
 Hooks are triggered on update operations:
 
 ```typescript
+
 const db = createQueryBuilder<typeof schema>({
   schema,
   meta,
@@ -136,11 +100,13 @@ const db = createQueryBuilder<typeof schema>({
     },
   },
 })
+
 ```
 
 ## Update with JSON Columns
 
 ```typescript
+
 // Update a JSON column
 await db.update('users', 1, {
   preferences: {
@@ -157,6 +123,7 @@ await db
   })
   .where({ id: 1 })
   .execute()
+
 ```
 
 ## Bulk Updates
@@ -164,17 +131,20 @@ await db
 Efficiently update multiple records:
 
 ```typescript
+
 // Update many records with the same values
 await db
   .updateFrom('posts')
   .set({ published: true, published_at: new Date() })
   .where('id', 'IN', [1, 2, 3, 4, 5])
   .execute()
+
 ```
 
 ## Update with Transaction
 
 ```typescript
+
 await db.transaction(async (trx) => {
   // Update user
   await trx.update('users', userId, {
@@ -188,11 +158,13 @@ await db.transaction(async (trx) => {
     .where({ user_id: userId })
     .execute()
 })
+
 ```
 
 ## Update or Create (Upsert)
 
 ```typescript
+
 // Insert or update if exists
 await db.upsert('users', {
   email: 'user@example.com',
@@ -202,11 +174,13 @@ await db.upsert('users', {
   conflictColumns: ['email'],
   updateColumns: ['name', 'active'],
 })
+
 ```
 
 ## Complete Example
 
 ```typescript
+
 import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta } from 'bun-query-builder'
 
 // Setup
@@ -272,4 +246,5 @@ async function updateUsers() {
 }
 
 updateUsers()
+
 ```

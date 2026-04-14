@@ -252,7 +252,9 @@ try {
 
 ```yaml
 # GitHub Actions example
+
 - name: Run migrations
+
   run: |
     query-builder migrate ./src/models --dialect postgres --apply
 ```

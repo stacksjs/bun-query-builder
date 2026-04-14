@@ -367,7 +367,7 @@ describe('User queries', () => {
 // Secure logging implementation
 function sanitizeSQL(sql: string): string {
   return sql
-    .replace(/(password|token|secret)\s*=\s*['"][^'"]*['"]/gi, 'REDACTED_FIELD = [REDACTED]')
+    .replace(/(password|token|secret)\s_=\s_['"][^'"]*['"]/gi, 'REDACTED_FIELD = [REDACTED]')
     .replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, '[CARD_REDACTED]')
     .replace(/\b\w+@\w+\.\w{2,}\b/g, '[EMAIL_REDACTED]')
 }
@@ -520,7 +520,7 @@ function mask(obj: any) {
 function format(sql: string): string {
   return sql
     .replace(/\s+/g, ' ')
-    .replace(/\s*,\s*/g, ', ')
+    .replace(/\s_,\s_/g, ', ')
     .trim()
 }
 ```
@@ -643,19 +643,19 @@ await db
 
 ## Extended FAQ
 
-### Does enabling captureText affect performance?
+### Does enabling captureText affect performance
 
 Slightly, due to capturing and stringifying query text. Keep disabled in prod unless needed.
 
-### Can I redact parameters automatically?
+### Can I redact parameters automatically
 
 Yes, wrap logging and run a redaction function like `mask` above before persisting logs.
 
-### How do I correlate logs with requests?
+### How do I correlate logs with requests
 
 Add `correlationId`/`requestId` from your web framework context to each log entry.
 
-### Can I get bound parameter values?
+### Can I get bound parameter values
 
 Prefer `values()` for a matrix of result values. Parameter arrays are not exposed uniformly; use raw cautiously if needed.
 

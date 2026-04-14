@@ -2,53 +2,6 @@
 title: Select Queries
 description: Build type-safe SELECT queries with the query builder.
 ---
-
-# Select Queries
-
-Build type-safe SELECT queries with full column and table inference.
-
-## Basic Select
-
-```typescript
-import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta } from 'bun-query-builder'
-
-const db = createQueryBuilder<typeof schema>({ schema, meta })
-
-// Select all columns from a table
-const users = await db.selectFrom('users').get()
-
-// Select specific columns
-const names = await db
-  .selectFrom('users')
-  .select(['name', 'email'])
-  .get()
-
-// Select with alias
-const data = await db
-  .selectFrom('users')
-  .select(['name AS userName', 'email AS userEmail'])
-  .get()
-```
-
-## Where Clauses
-
-```typescript
-// Simple where
-const activeUsers = await db
-  .selectFrom('users')
-  .where({ active: true })
-  .get()
-
-// Where with operator
-const adults = await db
-  .selectFrom('users')
-  .where('age', '>=', 18)
-  .get()
-
-// Multiple conditions (AND)
-const activeAdults = await db
-  .selectFrom('users')
-  .where({ active: true })
   .andWhere('age', '>=', 18)
   .get()
 
@@ -58,11 +11,13 @@ const results = await db
   .where({ role: 'admin' })
   .orWhere({ role: 'moderator' })
   .get()
+
 ```
 
 ## Ordering Results
 
 ```typescript
+
 // Order ascending (default)
 const users = await db
   .selectFrom('users')
@@ -99,11 +54,13 @@ const randomUsers = await db
   .selectFrom('users')
   .inRandomOrder()
   .get()
+
 ```
 
 ## Limiting Results
 
 ```typescript
+
 // Limit results
 const topTen = await db
   .selectFrom('users')
@@ -116,11 +73,13 @@ const page2 = await db
   .limit(10)
   .offset(10)
   .get()
+
 ```
 
 ## Distinct Values
 
 ```typescript
+
 // Get distinct values
 const countries = await db
   .selectFrom('users')
@@ -132,11 +91,13 @@ const uniqueLocations = await db
   .selectFrom('users')
   .distinctOn(['city', 'country'])
   .get()
+
 ```
 
 ## First and Single Record
 
 ```typescript
+
 // Get first record
 const firstUser = await db
   .selectFrom('users')
@@ -147,6 +108,7 @@ const user = await db
   .selectFrom('users')
   .where({ id: 1 })
   .first()
+
 ```
 
 ## Pluck Values
@@ -154,22 +116,26 @@ const user = await db
 Get a single column as an array:
 
 ```typescript
+
 // Get all email addresses
 const emails = await db
   .selectFrom('users')
   .pluck('email')
 // ['user1@example.com', 'user2@example.com', ...]
+
 ```
 
 ## Exists Check
 
 ```typescript
+
 // Check if records exist
 const hasAdmins = await db
   .selectFrom('users')
   .where({ role: 'admin' })
   .exists()
 // true or false
+
 ```
 
 ## Where Column Comparison
@@ -177,21 +143,25 @@ const hasAdmins = await db
 Compare two columns:
 
 ```typescript
+
 // Find users where created_at equals updated_at
 const neverUpdated = await db
   .selectFrom('users')
   .whereColumn('created_at', '=', 'updated_at')
   .get()
+
 ```
 
 ## Raw Where Clauses
 
 ```typescript
+
 // Raw SQL in where
 const activeRecent = await db
   .selectFrom('users')
   .whereRaw('DATE(created_at) > DATE_SUB(NOW(), INTERVAL 30 DAY)')
   .get()
+
 ```
 
 ## Query Caching
@@ -199,6 +169,7 @@ const activeRecent = await db
 Cache query results for improved performance:
 
 ```typescript
+
 // Cache for 60 seconds (default)
 const users = await db
   .selectFrom('users')
@@ -219,11 +190,13 @@ clearQueryCache()
 
 // Configure cache size
 setQueryCacheMaxSize(500)
+
 ```
 
 ## Execute Methods
 
 ```typescript
+
 // get() - Get all matching records
 const allUsers = await db.selectFrom('users').get()
 
@@ -236,11 +209,13 @@ const results = await db.selectFrom('users').execute()
 // toSQL() - Get the SQL string (for debugging)
 const sql = db.selectFrom('users').where({ active: true }).toSQL()
 console.log(sql)
+
 ```
 
 ## Complete Example
 
 ```typescript
+
 import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta } from 'bun-query-builder'
 
 // Define models
@@ -277,4 +252,5 @@ const results = await db
   .limit(20)
   .cache()
   .get()
+
 ```

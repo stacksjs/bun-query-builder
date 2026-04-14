@@ -362,7 +362,7 @@ await db
   .selectFrom('users')
   .whereRaw(db.sql`coalesce(age, 0) > 0`)
   .groupByRaw(db.sql`country`)
-  .havingRaw(db.sql`count(*) > 10`)
+  .havingRaw(db.sql`count(_) > 10`)
   .execute()
 ```
 
@@ -460,7 +460,7 @@ const db = createQueryBuilder({
     afterUpdate: async ({ table, data, where, result }) => {
       console.log(`Updated ${table}:`, result)
       // Clear related caches, send webhooks, etc.
-      await cache.invalidate(`${table}:*`)
+      await cache.invalidate(`${table}:_`)
     },
 
     // DELETE hooks
@@ -484,6 +484,7 @@ const db = createQueryBuilder({
 ```
 
 **Hook Use Cases:**
+
 - **Validation**: Enforce business rules before operations
 - **Audit Logging**: Track all data changes
 - **Cache Invalidation**: Clear caches when data changes
@@ -493,10 +494,11 @@ const db = createQueryBuilder({
 - **Analytics**: Track usage patterns and metrics
 
 **Best Practices:**
+
 - Keep hooks fast to avoid slowing down queries
 - Use async hooks for I/O operations
-- Throw errors in before* hooks to prevent operations
-- Never throw in after* hooks (log errors instead)
+- Throw errors in before_ hooks to prevent operations
+- Never throw in after_ hooks (log errors instead)
 - Be mindful of infinite loops (hook triggering another query)
 
 ## Soft deletes
@@ -561,6 +563,7 @@ setQueryCacheMaxSize(500)
 ```
 
 **Best Practices:**
+
 - Use caching for expensive queries that don't change frequently
 - Set appropriate TTL based on data freshness requirements
 - Clear cache when underlying data changes
@@ -591,6 +594,7 @@ const deletedCount = await db.deleteMany('old_sessions', [1, 2, 3, 4, 5])
 ```
 
 **Performance Tips:**
+
 - `insertMany()` is more efficient than multiple individual inserts
 - Use `updateMany()` for bulk updates with conditions
 - `deleteMany()` uses `WHERE id IN (...)` for efficient bulk deletion
@@ -703,7 +707,7 @@ await db
 // Delete with complex conditions
 await db
   .deleteFrom('sessions')
-  .where(['created_at', '<', new Date(Date.now() - 24 * 60 * 60 * 1000)]) // older than 24h
+  .where(['created_at', '<', new Date(Date.now() - 24 _ 60 _ 60 _ 1000)]) // older than 24h
   .andWhere(['user_id', 'is not', null])
   .execute()
 
@@ -761,7 +765,7 @@ See the Pagination page for details. Highlights:
 await db.selectFrom('users').paginate(25, 1)
 await db.selectFrom('users').simplePaginate(25)
 await db.selectFrom('users').cursorPaginate(100, undefined, 'id', 'asc')
-await db.selectFrom('users').chunkById(1000, 'id', async (batch) => { /* ... */ })
+await db.selectFrom('users').chunkById(1000, 'id', async (batch) => { /_ ... */ })
 ```
 
 ## CTEs and Recursive Queries
@@ -1090,7 +1094,7 @@ const registrationTrends = await db
   .selectFrom('users')
   .selectRaw(db.sql`
     DATE_TRUNC('month', created_at) as month,
-    COUNT(*) as new_users,
+    COUNT(_) as new_users,
     COUNT(CASE WHEN role = 'admin' THEN 1 END) as new_admins
   `)
   .where(['created_at', '>=', new Date('2024-01-01')])
@@ -1135,7 +1139,7 @@ const projectsWithCollaborators = await db
 ```ts
 // Cleanup old sessions
 async function cleanupOldSessions() {
-  const cutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // 30 days ago
+  const cutoffDate = new Date(Date.now() - 30 _ 24 _ 60 _ 60 _ 1000) // 30 days ago
 
   const deletedCount = await db
     .deleteFrom('user_sessions')
@@ -1155,7 +1159,7 @@ async function archiveCompletedProjects() {
       .selectFrom('projects')
       .select('projects', 'id', 'name')
       .where(['status', '=', 'completed'])
-      .where(['completed_at', '<', new Date(Date.now() - 6 * 30 * 24 * 60 * 60 * 1000)])
+      .where(['completed_at', '<', new Date(Date.now() - 6 _ 30 _ 24 _ 60 _ 60 _ 1000)])
       .execute()
 
     if (projectsToArchive.length === 0)
@@ -1186,19 +1190,19 @@ async function archiveCompletedProjects() {
 
 ## FAQ
 
-### Why does `toSQL()` return an object instead of a string?
+### Why does `toSQL()` return an object instead of a string
 
 Because Bun’s `sql` returns a query object that preserves parameterization and execution features. We expose it directly for performance and safety.
 
-### How do I print the SQL text?
+### How do I print the SQL text
 
 Enable `config.debug.captureText = true` and call `(q as any).toText?.()`.
 
-### How do I compare two columns?
+### How do I compare two columns
 
 Use `whereColumn(left, op, right)`.
 
-### How do I add arbitrary fragments?
+### How do I add arbitrary fragments
 
 Use `selectRaw`, `whereRaw`, `groupByRaw`, or `havingRaw` and pass a Bun `sql` fragment.
 

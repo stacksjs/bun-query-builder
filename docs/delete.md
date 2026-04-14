@@ -2,57 +2,12 @@
 title: Delete Queries
 description: Delete records from your database with type-safe queries.
 ---
-
-# Delete Queries
-
-Delete records with type-safe queries, soft deletes, and cascade support.
-
-## Basic Delete
-
-```typescript
-import { createQueryBuilder } from 'bun-query-builder'
-
-const db = createQueryBuilder<typeof schema>({ schema, meta })
-
-// Delete by ID
-await db.delete('users', 1)
-
-// Delete with where clause
-await db
-  .deleteFrom('users')
-  .where({ active: false })
-  .execute()
-```
-
-## Delete with Conditions
-
-```typescript
-// Delete records matching conditions
-await db
-  .deleteFrom('posts')
-  .where('created_at', '<', '2023-01-01')
-  .execute()
-
-// Delete with multiple conditions
-await db
-  .deleteFrom('sessions')
-  .where('expired', '=', true)
-  .andWhere('last_activity', '<', '2024-01-01')
-  .execute()
-```
-
-## Delete Many
-
-```typescript
-// Delete multiple records by IDs
-await db.deleteMany('users', [1, 2, 3, 4, 5])
-
-// Delete many with conditions
 await db
   .deleteFrom('logs')
   .where('level', '=', 'debug')
   .where('created_at', '<', '2024-01-01')
   .execute()
+
 ```
 
 ## Soft Deletes
@@ -60,6 +15,7 @@ await db
 If your model supports soft deletes, records are marked as deleted instead of being removed:
 
 ```typescript
+
 // Model with soft deletes enabled
 const models = {
   User: {
@@ -88,11 +44,13 @@ const deletedUsers = await db
   .selectFrom('users')
   .onlyTrashed()
   .get()
+
 ```
 
 ## Restore Soft Deleted Records
 
 ```typescript
+
 // Restore a soft deleted record
 await db.restore('users', 1)
 // Sets deleted_at = NULL
@@ -102,11 +60,13 @@ await db
   .restoreFrom('users')
   .where({ email: 'restored@example.com' })
   .execute()
+
 ```
 
 ## Force Delete (Permanently)
 
 ```typescript
+
 // Permanently delete a soft deleted record
 await db.forceDelete('users', 1)
 
@@ -116,11 +76,13 @@ await db
   .onlyTrashed()
   .forceDelete()
   .execute()
+
 ```
 
 ## Delete with Returning
 
 ```typescript
+
 // Get deleted records data
 const deleted = await db
   .deleteFrom('users')
@@ -129,6 +91,7 @@ const deleted = await db
   .execute()
 
 console.log('Deleted users:', deleted)
+
 ```
 
 ## Model Hooks
@@ -136,6 +99,7 @@ console.log('Deleted users:', deleted)
 Hooks are triggered on delete operations:
 
 ```typescript
+
 const db = createQueryBuilder<typeof schema>({
   schema,
   meta,
@@ -150,6 +114,7 @@ const db = createQueryBuilder<typeof schema>({
     },
   },
 })
+
 ```
 
 ## Truncate Table
@@ -157,16 +122,19 @@ const db = createQueryBuilder<typeof schema>({
 Remove all records from a table:
 
 ```typescript
+
 // Truncate entire table
 await db.truncate('logs')
 
 // With cascade (if foreign keys exist)
 await db.truncate('users', { cascade: true })
+
 ```
 
 ## Delete with Transaction
 
 ```typescript
+
 await db.transaction(async (trx) => {
   // Delete user's posts first
   await trx
@@ -179,6 +147,7 @@ await db.transaction(async (trx) => {
 
   // All or nothing - if any delete fails, all are rolled back
 })
+
 ```
 
 ## Cascade Delete
@@ -186,6 +155,7 @@ await db.transaction(async (trx) => {
 Handle related records:
 
 ```typescript
+
 // Manual cascade delete
 async function deleteUserWithRelations(userId: number) {
   await db.transaction(async (trx) => {
@@ -199,11 +169,13 @@ async function deleteUserWithRelations(userId: number) {
     await trx.delete('users', userId)
   })
 }
+
 ```
 
 ## Complete Example
 
 ```typescript
+
 import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta } from 'bun-query-builder'
 
 // Setup with soft deletes
@@ -284,4 +256,5 @@ async function cleanupData() {
 }
 
 cleanupData()
+
 ```

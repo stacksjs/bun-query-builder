@@ -38,15 +38,17 @@ import { faker } from 'ts-mocker'
 
 export default class UserSeeder extends Seeder {
   /**
+
    * Run the database seeds.
+
    */
   async run(qb: QueryBuilder): Promise<void> {
     // Example: Create 10 records
     const users = Array.from({ length: 10 }, () => ({
       name: faker.person.fullName(),
       email: faker.internet.email(),
-      created_at: new Date(),
-      updated_at: new Date(),
+      created*at: new Date(),
+      updated*at: new Date(),
     }))
 
     await qb.table('users').insert(users).execute()
@@ -55,8 +57,10 @@ export default class UserSeeder extends Seeder {
   }
 
   /**
+
    * Specify the order in which this seeder should run.
    * Lower numbers run first. Default is 100.
+
    */
   get order(): number {
     return 100
@@ -95,8 +99,8 @@ export default class ProductSeeder extends Seeder {
       description: faker.commerce.productDescription(),
       price: faker.commerce.price(10, 1000),
       stock: faker.number.int(0, 100),
-      created_at: new Date(),
-      updated_at: new Date(),
+      created*at: new Date(),
+      updated*at: new Date(),
     }))
 
     await qb.table('products').insert(products).execute()
@@ -116,8 +120,8 @@ export default class UserSeeder extends Seeder {
       name: faker.person.fullName(),
       email: faker.internet.email(),
       age: faker.number.int(18, 80),
-      created_at: new Date(),
-      updated_at: new Date(),
+      created*at: new Date(),
+      updated*at: new Date(),
     }))
 
     await qb.table('users').insert(users).execute()
@@ -144,12 +148,12 @@ export default class PostSeeder extends Seeder {
     for (const user of users) {
       for (let i = 0; i < 3; i++) {
         posts.push({
-          user_id: user.id,
+          user*id: user.id,
           title: faker.lorem.sentence(5),
           body: faker.lorem.paragraphs(3),
           published: faker.datatype.boolean(0.7), // 70% published
-          created_at: faker.date.past(),
-          updated_at: new Date(),
+          created*at: faker.date.past(),
+          updated*at: new Date(),
         })
       }
     }
@@ -177,8 +181,8 @@ export default class LargeDataSeeder extends Seeder {
       const batch = Array.from({ length: batchSize }, () => ({
         name: faker.person.fullName(),
         email: faker.internet.email(),
-        created_at: new Date(),
-        updated_at: new Date(),
+        created*at: new Date(),
+        updated*at: new Date(),
       }))
 
       await qb.table('users').insert(batch).execute()
@@ -207,8 +211,8 @@ export default class ConditionalSeeder extends Seeder {
     const users = Array.from({ length: 10 }, () => ({
       name: faker.person.fullName(),
       email: faker.internet.email(),
-      created_at: new Date(),
-      updated_at: new Date(),
+      created*at: new Date(),
+      updated*at: new Date(),
     }))
 
     await qb.table('users').insert(users).execute()
@@ -233,7 +237,7 @@ faker.person.jobTitle()          // "Software Engineer"
 
 ```typescript
 faker.internet.email()           // "john.doe@example.com"
-faker.internet.userName()        // "john_doe123"
+faker.internet.userName()        // "john*doe123"
 faker.internet.url()             // "https://example.com"
 faker.internet.password()        // "aB3$dF7!"
 ```
@@ -434,7 +438,7 @@ Use appropriate faker methods for each field:
   phone: faker.phone.number(),             // Valid phone number
   age: faker.number.int(18, 80),          // Reasonable age range
   country: faker.location.country(),       // Real country names
-  created_at: faker.date.past(),          // Past dates for created_at
+  created*at: faker.date.past(),          // Past dates for created*at
 }
 ```
 
@@ -456,10 +460,12 @@ Add comments explaining what data is being created:
 
 ```typescript
 /**
+
  * Seeds the database with:
  * - 50 users with various roles
  * - 3-5 posts per user
  * - Comments distributed across posts
+
  */
 export default class UserSeeder extends Seeder {
   // ...
@@ -499,8 +505,8 @@ function createUser(overrides = {}) {
     email: faker.internet.email(),
     age: faker.number.int(18, 80),
     role: 'user',
-    created_at: new Date(),
-    updated_at: new Date(),
+    created*at: new Date(),
+    updated*at: new Date(),
     ...overrides,
   }
 }
@@ -531,12 +537,12 @@ export default class UserRoleSeeder extends Seeder {
     const userRoles = users.flatMap(user =>
       faker.helpers.arrayElements(roles, faker.number.int(1, 3))
         .map(role => ({
-          user_id: user.id,
-          role_id: role.id,
+          user*id: user.id,
+          role*id: role.id,
         }))
     )
 
-    await qb.table('user_roles').insert(userRoles).execute()
+    await qb.table('user*roles').insert(userRoles).execute()
   }
 
   get order(): number {
@@ -550,7 +556,7 @@ export default class UserRoleSeeder extends Seeder {
 ```typescript
 export default class EnvironmentSeeder extends Seeder {
   async run(qb: any): Promise<void> {
-    const env = process.env.NODE_ENV
+    const env = process.env.NODE*ENV
 
     if (env === 'production') {
       console.log('Skipping seeding in production')

@@ -276,11 +276,11 @@ monitor.startMonitoring()
 
 ## FAQ
 
-### Why does ping sometimes return true then fail later?
+### Why does ping sometimes return true then fail later
 
 Network partitions or credential changes may occur after the ping. Always handle errors at query time.
 
-### Can I reserve multiple connections?
+### Can I reserve multiple connections
 
 Yes, but prefer reserving only when necessary to avoid starving the pool.
 
@@ -340,17 +340,21 @@ process.on('SIGTERM', async () => {
 livenessProbe:
   exec:
     command:
+
       - /bin/sh
       - -lc
       - query-builder ping
+
   initialDelaySeconds: 10
   periodSeconds: 15
 readinessProbe:
   exec:
     command:
+
       - /bin/sh
       - -lc
       - query-builder wait-ready --attempts 10 --delay 200
+
   initialDelaySeconds: 5
   periodSeconds: 10
 ```

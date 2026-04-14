@@ -212,7 +212,7 @@ const buddyManagers = await db
 const averyActiveTeam = await db
   .selectFrom('users')
   .whereHas('Team', ['lead_id', '=', (await db.selectFrom('users').where({ name: 'Avery' }).first())?.id])
-  .whereHas('Activity', ['created_at', '>', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)])
+  .whereHas('Activity', ['created_at', '>', new Date(Date.now() - 7 _ 24 _ 60 _ 60 _ 1000)])
   .execute()
 ```
 
@@ -249,6 +249,7 @@ const chrisMenteesWithoutCompletions = await db
 ```
 
 **When to use**:
+
 - Use `has()` when you only care about existence, not specific conditions
 - Use `whereHas()` when you need to filter by specific criteria on the related records
 - Use `doesntHave()` to find records without any related data
@@ -297,13 +298,14 @@ const chrisActiveProjects = await db
   .with({
     projects: (qb) => qb
       .where('status', '=', 'active')
-      .where(['last_activity', '>', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)])
+      .where(['last_activity', '>', new Date(Date.now() - 7 _ 24 _ 60 _ 60 _ 1000)])
       .orderBy('priority', 'desc')
   })
   .first()
 ```
 
 **Use Cases**:
+
 - Load only specific related records (e.g., published posts, active projects)
 - Sort related records (e.g., most recent comments first)
 - Limit the number of related records loaded
@@ -559,19 +561,19 @@ await db
 
 ## FAQ
 
-### How are join keys determined?
+### How are join keys determined
 
 We use `SchemaMeta`: the parent PK and child FK by convention `${singular(parent)}_id`. You can adjust singularization in config.
 
-### Can I join nested relations?
+### Can I join nested relations
 
 Call `with` multiple times; joins are flat in SQL. For nested constraints, use `whereHas` with subqueries.
 
-### What if my FK names are different?
+### What if my FK names are different
 
 Prefer `join` with explicit keys, or adapt your models to include the conventional FK naming.
 
-### How do I avoid column collisions?
+### How do I avoid column collisions
 
 Use `selectAllRelations()` (it aliases columns) or `selectRaw`/`select` with explicit aliases.
 

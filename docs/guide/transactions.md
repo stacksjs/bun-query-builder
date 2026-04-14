@@ -133,7 +133,7 @@ await transaction(async (trx) => {
     }
   })
 
-  await trx.update('inventory').set(/* ... */).execute()
+  await trx.update('inventory').set(/_ ... _/).execute()
 })
 ```
 
@@ -282,7 +282,7 @@ async function placeOrder(userId: number, items: OrderItem[]) {
         .where({ id: item.productId })
         .execute()
 
-      total += product.price * item.quantity
+      total += product.price _ item.quantity
     }
 
     // Update order total
@@ -317,7 +317,7 @@ async function processBatch(records: any[]) {
         await processRecord(trx, records[i])
       } catch (error) {
         // On error, rollback to last checkpoint and skip
-        const checkpoint = Math.floor(i / 100) * 100
+        const checkpoint = Math.floor(i / 100) _ 100
         if (checkpoint > 0) {
           await trx.rollbackToSavepoint(`batch_${checkpoint}`)
         }

@@ -12,7 +12,7 @@ Returns only matching rows from both tables:
 const postsWithUsers = await db
   .selectFrom('posts')
   .join('users', 'posts.user_id', '=', 'users.id')
-  .select(['posts.*', 'users.name as author_name'])
+  .select(['posts._', 'users.name as author_name'])
   .get()
 ```
 
@@ -24,7 +24,7 @@ Returns all rows from the left table, with matching rows from the right:
 const usersWithPosts = await db
   .selectFrom('users')
   .leftJoin('posts', 'users.id', '=', 'posts.user_id')
-  .select(['users.*', 'posts.title'])
+  .select(['users._', 'posts.title'])
   .get()
 ```
 
@@ -36,7 +36,7 @@ Returns all rows from the right table, with matching rows from the left:
 const postsWithOptionalUsers = await db
   .selectFrom('posts')
   .rightJoin('users', 'posts.user_id', '=', 'users.id')
-  .select(['users.*', 'posts.title'])
+  .select(['users._', 'posts.title'])
   .get()
 ```
 
@@ -141,7 +141,7 @@ const topSellers = await db
 const usersWithPostCount = await db
   .selectFrom('users')
   .leftJoin('posts', 'users.id', '=', 'posts.user_id')
-  .select(['users.*', 'COUNT(posts.id) as post_count'])
+  .select(['users._', 'COUNT(posts.id) as post_count'])
   .groupBy('users.id')
   .get()
 ```

@@ -470,11 +470,11 @@ function trackConfigurationChange(key: string, oldValue: any, newValue: any) {
 
 ## FAQ
 
-### How do per-instance overrides work?
+### How do per-instance overrides work
 
 Call `db.configure(partialConfig)` to shallow-merge selected properties for that builder instance.
 
-### Can I change config at runtime?
+### Can I change config at runtime
 
 Yes. Changing `config` affects subsequently created queries. Prefer setting once during app boot.
 

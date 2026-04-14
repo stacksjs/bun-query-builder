@@ -365,8 +365,8 @@ query-builder wait-ready --attempts 30 --delay 250
 
 # Execute SQL
 query-builder file ./migrations/seed.sql
-query-builder unsafe "SELECT * FROM users WHERE id = $1" --params "[1]"
-query-builder explain "SELECT * FROM users WHERE active = true"
+query-builder unsafe "SELECT _ FROM users WHERE id = $1" --params "[1]"
+query-builder explain "SELECT _ FROM users WHERE active = true"
 
 # Diagrams & Visualization
 query-builder relation:diagram                   # Generate Mermaid ER diagram

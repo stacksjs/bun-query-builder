@@ -406,23 +406,27 @@ validateConfiguration()
 ## Best Practices
 
 ### Development
+
 - **Enable Debugging**: Use `debug.captureText = true` and `verbose = true` for development
 - **Small Pages**: Use smaller `defaultPerPage` values for faster development feedback
 - **Minimal Retries**: Set low retry counts to fail fast during development
 
 ### Production
+
 - **Disable Debugging**: Turn off `debug.captureText` to prevent memory leaks
 - **Optimize Retries**: Configure appropriate retry counts based on your workload
 - **Monitor Performance**: Use query hooks for APM integration and slow query detection
 - **Lock Configuration**: Use `Object.freeze(config)` to prevent runtime changes
 
 ### Security
+
 - **Validate Configuration**: Implement startup validation to catch misconfigurations
 - **Environment Separation**: Use different configurations for different environments
 - **Secrets Management**: Keep database credentials separate from configuration code
 - **Audit Changes**: Log and monitor configuration changes in production
 
 ### Team Collaboration
+
 - **Document Decisions**: Comment configuration choices and their rationale
 - **Version Control**: Store configuration in version-controlled files
 - **Review Changes**: Treat configuration changes like code changes in reviews

@@ -64,7 +64,7 @@ const meta = buildSchemaMeta(models)
 | `whereIn(col, vals)` | WHERE IN | `.whereIn('id', [1, 2, 3])` |
 | `whereNotIn(col, vals)` | WHERE NOT IN | `.whereNotIn('status', ['banned'])` |
 | `whereBetween(col, a, b)` | WHERE BETWEEN | `.whereBetween('age', 18, 65)` |
-| `whereNull(col)` | WHERE IS NULL | `.whereNull('deleted_at')` |
+| `whereNull(col)` | WHERE IS NULL | `.whereNull('deleted*at')` |
 | `whereNotNull(col)` | WHERE IS NOT NULL | `.whereNotNull('email')` |
 | `whereColumn(a, op, b)` | Compare columns | `.whereColumn('a', '=', 'b')` |
 | `whereRaw(sql)` | Raw WHERE clause | `.whereRaw('LOWER(name) = ?', ['john'])` |
@@ -73,7 +73,7 @@ const meta = buildSchemaMeta(models)
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `join(table, a, op, b)` | INNER JOIN | `.join('posts', 'users.id', '=', 'posts.user_id')` |
+| `join(table, a, op, b)` | INNER JOIN | `.join('posts', 'users.id', '=', 'posts.user*id')` |
 | `leftJoin(...)` | LEFT JOIN | `.leftJoin('posts', ...)` |
 | `rightJoin(...)` | RIGHT JOIN | `.rightJoin('posts', ...)` |
 | `crossJoin(table)` | CROSS JOIN | `.crossJoin('categories')` |
@@ -83,8 +83,8 @@ const meta = buildSchemaMeta(models)
 | Method | Description | Example |
 |--------|-------------|---------|
 | `orderBy(col, dir)` | ORDER BY | `.orderBy('name', 'asc')` |
-| `orderByDesc(col)` | ORDER BY DESC | `.orderByDesc('created_at')` |
-| `latest()` | Order by created_at DESC | `.latest()` |
+| `orderByDesc(col)` | ORDER BY DESC | `.orderByDesc('created*at')` |
+| `latest()` | Order by created*at DESC | `.latest()` |
 | `oldest()` | Order by created_at ASC | `.oldest()` |
 | `inRandomOrder()` | Random order | `.inRandomOrder()` |
 | `limit(n)` | LIMIT | `.limit(10)` |

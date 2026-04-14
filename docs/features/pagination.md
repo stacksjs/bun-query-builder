@@ -64,12 +64,12 @@ Implementation details:
 
 ### Composite cursors
 
-You can pass multiple columns for deterministic ordering, e.g. `['created_at', 'id']`.
+You can pass multiple columns for deterministic ordering, e.g. `['created*at', 'id']`.
 
 ```ts
 const page = await db
   .selectFrom('users')
-  .cursorPaginate(50, undefined, ['created_at', 'id'], 'asc')
+  .cursorPaginate(50, undefined, ['created*at', 'id'], 'asc')
 
 // use page.meta.nextCursor to fetch the next window
 ```
@@ -126,9 +126,9 @@ await db.selectFrom('users').eachById(500, 'id', async (row) => {
 async function getUsersPage(page: number = 1, perPage: number = 20) {
   const { data, meta } = await db
     .selectFrom('users')
-    .select('users', 'id', 'name', 'email', 'role', 'created_at')
+    .select('users', 'id', 'name', 'email', 'role', 'created*at')
     .where({ active: true })
-    .orderBy('created_at', 'desc')
+    .orderBy('created*at', 'desc')
     .paginate(perPage, page)
 
   return {
@@ -148,7 +148,7 @@ async function getUsersPage(page: number = 1, perPage: number = 20) {
 const chrisProjects = await db
   .selectFrom('projects')
   .where({ owner: 'Chris' })
-  .orderBy('updated_at', 'desc')
+  .orderBy('updated*at', 'desc')
   .paginate(10, 1)
 ```
 
@@ -159,10 +159,10 @@ const chrisProjects = await db
 async function getInfinitePosts(cursor?: string) {
   const page = await db
     .selectFrom('posts')
-    .select('posts', 'id', 'title', 'content', 'author_id', 'created_at')
+    .select('posts', 'id', 'title', 'content', 'author*id', 'created*at')
     .with('Author')
     .where({ published: true })
-    .cursorPaginate(20, cursor, 'created_at', 'desc')
+    .cursorPaginate(20, cursor, 'created*at', 'desc')
 
   return {
     posts: page.data,
@@ -200,7 +200,7 @@ async function sendNewsletterToAllUsers() {
 
   await db
     .selectFrom('users')
-    .where({ email_verified: true, newsletter_subscribed: true })
+    .where({ email*verified: true, newsletter*subscribed: true })
     .chunkById(100, 'id', async (userBatch) => {
       // Process batch of users
       for (const user of userBatch) {
@@ -220,15 +220,15 @@ async function exportUserData() {
   let exportedCount = 0
 
   // Write CSV header
-  exportFile.write('id,name,email,created_at\n')
+  exportFile.write('id,name,email,created*at\n')
 
   await db
     .selectFrom('users')
-    .select('users', 'id', 'name', 'email', 'created_at')
+    .select('users', 'id', 'name', 'email', 'created*at')
     .orderBy('id', 'asc')
     .chunk(500, async (userBatch) => {
       for (const user of userBatch) {
-        exportFile.write(`${user.id},"${user.name}","${user.email}","${user.created_at}"\n`)
+        exportFile.write(`${user.id},"${user.name}","${user.email}","${user.created*at}"\n`)
         exportedCount++
       }
 
@@ -265,16 +265,16 @@ async function searchUsersWithPagination(query: string, page: number = 1) {
 // Time-based cursor pagination for real-time feeds
 async function getRealtimeFeed(cursor?: string, userId?: number) {
   let query = db
-    .selectFrom('feed_items')
-    .select('feed_items', 'id', 'content', 'created_at', 'user_id')
+    .selectFrom('feed*items')
+    .select('feed*items', 'id', 'content', 'created*at', 'user*id')
     .with('User')
-    .orderBy('created_at', 'desc')
+    .orderBy('created*at', 'desc')
 
   if (userId) {
-    query = query.where({ user_id: userId })
+    query = query.where({ user*id: userId })
   }
 
-  const page = await query.cursorPaginate(25, cursor, 'created_at', 'desc')
+  const page = await query.cursorPaginate(25, cursor, 'created*at', 'desc')
 
   return {
     items: page.data,
@@ -308,12 +308,12 @@ const buddyFeed = await getRealtimeFeed(undefined, buddyUserId)
 const page = await db
   .selectFrom('posts')
   .where({ published: true })
-  .cursorPaginate(50, cursor, 'created_at', 'desc') // created_at should be indexed
+  .cursorPaginate(50, cursor, 'created*at', 'desc') // created*at should be indexed
 
 // Good: Composite cursor for stable ordering
 const page = await db
   .selectFrom('events')
-  .cursorPaginate(25, cursor, ['created_at', 'id'], 'desc') // Both columns indexed
+  .cursorPaginate(25, cursor, ['created*at', 'id'], 'desc') // Both columns indexed
 
 // Avoid: Large offset pagination
 const badPage = await db
@@ -334,16 +334,16 @@ async function getLatestNotifications(userId: number, cursor?: string) {
   // Cursor pagination is stable even if new notifications are added
   return await db
     .selectFrom('notifications')
-    .where({ user_id: userId, deleted_at: null })
-    .cursorPaginate(20, cursor, ['created_at', 'id'], 'desc')
+    .where({ user*id: userId, deleted*at: null })
+    .cursorPaginate(20, cursor, ['created*at', 'id'], 'desc')
 }
 
 // Composite cursor for handling duplicate timestamps
 async function getOrderHistory(customerId: number, cursor?: string) {
   return await db
     .selectFrom('orders')
-    .where({ customer_id: customerId })
-    .cursorPaginate(25, cursor, ['created_at', 'id'], 'desc')
+    .where({ customer*id: customerId })
+    .cursorPaginate(25, cursor, ['created*at', 'id'], 'desc')
 }
 ```
 
@@ -374,12 +374,12 @@ interface PaginatedResponse<T> {
 async function getUsersAPI(req: Request): Promise<PaginatedResponse<User>> {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page as string) || 1)
-    const perPage = Math.min(100, Math.max(1, Number.parseInt(req.query.per_page as string) || 20))
+    const perPage = Math.min(100, Math.max(1, Number.parseInt(req.query.per*page as string) || 20))
 
     const result = await db
       .selectFrom('users')
       .where({ active: true })
-      .orderBy('created_at', 'desc')
+      .orderBy('created*at', 'desc')
       .paginate(perPage, page)
 
     return {
@@ -415,7 +415,7 @@ async function processLargeDataset(batchSize: number = 1000) {
 
   try {
     await db
-      .selectFrom('large_table')
+      .selectFrom('large*table')
       .where(['id', '>', lastProcessedId])
       .orderBy('id', 'asc')
       .chunkById(batchSize, 'id', async (batch) => {
@@ -507,15 +507,15 @@ const UsersList = () => {
 
 ## FAQ
 
-### Why is my total count expensive?
+### Why is my total count expensive
 
 `COUNT(*)` over large joins can be costly. Consider `simplePaginate` or caching counts.
 
-### Can I use composite cursors?
+### Can I use composite cursors
 
-Yes. Provide an array of columns like `['created_at', 'id']`. The cursor will carry a tuple of values in order.
+Yes. Provide an array of columns like `['created*at', 'id']`. The cursor will carry a tuple of values in order.
 
-### How do I resume a chunked job?
+### How do I resume a chunked job
 
 Persist the last processed cursor (e.g., last `id`) and restart `chunkById` with that cursor.
 
@@ -530,7 +530,7 @@ let cursor: number | undefined
 do {
   const { data, meta } = await db
     .selectFrom('events')
-    .cursorPaginate(100, cursor, 'created_at', 'desc')
+    .cursorPaginate(100, cursor, 'created*at', 'desc')
   // process new slice
   cursor = meta.nextCursor as number | undefined
 } while (cursor)
@@ -551,15 +551,15 @@ const { data, meta } = await db
 ```ts
 await db
   .selectFrom('posts')
-  .orderBy('published_at', 'desc')
+  .orderBy('published*at', 'desc')
   .paginate(10, 1)
 ```
 
 ### Chunk with transformation
 
 ```ts
-await db.selectFrom('audit_logs').chunk(5000, async (rows) => {
-  const normalized = rows.map(r => ({ ...r, ts: new Date(r.created_at) }))
+await db.selectFrom('audit*logs').chunk(5000, async (rows) => {
+  const normalized = rows.map(r => ({ ...r, ts: new Date(r.created*at) }))
   await writeLogs(normalized)
 })
 ```
@@ -577,5 +577,5 @@ await db.selectFrom('images').eachById(200, 'id', async (row) => {
 Ensure the cursor column has an index; otherwise, performance degrades.
 
 ```sql
-CREATE INDEX IF NOT EXISTS idx_users_id ON users(id);
+CREATE INDEX IF NOT EXISTS idx*users*id ON users(id);
 ```

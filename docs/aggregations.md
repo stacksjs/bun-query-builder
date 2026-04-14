@@ -3,57 +3,10 @@ title: Aggregations
 description: Perform aggregate calculations with the query builder.
 ---
 
-# Aggregations
-
-Perform aggregate calculations like COUNT, SUM, AVG, MIN, and MAX with full type safety.
-
-## Count
-
-Count records in a table:
-
-```typescript
-import { createQueryBuilder } from 'bun-query-builder'
-
-const db = createQueryBuilder<typeof schema>({ schema, meta })
-
-// Count all records
-const totalUsers = await db.selectFrom('users').count()
-console.log(totalUsers) // 150
-
-// Count with conditions
-const activeUsers = await db
-  .selectFrom('users')
-  .where({ active: true })
-  .count()
-
-// Count specific column (excludes NULL)
-const usersWithEmail = await db.selectFrom('users').count('email')
-
-// Count distinct values
-const uniqueCountries = await db.selectFrom('users').countDistinct('country')
-```
-
-## Sum
-
-Calculate the sum of a column:
-
-```typescript
-// Sum of all order amounts
-const totalRevenue = await db.selectFrom('orders').sum('amount')
-console.log(totalRevenue) // 125000.50
-
-// Sum with conditions
-const yearlyRevenue = await db
-  .selectFrom('orders')
-  .where('created_at', '>=', '2024-01-01')
-  .sum('amount')
-```
-
-## Average
-
 Calculate the average of a column:
 
 ```typescript
+
 // Average age of users
 const avgAge = await db.selectFrom('users').avg('age')
 console.log(avgAge) // 32.5
@@ -63,6 +16,7 @@ const avgActiveUserAge = await db
   .selectFrom('users')
   .where({ active: true })
   .avg('age')
+
 ```
 
 ## Max
@@ -70,12 +24,14 @@ const avgActiveUserAge = await db
 Get the maximum value:
 
 ```typescript
+
 // Maximum score
 const maxScore = await db.selectFrom('users').max('score')
 console.log(maxScore) // 9999
 
 // Latest timestamp
 const latestOrder = await db.selectFrom('orders').max('created_at')
+
 ```
 
 ## Min
@@ -83,12 +39,14 @@ const latestOrder = await db.selectFrom('orders').max('created_at')
 Get the minimum value:
 
 ```typescript
+
 // Minimum price
 const minPrice = await db.selectFrom('products').min('price')
 console.log(minPrice) // 9.99
 
 // Earliest record
 const firstOrder = await db.selectFrom('orders').min('created_at')
+
 ```
 
 ## Group By
@@ -96,10 +54,11 @@ const firstOrder = await db.selectFrom('orders').min('created_at')
 Group results for aggregate calculations:
 
 ```typescript
+
 // Count users by country
 const usersByCountry = await db
   .selectFrom('users')
-  .select(['country', 'COUNT(*) AS count'])
+  .select(['country', 'COUNT(_) AS count'])
   .groupBy('country')
   .get()
 // [{ country: 'US', count: 50 }, { country: 'UK', count: 30 }, ...]
@@ -122,6 +81,7 @@ const salesByMonthAndCategory = await db
   ])
   .groupBy(['month', 'category'])
   .get()
+
 ```
 
 ## Having Clause
@@ -129,12 +89,13 @@ const salesByMonthAndCategory = await db
 Filter grouped results:
 
 ```typescript
+
 // Find categories with more than 100 orders
 const popularCategories = await db
   .selectFrom('orders')
-  .select(['category', 'COUNT(*) AS order_count'])
+  .select(['category', 'COUNT(_) AS order_count'])
   .groupBy('category')
-  .having('COUNT(*)', '>', 100)
+  .having('COUNT(_)', '>', 100)
   .get()
 
 // Find users with high average order value
@@ -144,6 +105,7 @@ const highValueCustomers = await db
   .groupBy('user_id')
   .having('AVG(amount)', '>', 500)
   .get()
+
 ```
 
 ## Raw Aggregations
@@ -151,13 +113,14 @@ const highValueCustomers = await db
 Use raw SQL for complex aggregations:
 
 ```typescript
+
 // Custom aggregation
 const results = await db
   .selectFrom('orders')
   .select([
     'ROUND(AVG(amount), 2) AS avg_amount',
     'ROUND(SUM(amount), 2) AS total',
-    'COUNT(*) AS count',
+    'COUNT(_) AS count',
   ])
   .first()
 
@@ -166,11 +129,12 @@ const weeklyStats = await db
   .selectFrom('orders')
   .selectRaw(`
     strftime('%Y-%W', created_at) AS week,
-    COUNT(*) AS orders,
+    COUNT(_) AS orders,
     SUM(amount) AS revenue
   `)
   .groupByRaw("strftime('%Y-%W', created_at)")
   .get()
+
 ```
 
 ## Combined Aggregates
@@ -178,11 +142,12 @@ const weeklyStats = await db
 Get multiple aggregates in one query:
 
 ```typescript
+
 // Multiple aggregates
 const stats = await db
   .selectFrom('products')
   .select([
-    'COUNT(*) AS total',
+    'COUNT(_) AS total',
     'AVG(price) AS avg_price',
     'MIN(price) AS min_price',
     'MAX(price) AS max_price',
@@ -198,6 +163,7 @@ console.log(stats)
 //   max_price: 999.99,
 //   total_stock: 5000
 // }
+
 ```
 
 ## Aggregates with Joins
@@ -205,6 +171,7 @@ console.log(stats)
 Combine aggregations with joins:
 
 ```typescript
+
 // Get authors with post counts
 const authorStats = await db
   .selectFrom('users')
@@ -217,11 +184,13 @@ const authorStats = await db
   .groupBy('users.id')
   .orderByDesc('post_count')
   .get()
+
 ```
 
 ## Complete Example
 
 ```typescript
+
 import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta } from 'bun-query-builder'
 
 // Setup
@@ -266,7 +235,7 @@ async function getAnalytics() {
   const orderStats = await db
     .selectFrom('orders')
     .select([
-      'COUNT(*) AS total_orders',
+      'COUNT(_) AS total_orders',
       'SUM(amount) AS total_revenue',
       'AVG(amount) AS avg_order_value',
       'MIN(amount) AS min_order',
@@ -277,7 +246,7 @@ async function getAnalytics() {
   // Users by country
   const usersByCountry = await db
     .selectFrom('users')
-    .select(['country', 'COUNT(*) AS count'])
+    .select(['country', 'COUNT(_) AS count'])
     .groupBy('country')
     .orderByDesc('count')
     .limit(10)
@@ -288,7 +257,7 @@ async function getAnalytics() {
     .selectFrom('orders')
     .select([
       'category',
-      'COUNT(*) AS order_count',
+      'COUNT(_) AS order_count',
       'SUM(amount) AS revenue',
     ])
     .groupBy('category')
@@ -302,7 +271,7 @@ async function getAnalytics() {
     .selectFrom('orders')
     .selectRaw(`
       strftime('%Y-%m', created_at) AS month,
-      COUNT(*) AS orders,
+      COUNT(_) AS orders,
       SUM(amount) AS revenue
     `)
     .groupByRaw("strftime('%Y-%m', created_at)")
@@ -320,4 +289,5 @@ async function getAnalytics() {
 }
 
 getAnalytics().then(console.log)
+
 ```

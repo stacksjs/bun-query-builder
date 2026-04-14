@@ -6,7 +6,7 @@ Typed, model-driven Query Builder for Bun’s native `sql`.
 
 Define your model once and write type-safe queries powered by Bun’s tagged templates for safety and performance.
 
-## Why bun-query-builder?
+## Why bun-query-builder
 
 - Strong types from your model files
 - Laravel-like fluent API; Kysely-like DX

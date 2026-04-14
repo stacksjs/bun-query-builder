@@ -12,6 +12,7 @@ Performance benchmarks comparing `bun-query-builder` against popular TypeScript 
 ## Benchmark Categories
 
 ### Basic Queries
+
 - SELECT: Find user by ID
 - SELECT: Get all active users
 - SELECT: Get users with limit
@@ -21,6 +22,7 @@ Performance benchmarks comparing `bun-query-builder` against popular TypeScript 
 - DELETE: Single user
 
 ### Advanced Queries
+
 - JOIN: Users with their posts
 - AGGREGATE: Average age
 - WHERE: Complex conditions
@@ -28,6 +30,7 @@ Performance benchmarks comparing `bun-query-builder` against popular TypeScript 
 - GROUP BY + HAVING
 
 ### Batch Operations
+
 - INSERT MANY: 100 users
 - UPDATE MANY: Batch update by age range
 - DELETE MANY: By IDs
@@ -71,7 +74,7 @@ _Platform: Apple M3 Pro, Bun 1.3.11 (arm64-darwin)_
 
 Lowest time per benchmark is **bolded**. bun-query-builder wins 16 of 16 benchmarks.
 
-### Why Fast?
+### Why Fast
 
 - **Direct `bun:sqlite` access** - No abstraction layers between query builder and database
 - **Statement caching** - Prepared statements reused via Map-based O(1) lookup
@@ -94,6 +97,7 @@ bun run setup
 ```
 
 This creates a SQLite database with:
+
 - 1,000 users
 - 5,000 posts (associated with users)
 
@@ -129,6 +133,7 @@ bun run clean
 ## Database Schema
 
 ### Users Table
+
 - `id` - Primary key (autoincrement)
 - `name` - User's name
 - `email` - Unique email
@@ -138,6 +143,7 @@ bun run clean
 - `updated_at` - Timestamp
 
 ### Posts Table
+
 - `id` - Primary key (autoincrement)
 - `title` - Post title
 - `content` - Post content

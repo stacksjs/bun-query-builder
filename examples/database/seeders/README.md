@@ -79,6 +79,7 @@ bun qb seed --dir ./custom/path/to/seeders
 Seeders are executed in order based on their `order` property. The default order is 100.
 
 In this example:
+
 - **UserSeeder** (order: 10) - Runs first, creates users
 - **PostSeeder** (order: 20) - Runs second, creates posts for users
 - **CommentSeeder** (order: 30) - Runs last, creates comments on posts

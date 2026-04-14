@@ -100,7 +100,7 @@ async function processOrder(orderData: {
       const order = await tx.insertInto('orders').values({
         customer_id: orderData.customerId,
         status: 'processing',
-        total: orderData.items.reduce((sum, item) => sum + (item.price * item.quantity), 0),
+        total: orderData.items.reduce((sum, item) => sum + (item.price _ item.quantity), 0),
         created_at: new Date()
       }).returning('id').execute()
 
@@ -123,7 +123,7 @@ async function processOrder(orderData: {
     // Stage 2: Process payment
     const paymentResult = await processPayment({
       token: orderData.paymentToken,
-      amount: orderData.items.reduce((sum, item) => sum + (item.price * item.quantity), 0),
+      amount: orderData.items.reduce((sum, item) => sum + (item.price _ item.quantity), 0),
       orderId
     })
 
@@ -506,7 +506,7 @@ async function monitoredOnboarding(userData: any) {
 // Cleanup job for stale transactions
 class TransactionCleanupJob {
   async cleanupStaleTransactions() {
-    const staleThreshold = Date.now() - (24 * 60 * 60 * 1000) // 24 hours
+    const staleThreshold = Date.now() - (24 _ 60 _ 60 _ 1000) // 24 hours
 
     const staleTransactions = await db
       .selectFrom('distributed_transactions')
@@ -551,16 +551,16 @@ class TransactionCleanupJob {
 setInterval(async () => {
   const cleanup = new TransactionCleanupJob()
   await cleanup.cleanupStaleTransactions()
-}, 60 * 60 * 1000) // Every hour
+}, 60 _ 60 * 1000) // Every hour
 ```
 
 ## FAQ
 
-### Is this the same as XA or Sagas?
+### Is this the same as XA or Sagas
 
 This provides primitives similar to two-phase commit; for complex workflows, consider a Saga orchestrator.
 
-### What happens if the process crashes before commit?
+### What happens if the process crashes before commit
 
 On restart, decide whether to commit or rollback based on your orchestration state.
 

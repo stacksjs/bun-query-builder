@@ -2,60 +2,12 @@
 title: Joins
 description: Build type-safe JOIN queries with the query builder.
 ---
-
-# Joins
-
-Build type-safe JOIN queries to combine data from multiple tables.
-
-## Inner Join
-
-Returns only records that have matching values in both tables:
-
-```typescript
-import { createQueryBuilder } from 'bun-query-builder'
-
-const db = createQueryBuilder<typeof schema>({ schema, meta })
-
-// Basic inner join
-const results = await db
-  .selectFrom('posts')
-  .join('users', 'posts.user_id', 'users.id')
-  .get()
-
-// With column selection
-const postsWithAuthors = await db
-  .selectFrom('posts')
-  .select(['posts.title', 'posts.content', 'users.name AS author'])
-  .join('users', 'posts.user_id', 'users.id')
-  .get()
-```
-
-## Left Join
-
-Returns all records from the left table and matching records from the right table:
-
-```typescript
-// Left join - get all users with their posts (if any)
-const usersWithPosts = await db
-  .selectFrom('users')
-  .select(['users.name', 'posts.title'])
-  .leftJoin('posts', 'users.id', 'posts.user_id')
-  .get()
-
-// Users without posts will have null for posts.title
-```
-
-## Right Join
-
-Returns all records from the right table and matching records from the left table:
-
-```typescript
-// Right join
 const postsWithUsers = await db
   .selectFrom('posts')
   .select(['posts.title', 'users.name'])
   .rightJoin('users', 'posts.user_id', 'users.id')
   .get()
+
 ```
 
 ## Cross Join
@@ -63,11 +15,13 @@ const postsWithUsers = await db
 Returns the Cartesian product of both tables:
 
 ```typescript
+
 // Cross join - combine every row from both tables
 const combinations = await db
   .selectFrom('colors')
   .crossJoin('sizes')
   .get()
+
 ```
 
 ## Multiple Joins
@@ -75,6 +29,7 @@ const combinations = await db
 Chain multiple joins together:
 
 ```typescript
+
 // Join multiple tables
 const postsWithDetails = await db
   .selectFrom('posts')
@@ -86,6 +41,7 @@ const postsWithDetails = await db
   .join('users', 'posts.user_id', 'users.id')
   .join('categories', 'posts.category_id', 'categories.id')
   .get()
+
 ```
 
 ## Join with Conditions
@@ -93,6 +49,7 @@ const postsWithDetails = await db
 Add additional conditions to joins:
 
 ```typescript
+
 // Join with additional where conditions
 const activePostsByActiveUsers = await db
   .selectFrom('posts')
@@ -100,6 +57,7 @@ const activePostsByActiveUsers = await db
   .where({ 'posts.published': true })
   .andWhere({ 'users.active': true })
   .get()
+
 ```
 
 ## Self Join
@@ -107,12 +65,14 @@ const activePostsByActiveUsers = await db
 Join a table to itself:
 
 ```typescript
+
 // Self join - find employees and their managers
 const employeesWithManagers = await db
   .selectFrom('employees AS e')
   .select(['e.name AS employee', 'm.name AS manager'])
   .leftJoin('employees AS m', 'e.manager_id', 'm.id')
   .get()
+
 ```
 
 ## Join with Subquery
@@ -120,6 +80,7 @@ const employeesWithManagers = await db
 Use subqueries in joins:
 
 ```typescript
+
 // Join with aggregated subquery
 const usersWithPostCounts = await db
   .selectFrom('users')
@@ -133,6 +94,7 @@ const usersWithPostCounts = await db
     'post_counts.user_id'
   )
   .get()
+
 ```
 
 ## Eager Loading Relations
@@ -140,6 +102,7 @@ const usersWithPostCounts = await db
 Use the `with` method for eager loading related records:
 
 ```typescript
+
 // Eager load posts for users
 const usersWithPosts = await db
   .selectFrom('users')
@@ -161,6 +124,7 @@ const usersWithRelations = await db
   .selectFrom('users')
   .with(['posts', 'comments', 'profile'])
   .get()
+
 ```
 
 ## Count Relations
@@ -168,6 +132,7 @@ const usersWithRelations = await db
 Get count of related records:
 
 ```typescript
+
 // Get users with post count
 const usersWithPostCount = await db
   .selectFrom('users')
@@ -181,6 +146,7 @@ const usersWithCounts = await db
   .selectFrom('users')
   .withCount(['posts', 'comments'])
   .get()
+
 ```
 
 ## Has Relation
@@ -188,6 +154,7 @@ const usersWithCounts = await db
 Filter by existence of relations:
 
 ```typescript
+
 // Get users who have posts
 const usersWithPosts = await db
   .selectFrom('users')
@@ -205,6 +172,7 @@ const usersWithPublishedPosts = await db
   .selectFrom('users')
   .whereHas('posts', (qb) => qb.where('published', '=', true))
   .get()
+
 ```
 
 ## Join with Alias
@@ -212,6 +180,7 @@ const usersWithPublishedPosts = await db
 Use table aliases for complex queries:
 
 ```typescript
+
 const results = await db
   .selectFrom('orders AS o')
   .select([
@@ -223,11 +192,13 @@ const results = await db
   .join('order_items AS oi', 'o.id', 'oi.order_id')
   .join('products AS p', 'oi.product_id', 'p.id')
   .get()
+
 ```
 
 ## Complete Example
 
 ```typescript
+
 import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta } from 'bun-query-builder'
 
 // Models with relations
@@ -308,4 +279,5 @@ async function getPostsWithDetails() {
 }
 
 getPostsWithDetails()
+
 ```
