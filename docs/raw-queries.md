@@ -4,21 +4,6 @@ description: Execute raw SQL queries when you need full control.
 ---
   .get()
 
-// Raw in group by
-const grouped = await db
-  .selectFrom('orders')
-  .select(['SUM(amount) AS total'])
-  .groupByRaw("strftime('%Y-%m', created*at)")
-  .get()
-
-// Raw in having
-const filtered = await db
-  .selectFrom('orders')
-  .select(['user*id', 'SUM(amount) AS total'])
-  .groupBy('user*id')
-  .havingRaw('SUM(amount) > 1000')
-  .get()
-
 ```
 
 ## Unsafe Queries

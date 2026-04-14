@@ -3,24 +3,6 @@ title: Aggregations
 description: Perform aggregate calculations with the query builder.
 ---
 
-Calculate the average of a column:
-
-```typescript
-
-// Average age of users
-const avgAge = await db.selectFrom('users').avg('age')
-console.log(avgAge) // 32.5
-
-// Average with conditions
-const avgActiveUserAge = await db
-  .selectFrom('users')
-  .where({ active: true })
-  .avg('age')
-
-```
-
-## Max
-
 Get the maximum value:
 
 ```typescript

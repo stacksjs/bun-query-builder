@@ -2,23 +2,6 @@
 title: Joins
 description: Build type-safe JOIN queries with the query builder.
 ---
-const postsWithUsers = await db
-  .selectFrom('posts')
-  .select(['posts.title', 'users.name'])
-  .rightJoin('users', 'posts.user_id', 'users.id')
-  .get()
-
-```
-
-## Cross Join
-
-Returns the Cartesian product of both tables:
-
-```typescript
-
-// Cross join - combine every row from both tables
-const combinations = await db
-  .selectFrom('colors')
   .crossJoin('sizes')
   .get()
 

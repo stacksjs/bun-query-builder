@@ -2,23 +2,6 @@
 title: Select Queries
 description: Build type-safe SELECT queries with the query builder.
 ---
-  .andWhere('age', '>=', 18)
-  .get()
-
-// OR conditions
-const results = await db
-  .selectFrom('users')
-  .where({ role: 'admin' })
-  .orWhere({ role: 'moderator' })
-  .get()
-
-```
-
-## Ordering Results
-
-```typescript
-
-// Order ascending (default)
 const users = await db
   .selectFrom('users')
   .orderBy('name')

@@ -2,24 +2,6 @@
 title: Insert Queries
 description: Insert records into your database with type-safe queries.
 ---
-  email: 'john@example.com',
-})
-// created_at and updated_at are auto-populated
-
-```
-
-## Insert or Ignore
-
-Insert only if the record doesn't exist (based on unique constraints):
-
-```typescript
-
-// Insert or ignore on conflict
-await db.insertOrIgnore('users', {
-  email: 'existing@example.com',
-  name: 'New Name',
-})
-
 ```
 
 ## Upsert (Insert or Update)

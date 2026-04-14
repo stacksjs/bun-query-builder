@@ -2,23 +2,6 @@
 title: Delete Queries
 description: Delete records from your database with type-safe queries.
 ---
-await db
-  .deleteFrom('logs')
-  .where('level', '=', 'debug')
-  .where('created_at', '<', '2024-01-01')
-  .execute()
-
-```
-
-## Soft Deletes
-
-If your model supports soft deletes, records are marked as deleted instead of being removed:
-
-```typescript
-
-// Model with soft deletes enabled
-const models = {
-  User: {
     name: 'User',
     table: 'users',
     softDeletes: true,  // Enable soft deletes

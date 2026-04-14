@@ -2,24 +2,6 @@
 title: Update Queries
 description: Update records in your database with type-safe queries.
 ---
-
-// Update many records matching conditions
-await db.updateMany('users', { active: false }, { status: 'archived' })
-// Updates all users where active = false, setting status = 'archived'
-
-```
-
-## Increment and Decrement
-
-```typescript
-
-// Increment a column value
-await db
-  .updateFrom('posts')
-  .increment('views', 1)
-  .where({ id: 123 })
-  .execute()
-
 // Decrement a column value
 await db
   .updateFrom('products')
