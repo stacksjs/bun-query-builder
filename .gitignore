@@ -28,3 +28,4 @@ users.json
 /.qb
 packages/benchmark/test_db-shm
 packages/benchmark/test_db-wal
+pantry
