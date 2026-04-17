@@ -1545,8 +1545,10 @@ export function createTableFromModel(definition: ModelDefinition): void {
 
   for (const [name, attr] of Object.entries(definition.attributes)) {
     let colType = 'TEXT'
-    if (attr.type === 'number') colType = 'REAL'
+    if (attr.type === 'number') colType = 'INTEGER'
     else if (attr.type === 'boolean') colType = 'INTEGER'
+    // Safety net: foreign key columns must always be INTEGER
+    if (name.endsWith('_id')) colType = 'INTEGER'
     columns.push(`${name} ${colType}${attr.unique ? ' UNIQUE' : ''}`)
   }
 

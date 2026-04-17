@@ -341,7 +341,7 @@ describe('migrations - complex model attributes', () => {
       expect(getColumn(plan, 'financials', 'amount')?.type).toBe('float')
       expect(getColumn(plan, 'financials', 'rate')?.type).toBe('double')
       expect(getColumn(plan, 'financials', 'price')?.type).toBe('decimal')
-      expect(getColumn(plan, 'financials', 'generic_num')?.type).toBe('float')
+      expect(getColumn(plan, 'financials', 'generic_num')?.type).toBe('integer')
     })
 
     it('detects boolean type from validation rule', () => {

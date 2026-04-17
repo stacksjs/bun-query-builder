@@ -232,8 +232,9 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
       case 'bigint':
         return 'bigint'
       case 'float':
-      case 'number':
         return 'float'
+      case 'number':
+        return 'integer'
       case 'double':
         return 'double'
       case 'decimal':
@@ -262,8 +263,10 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
       return 'integer'
     if (type === 'bigint')
       return 'bigint'
-    if (type === 'float' || type === 'number')
+    if (type === 'float')
       return 'float'
+    if (type === 'number')
+      return 'integer'
     if (type === 'boolean')
       return 'boolean'
     if (type === 'date')

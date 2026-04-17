@@ -24,6 +24,12 @@ export class SQLiteDriver implements DialectDriver {
   }
 
   private getColumnType(column: ColumnPlan): string {
+    // Safety net: foreign key columns (ending in _id) must always be INTEGER
+    // to prevent data corruption from float storage (e.g., 11.0 instead of 11)
+    if (column.name.endsWith('_id')) {
+      return 'INTEGER'
+    }
+
     switch (column.type) {
       case 'string': return 'TEXT'
       case 'text': return 'TEXT'
