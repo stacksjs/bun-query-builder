@@ -1,4 +1,4 @@
-import type { ModelRecord } from './schema'
+import type { ForeignKeyConfig, ModelRecord, OnForeignKeyAction } from './schema'
 import type { SupportedDialect } from './types'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -107,7 +107,7 @@ export interface ColumnPlan {
   isNullable: boolean
   hasDefault: boolean
   defaultValue?: PrimitiveDefault
-  references?: { table: string, column: string }
+  references?: { table: string, column: string, onDelete?: OnForeignKeyAction, onUpdate?: OnForeignKeyAction }
   enumValues?: string[]
 }
 
@@ -389,19 +389,34 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
 
       // Foreign key inference for *_id columns
       // Infer FK when:
-      //   1. foreignKey is explicitly true, OR
-      //   2. The model declares a belongsTo relationship matching the inferred model name, OR
-      //   3. A model with the inferred name exists in the models record (convention-based)
+      //   1. foreignKey is an explicit ForeignKeyConfig object, OR
+      //   2. foreignKey is explicitly true, OR
+      //   3. The model declares a belongsTo relationship matching the inferred model name, OR
+      //   4. A model with the inferred name exists in the models record (convention-based)
       // Skip when foreignKey is explicitly false
       if (columnName.endsWith('_id') && attr.foreignKey !== false) {
-        const base = columnName.replace(/_id$/, '')
-        // Try PascalCase first (user_id -> User), then try camelCase variants
-        const maybeModel = base.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase())
-        const refTable = meta.modelToTable[maybeModel]
-        if (refTable) {
-          // When the referenced model exists in the schema, auto-infer FK
-          const refPk = meta.primaryKeys[refTable] ?? 'id'
-          col.references = { table: refTable, column: refPk }
+        if (typeof attr.foreignKey === 'object' && attr.foreignKey !== null) {
+          // Explicit FK config — use it directly
+          const fkConfig = attr.foreignKey as ForeignKeyConfig
+          col.references = {
+            table: fkConfig.table,
+            column: fkConfig.column ?? 'id',
+            onDelete: fkConfig.onDelete,
+            onUpdate: fkConfig.onUpdate,
+          }
+          if (fkConfig.nullable !== undefined)
+            col.isNullable = fkConfig.nullable
+        }
+        else {
+          const base = columnName.replace(/_id$/, '')
+          // Try PascalCase first (user_id -> User), then try camelCase variants
+          const maybeModel = base.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase())
+          const refTable = meta.modelToTable[maybeModel]
+          if (refTable) {
+            // When the referenced model exists in the schema, auto-infer FK
+            const refPk = meta.primaryKeys[refTable] ?? 'id'
+            col.references = { table: refTable, column: refPk }
+          }
         }
       }
 
@@ -546,7 +561,7 @@ export function generateSql(plan: MigrationPlan): string[] {
   for (const t of plan.tables) {
     for (const c of t.columns) {
       if (c.references) {
-        const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column)
+        const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
         statements.push(alterTableStatement)
         createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
       }
@@ -750,7 +765,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       const t = nextTables[tableName]
       for (const c of t.columns) {
         if (c.references) {
-          const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column)
+          const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
           chunks.push(alterTableStatement)
           createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
         }
@@ -855,7 +870,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         hasChanges = true
 
         if (c.references) {
-          const addFkStatement = driver.addForeignKey(curr.table, c.name, c.references.table, c.references.column)
+          const addFkStatement = driver.addForeignKey(curr.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
           tableChanges.push(addFkStatement)
           chunks.push(addFkStatement)
         }

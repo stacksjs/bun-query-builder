@@ -71,6 +71,8 @@ export interface TypedAttribute<T = unknown> {
   guarded?: boolean
   nullable?: boolean
   default?: InferType<T>
+  /** Control FK constraint: false to skip, true to auto-infer, or explicit config */
+  foreignKey?: boolean | import('./schema').ForeignKeyConfig
   validation?: {
     rule: unknown
     message?: Record<string, string>
@@ -1549,7 +1551,18 @@ export function createTableFromModel(definition: ModelDefinition): void {
     else if (attr.type === 'boolean') colType = 'INTEGER'
     // Safety net: foreign key columns must always be INTEGER
     if (name.endsWith('_id')) colType = 'INTEGER'
-    columns.push(`${name} ${colType}${attr.unique ? ' UNIQUE' : ''}`)
+    let colDef = `${name} ${colType}`
+    if (attr.unique) colDef += ' UNIQUE'
+    // Inline FK constraints for SQLite CREATE TABLE
+    if (typeof attr.foreignKey === 'object' && attr.foreignKey !== null) {
+      const fk = attr.foreignKey as import('./schema').ForeignKeyConfig
+      colDef += ` REFERENCES ${fk.table}(${fk.column ?? 'id'})`
+      if (fk.onDelete)
+        colDef += ` ON DELETE ${fk.onDelete.toUpperCase()}`
+      if (fk.onUpdate)
+        colDef += ` ON UPDATE ${fk.onUpdate.toUpperCase()}`
+    }
+    columns.push(colDef)
   }
 
   if (definition.traits?.useTimestamps) {

@@ -9,6 +9,21 @@ import type { Faker } from 'ts-mocker'
 
 export type ValidatorMessage = Record<string, string>
 
+export type OnForeignKeyAction = 'cascade' | 'set null' | 'restrict' | 'no action'
+
+export interface ForeignKeyConfig {
+  /** Referenced table name */
+  table: string
+  /** Referenced column (defaults to 'id') */
+  column?: string
+  /** ON DELETE behavior */
+  onDelete?: OnForeignKeyAction
+  /** ON UPDATE behavior */
+  onUpdate?: OnForeignKeyAction
+  /** Whether the FK column allows NULL */
+  nullable?: boolean
+}
+
 /**
  * # `ValidationType`
  *
@@ -40,8 +55,8 @@ export interface Attribute {
   hidden?: boolean
   fillable?: boolean
   guarded?: boolean
-  /** Set to false to prevent auto-inference of foreign key from *Id naming convention */
-  foreignKey?: boolean
+  /** Control FK constraint: false to skip, true to auto-infer, or explicit config */
+  foreignKey?: boolean | ForeignKeyConfig
   factory?: (faker: Faker) => any
   validation: {
     rule: ValidationType

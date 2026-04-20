@@ -655,6 +655,232 @@ describe('migrations - complex model attributes', () => {
       expect(fkCol?.references?.table).toBe('countries')
       expect(fkCol?.references?.column).toBe('code') // Should reference custom PK
     })
+
+    it('supports explicit foreignKey config with onDelete and nullable', () => {
+      const models = defineModels({
+        User: {
+          name: 'User',
+          table: 'users',
+          attributes: { id: { validation: { rule: {} } } },
+        },
+        Coach: {
+          name: 'Coach',
+          table: 'coaches',
+          attributes: { id: { validation: { rule: {} } } },
+        },
+        Athlete: {
+          name: 'Athlete',
+          table: 'athletes',
+          attributes: {
+            id: { validation: { rule: {} } },
+            user_id: {
+              validation: { rule: { name: 'integer' } },
+              foreignKey: { table: 'users', onDelete: 'cascade' },
+            },
+            coach_id: {
+              validation: { rule: { name: 'integer' } },
+              foreignKey: { table: 'coaches', onDelete: 'set null', nullable: true },
+            },
+          },
+          belongsTo: ['User', 'Coach'],
+        },
+      })
+
+      const plan = buildMigrationPlan(models as any, { dialect: 'sqlite' })
+      const userIdCol = getColumn(plan, 'athletes', 'user_id')
+      const coachIdCol = getColumn(plan, 'athletes', 'coach_id')
+
+      // user_id: explicit FK config with cascade
+      expect(userIdCol?.references?.table).toBe('users')
+      expect(userIdCol?.references?.column).toBe('id')
+      expect(userIdCol?.references?.onDelete).toBe('cascade')
+      expect(userIdCol?.isNullable).toBe(true) // nullable not overridden, defaults to true
+
+      // coach_id: explicit FK config with set null, nullable
+      expect(coachIdCol?.references?.table).toBe('coaches')
+      expect(coachIdCol?.references?.column).toBe('id')
+      expect(coachIdCol?.references?.onDelete).toBe('set null')
+      expect(coachIdCol?.isNullable).toBe(true)
+    })
+
+    it('supports custom FK column reference', () => {
+      const models = defineModels({
+        Account: {
+          name: 'Account',
+          table: 'accounts',
+          attributes: {
+            id: { validation: { rule: {} } },
+            external_id: { validation: { rule: { name: 'string' } } },
+          },
+        },
+        Transaction: {
+          name: 'Transaction',
+          table: 'transactions',
+          attributes: {
+            id: { validation: { rule: {} } },
+            account_id: {
+              validation: { rule: { name: 'integer' } },
+              foreignKey: { table: 'accounts', column: 'external_id' },
+            },
+          },
+        },
+      })
+
+      const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
+      const fkCol = getColumn(plan, 'transactions', 'account_id')
+
+      expect(fkCol?.references?.table).toBe('accounts')
+      expect(fkCol?.references?.column).toBe('external_id')
+    })
+
+    it('supports onUpdate in foreignKey config', () => {
+      const models = defineModels({
+        Parent: {
+          name: 'Parent',
+          table: 'parents',
+          attributes: { id: { validation: { rule: {} } } },
+        },
+        Child: {
+          name: 'Child',
+          table: 'children',
+          attributes: {
+            id: { validation: { rule: {} } },
+            parent_id: {
+              validation: { rule: { name: 'integer' } },
+              foreignKey: { table: 'parents', onDelete: 'cascade', onUpdate: 'cascade' },
+            },
+          },
+        },
+      })
+
+      const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
+      const fkCol = getColumn(plan, 'children', 'parent_id')
+
+      expect(fkCol?.references?.onDelete).toBe('cascade')
+      expect(fkCol?.references?.onUpdate).toBe('cascade')
+    })
+
+    it('belongsTo does not duplicate columns already in attributes with FK config', () => {
+      const models = defineModels({
+        User: {
+          name: 'User',
+          table: 'users',
+          attributes: { id: { validation: { rule: {} } } },
+        },
+        Post: {
+          name: 'Post',
+          table: 'posts',
+          attributes: {
+            id: { validation: { rule: {} } },
+            user_id: {
+              validation: { rule: { name: 'integer' } },
+              foreignKey: { table: 'users', onDelete: 'cascade' },
+            },
+          },
+          belongsTo: ['User'],
+        },
+      })
+
+      const plan = buildMigrationPlan(models as any, { dialect: 'sqlite' })
+      const postsTable = plan.tables.find(t => t.table === 'posts')
+      const userIdCols = postsTable?.columns.filter(c => c.name === 'user_id')
+
+      // Should only have one user_id column, not duplicated by belongsTo
+      expect(userIdCols?.length).toBe(1)
+      expect(userIdCols?.[0]?.references?.onDelete).toBe('cascade')
+    })
+
+    it('backward compat: foreignKey: true still auto-infers', () => {
+      const models = defineModels({
+        User: {
+          name: 'User',
+          table: 'users',
+          attributes: { id: { validation: { rule: {} } } },
+        },
+        Post: {
+          name: 'Post',
+          table: 'posts',
+          attributes: {
+            id: { validation: { rule: {} } },
+            user_id: {
+              validation: { rule: { name: 'integer' } },
+              foreignKey: true,
+            },
+          },
+        },
+      })
+
+      const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
+      const fkCol = getColumn(plan, 'posts', 'user_id')
+
+      expect(fkCol?.references?.table).toBe('users')
+      expect(fkCol?.references?.column).toBe('id')
+    })
+
+    it('backward compat: foreignKey: false skips FK inference', () => {
+      const models = defineModels({
+        User: {
+          name: 'User',
+          table: 'users',
+          attributes: { id: { validation: { rule: {} } } },
+        },
+        Post: {
+          name: 'Post',
+          table: 'posts',
+          attributes: {
+            id: { validation: { rule: {} } },
+            user_id: {
+              validation: { rule: { name: 'integer' } },
+              foreignKey: false,
+            },
+          },
+        },
+      })
+
+      const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
+      const fkCol = getColumn(plan, 'posts', 'user_id')
+
+      expect(fkCol?.references).toBeUndefined()
+    })
+
+    it('generates SQL with ON DELETE and ON UPDATE clauses', () => {
+      const models = defineModels({
+        User: {
+          name: 'User',
+          table: 'users',
+          attributes: { id: { validation: { rule: {} } } },
+        },
+        Coach: {
+          name: 'Coach',
+          table: 'coaches',
+          attributes: { id: { validation: { rule: {} } } },
+        },
+        Athlete: {
+          name: 'Athlete',
+          table: 'athletes',
+          attributes: {
+            id: { validation: { rule: {} } },
+            user_id: {
+              validation: { rule: { name: 'integer' } },
+              foreignKey: { table: 'users', onDelete: 'cascade' },
+            },
+            coach_id: {
+              validation: { rule: { name: 'integer' } },
+              foreignKey: { table: 'coaches', onDelete: 'set null', onUpdate: 'cascade', nullable: true },
+            },
+          },
+        },
+      })
+
+      for (const dialect of ['sqlite', 'postgres', 'mysql'] as const) {
+        const plan = buildMigrationPlan(models as any, { dialect })
+        const sql = generateSql(plan, { dialect }).join('\n')
+
+        expect(sql).toContain('ON DELETE CASCADE')
+        expect(sql).toContain('ON DELETE SET NULL')
+        expect(sql).toContain('ON UPDATE CASCADE')
+      }
+    })
   })
 
   // ============================================================================

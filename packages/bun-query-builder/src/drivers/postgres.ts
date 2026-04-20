@@ -4,7 +4,7 @@ export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
   createTable: (table: TablePlan) => string
   createIndex: (tableName: string, index: IndexPlan) => string
-  addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string) => string
+  addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
   modifyColumn: (tableName: string, column: ColumnPlan) => string
   dropTable: (tableName: string) => string
@@ -102,9 +102,14 @@ export class PostgresDriver implements DialectDriver {
     return `CREATE ${kind}INDEX IF NOT EXISTS ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns});`
   }
 
-  addForeignKey(tableName: string, columnName: string, refTable: string, refColumn: string): string {
+  addForeignKey(tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string): string {
     const fkName = `${tableName}_${columnName}_fk`
-    return `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD CONSTRAINT ${this.quoteIdentifier(fkName)} FOREIGN KEY (${this.quoteIdentifier(columnName)}) REFERENCES ${this.quoteIdentifier(refTable)}(${this.quoteIdentifier(refColumn)});`
+    let sql = `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD CONSTRAINT ${this.quoteIdentifier(fkName)} FOREIGN KEY (${this.quoteIdentifier(columnName)}) REFERENCES ${this.quoteIdentifier(refTable)}(${this.quoteIdentifier(refColumn)})`
+    if (onDelete)
+      sql += ` ON DELETE ${onDelete.toUpperCase()}`
+    if (onUpdate)
+      sql += ` ON UPDATE ${onUpdate.toUpperCase()}`
+    return `${sql};`
   }
 
   addColumn(tableName: string, column: ColumnPlan): string {
