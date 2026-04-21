@@ -1,12 +1,20 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { dts } from 'bun-plugin-dtsx'
 
-await Bun.build({
+const result = await Bun.build({
   entrypoints: ['src/index.ts', 'src/browser.ts', 'src/dynamodb/index.ts', 'bin/cli.ts'],
   outdir: './dist',
   target: 'bun',
   plugins: [dts()],
 })
+
+if (!result.success) {
+  console.error('Build failed:')
+  for (const log of result.logs) {
+    console.error(log)
+  }
+  process.exit(1)
+}
 
 // Fix: Ensure init_config() is awaited in init_src()
 // Bun's bundler doesn't automatically await async init functions
