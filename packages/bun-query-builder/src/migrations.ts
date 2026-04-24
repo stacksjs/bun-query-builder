@@ -340,11 +340,11 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       const isPk = attrName === primaryKey
 
       // Priority 1: Check validation rule for explicit type
-      inferred = detectTypeFromValidationRule(attr.validation.rule)
+      inferred = detectTypeFromValidationRule(attr.validation?.rule)
 
       // Priority 2: Check for enum validation rule (or extract enum values if type is enum)
       if (!inferred || inferred === 'enum') {
-        const enumVals = detectEnumFromValidationRule(attr.validation.rule)
+        const enumVals = detectEnumFromValidationRule(attr.validation?.rule)
         if (enumVals && enumVals.length > 0) {
           inferred = 'enum'
           enumValues = enumVals
@@ -489,6 +489,23 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           type: 'datetime',
           isPrimaryKey: false,
           isUnique: false,
+          isNullable: true,
+          hasDefault: false,
+        })
+      }
+    }
+
+    // Handle useUuid trait - add uuid column (nullable unique string). The
+    // ORM auto-populates it on create() for models with this trait, so the
+    // generated schema must have the column.
+    const useUuid = traits?.useUuid ?? false
+    if (useUuid) {
+      if (!columns.some(c => c.name === 'uuid')) {
+        columns.push({
+          name: 'uuid',
+          type: 'string',
+          isPrimaryKey: false,
+          isUnique: true,
           isNullable: true,
           hasDefault: false,
         })
