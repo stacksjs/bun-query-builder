@@ -530,6 +530,91 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     tables.push({ table, columns, indexes })
   }
 
+  // Trait-driven shared/per-model pivot tables. The likeable, taggable, and
+  // categorizable traits all read/write to canonical pivot tables that the
+  // framework expects to exist. Auto-emit them whenever any model declares
+  // the corresponding trait, so `_likeable.like()` / `_taggable.addTag()` /
+  // `_categorizable.addCategory()` work right after migrate:fresh.
+  const seenTables = new Set(tables.map(t => t.table))
+  function ensureTable(plan: TablePlan) {
+    if (!seenTables.has(plan.table)) {
+      seenTables.add(plan.table)
+      tables.push(plan)
+    }
+  }
+
+  for (const modelName of Object.keys(models)) {
+    const model = models[modelName] as any
+    const traits = (model?.traits ?? {}) as Record<string, any>
+    const modelTable = (model.table as string) || `${String(model.name).toLowerCase()}s`
+    const singular = modelTable.replace(/s$/, '')
+
+    // likeable → per-model `<table>_likes` pivot keyed by user_id + <model>_id
+    if (traits.likeable) {
+      const opts = typeof traits.likeable === 'object' ? traits.likeable as { table?: string, foreignKey?: string } : {}
+      const likeTable = opts.table || `${modelTable}_likes`
+      const fk = opts.foreignKey || `${singular}_id`
+      ensureTable({
+        table: likeTable,
+        columns: [
+          { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'user_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'users', column: 'id' } },
+          { name: fk, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: modelTable, column: 'id' } },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
+        ],
+        indexes: [{ name: `${likeTable}_user_target_unique`, columns: ['user_id', fk], type: 'unique' }],
+      })
+    }
+
+    // taggable → shared polymorphic `taggable` table
+    if (traits.taggable) {
+      ensureTable({
+        table: 'taggable',
+        columns: [
+          { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'name', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'slug', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'description', type: 'text', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
+          { name: 'order', type: 'integer', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 0 as any },
+          { name: 'is_active', type: 'boolean', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: true as any },
+          { name: 'taggable_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'taggable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
+        ],
+        indexes: [{ name: 'taggable_target_index', columns: ['taggable_id', 'taggable_type'], type: 'index' }],
+      })
+    }
+
+    // categorizable → `categorizable` (categories list) + `categorizable_models` (pivot)
+    if (traits.categorizable) {
+      ensureTable({
+        table: 'categorizable',
+        columns: [
+          { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'name', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'slug', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'description', type: 'text', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
+        ],
+        indexes: [{ name: 'categorizable_slug_unique', columns: ['slug'], type: 'unique' }],
+      })
+      ensureTable({
+        table: 'categorizable_models',
+        columns: [
+          { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'category_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'categorizable', column: 'id' } },
+          { name: 'categorizable_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'categorizable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+        ],
+        indexes: [{ name: 'categorizable_models_target_index', columns: ['categorizable_id', 'categorizable_type'], type: 'index' }],
+      })
+    }
+  }
+
   return { dialect: options.dialect, tables }
 }
 
