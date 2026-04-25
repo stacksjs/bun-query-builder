@@ -468,6 +468,9 @@ class ModelInstance<
         Object.values(data) as Bindings
       )
 
+      for (const [key, value] of Object.entries(data)) {
+        this._attributes[key] = value
+      }
       this._attributes[pk] = result.lastInsertRowid
 
       hooks?.afterCreate?.(this as unknown as ModelHookInstance)
@@ -1253,15 +1256,16 @@ class ModelQueryBuilder<
       sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
-    return (db.query(sql).get(...(params as Bindings)) as { v: number | null }).v
+    const row = db.query(sql).get(...(params as Bindings)) as { v: number | null } | null
+    return row?.v ?? null
   }
 
-  max<K extends ColumnName<TDef>>(column: K): number | null {
-    return this.aggregate('MAX', column as string)
+  max<K extends ColumnName<TDef>>(column: K): number {
+    return this.aggregate('MAX', column as string) || 0
   }
 
-  min<K extends ColumnName<TDef>>(column: K): number | null {
-    return this.aggregate('MIN', column as string)
+  min<K extends ColumnName<TDef>>(column: K): number {
+    return this.aggregate('MIN', column as string) || 0
   }
 
   avg<K extends NumericColumns<TDef>>(column: K): number {

@@ -11,7 +11,7 @@
  * 7. Relation names are properly inferred
  */
 
-import { describe, test, expect } from 'bun:test'
+import { describe, test, expect, beforeAll } from 'bun:test'
 import { createModel, createTableFromModel, configureOrm, type ModelDefinition } from '../orm'
 
 const UserDef = {
@@ -60,15 +60,19 @@ const TagDef = {
 } as const satisfies ModelDefinition
 
 describe('type narrowing', () => {
-  const User = createModel(UserDef)
-  const Post = createModel(PostDef)
-  const Tag = createModel(TagDef)
+  let User: ReturnType<typeof createModel<typeof UserDef>>
+  let Post: ReturnType<typeof createModel<typeof PostDef>>
+  let Tag: ReturnType<typeof createModel<typeof TagDef>>
 
-  // Setup in-memory DB
-  configureOrm({ database: ':memory:' })
-  createTableFromModel(UserDef)
-  createTableFromModel(PostDef)
-  createTableFromModel(TagDef)
+  beforeAll(() => {
+    configureOrm({ database: ':memory:' })
+    User = createModel(UserDef)
+    Post = createModel(PostDef)
+    Tag = createModel(TagDef)
+    createTableFromModel(UserDef)
+    createTableFromModel(PostDef)
+    createTableFromModel(TagDef)
+  })
 
   // ---------------------------------------------------------------
   // 1. select() narrows columns on the returned ModelInstance
