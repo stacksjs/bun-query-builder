@@ -18,7 +18,7 @@ if (!result.success) {
 
 // Fix: Ensure init_config() is awaited in init_src()
 // Bun's bundler doesn't automatically await async init functions
-const filePath = './dist/index.js'
+const filePath = './dist/src/index.js'
 const content = await readFile(filePath, 'utf8')
 
 // Replace init_config(); with await init_config(); only in the init_src function body
