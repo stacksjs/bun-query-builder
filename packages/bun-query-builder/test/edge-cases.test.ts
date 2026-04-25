@@ -145,14 +145,14 @@ describe('Edge Cases', () => {
       expect(exists).toBe(false)
     })
 
-    it('max() returns 0 when no records exist', () => {
+    it('max() returns null when no records exist', () => {
       const max = TestModel.max('count')
-      expect(max).toBe(0)
+      expect(max).toBeNull()
     })
 
-    it('min() returns 0 when no records exist', () => {
+    it('min() returns null when no records exist', () => {
       const min = TestModel.min('count')
-      expect(min).toBe(0)
+      expect(min).toBeNull()
     })
 
     it('sum() returns 0 when no records exist', () => {
