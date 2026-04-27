@@ -1,3 +1,32 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.14...v0.1.15)
+
+### 🚀 Features
+
+- **migrations**: auto-emit pivot tables for likeable/taggable/categorizable ([1f167ef](https://github.com/stacksjs/bun-query-builder/commit/1f167ef)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- guard setConfig against bundler-deferred config init ([039642e](https://github.com/stacksjs/bun-query-builder/commit/039642e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **migrations**: null-safe validation access + add uuid column for useUuid trait ([fbe5667](https://github.com/stacksjs/bun-query-builder/commit/fbe5667)) _(by Chris <chrisbreuer93@gmail.com>)_
+- correct build output path from dist/index.js to dist/src/index.js ([efcffba](https://github.com/stacksjs/bun-query-builder/commit/efcffba)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- make aggregate null-safe and move test setup to beforeAll ([4c22df0](https://github.com/stacksjs/bun-query-builder/commit/4c22df0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- surface build failures by checking Bun.build result ([d782fad](https://github.com/stacksjs/bun-query-builder/commit/d782fad)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧪 Tests
+
+- **edge-cases**: align max/min empty-set with null SQL semantics ([d0353d6](https://github.com/stacksjs/bun-query-builder/commit/d0353d6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.1.15 ([f9eb074](https://github.com/stacksjs/bun-query-builder/commit/f9eb074)) _(by Chris <chrisbreuer93@gmail.com>)_
+- add release:patch/minor/major scripts ([eb765d7](https://github.com/stacksjs/bun-query-builder/commit/eb765d7)) _(by Chris <chrisbreuer93@gmail.com>)_
+- fresh install to pick up pickier 0.1.21 ([e85738b](https://github.com/stacksjs/bun-query-builder/commit/e85738b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.12...v0.1.13)
 
 ### 🧹 Chores
