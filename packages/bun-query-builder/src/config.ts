@@ -59,8 +59,21 @@ export const defaultConfig: QueryBuilderConfig = {
   },
 }
 
-// For backwards compatibility - synchronous access with default fallback
-export const config: QueryBuilderConfig = defaultConfig
+// For backwards compatibility — synchronous access with default fallback.
+//
+// Why `let` + an explicit `Object.assign(config, defaultConfig)` instead of
+// the obvious `export const config = defaultConfig`: when downstream code
+// (e.g. `bunfig`, our config loader) introduces a top-level `await`, Bun's
+// bundler may wrap this module's initializer in `__esm(async () => {...})`.
+// Static `const x = y` exports inside such a wrapper are reassigned only
+// once the async init runs, so callers that reach `setConfig(...)` before
+// that init (e.g. another module's top-level `setConfig` call mid-graph)
+// see `config` as `undefined` and `Object.assign(undefined, ...)` throws.
+// Initializing as `let config = {...defaultConfig}` outside the wrapper, and
+// having `setConfig` re-hydrate from defaults if it's somehow still empty,
+// keeps the surface synchronous for every consumer regardless of how the
+// module ends up bundled.
+export let config: QueryBuilderConfig = { ...defaultConfig }
 
 /**
  * Get the placeholder format for the current dialect.
@@ -107,6 +120,15 @@ export async function getConfig(): Promise<QueryBuilderConfig> {
  * your application code rather than using a config file.
  */
 export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
+  // Re-hydrate from defaults if a bundler deferred our module init far
+  // enough that `config` never got its synchronous assignment (see the
+  // long comment on `let config = ...` above). The cast through `unknown`
+  // keeps TypeScript happy; the read of an arbitrary key (`as any`) keeps
+  // Bun's bundler from DCE-ing the guard on the basis of `config`'s type.
+  if ((config as unknown as Record<string, unknown> | undefined) === undefined
+    || (config as any).dialect === undefined) {
+    config = { ...defaultConfig }
+  }
   // Merge user config with existing config
   Object.assign(config, userConfig)
 
