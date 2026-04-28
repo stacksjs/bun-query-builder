@@ -84,6 +84,16 @@ export interface TypedAttribute<T = unknown> {
 // eslint-disable-next-line ts/no-empty-object-type
 export interface ModelHookInstance extends Record<string, unknown> {
   get(key: string): unknown
+  /** Raw attribute read (skips computed `get:` accessors). */
+  getAttribute?(key: string): unknown
+  /** Plain-object snapshot of all attributes. */
+  getAttributes?(): Record<string, unknown>
+  /** Subset of attributes for the named columns. */
+  only?(keys: ReadonlyArray<string>): Record<string, unknown>
+  /** All attributes except the named columns. */
+  except?(keys: ReadonlyArray<string>): Record<string, unknown>
+  /** Plain-object snapshot for JSON serialization (folds in relations). */
+  toArray?(): Record<string, unknown>
 }
 
 // Base model definition
@@ -310,9 +320,38 @@ class ModelInstance<
   get<K extends TSelected>(key: K): K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : never {
     const getter = this._definition.get?.[key as string]
     if (getter) {
-      return getter(this._attributes as Record<string, unknown>) as any
+      // Defensive: a buggy computed accessor (throws, returns the validator
+      // function source, etc.) shouldn't poison every read. Fall back to the
+      // raw attribute value so the caller still sees something sensible.
+      try {
+        const v = getter(this._attributes as Record<string, unknown>)
+        if (v !== undefined) return v as any
+      }
+      catch {
+        // fall through to raw attribute
+      }
     }
     return this._attributes[key as string] as any
+  }
+
+  /**
+   * Read the raw column value, bypassing any computed `get:` accessor.
+   *
+   * Use when an accessor's name collides with an attribute (or a global
+   * helper, in template engines that auto-import getter-shaped functions
+   * by name) and you need the underlying database value.
+   */
+  getAttribute<K extends TSelected>(key: K): K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown {
+    return this._attributes[key as string] as any
+  }
+
+  /**
+   * Plain-object snapshot of all attribute values. Method form so callers
+   * can write `instance.getAttributes()` (Eloquent-style); `instance.attributes`
+   * remains as a getter. Both return a shallow copy.
+   */
+  getAttributes(): Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>> {
+    return { ...this._attributes } as any
   }
 
   set<K extends ColumnName<TDef>>(
@@ -322,6 +361,59 @@ class ModelInstance<
     // Snapshot original on first mutation (copy-on-write)
     if (this._original === null) this._original = { ...this._attributes }
     this._attributes[key as string] = value
+  }
+
+  /**
+   * Subset of attributes containing only the named columns. Mirrors Lodash
+   * `pick` / Laravel's `Collection::only`. Useful for narrowing a model
+   * down to a response shape without mutating it.
+   */
+  only<K extends TSelected>(keys: ReadonlyArray<K>): Partial<ModelAttributes<TDef>> {
+    const out: Record<string, unknown> = {}
+    for (const k of keys) {
+      out[k as string] = this._attributes[k as string]
+    }
+    return out as Partial<ModelAttributes<TDef>>
+  }
+
+  /**
+   * Inverse of `only` — every attribute *except* the named columns. Use
+   * for stripping `password` / `remember_token` etc. without enumerating
+   * the rest of the schema.
+   */
+  except<K extends TSelected>(keys: ReadonlyArray<K>): Partial<ModelAttributes<TDef>> {
+    const drop = new Set<string>(keys.map(k => k as string))
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(this._attributes)) {
+      if (!drop.has(k)) out[k] = this._attributes[k]
+    }
+    return out as Partial<ModelAttributes<TDef>>
+  }
+
+  /**
+   * Plain-object snapshot suitable for JSON serialization. Today this is a
+   * shallow attribute copy with relations folded in (relations themselves
+   * are toArray'd recursively when present). Equivalent to Eloquent's
+   * `toArray()`. The instance method `toJSON()` exists separately and may
+   * apply hidden-field stripping; this one is the unfiltered raw form.
+   */
+  toArray(): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...this._attributes }
+    for (const [name, rel] of Object.entries(this._relations)) {
+      if (rel == null) {
+        out[name] = null
+      }
+      else if (Array.isArray(rel)) {
+        out[name] = rel.map(r => (r && typeof (r as any).toArray === 'function' ? (r as any).toArray() : r))
+      }
+      else if (typeof (rel as any).toArray === 'function') {
+        out[name] = (rel as any).toArray()
+      }
+      else {
+        out[name] = rel
+      }
+    }
+    return out
   }
 
   /**
@@ -486,6 +578,23 @@ class ModelInstance<
     return this.save()
   }
 
+  /**
+   * Re-read this row from the database and return a *new* ModelInstance
+   * with the latest values. Does NOT mutate the receiver — pair with
+   * `.refresh()` if you want in-place update.
+   *
+   * @returns the freshly-fetched row, or `null` if the row no longer exists.
+   */
+  fresh(): ModelInstance<TDef, TSelected> | null {
+    const db = getDatabase()
+    const pk = this._definition.primaryKey || 'id'
+    const id = this._attributes[pk]
+    if (id == null) return null
+    const row = db.query(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`).get(id as any)
+    if (!row) return null
+    return new ModelInstance(this._definition, row as Partial<ModelAttributes<TDef>>)
+  }
+
   delete(): boolean {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
@@ -511,7 +620,18 @@ class ModelInstance<
     return true
   }
 
-  refresh(): this {
+  /**
+   * In-place re-read of this row from the database.
+   *
+   * - On success: replaces `_attributes` AND clears the dirty snapshot, so
+   *   `isDirty()` reports `false` afterwards. Returns `this`.
+   * - On missing row: returns `null` instead of leaving the receiver in a
+   *   stale state. Callers can `if (!post.refresh()) ...` to handle the
+   *   between-fetches-deleted case.
+   *
+   * Throws only when the receiver has no primary key set.
+   */
+  refresh(): this | null {
     const db = getDatabase()
     const pk = this._definition.primaryKey || 'id'
     const pkValue = this._attributes[pk]
@@ -519,11 +639,9 @@ class ModelInstance<
     if (!pkValue) throw new Error('Cannot refresh a model without a primary key')
 
     const row = db.query(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`).get(pkValue as SQLQueryBindings) as Record<string, unknown> | null
-    if (row) {
-      this._attributes = row
-      this._original = { ...row }
-    }
-
+    if (!row) return null
+    this._attributes = row
+    this._original = null // post-refresh, nothing is dirty
     return this
   }
 
