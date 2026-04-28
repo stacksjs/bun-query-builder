@@ -1260,12 +1260,12 @@ class ModelQueryBuilder<
     return row?.v ?? null
   }
 
-  max<K extends ColumnName<TDef>>(column: K): number {
-    return this.aggregate('MAX', column as string) || 0
+  max<K extends ColumnName<TDef>>(column: K): number | null {
+    return this.aggregate('MAX', column as string)
   }
 
-  min<K extends ColumnName<TDef>>(column: K): number {
-    return this.aggregate('MIN', column as string) || 0
+  min<K extends ColumnName<TDef>>(column: K): number | null {
+    return this.aggregate('MIN', column as string)
   }
 
   avg<K extends NumericColumns<TDef>>(column: K): number {
