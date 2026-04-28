@@ -23,6 +23,14 @@ const SQL_PATTERNS = {
   SELECT: /^SELECT\s+/i,
   SELECT_FROM: /^SELECT\s+(.+?)\s+FROM/i,
   WHERE: /\bWHERE\b/i,
+  ORDER_BY: /\bORDER\s+BY\b/i,
+  GROUP_BY: /\bGROUP\s+BY\b/i,
+  // LIMIT/OFFSET regexes deliberately match a trailing-clause shape so
+  // `replace(LIMIT, ` LIMIT N`)` swaps the entire existing clause without
+  // also corrupting any LIMIT mentioned inside a subquery earlier in the
+  // SQL (subqueries are wrapped in parens).
+  LIMIT: /\sLIMIT\s+\d+/i,
+  OFFSET: /\sOFFSET\s+\d+/i,
   IDENTIFIER: /^[A-Z_][\w.]*$/i,
   DELETED_AT: /\bdeleted_at\b/i,
 } as const
@@ -3635,18 +3643,30 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
-        text += ` ORDER BY ${column} ${direction === 'asc' ? 'ASC' : 'DESC'}`
+        // Compose-aware: detect an existing ORDER BY clause and append the
+        // new column with a comma instead of emitting a second `ORDER BY`,
+        // which is invalid SQL. Without this fix, calling .orderBy() twice
+        // produced `ORDER BY a ASC ORDER BY b ASC` and SQLite/MySQL/Postgres
+        // all rejected it.
+        const dir = direction === 'asc' ? 'ASC' : 'DESC'
+        text = SQL_PATTERNS.ORDER_BY.test(text)
+          ? `${text}, ${column} ${dir}`
+          : `${text} ORDER BY ${column} ${dir}`
         built = null
         return this
       },
       orderByDesc(column: string) {
-        text += ` ORDER BY ${column} DESC`
+        text = SQL_PATTERNS.ORDER_BY.test(text)
+          ? `${text}, ${column} DESC`
+          : `${text} ORDER BY ${column} DESC`
         built = null
         return this as any
       },
       inRandomOrder() {
         const rnd = config.sql.randomFunction === 'RAND()' ? 'RAND()' : 'RANDOM()'
-        text += ` ORDER BY ${rnd}`
+        text = SQL_PATTERNS.ORDER_BY.test(text)
+          ? `${text}, ${rnd}`
+          : `${text} ORDER BY ${rnd}`
         built = null
         return this as any
       },
@@ -3658,22 +3678,35 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       latest(column?: any) {
         const col = column ?? config.timestamps.defaultOrderColumn
-        text += ` ORDER BY ${col} DESC`
+        text = SQL_PATTERNS.ORDER_BY.test(text)
+          ? `${text}, ${col} DESC`
+          : `${text} ORDER BY ${col} DESC`
         built = null
         return this as any
       },
       oldest(column?: any) {
         const col = column ?? config.timestamps.defaultOrderColumn
-        text += ` ORDER BY ${col} ASC`
+        text = SQL_PATTERNS.ORDER_BY.test(text)
+          ? `${text}, ${col} ASC`
+          : `${text} ORDER BY ${col} ASC`
         built = null
         return this as any
       },
       limit(n: number) {
-        text += ` LIMIT ${n}`
+        // Calling limit() twice would produce `LIMIT 5 LIMIT 10` — invalid
+        // SQL. Replace any existing clause so the most recent call wins,
+        // matching Laravel/Eloquent semantics.
+        text = SQL_PATTERNS.LIMIT.test(text)
+          ? text.replace(SQL_PATTERNS.LIMIT, ` LIMIT ${n}`)
+          : `${text} LIMIT ${n}`
+        built = null
         return this
       },
       offset(n: number) {
-        text += ` OFFSET ${n}`
+        text = SQL_PATTERNS.OFFSET.test(text)
+          ? text.replace(SQL_PATTERNS.OFFSET, ` OFFSET ${n}`)
+          : `${text} OFFSET ${n}`
+        built = null
         return this
       },
       join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
@@ -3769,13 +3802,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       groupBy(...cols: string[]) {
         if (cols.length) {
-          text += ` GROUP BY ${cols.join(', ')}`
+          // Compose with any existing GROUP BY so chained calls add columns
+          // instead of emitting a second clause.
+          text = SQL_PATTERNS.GROUP_BY.test(text)
+            ? `${text}, ${cols.join(', ')}`
+            : `${text} GROUP BY ${cols.join(', ')}`
           built = null
         }
         return this as any
       },
       groupByRaw(fragment: any) {
-        text += ` GROUP BY ${String(fragment)}`
+        text = SQL_PATTERNS.GROUP_BY.test(text)
+          ? `${text}, ${String(fragment)}`
+          : `${text} GROUP BY ${String(fragment)}`
         built = null
         return this as any
       },
@@ -3816,7 +3855,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       orderByRaw(fragment: any) {
-        text += ` ORDER BY ${String(fragment)}`
+        text = SQL_PATTERNS.ORDER_BY.test(text)
+          ? `${text}, ${String(fragment)}`
+          : `${text} ORDER BY ${String(fragment)}`
         built = null
         return this as any
       },
@@ -4418,15 +4459,28 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return createSubQueryBuilder(newQ) as any
         },
         orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
-          const newQ = sql`${q} ORDER BY ${sql(column)} ${direction === 'asc' ? sql`ASC` : sql`DESC`}`
+          // Compose-aware on subqueries too — chaining orderBy twice should
+          // produce a single comma-separated clause, not two ORDER BYs.
+          const dir = direction === 'asc' ? 'ASC' : 'DESC'
+          const current = String(q)
+          const newQ = SQL_PATTERNS.ORDER_BY.test(current)
+            ? sql.unsafe(`${current}, ${column} ${dir}`)
+            : sql`${q} ORDER BY ${sql(column)} ${direction === 'asc' ? sql`ASC` : sql`DESC`}`
           return createSubQueryBuilder(newQ) as any
         },
         limit(n: number) {
-          const newQ = sql`${q} LIMIT ${n}`
+          // Repeat-call replaces, matching the parent builder's semantics.
+          const current = String(q)
+          const newQ = SQL_PATTERNS.LIMIT.test(current)
+            ? sql.unsafe(current.replace(SQL_PATTERNS.LIMIT, ` LIMIT ${n}`))
+            : sql`${q} LIMIT ${n}`
           return createSubQueryBuilder(newQ) as any
         },
         offset(n: number) {
-          const newQ = sql`${q} OFFSET ${n}`
+          const current = String(q)
+          const newQ = SQL_PATTERNS.OFFSET.test(current)
+            ? sql.unsafe(current.replace(SQL_PATTERNS.OFFSET, ` OFFSET ${n}`))
+            : sql`${q} OFFSET ${n}`
           return createSubQueryBuilder(newQ) as any
         },
         toSQL() {
