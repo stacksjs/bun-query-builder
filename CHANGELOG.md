@@ -1,3 +1,56 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.15...v0.1.16)
+
+### 🚀 Features
+
+- **orm**: add nested whereGroup callback + raw + or-variants on ModelQueryBuilder ([a1436f8](https://github.com/stacksjs/bun-query-builder/commit/a1436f8)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **orm**: add Eloquent-style instance helpers + fix refresh() return ([a0e80fe](https://github.com/stacksjs/bun-query-builder/commit/a0e80fe)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- add setup-bun to publish-commit job ([03ab574](https://github.com/stacksjs/bun-query-builder/commit/03ab574)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- max() and min() return null on empty tables instead of 0 ([1f43678](https://github.com/stacksjs/bun-query-builder/commit/1f43678)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🤖 Continuous Integration
+
+- drop redundant setup-bun (pantry installs bun via deps.yaml) ([52d3711](https://github.com/stacksjs/bun-query-builder/commit/52d3711)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.1.16 ([50ab13b](https://github.com/stacksjs/bun-query-builder/commit/50ab13b)) _(by Chris <chrisbreuer93@gmail.com>)_
+- fresh install to pick up dtsx 0.9.14 and bunfig 0.15.9 ([5057b97](https://github.com/stacksjs/bun-query-builder/commit/5057b97)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([e4fd45d](https://github.com/stacksjs/bun-query-builder/commit/e4fd45d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.15...HEAD)
+
+### 🚀 Features
+
+- **orm**: add nested whereGroup callback + raw + or-variants on ModelQueryBuilder ([a1436f8](https://github.com/stacksjs/bun-query-builder/commit/a1436f8)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **orm**: add Eloquent-style instance helpers + fix refresh() return ([a0e80fe](https://github.com/stacksjs/bun-query-builder/commit/a0e80fe)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- add setup-bun to publish-commit job ([03ab574](https://github.com/stacksjs/bun-query-builder/commit/03ab574)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- max() and min() return null on empty tables instead of 0 ([1f43678](https://github.com/stacksjs/bun-query-builder/commit/1f43678)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🤖 Continuous Integration
+
+- drop redundant setup-bun (pantry installs bun via deps.yaml) ([52d3711](https://github.com/stacksjs/bun-query-builder/commit/52d3711)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- fresh install to pick up dtsx 0.9.14 and bunfig 0.15.9 ([5057b97](https://github.com/stacksjs/bun-query-builder/commit/5057b97)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([e4fd45d](https://github.com/stacksjs/bun-query-builder/commit/e4fd45d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.14...v0.1.15)
 
 ### 🚀 Features
