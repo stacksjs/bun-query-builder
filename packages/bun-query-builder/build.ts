@@ -18,7 +18,8 @@ if (!result.success) {
 
 // Fix: Ensure init_config() is awaited in init_src()
 // Bun's bundler doesn't automatically await async init functions.
-// `dist/src/index.js` matches the package.json `import` exports condition.
+// `dist/src/index.js` is where the bundler emits the entry — `package.json`
+// exports points consumers there directly so we don't need to copy.
 const filePath = './dist/src/index.js'
 const original = await readFile(filePath, 'utf8')
 

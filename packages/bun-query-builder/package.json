@@ -22,21 +22,21 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/src/index.js"
     },
     "./browser": {
       "types": "./dist/browser.d.ts",
-      "import": "./dist/browser.js"
+      "import": "./dist/src/browser.js"
     },
     "./dynamodb": {
       "types": "./dist/dynamodb/index.d.ts",
-      "import": "./dist/dynamodb/index.js"
+      "import": "./dist/src/dynamodb/index.js"
     },
     "./*": {
       "import": "./dist/*"
     }
   },
-  "module": "./dist/index.js",
+  "module": "./dist/src/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
     "query-builder": "./dist/bin/cli.js",

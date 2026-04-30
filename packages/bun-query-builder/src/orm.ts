@@ -840,7 +840,7 @@ class ModelQueryBuilder<
   TSelected extends ColumnName<TDef> = ColumnName<TDef>
 > {
   private _definition: TDef
-  private _wheres: { column: string; operator: WhereOperator; value: unknown; boolean: 'and' | 'or' }[] = []
+  private _wheres: { column?: string; operator?: WhereOperator; value?: unknown; boolean: 'and' | 'or'; raw?: string; rawParams?: unknown[] }[] = []
   private _orderBy: { column: string; direction: 'asc' | 'desc' }[] = []
   private _limit?: number
   private _offset?: number
@@ -915,6 +915,14 @@ class ModelQueryBuilder<
     return this
   }
 
+  orWhereIn<K extends ColumnName<TDef>>(
+    column: K,
+    values: (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]
+  ): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'in', value: values, boolean: 'or' })
+    return this
+  }
+
   whereNotIn<K extends ColumnName<TDef>>(
     column: K,
     values: (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]
@@ -923,8 +931,21 @@ class ModelQueryBuilder<
     return this
   }
 
+  orWhereNotIn<K extends ColumnName<TDef>>(
+    column: K,
+    values: (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]
+  ): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'not in', value: values, boolean: 'or' })
+    return this
+  }
+
   whereNull<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
     this._wheres.push({ column: column as string, operator: '=', value: null, boolean: 'and' })
+    return this
+  }
+
+  orWhereNull<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: '=', value: null, boolean: 'or' })
     return this
   }
 
@@ -933,8 +954,91 @@ class ModelQueryBuilder<
     return this
   }
 
+  orWhereNotNull<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: '!=', value: null, boolean: 'or' })
+    return this
+  }
+
   whereLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
     this._wheres.push({ column: column as string, operator: 'like', value: pattern, boolean: 'and' })
+    return this
+  }
+
+  orWhereLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'like', value: pattern, boolean: 'or' })
+    return this
+  }
+
+  whereNotLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'not like', value: pattern, boolean: 'and' })
+    return this
+  }
+
+  orWhereNotLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'not like', value: pattern, boolean: 'or' })
+    return this
+  }
+
+  /**
+   * Append a raw SQL fragment as a WHERE clause, with optional positional
+   * parameters. Use this when you need a nested OR-group or any SQL the
+   * builder doesn't expose directly.
+   *
+   * @example
+   * ```ts
+   * Car.query()
+   *   .where('status', 'active')
+   *   .whereRaw('(LOWER(make) LIKE ? OR LOWER(model) LIKE ?)', '%tesla%', '%tesla%')
+   *   .get()
+   * ```
+   */
+  whereRaw(fragment: string, ...params: unknown[]): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ raw: fragment, rawParams: params, boolean: 'and' })
+    return this
+  }
+
+  orWhereRaw(fragment: string, ...params: unknown[]): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ raw: fragment, rawParams: params, boolean: 'or' })
+    return this
+  }
+
+  /**
+   * Apply a parenthesised group of conditions, ANDed against the rest of
+   * the query. The callback receives a fresh builder; any where/orWhere
+   * calls on it are wrapped in `( ... )` and joined with the surrounding
+   * conditions, which is the only way to express AND/OR precedence
+   * correctly without raw SQL.
+   *
+   * @example
+   * ```ts
+   * Car.query()
+   *   .where('status', 'active')
+   *   .whereGroup(b => b
+   *     .whereLike('make', '%tesla%')
+   *     .orWhereLike('model', '%tesla%'))
+   *   .get()
+   * // → WHERE status = ? AND (make LIKE ? OR model LIKE ?)
+   * ```
+   */
+  whereGroup(callback: (builder: ModelQueryBuilder<TDef, TSelected>) => unknown): ModelQueryBuilder<TDef, TSelected> {
+    return this._addGroup('and', callback)
+  }
+
+  orWhereGroup(callback: (builder: ModelQueryBuilder<TDef, TSelected>) => unknown): ModelQueryBuilder<TDef, TSelected> {
+    return this._addGroup('or', callback)
+  }
+
+  private _addGroup(
+    boolean: 'and' | 'or',
+    callback: (builder: ModelQueryBuilder<TDef, TSelected>) => unknown,
+  ): ModelQueryBuilder<TDef, TSelected> {
+    const sub = new ModelQueryBuilder<TDef, TSelected>(this._definition)
+    callback(sub)
+    if (sub._wheres.length === 0) return this
+    const groupParams: unknown[] = []
+    const inner = sub.buildWhereClauses(groupParams)
+    if (!inner) return this
+    this._wheres.push({ raw: `(${inner})`, rawParams: groupParams, boolean })
     return this
   }
 
@@ -1036,7 +1140,11 @@ class ModelQueryBuilder<
       const w = this._wheres[i]
       let clause: string
 
-      if (w.value === null) {
+      if (w.raw) {
+        clause = w.raw
+        if (w.rawParams && w.rawParams.length > 0) params.push(...w.rawParams)
+      }
+      else if (w.value === null) {
         clause = w.operator === '=' ? `${w.column} IS NULL` : `${w.column} IS NOT NULL`
       }
       else if (w.operator === 'in' || w.operator === 'not in') {
