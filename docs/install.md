@@ -10,7 +10,7 @@ bun add bun-query-builder
 
 :::
 
-### Requirements
+## Requirements
 
 - Bun 1.2.20+
 - A PostgreSQL database _(MySQL/SQLite planned per Bun roadmap)_
