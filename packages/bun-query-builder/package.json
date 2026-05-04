@@ -77,13 +77,13 @@
     "typecheck": "bun --bun tsc"
   },
   "dependencies": {
-    "@stacksjs/clapp": "^0.2.0",
+    "@stacksjs/clapp": "^0.2.7",
     "@stacksjs/ts-validation": "^0.4.10",
     "dynamodb-tooling": "^0.3.2",
     "ts-mocker": "^0.1.7"
   },
   "devDependencies": {
-    "bunfig": "^0.15.6"
+    "bunfig": "^0.15.11"
   },
   "overrides": {
     "unconfig": "0.3.10"
