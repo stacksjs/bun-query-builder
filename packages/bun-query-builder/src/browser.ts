@@ -1310,13 +1310,26 @@ export function createBrowserModel<const TDef extends BrowserModelDefinition>(de
 }
 
 /**
+ * Response shape returned by `browserAuth.login` / `browserAuth.register`.
+ * Lifted to a named type so the generated `.d.ts` doesn't carry a nested
+ * inline object literal in the return position — bun-plugin-dtsx has a
+ * bug where `Promise<{ ... }>` in that position emits as `Promise<;`,
+ * breaking downstream typecheck for any consumer that imports from
+ * `bun-query-builder/browser`.
+ */
+export interface BrowserAuthResponse {
+  user: Record<string, unknown>
+  token: string
+}
+
+/**
  * Auth helpers for browser
  */
 export const browserAuth = {
   /**
    * Login and store token
    */
-  async login(credentials: { email: string, password: string }): Promise<{ user: Record<string, unknown>, token: string }> {
+  async login(credentials: { email: string, password: string }): Promise<BrowserAuthResponse> {
     const response = await fetch(`${browserConfig.baseUrl}/login`, {
       method: 'POST',
       headers: {
@@ -1347,7 +1360,7 @@ export const browserAuth = {
   /**
    * Register a new user
    */
-  async register(data: { name: string, email: string, password: string }): Promise<{ user: Record<string, unknown>, token: string }> {
+  async register(data: { name: string, email: string, password: string }): Promise<BrowserAuthResponse> {
     const response = await fetch(`${browserConfig.baseUrl}/register`, {
       method: 'POST',
       headers: {

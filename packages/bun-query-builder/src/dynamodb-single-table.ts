@@ -563,6 +563,24 @@ export function createRepository<T extends Record<string, any>>(
 /**
  * Common single table design patterns
  */
+/**
+ * Result shapes for relationship pattern helpers. Lifted to named
+ * interfaces so the generated `.d.ts` doesn't carry an inline object
+ * literal in the return position — bun-plugin-dtsx has a bug where
+ * `(...) => { ... }` in that position emits as `=> ;`, breaking
+ * downstream typecheck for any consumer importing from
+ * `bun-query-builder/dynamodb-single-table`.
+ */
+export interface OneToManyPattern {
+  parent: SingleTableEntity
+  child: SingleTableEntity
+}
+
+export interface ManyToManyPattern {
+  entity: SingleTableEntity
+  relation: SingleTableEntity
+}
+
 export const SingleTablePatterns = {
   /**
    * User with profile pattern
@@ -586,7 +604,7 @@ export const SingleTablePatterns = {
     childEntity: string,
     parentIdField: string = 'id',
     childIdField: string = 'id',
-  ): { parent: SingleTableEntity, child: SingleTableEntity } => ({
+  ): OneToManyPattern => ({
     parent: {
       name: parentEntity,
       pkPattern: `${parentEntity.toUpperCase()}#\${${parentIdField}}`,
@@ -612,7 +630,7 @@ export const SingleTablePatterns = {
     relationName: string,
     idField: string = 'id',
     relatedIdField: string = 'relatedId',
-  ): { entity: SingleTableEntity, relation: SingleTableEntity } => ({
+  ): ManyToManyPattern => ({
     entity: {
       name: entityName,
       pkPattern: `${entityName.toUpperCase()}#\${${idField}}`,
