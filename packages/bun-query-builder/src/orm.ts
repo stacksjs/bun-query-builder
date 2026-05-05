@@ -270,7 +270,7 @@ export type InferRelationNames<TDef> =
   | InferHasOneThroughNames<TDef>
   | InferHasManyThroughNames<TDef>
 
-type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'in' | 'not in'
+type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' | 'in' | 'not in'
 
 let globalDb: Database | null = null
 
@@ -692,10 +692,6 @@ class ModelInstance<
     return json as any
   }
 
-  /** Alias for toJSON() */
-  toArray(): Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, HiddenKeys<TDef>> {
-    return this.toJSON()
-  }
 }
 
 // Memoization caches for hot-path string conversions and query plans
