@@ -694,8 +694,14 @@ export class DynamoDBToolingAdapter {
     }
 
     if (model.belongsToMany) {
-      for (const related of model.belongsToMany) {
-        // Pivot entity name is alphabetically sorted for consistency
+      // Normalize the entries: legacy form is `string[]` / `Record<string,string>`,
+      // new form (Option A/B) values are `BelongsToManyConfig` objects.
+      const items = Array.isArray(model.belongsToMany)
+        ? (model.belongsToMany as Array<string | { model: string }>)
+        : Object.values(model.belongsToMany as Record<string, string | { model: string }>)
+      for (const item of items) {
+        const related = typeof item === 'string' ? item : (item as any)?.model
+        if (!related) continue
         const names = [model.name, related].sort()
         relationships.push({
           type: 'belongsToMany',

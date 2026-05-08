@@ -115,6 +115,12 @@ export interface IndexPlan {
   name: string
   columns: string[]
   type: 'index' | 'unique'
+  /**
+   * Partial-index predicate (`CREATE [UNIQUE] INDEX ... WHERE <expr>`).
+   * Postgres + SQLite support this; MySQL does not — `mysql` driver throws
+   * at migration generation if set.
+   */
+  where?: string
 }
 
 export interface TablePlan {
@@ -512,12 +518,14 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       }
     }
 
-    // Composite indexes from model definition - convert column names to snake_case
+    // Composite indexes from model definition — honor the optional `unique`
+    // and `where` (partial index) flags from the schema-level CompositeIndex.
     for (const idx of (model.indexes ?? [])) {
       indexes.push({
         name: idx.name,
         columns: idx.columns.map((c: string) => snakeCase(c)),
-        type: 'index',
+        type: idx.unique ? 'unique' : 'index',
+        where: idx.where,
       })
     }
 
@@ -612,6 +620,85 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         ],
         indexes: [{ name: 'categorizable_models_target_index', columns: ['categorizable_id', 'categorizable_type'], type: 'index' }],
       })
+    }
+  }
+
+  // Option A: inline `belongsToMany: { rel: { model, pivot: { columns, ... } } }`
+  // emits a dedicated pivot table when no `through:` model is present (Option B
+  // pivots are full models and emit themselves through the main loop above).
+  for (const modelName of Object.keys(models)) {
+    const model = models[modelName] as any
+    const btm = model?.belongsToMany
+    if (!btm || typeof btm !== 'object' || Array.isArray(btm)) continue
+    const parentTable = (model.table as string) || `${String(model.name).toLowerCase()}s`
+    const parentSingular = parentTable.replace(/s$/, '')
+
+    for (const [relKey, value] of Object.entries(btm)) {
+      const cfg = value as any
+      if (!cfg || typeof cfg !== 'object') continue
+      // Option B (`through:`) is a real model and emits via the main loop.
+      if (cfg.through) continue
+      // Skip when the user hasn't declared any pivot metadata — preserves the
+      // legacy behavior where pivot tables are user-managed.
+      const pivotCfg = cfg.pivot as { columns?: Record<string, any>, timestamps?: boolean, uniques?: string[][] } | undefined
+      if (!pivotCfg || (!pivotCfg.columns && !pivotCfg.timestamps && !pivotCfg.uniques)) continue
+
+      const relatedModelName = cfg.model as string
+      const relatedRaw = models[relatedModelName] as any
+      const relatedTable = (relatedRaw?.table as string) || `${String(relatedModelName).toLowerCase()}s`
+      const relatedSingular = relatedTable.replace(/s$/, '')
+      const pivotTable = (cfg.table as string) || [parentSingular, relatedSingular].sort().join('_')
+      const fkParent = (cfg.foreignKey as string) || `${parentSingular}_id`
+      const fkRelated = (cfg.relatedKey as string) || `${relatedSingular}_id`
+
+      const cols: ColumnPlan[] = [
+        { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
+        { name: fkParent, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: parentTable, column: 'id' } },
+        { name: fkRelated, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: relatedTable, column: 'id' } },
+      ]
+      if (pivotCfg.columns) {
+        for (const [name, attr] of Object.entries(pivotCfg.columns)) {
+          const a = attr as any
+          const colType: NormalizedColumnType = guessTypeFromName(name) ?? 'string'
+          cols.push({
+            name,
+            type: colType,
+            isPrimaryKey: false,
+            isUnique: false,
+            isNullable: a?.nullable ?? false,
+            hasDefault: a?.default !== undefined,
+            defaultValue: a?.default,
+          })
+        }
+      }
+      if (pivotCfg.timestamps) {
+        cols.push({ name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any })
+        cols.push({ name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false })
+      }
+
+      const idx: IndexPlan[] = []
+      // Default uniqueness on (parent_fk, related_fk) — overridden by explicit uniques.
+      const declaredUniques = pivotCfg.uniques && pivotCfg.uniques.length > 0
+        ? pivotCfg.uniques
+        : [[fkParent, fkRelated]]
+      for (let i = 0; i < declaredUniques.length; i++) {
+        const u = declaredUniques[i]
+        idx.push({
+          name: `${pivotTable}_${u.join('_')}_unique${i > 0 ? `_${i}` : ''}`,
+          columns: [...u],
+          type: 'unique',
+        })
+      }
+
+      // Don't override an existing model with the same table name (e.g.
+      // someone declared the pivot as a real model AND inline — through-form
+      // wins via the earlier `continue`, this branch is a safety net).
+      ensureTable({ table: pivotTable, columns: cols, indexes: idx })
+      // Avoid silently overriding a relKey-keyed name conflict across two
+      // parents declaring the same pivot — `ensureTable` is idempotent on
+      // table name, so the second declaration is dropped. (Acceptable: both
+      // sides typically declare the same pivot.)
+      void relKey
     }
   }
 

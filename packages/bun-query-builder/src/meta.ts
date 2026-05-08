@@ -1,4 +1,4 @@
-import type { ModelRecord } from './schema'
+import type { BelongsToManyConfig, ModelRecord } from './schema'
 
 export interface SchemaMeta {
   modelToTable: Record<string, string>
@@ -8,7 +8,12 @@ export interface SchemaMeta {
     hasOne?: Record<string, string>
     hasMany?: Record<string, string>
     belongsTo?: Record<string, string>
-    belongsToMany?: Record<string, string>
+    /**
+     * Either a model-name string (legacy form) or a `BelongsToManyConfig`
+     * object (Option A inline / Option B `through:`). Use `resolvePivot`
+     * from `./pivot` to read pivot metadata uniformly.
+     */
+    belongsToMany?: Record<string, string | BelongsToManyConfig>
     hasOneThrough?: Record<string, { through: string, target: string }>
     hasManyThrough?: Record<string, { through: string, target: string }>
     morphOne?: Record<string, string>
@@ -18,6 +23,13 @@ export interface SchemaMeta {
     morphedByMany?: Record<string, string>
   }>
   scopes?: Record<string, Record<string, (qb: any, value?: any) => any>>
+  /**
+   * Original models record passed to `buildSchemaMeta`, retained so downstream
+   * consumers (e.g. the pivot resolver) can read through-model attributes
+   * without a second registry lookup. Stored as `unknown` to keep the meta
+   * shape decoupled from the model definition type.
+   */
+  models?: ModelRecord
 }
 
 export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
@@ -48,6 +60,24 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
       }
       return v as Record<string, string>
     }
+    // belongsToMany variant: preserves the config object form (Option A/B).
+    const toBelongsToManyRecord = (v: any): Record<string, string | BelongsToManyConfig> => {
+      if (!v)
+        return {}
+      if (Array.isArray(v)) {
+        const rec: Record<string, string | BelongsToManyConfig> = {}
+        for (const item of v) {
+          if (typeof item === 'string') {
+            rec[item] = item
+          }
+          else if (item && typeof item === 'object' && typeof item.model === 'string') {
+            rec[item.model] = item as BelongsToManyConfig
+          }
+        }
+        return rec
+      }
+      return v as Record<string, string | BelongsToManyConfig>
+    }
     const toThroughRecord = (v: any): Record<string, { through: string, target: string }> => {
       if (!v)
         return {}
@@ -57,7 +87,7 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
       hasOne: toRecord(m.hasOne),
       hasMany: toRecord(m.hasMany),
       belongsTo: toRecord(m.belongsTo),
-      belongsToMany: toRecord(m.belongsToMany),
+      belongsToMany: toBelongsToManyRecord(m.belongsToMany),
       hasOneThrough: toThroughRecord(m.hasOneThrough),
       hasManyThrough: toThroughRecord(m.hasManyThrough),
       morphOne: toRecord(m.morphOne),
@@ -78,5 +108,5 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
     }
   }
 
-  return { modelToTable, tableToModel, primaryKeys, relations, scopes: scopesByTable }
+  return { modelToTable, tableToModel, primaryKeys, relations, scopes: scopesByTable, models }
 }

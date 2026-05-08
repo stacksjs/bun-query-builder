@@ -944,6 +944,82 @@ describe('new relationship features', () => {
     })
   })
 
+  describe('wherePivot family', () => {
+    function setup() {
+      const Coach = defineModel({
+        name: 'Coach',
+        table: 'coaches',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} as any } } },
+        belongsToMany: {
+          athletes: {
+            model: 'Athlete',
+            table: 'coach_athletes',
+            foreignKey: 'coach_id',
+            relatedKey: 'athlete_id',
+            pivot: { columns: { role: { default: 'shared' }, status: { default: 'active' } } },
+          },
+        },
+      } as const)
+      const Athlete = defineModel({
+        name: 'Athlete',
+        table: 'athletes',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} as any } } },
+      } as const)
+      const models = defineModels({ Coach, Athlete })
+      const schema = buildDatabaseSchema(models)
+      const meta = buildSchemaMeta(models)
+      const db = createQueryBuilder<typeof schema>({ ...mockQueryBuilderState, schema, meta })
+      return db
+    }
+
+    it('emits an auto-join + WHERE clause referencing the pivot table', () => {
+      const db = setup()
+      const qb = db.selectFrom('coaches').wherePivot('athletes', 'role', 'primary')
+      const sql = String(qb.toSQL()?.sql || qb.toSQL() || '')
+      expect(sql).toContain('LEFT JOIN coach_athletes')
+      expect(sql).toContain('coach_athletes.role =')
+    })
+
+    it('honors explicit `table:` override', () => {
+      const db = setup()
+      const qb = db.selectFrom('coaches').wherePivot('athletes', 'status', '=', 'active')
+      const sql = String(qb.toSQL()?.sql || qb.toSQL() || '')
+      expect(sql).toContain('coach_athletes.status =')
+    })
+
+    it('does not double-join the pivot when called twice', () => {
+      const db = setup()
+      const qb = db.selectFrom('coaches')
+        .wherePivot('athletes', 'role', 'primary')
+        .wherePivot('athletes', 'status', 'active')
+      const sql = String(qb.toSQL()?.sql || qb.toSQL() || '')
+      const matches = sql.match(/LEFT JOIN coach_athletes/g) || []
+      expect(matches.length).toBe(1)
+    })
+
+    it('supports wherePivotIn', () => {
+      const db = setup()
+      const qb = db.selectFrom('coaches').wherePivotIn('athletes', 'status', ['active', 'pending'])
+      const sql = String(qb.toSQL()?.sql || qb.toSQL() || '')
+      expect(sql).toContain('coach_athletes.status IN')
+    })
+
+    it('supports wherePivotNull / wherePivotNotNull', () => {
+      const db = setup()
+      const qb1 = db.selectFrom('coaches').wherePivotNull('athletes', 'accepted_at')
+      const qb2 = db.selectFrom('coaches').wherePivotNotNull('athletes', 'accepted_at')
+      expect(String(qb1.toSQL()?.sql || qb1.toSQL() || '')).toContain('coach_athletes.accepted_at IS NULL')
+      expect(String(qb2.toSQL()?.sql || qb2.toSQL() || '')).toContain('coach_athletes.accepted_at IS NOT NULL')
+    })
+
+    it('throws on a non-belongsToMany relation name', () => {
+      const db = setup()
+      expect(() => db.selectFrom('coaches').wherePivot('unknown', 'x', 'y')).toThrow('not a belongsToMany')
+    })
+  })
+
   describe('soft delete support', () => {
     it('should filter soft-deleted records in relationships by default', () => {
       const User = defineModel({

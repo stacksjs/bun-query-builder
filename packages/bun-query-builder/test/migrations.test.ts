@@ -64,6 +64,140 @@ describe('migration planner', () => {
     expect(sql.join('\n').toLowerCase()).toContain('create table')
     expect(sql.join('\n').toLowerCase()).toContain('unique index')
   })
+
+  it('honors CompositeIndex.unique flag', () => {
+    const m = defineModels({
+      Tag: {
+        name: 'Tag',
+        table: 'tags',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} } },
+          slug: { validation: { rule: {} } },
+        },
+        indexes: [
+          { name: 'tags_slug_unique', columns: ['slug'], unique: true },
+        ],
+      },
+    } as const)
+    const plan = buildMigrationPlan(m as any, { dialect: 'postgres' })
+    const tags = plan.tables.find(t => t.table === 'tags')!
+    const idx = tags.indexes.find(i => i.name === 'tags_slug_unique')!
+    expect(idx.type).toBe('unique')
+  })
+
+  it('emits CompositeIndex.where as a partial index on Postgres', () => {
+    const m = defineModels({
+      CoachAthlete: {
+        name: 'CoachAthlete',
+        table: 'coach_athletes',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} } },
+          coach_id: { validation: { rule: {} } },
+          athlete_id: { validation: { rule: {} } },
+          role: { validation: { rule: {} } },
+        },
+        indexes: [
+          { name: 'one_primary_per_athlete', columns: ['athlete_id'], unique: true, where: "role = 'primary'" },
+        ],
+      },
+    } as const)
+    const plan = buildMigrationPlan(m as any, { dialect: 'postgres' })
+    const sql = generateSql(plan).join('\n')
+    expect(sql).toContain("WHERE role = 'primary'")
+    expect(sql.toLowerCase()).toContain('unique index')
+  })
+
+  it('throws on MySQL when CompositeIndex.where is set', () => {
+    const m = defineModels({
+      X: {
+        name: 'X',
+        table: 'xs',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } } },
+        indexes: [{ name: 'x_partial', columns: ['id'], where: 'id > 0' }],
+      },
+    } as const)
+    const plan = buildMigrationPlan(m as any, { dialect: 'mysql' })
+    expect(() => generateSql(plan)).toThrow(/Partial indexes.*not supported on MySQL/)
+  })
+
+  it('auto-emits Option A inline pivot tables', () => {
+    const m = defineModels({
+      Coach: {
+        name: 'Coach',
+        table: 'coaches',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } }, name: { validation: { rule: {} } } },
+        belongsToMany: {
+          athletes: {
+            model: 'Athlete',
+            table: 'coach_athletes',
+            foreignKey: 'coach_id',
+            relatedKey: 'athlete_id',
+            pivot: {
+              timestamps: true,
+              columns: { role: { default: 'shared' }, status: { default: 'active' } },
+            },
+          },
+        },
+      },
+      Athlete: {
+        name: 'Athlete',
+        table: 'athletes',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } }, name: { validation: { rule: {} } } },
+      },
+    } as const)
+    const plan = buildMigrationPlan(m as any, { dialect: 'postgres' })
+    const pivot = plan.tables.find(t => t.table === 'coach_athletes')
+    expect(pivot).toBeDefined()
+    const colNames = pivot!.columns.map(c => c.name).sort()
+    expect(colNames).toContain('coach_id')
+    expect(colNames).toContain('athlete_id')
+    expect(colNames).toContain('role')
+    expect(colNames).toContain('status')
+    expect(colNames).toContain('created_at')
+    // Default unique on the FK pair
+    expect(pivot!.indexes.some(i => i.type === 'unique')).toBeTrue()
+  })
+
+  it('does not emit a separate pivot when `through:` is set (uses through-model table instead)', () => {
+    const m = defineModels({
+      Coach: {
+        name: 'Coach',
+        table: 'coaches',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } }, name: { validation: { rule: {} } } },
+        belongsToMany: {
+          athletes: { model: 'Athlete', through: 'CoachAthlete' },
+        },
+      },
+      Athlete: {
+        name: 'Athlete',
+        table: 'athletes',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } }, name: { validation: { rule: {} } } },
+      },
+      CoachAthlete: {
+        name: 'CoachAthlete',
+        table: 'coach_athletes',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} } },
+          coach_id: { validation: { rule: {} } },
+          athlete_id: { validation: { rule: {} } },
+          role: { validation: { rule: {} } },
+        },
+      },
+    } as const)
+    const plan = buildMigrationPlan(m as any, { dialect: 'postgres' })
+    const pivots = plan.tables.filter(t => t.table === 'coach_athletes')
+    // Exactly one — the through model's own table, not duplicated by the
+    // Option-A auto-emission path.
+    expect(pivots.length).toBe(1)
+  })
 })
 
 describe('migration status and rollback', () => {

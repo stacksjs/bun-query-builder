@@ -12,6 +12,7 @@ export * from './factory'
 export * from './loader'
 export * from './meta'
 export * from './migrations'
+export * from './pivot'
 export * from './orm'
 export * from './schema'
 export * from './seeder'
@@ -41,6 +42,7 @@ export type {
   InferColumnNames,
   InferHiddenKeys,
   InferGuardedKeys,
+  InferPivotColumns,
   ModelRow,
   ModelRowLoose,
   ModelCreateData,

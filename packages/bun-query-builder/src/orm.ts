@@ -293,6 +293,27 @@ export function getDatabase(): Database {
 }
 
 /**
+ * Collect every `belongsToMany` relation key declared on a model definition.
+ * Used by ModelInstance's Proxy to know which property reads should resolve
+ * to a callable RelationBuilder.
+ */
+function collectBelongsToManyKeys(definition: ModelDefinition): Set<string> {
+  const keys = new Set<string>()
+  const rel = definition.belongsToMany
+  if (!rel) return keys
+  if (Array.isArray(rel)) {
+    for (const item of rel) {
+      if (typeof item === 'string') keys.add(item.toLowerCase())
+      else if (item && typeof item === 'object' && (item as any).model) keys.add(((item as any).model as string).toLowerCase())
+    }
+  }
+  else if (typeof rel === 'object') {
+    for (const k of Object.keys(rel)) keys.add(k)
+  }
+  return keys
+}
+
+/**
  * Model instance - represents a single database record
  */
 class ModelInstance<
@@ -309,6 +330,34 @@ class ModelInstance<
     this._definition = definition
     this._attributes = { ...attributes }
     this._original = null // deferred — only copied on first mutation
+
+    // Install a callable accessor for each declared `belongsToMany` relation:
+    // `coach.athletes()` returns a fresh BelongsToManyRelationBuilder. Existing
+    // methods on the class (get/set/save/...) take precedence — we only
+    // intercept property names that don't already exist on the target.
+    const btmKeys = collectBelongsToManyKeys(definition)
+    if (btmKeys.size === 0) return
+    const self = this
+    // eslint-disable-next-line no-constructor-return
+    return new Proxy(this, {
+      get(target, prop, receiver) {
+        if (typeof prop === 'string' && btmKeys.has(prop) && !(prop in target)) {
+          return () => {
+            const resolved = resolveRelation(definition as ModelDefinition, prop)
+            if (!resolved || resolved.type !== 'belongsToMany') {
+              throw new Error(`[orm] relation '${prop}' did not resolve to a belongsToMany on '${definition.name}'`)
+            }
+            const relatedModel = getModelFromRegistry(resolved.relatedModelName)
+            const relatedDef = relatedModel?.getDefinition?.() || relatedModel?.definition
+            if (!relatedDef) {
+              throw new Error(`[orm] related model '${resolved.relatedModelName}' is not registered`)
+            }
+            return new BelongsToManyRelationBuilder(self, definition as ModelDefinition, resolved, relatedDef)
+          }
+        }
+        return Reflect.get(target, prop, receiver)
+      },
+    }) as any
   }
 
   /** Get the original attributes, creating the snapshot on first access after a mutation. */
@@ -741,14 +790,33 @@ function toTableName(modelName: string): string {
  *   Array syntax:  hasMany: ['Order']        → relation name is 'order', model is 'Order'
  *   Object syntax: hasMany: { orders: 'Order' } → relation name is 'orders', model is 'Order'
  */
-function resolveRelation(definition: ModelDefinition, relationName: string): {
+/**
+ * Resolved-relation shape returned by `resolveRelation`. Pivot fields are
+ * populated only for `belongsToMany` relations.
+ */
+interface ResolvedRelation {
   type: 'hasMany' | 'hasOne' | 'belongsTo' | 'belongsToMany'
   relatedModelName: string
   relatedTable: string
   foreignKey: string
   localKey: string
-} | null {
+  /** Pivot table name (belongsToMany only). */
+  pivotTable?: string
+  /** FK on pivot pointing at the parent (belongsToMany only). */
+  pivotFkParent?: string
+  /** FK on pivot pointing at the related model (belongsToMany only). */
+  pivotFkRelated?: string
+  /** Declared pivot column names — excludes the two FKs (belongsToMany only). */
+  pivotColumns?: string[]
+  /** Pivot model name when declared via `through:` (Option B). */
+  pivotModelName?: string
+  /** Whether the pivot tracks `created_at`/`updated_at`. */
+  pivotTimestamps?: boolean
+}
+
+function resolveRelation(definition: ModelDefinition, relationName: string): ResolvedRelation | null {
   const parentName = definition.name
+  const parentTable = definition.table
   const parentPk = definition.primaryKey || 'id'
 
   /**
@@ -784,6 +852,33 @@ function resolveRelation(definition: ModelDefinition, relationName: string): {
     return null
   }
 
+  /** Find the BelongsToManyConfig object (if any) for this relation. */
+  function findBelongsToManyEntry():
+    | { entry: string | { model: string, through?: string, table?: string, foreignKey?: string, relatedKey?: string, pivot?: { columns?: Record<string, any>, timestamps?: boolean, uniques?: string[][] } } }
+    | null {
+    const rel = definition.belongsToMany
+    if (!rel) return null
+    if (Array.isArray(rel)) {
+      for (const item of rel) {
+        if (typeof item === 'string') {
+          if (item.toLowerCase() === relationName.toLowerCase()) return { entry: item }
+        }
+        else if (item && typeof item === 'object' && (item as any).model) {
+          if (((item as any).model as string).toLowerCase() === relationName.toLowerCase()) return { entry: item as any }
+        }
+      }
+      return null
+    }
+    if (typeof rel === 'object') {
+      for (const [key, value] of Object.entries(rel)) {
+        if (key === relationName || key.toLowerCase() === relationName.toLowerCase()) {
+          return { entry: value as any }
+        }
+      }
+    }
+    return null
+  }
+
   // Check hasMany
   const hasManyModel = findModelName(definition.hasMany)
   if (hasManyModel) {
@@ -812,20 +907,387 @@ function resolveRelation(definition: ModelDefinition, relationName: string): {
     return { type: 'belongsTo', relatedModelName: belongsToModel, relatedTable, foreignKey, localKey: relatedPk }
   }
 
-  // Check belongsToMany
-  const belongsToManyModel = findModelName(definition.belongsToMany)
-  if (belongsToManyModel) {
-    const relatedModel = getModelFromRegistry(belongsToManyModel)
-    const relatedTable = relatedModel?.getTable?.() || toTableName(belongsToManyModel)
-    // Pivot table convention: alphabetical order of both table names
-    const tables = [definition.table, relatedTable].sort()
-    // eslint-disable-next-line no-unused-vars
-    const _pivotTable = tables.join('_')
-    const foreignKey = toSnakeCase(parentName) + '_id'
-    return { type: 'belongsToMany', relatedModelName: belongsToManyModel, relatedTable, foreignKey, localKey: parentPk }
+  // Check belongsToMany — supports Option A (inline pivot) and Option B (`through:`).
+  const found = findBelongsToManyEntry()
+  if (found) {
+    const isConfig = typeof found.entry === 'object'
+    const relatedModelName = isConfig ? (found.entry as any).model : (found.entry as string)
+    const relatedModel = getModelFromRegistry(relatedModelName)
+    const relatedTable = relatedModel?.getTable?.() || toTableName(relatedModelName)
+    const config: any = isConfig ? found.entry : null
+
+    // Pivot table: explicit > through-model.table > legacy [a,b].sort().join('_')
+    let pivotTable: string
+    let pivotModelName: string | undefined
+    if (config?.table) {
+      pivotTable = config.table
+    }
+    else if (config?.through) {
+      pivotModelName = config.through
+      const throughModel = getModelFromRegistry(config.through)
+      if (!throughModel) {
+        throw new Error(`[orm] belongsToMany relation '${relationName}' on '${parentName}' references unknown through model '${config.through}'. Make sure '${config.through}' is registered.`)
+      }
+      pivotTable = throughModel.getTable?.() || throughModel.getDefinition?.()?.table || toTableName(config.through)
+    }
+    else {
+      const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
+      const b = relatedTable.endsWith('s') ? relatedTable.slice(0, -1) : relatedTable
+      pivotTable = [a, b].sort().join('_')
+    }
+
+    const pivotFkParent = config?.foreignKey || `${(parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable)}_id`
+    const pivotFkRelated = config?.relatedKey || `${(relatedTable.endsWith('s') ? relatedTable.slice(0, -1) : relatedTable)}_id`
+
+    // Pivot columns from inline config + (when applicable) the through model.
+    const pivotColumns: string[] = []
+    if (config?.pivot?.columns) {
+      for (const k of Object.keys(config.pivot.columns)) pivotColumns.push(k)
+    }
+    if (pivotModelName) {
+      const throughModel = getModelFromRegistry(pivotModelName)
+      const throughDef = throughModel?.getDefinition?.() || throughModel?.definition
+      const attrs = throughDef?.attributes ?? {}
+      const throughPk = throughDef?.primaryKey ?? 'id'
+      for (const k of Object.keys(attrs)) {
+        if (k === pivotFkParent || k === pivotFkRelated || k === throughPk) continue
+        if (!pivotColumns.includes(k)) pivotColumns.push(k)
+      }
+    }
+
+    return {
+      type: 'belongsToMany',
+      relatedModelName,
+      relatedTable,
+      foreignKey: pivotFkParent,
+      localKey: parentPk,
+      pivotTable,
+      pivotFkParent,
+      pivotFkRelated,
+      pivotColumns,
+      pivotModelName,
+      pivotTimestamps: Boolean(config?.pivot?.timestamps),
+    }
   }
 
   return null
+}
+
+/**
+ * # `BelongsToManyRelationBuilder`
+ *
+ * Per-instance relation builder returned by callable accessors on a
+ * `ModelInstance`. Combines a query side (read pivot-joined related rows,
+ * filter by pivot columns) with a mutation side (attach/detach/sync/
+ * updateExistingPivot/toggle).
+ *
+ * Constructed lazily — `coach.athletes` returns a function that, when called,
+ * returns a fresh builder; chained methods return `this` so a single builder
+ * is reused per call.
+ */
+export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
+  private _parent: ModelInstance<any, any>
+  private _parentDef: ModelDefinition
+  private _resolved: ResolvedRelation
+  private _relatedDef: TRel
+  private _wheres: { sql: string, params: unknown[] }[] = []
+  private _pivotWheres: { sql: string, params: unknown[] }[] = []
+  private _orderBy: string[] = []
+  private _limit?: number
+  private _offset?: number
+
+  constructor(parent: ModelInstance<any, any>, parentDef: ModelDefinition, resolved: ResolvedRelation, relatedDef: TRel) {
+    this._parent = parent
+    this._parentDef = parentDef
+    this._resolved = resolved
+    this._relatedDef = relatedDef
+  }
+
+  private get parentId(): unknown {
+    const pk = this._parentDef.primaryKey || 'id'
+    return (this._parent as any).get(pk)
+  }
+
+  private get pivotTable(): string { return this._resolved.pivotTable! }
+  private get fkParent(): string { return this._resolved.pivotFkParent! }
+  private get fkRelated(): string { return this._resolved.pivotFkRelated! }
+  private get relatedTable(): string { return this._resolved.relatedTable }
+  private get relatedPk(): string { return this._relatedDef.primaryKey || 'id' }
+
+  // --- query side -----------------------------------------------------------
+
+  /** Filter by a column on the related table. */
+  where(column: string, opOrValue: unknown, value?: unknown): this {
+    if (value === undefined) {
+      this._wheres.push({ sql: `${this.relatedTable}.${column} = ?`, params: [opOrValue] })
+    }
+    else {
+      this._wheres.push({ sql: `${this.relatedTable}.${column} ${String(opOrValue)} ?`, params: [value] })
+    }
+    return this
+  }
+
+  /** Filter by a column on the pivot table. */
+  wherePivot(column: string, opOrValue: unknown, value?: unknown): this {
+    if (value === undefined) {
+      this._pivotWheres.push({ sql: `${this.pivotTable}.${column} = ?`, params: [opOrValue] })
+    }
+    else {
+      this._pivotWheres.push({ sql: `${this.pivotTable}.${column} ${String(opOrValue)} ?`, params: [value] })
+    }
+    return this
+  }
+
+  wherePivotIn(column: string, values: unknown[]): this {
+    if (!values.length) return this
+    const placeholders = values.map(() => '?').join(', ')
+    this._pivotWheres.push({ sql: `${this.pivotTable}.${column} IN (${placeholders})`, params: [...values] })
+    return this
+  }
+
+  wherePivotNotIn(column: string, values: unknown[]): this {
+    if (!values.length) return this
+    const placeholders = values.map(() => '?').join(', ')
+    this._pivotWheres.push({ sql: `${this.pivotTable}.${column} NOT IN (${placeholders})`, params: [...values] })
+    return this
+  }
+
+  wherePivotNull(column: string): this {
+    this._pivotWheres.push({ sql: `${this.pivotTable}.${column} IS NULL`, params: [] })
+    return this
+  }
+
+  wherePivotNotNull(column: string): this {
+    this._pivotWheres.push({ sql: `${this.pivotTable}.${column} IS NOT NULL`, params: [] })
+    return this
+  }
+
+  orderBy(column: string, direction: 'asc' | 'desc' = 'asc'): this {
+    this._orderBy.push(`${column} ${direction.toUpperCase()}`)
+    return this
+  }
+
+  limit(n: number): this { this._limit = n; return this }
+  offset(n: number): this { this._offset = n; return this }
+
+  /** Build the SELECT SQL for query-side execution. */
+  private buildSelect(): { sql: string, params: unknown[] } {
+    const params: unknown[] = []
+    let sql = `SELECT ${this.relatedTable}.*, ${this.pivotTable}.* FROM ${this.relatedTable}`
+    sql += ` INNER JOIN ${this.pivotTable} ON ${this.pivotTable}.${this.fkRelated} = ${this.relatedTable}.${this.relatedPk}`
+    sql += ` WHERE ${this.pivotTable}.${this.fkParent} = ?`
+    params.push(this.parentId)
+    for (const w of this._pivotWheres) {
+      sql += ` AND ${w.sql}`
+      params.push(...w.params)
+    }
+    for (const w of this._wheres) {
+      sql += ` AND ${w.sql}`
+      params.push(...w.params)
+    }
+    if (this._orderBy.length > 0) sql += ` ORDER BY ${this._orderBy.join(', ')}`
+    if (this._limit !== undefined) sql += ` LIMIT ${this._limit}`
+    if (this._offset !== undefined) sql += ` OFFSET ${this._offset}`
+    return { sql, params }
+  }
+
+  /** Hydrate raw rows into related ModelInstances with `.pivot` extras. */
+  private hydrateRows(rows: Record<string, unknown>[]): ModelInstance<TRel, any>[] {
+    const relatedAttrs = new Set(Object.keys(this._relatedDef.attributes ?? {}))
+    relatedAttrs.add(this.relatedPk)
+    // System columns from related model traits — best effort.
+    relatedAttrs.add('created_at'); relatedAttrs.add('updated_at'); relatedAttrs.add('deleted_at')
+    const fkParent = this.fkParent
+    const fkRelated = this.fkRelated
+    return rows.map((raw) => {
+      const relatedRow: Record<string, unknown> = {}
+      const pivotExtras: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(raw)) {
+        if (k === fkParent || k === fkRelated) continue
+        if (relatedAttrs.has(k)) relatedRow[k] = v
+        else pivotExtras[k] = v
+      }
+      // The related PK always belongs to the related row; force it.
+      relatedRow[this.relatedPk] = raw[this.relatedPk]
+      const inst = new ModelInstance(this._relatedDef, relatedRow as any)
+      ;(inst as any).pivot = pivotExtras
+      return inst
+    })
+  }
+
+  get(): ModelInstance<TRel, any>[] {
+    const db = getDatabase()
+    const { sql, params } = this.buildSelect()
+    const rows = db.query(sql).all(...(params as Bindings)) as Record<string, unknown>[]
+    return this.hydrateRows(rows)
+  }
+
+  first(): ModelInstance<TRel, any> | undefined {
+    this._limit = 1
+    return this.get()[0]
+  }
+
+  count(): number {
+    const db = getDatabase()
+    let sql = `SELECT COUNT(*) as count FROM ${this.pivotTable} WHERE ${this.fkParent} = ?`
+    const params: unknown[] = [this.parentId]
+    for (const w of this._pivotWheres) {
+      sql += ` AND ${w.sql}`
+      params.push(...w.params)
+    }
+    return (db.query(sql).get(...(params as Bindings)) as { count: number }).count
+  }
+
+  exists(): boolean {
+    return this.count() > 0
+  }
+
+  // --- mutation side --------------------------------------------------------
+
+  private now(): string { return new Date().toISOString() }
+
+  /**
+   * Attach one or more related rows to the parent. `extras` populate any
+   * declared pivot columns (Option A `pivot.columns` or Option B through-model
+   * attributes). Timestamps are auto-filled when `pivot.timestamps: true`.
+   *
+   * Returns the count of inserted rows.
+   */
+  attach(idOrIds: unknown | unknown[], extras: Record<string, unknown> = {}): number {
+    const db = getDatabase()
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
+    if (ids.length === 0) return 0
+    const ts = this._resolved.pivotTimestamps ? this.now() : null
+    let inserted = 0
+    for (const relatedId of ids) {
+      const row: Record<string, unknown> = {
+        [this.fkParent]: this.parentId,
+        [this.fkRelated]: relatedId,
+        ...extras,
+      }
+      if (ts) {
+        if (row.created_at === undefined) row.created_at = ts
+        if (row.updated_at === undefined) row.updated_at = ts
+      }
+      const cols = Object.keys(row)
+      const placeholders = cols.map(() => '?').join(', ')
+      const sql = `INSERT INTO ${this.pivotTable} (${cols.join(', ')}) VALUES (${placeholders})`
+      const params = cols.map(c => row[c])
+      db.run(sql, params as Bindings)
+      inserted++
+    }
+    return inserted
+  }
+
+  /**
+   * Detach related rows from the parent. With no argument, detaches all.
+   * Returns the count of deleted rows.
+   */
+  detach(idOrIds?: unknown | unknown[]): number {
+    const db = getDatabase()
+    let sql = `DELETE FROM ${this.pivotTable} WHERE ${this.fkParent} = ?`
+    const params: unknown[] = [this.parentId]
+    if (idOrIds !== undefined && idOrIds !== null) {
+      const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
+      if (ids.length === 0) return 0
+      const placeholders = ids.map(() => '?').join(', ')
+      sql += ` AND ${this.fkRelated} IN (${placeholders})`
+      params.push(...ids)
+    }
+    return db.run(sql, params as Bindings).changes
+  }
+
+  /**
+   * Update extras on an existing pivot row, identified by the related id.
+   * Returns the number of pivot rows updated (0 or 1).
+   */
+  updateExistingPivot(relatedId: unknown, extras: Record<string, unknown>): number {
+    const db = getDatabase()
+    const updates = { ...extras }
+    if (this._resolved.pivotTimestamps && updates.updated_at === undefined) {
+      updates.updated_at = this.now()
+    }
+    const cols = Object.keys(updates)
+    if (cols.length === 0) return 0
+    const setClause = cols.map(c => `${c} = ?`).join(', ')
+    const sql = `UPDATE ${this.pivotTable} SET ${setClause} WHERE ${this.fkParent} = ? AND ${this.fkRelated} = ?`
+    const params = [...cols.map(c => updates[c]), this.parentId, relatedId]
+    return db.run(sql, params as Bindings).changes
+  }
+
+  /**
+   * Reconcile the pivot to exactly match `items`. Pivot rows whose related id
+   * is missing from `items` are detached; rows that exist remain (and are
+   * updated when extras differ); rows that don't yet exist are attached.
+   *
+   * `items` may be a list of plain ids (no extras) or `{ id, ...extras }`
+   * objects.
+   */
+  sync(items: Array<unknown | { id: unknown, [key: string]: unknown }>): { attached: unknown[], detached: unknown[], updated: unknown[] } {
+    const db = getDatabase()
+    const desired = new Map<unknown, Record<string, unknown>>()
+    for (const item of items) {
+      if (item != null && typeof item === 'object' && 'id' in (item as any)) {
+        const { id, ...extras } = item as { id: unknown, [key: string]: unknown }
+        desired.set(id, extras)
+      }
+      else {
+        desired.set(item, {})
+      }
+    }
+
+    // Read current pivot rows for this parent.
+    const current = db.query(
+      `SELECT * FROM ${this.pivotTable} WHERE ${this.fkParent} = ?`,
+    ).all(this.parentId as any) as Record<string, unknown>[]
+    const currentIds = new Set(current.map(r => r[this.fkRelated]))
+
+    const attached: unknown[] = []
+    const detached: unknown[] = []
+    const updated: unknown[] = []
+
+    // Detach missing
+    const toDetach = [...currentIds].filter(id => !desired.has(id))
+    if (toDetach.length > 0) {
+      this.detach(toDetach)
+      detached.push(...toDetach)
+    }
+
+    // Attach or update
+    for (const [id, extras] of desired) {
+      if (!currentIds.has(id)) {
+        this.attach(id, extras)
+        attached.push(id)
+      }
+      else if (Object.keys(extras).length > 0) {
+        this.updateExistingPivot(id, extras)
+        updated.push(id)
+      }
+    }
+
+    return { attached, detached, updated }
+  }
+
+  /**
+   * For each id, attach if currently detached, detach if currently attached.
+   * Returns `{ attached, detached }`.
+   */
+  toggle(idOrIds: unknown | unknown[]): { attached: unknown[], detached: unknown[] } {
+    const db = getDatabase()
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
+    if (ids.length === 0) return { attached: [], detached: [] }
+    const placeholders = ids.map(() => '?').join(', ')
+    const present = db.query(
+      `SELECT ${this.fkRelated} FROM ${this.pivotTable} WHERE ${this.fkParent} = ? AND ${this.fkRelated} IN (${placeholders})`,
+    ).all(this.parentId as any, ...(ids as any[])) as Record<string, unknown>[]
+    const presentIds = new Set(present.map(r => r[this.fkRelated]))
+
+    const toAttach = ids.filter(id => !presentIds.has(id))
+    const toDetach = ids.filter(id => presentIds.has(id))
+    if (toAttach.length > 0) this.attach(toAttach)
+    if (toDetach.length > 0) this.detach(toDetach)
+    return { attached: toAttach, detached: toDetach }
+  }
 }
 
 /**
@@ -1272,6 +1734,70 @@ class ModelQueryBuilder<
           const fkVal = (instance as any)._attributes[rel.foreignKey]
           const row = byPk.get(fkVal)
           instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any) : null)
+        }
+      }
+
+      if (rel.type === 'belongsToMany') {
+        const parentIds = instances.map(i => i.get(pk as any)).filter(id => id != null)
+        if (parentIds.length === 0) continue
+        if (!rel.pivotTable || !rel.pivotFkParent || !rel.pivotFkRelated) continue
+
+        // 1) Fetch pivot rows for these parents.
+        const pivotPlaceholders = parentIds.map(() => '?').join(', ')
+        const pivotRows = db.query(
+          `SELECT * FROM ${rel.pivotTable} WHERE ${rel.pivotFkParent} IN (${pivotPlaceholders})`,
+        ).all(...(parentIds as any[])) as Record<string, unknown>[]
+
+        if (pivotRows.length === 0) {
+          for (const instance of instances) instance.setRelation(relationName, [])
+          continue
+        }
+
+        // 2) Fetch related rows in one batch.
+        const relatedIds = [...new Set(pivotRows.map(p => p[rel.pivotFkRelated!]))].filter(v => v != null)
+        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+        const relatedPk = relDef?.primaryKey || 'id'
+
+        let relatedRows: Record<string, unknown>[] = []
+        if (relatedIds.length > 0) {
+          const relPlaceholders = relatedIds.map(() => '?').join(', ')
+          relatedRows = db.query(
+            `SELECT * FROM ${rel.relatedTable} WHERE ${relatedPk} IN (${relPlaceholders})`,
+          ).all(...(relatedIds as any[])) as Record<string, unknown>[]
+        }
+        const relatedByPk = new Map<unknown, Record<string, unknown>>()
+        for (const r of relatedRows) relatedByPk.set(r[relatedPk], r)
+
+        // 3) Group pivot rows by parent id and assemble related instances per parent.
+        const pivotByParent = new Map<unknown, Record<string, unknown>[]>()
+        for (const p of pivotRows) {
+          const key = p[rel.pivotFkParent!]
+          if (!pivotByParent.has(key)) pivotByParent.set(key, [])
+          pivotByParent.get(key)!.push(p)
+        }
+
+        // Pivot extras = pivot row minus the two FKs and the pivot pk.
+        const pivotKnownKeys = new Set([rel.pivotFkParent, rel.pivotFkRelated])
+
+        for (const instance of instances) {
+          const parentVal = instance.get(pk as any)
+          const myPivots = pivotByParent.get(parentVal) || []
+          const relatedInstances = myPivots
+            .map((p) => {
+              const relRow = relatedByPk.get(p[rel.pivotFkRelated!])
+              if (!relRow) return null
+              const inst = new ModelInstance(relDef as any, relRow as any)
+              // Attach pivot extras under instance.pivot
+              const extras: Record<string, unknown> = {}
+              for (const [k, v] of Object.entries(p)) {
+                if (!pivotKnownKeys.has(k)) extras[k] = v
+              }
+              ;(inst as any).pivot = extras
+              return inst
+            })
+            .filter((x): x is ModelInstance<any, any> => x !== null)
+          instance.setRelation(relationName, relatedInstances)
         }
       }
     }

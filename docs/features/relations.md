@@ -89,6 +89,151 @@ await db
 
 Join order follows the order you pass to `with()`.
 
+## belongsToMany: pivot tables
+
+The legacy form is `belongsToMany: Record<string, ModelName>`:
+
+```ts
+defineModel({
+  name: 'Coach',
+  belongsToMany: { athletes: 'Athlete' },
+})
+```
+
+That works for trivial pivots, but real apps usually need extra columns on the pivot (`role`, `status`, timestamps, …). bun-query-builder supports two declarative forms.
+
+### Option A — inline pivot config
+
+Use when the pivot doesn't need its own model identity. bqb auto-emits the pivot table during migrations.
+
+```ts
+defineModel({
+  name: 'Coach',
+  table: 'coaches',
+  belongsToMany: {
+    athletes: {
+      model: 'Athlete',
+      table: 'coach_athletes',          // optional, default is alphabetical singular pair
+      foreignKey: 'coach_id',           // optional, default `${singular_parent}_id`
+      relatedKey: 'athlete_id',         // optional, default `${singular_related}_id`
+      pivot: {
+        timestamps: true,               // creates created_at / updated_at on attach
+        columns: {
+          role: { default: 'shared' },
+          status: { default: 'active' },
+          shared_by_coach_id: { nullable: true },
+          invited_at: { nullable: true },
+          accepted_at: { nullable: true },
+        },
+      },
+    },
+  },
+})
+```
+
+### Option B — `through:` a registered model (preferred)
+
+Use when the pivot has its own identity, hooks, or factories. The `through` model is just a regular `defineModel(...)` — bqb reads pivot column metadata from its `attributes`. Pairs naturally with the "pivot-as-model" pattern, so you can adopt it gradually.
+
+```ts
+defineModel({
+  name: 'CoachAthlete',
+  table: 'coach_athletes',
+  attributes: {
+    coach_id: { /* … */ },
+    athlete_id: { /* … */ },
+    role: { /* … */ },
+    status: { /* … */ },
+    invited_at: { /* … */ },
+    accepted_at: { /* … */ },
+  },
+})
+
+defineModel({
+  name: 'Coach',
+  belongsToMany: {
+    athletes: { model: 'Athlete', through: 'CoachAthlete' },
+  },
+})
+```
+
+### Reading pivot extras
+
+`a.pivot.role` is hydrated automatically when the relation uses the new config form (Option A or Option B):
+
+```ts
+const a = await coach.athletes().first()
+a.pivot.role        // 'primary'
+a.pivot.invited_at  // …
+```
+
+Legacy string-form `belongsToMany` keeps emitting flat `pivot_<col>` keys (when used with `withPivot('relation', 'col1', 'col2')`) for backwards compatibility.
+
+### Filtering by pivot columns
+
+```ts
+await coach.athletes().wherePivot('role', 'primary').get()
+await coach.athletes().wherePivot('status', '!=', 'archived').get()
+await coach.athletes().wherePivotIn('status', ['active', 'pending']).get()
+await coach.athletes().wherePivotNull('accepted_at').get()
+await coach.athletes().wherePivotNotNull('accepted_at').get()
+```
+
+Available on the `SelectQueryBuilder` too:
+
+```ts
+await db.selectFrom('coaches').with('athletes')
+  .wherePivot('athletes', 'role', 'primary')
+  .wherePivotIn('athletes', 'status', ['active', 'pending'])
+  .get()
+```
+
+The pivot table is auto-joined on first `wherePivot*` call and not duplicated on subsequent calls.
+
+### Mutations: attach / detach / sync / updateExistingPivot / toggle
+
+These are instance methods on the relation builder returned by `coach.athletes()`:
+
+```ts
+// Attach one related id with extras
+await coach.athletes().attach(athleteId, { role: 'shared', status: 'pending' })
+
+// Bulk attach (no extras)
+await coach.athletes().attach([id1, id2, id3])
+
+// Detach a specific related id (or detach() with no arg = detach all)
+await coach.athletes().detach(athleteId)
+
+// Update extras on an existing pivot row
+await coach.athletes().updateExistingPivot(athleteId, { role: 'primary' })
+
+// Reconcile to exactly match a list. Missing ids are detached, new ids
+// attached, existing rows updated when extras differ.
+const { attached, detached, updated } = await coach.athletes().sync([
+  { id: 1, role: 'primary' },
+  { id: 2, role: 'shared' },
+])
+
+// Flip attached/detached for each id
+const { attached, detached } = await coach.athletes().toggle([id1, id2])
+```
+
+When `pivot.timestamps: true`, `attach` and `updateExistingPivot` populate `created_at` / `updated_at` automatically.
+
+### Composite uniques and partial indexes
+
+Pivot tables almost always need a composite unique on `(parent_fk, related_fk)`. Option A emits one by default; for any pivot you can declare your own via `indexes` on the pivot model:
+
+```ts
+indexes: [
+  { name: 'coach_athletes_unique', columns: ['coach_id', 'athlete_id'], unique: true },
+  // partial unique — at most one primary coach per athlete (Postgres + SQLite)
+  { name: 'one_primary_per_athlete', columns: ['athlete_id'], unique: true, where: "role = 'primary'" },
+],
+```
+
+`unique` and `where` are part of the `CompositeIndex` type. Postgres and SQLite emit partial indexes (`CREATE [UNIQUE] INDEX ... WHERE ...`); MySQL throws at migration generation since it doesn't support partial indexes.
+
 ### Custom tables vs models
 
 `with('projects')` and `with('Project')` work identically when `meta.modelToTable.Project === 'projects'`.

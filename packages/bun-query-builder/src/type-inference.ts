@@ -37,6 +37,15 @@
  */
 
 import type { Faker } from 'ts-mocker'
+import type { ValidationType } from './schema'
+
+// Local mirror of the runtime PivotColumnAttribute shape (kept structural so we
+// don't take a hard dep on schema.ts at the type-inference layer).
+interface InferablePivotColumnAttribute {
+  default?: unknown
+  nullable?: boolean
+  validation?: { rule: ValidationType; message?: Record<string, string> }
+}
 
 // ============================================================================
 // Primitive type mappings (shared with orm.ts and browser.ts)
@@ -343,6 +352,51 @@ export type InferGuardedKeys<TModel> =
         [K in DefinitionAttributeKeys<TDef>]: TDef['attributes'][K] extends { guarded: true } ? K : never
       }[DefinitionAttributeKeys<TDef>]
     : never
+
+// ============================================================================
+// Pivot column inference (Option A)
+// ============================================================================
+
+type ExtractPivotRuleInput<R> = R extends { validate: (value: infer T) => any }
+  ? T
+  : R extends { test: (value: infer T) => any }
+    ? T
+    : R extends { getRules: () => Array<{ test: (value: infer T) => any }> }
+      ? T
+      : unknown
+
+type InferPivotColumnType<TCol> =
+  TCol extends { validation: { rule: infer R } }
+    ? ExtractPivotRuleInput<R>
+    : TCol extends { default: infer D }
+      ? D
+      : unknown
+
+/**
+ * Given a model definition with `belongsToMany: { <R>: { pivot: { columns } } }`
+ * (Option A), infer the typed shape of `.pivot.<col>` on related rows.
+ *
+ * Falls back to `Record<string, unknown>` when:
+ * - The relation uses `through:` (Option B — sibling-model lookup is unsafe at
+ *   the inference layer; runtime hydration still works.)
+ * - No `pivot.columns` is declared.
+ *
+ * @example
+ * ```ts
+ * type T = InferPivotColumns<typeof Coach, 'athletes'>
+ * // { role: string; status: string; ... }  (when role/status declared inline)
+ * ```
+ */
+export type InferPivotColumns<TModel, R extends string> =
+  ResolveDefinition<TModel> extends infer TDef
+    ? TDef extends { belongsToMany: infer BTM }
+      ? R extends keyof BTM
+        ? BTM[R] extends { pivot: { columns: infer Cols extends Record<string, InferablePivotColumnAttribute> } }
+          ? { [K in keyof Cols]: InferPivotColumnType<Cols[K]> }
+          : Record<string, unknown>
+        : Record<string, unknown>
+      : Record<string, unknown>
+    : Record<string, unknown>
 
 // ============================================================================
 // Internal relation name inference helpers

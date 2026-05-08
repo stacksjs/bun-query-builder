@@ -103,7 +103,8 @@ export class SQLiteDriver implements DialectDriver {
     const kind = index.type === 'unique' ? 'UNIQUE ' : ''
     const idxName = `${tableName}_${index.name}`
     const columns = index.columns.map(c => this.quoteIdentifier(c)).join(', ')
-    return `CREATE ${kind}INDEX IF NOT EXISTS ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns});`
+    const where = index.where ? ` WHERE ${index.where}` : ''
+    return `CREATE ${kind}INDEX IF NOT EXISTS ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns})${where};`
   }
 
   addForeignKey(tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string): string {

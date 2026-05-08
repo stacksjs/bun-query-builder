@@ -2,9 +2,11 @@
 
 /* eslint-disable no-useless-catch */
 import type { SchemaMeta } from './meta'
+import type { ResolvedPivot } from './pivot'
 import type { DatabaseSchema } from './schema'
 import { config, getPlaceholder, getPlaceholders } from './config'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
+import { resolvePivot } from './pivot'
 
 export { resetConnection }
 
@@ -911,6 +913,43 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   withPivot?: (relation: string, ...columns: string[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `wherePivot`
+   *
+   * Filter a `belongsToMany` query by a column on the pivot table. Auto-joins
+   * the pivot if not already in the FROM. Mirrors Laravel's `wherePivot`.
+   *
+   * @example
+   * ```ts
+   * await db.selectFrom('coaches').with('athletes').wherePivot('athletes', 'role', 'primary').get()
+   * await db.selectFrom('coaches').with('athletes').wherePivot('athletes', 'status', '!=', 'archived').get()
+   * ```
+   */
+  wherePivot?: (relation: string, column: string, opOrValue: any, value?: any) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `wherePivotIn`
+   *
+   * Filter a `belongsToMany` query by a column on the pivot table being in a list.
+   */
+  wherePivotIn?: (relation: string, column: string, values: any[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `wherePivotNotIn`
+   *
+   * Filter a `belongsToMany` query by a column on the pivot table being not in a list.
+   */
+  wherePivotNotIn?: (relation: string, column: string, values: any[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `wherePivotNull`
+   *
+   * Filter a `belongsToMany` query by a column on the pivot table being NULL.
+   */
+  wherePivotNull?: (relation: string, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `wherePivotNotNull`
+   *
+   * Filter a `belongsToMany` query by a column on the pivot table being NOT NULL.
+   */
+  wherePivotNotNull?: (relation: string, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
   /**
    * # `applyPivotColumns`
    *
@@ -2018,6 +2057,7 @@ function computeBackoffMs(attempt: number, cfg?: TxBackoff): number {
   return Math.floor(ms)
 }
 
+// eslint-disable-next-line pickier/no-unused-vars
 export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Partial<InternalState>): QueryBuilder<DB> {
   const _sql = state?.sql ?? getOrCreateBunSql()
   const meta = state?.meta
@@ -2219,6 +2259,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   function makeSelect<TTable extends keyof DB & string>(table: TTable): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT * FROM ${TTable}`>
   // eslint-disable-next-line pickier/no-unused-vars
   function makeSelect<TTable extends keyof DB & string>(table: TTable, columns: string[]): TypedSelectQueryBuilder<DB, TTable, any, TTable, `SELECT ${string} FROM ${TTable}`>
+  // eslint-disable-next-line pickier/no-unused-vars
   function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): any {
     // Use the sql instance from state (allows tests to inject mockSql)
     const sql = _sql
@@ -2252,7 +2293,86 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     let onlyTrashed = false
     let useCache = false
     const pivotColumns = new Map<string, string[]>() // Store pivot columns per relationship
+    /**
+     * Relations declared with the new `BelongsToManyConfig` (Option A or B).
+     * Result rows for these relations will be post-processed to nest
+     * `pivot_<col>` aliases under a `.pivot` object — matching the issue's
+     * `a.pivot.role` access pattern. Legacy string-form relations keep emitting
+     * flat `pivot_<col>` keys for backwards compatibility.
+     */
+    const pivotConfigRelations = new Set<string>()
     let cacheTtl = 60000
+
+    /**
+     * Closure-level singularize, honoring `config.relations.singularizeStrategy`.
+     * Lifted here so the pivot resolver and `wherePivot` can use it without
+     * being inside the `with()` method body.
+     */
+    const singularize = (name: string): string => {
+      if (config.relations.singularizeStrategy === 'none')
+        return name
+      return name.endsWith('s') ? name.slice(0, -1) : name
+    }
+
+    /** Local helper: resolve the pivot for a relation on the current table. */
+    const resolvePivotLocal = (relationKey: string): ResolvedPivot | null => {
+      if (!meta) return null
+      return resolvePivot(meta as SchemaMeta, String(table), relationKey, {
+        singularize,
+        models: (meta as SchemaMeta).models,
+      })
+    }
+
+    /**
+     * Walk a result row and lift any `pivot_<col>` alias into a nested
+     * `row.pivot.<col>` object, deleting the flat key. Only applied when the
+     * source relation came from a `BelongsToManyConfig` (tracked in
+     * `pivotConfigRelations`); the legacy string form keeps the flat shape.
+     */
+    const hydratePivotRow = (row: any): any => {
+      if (!row || typeof row !== 'object' || pivotConfigRelations.size === 0)
+        return row
+      let pivot: Record<string, unknown> | undefined
+      for (const k of Object.keys(row)) {
+        if (k.startsWith('pivot_')) {
+          if (!pivot) pivot = {}
+          pivot[k.slice(6)] = row[k]
+          delete row[k]
+        }
+      }
+      if (pivot) row.pivot = pivot
+      return row
+    }
+    const hydratePivotRows = (rows: any): any => {
+      if (pivotConfigRelations.size === 0 || !rows) return rows
+      if (Array.isArray(rows)) {
+        for (let i = 0; i < rows.length; i++) hydratePivotRow(rows[i])
+      }
+      else {
+        hydratePivotRow(rows)
+      }
+      return rows
+    }
+
+    /**
+     * Auto-join the pivot table for a belongsToMany relation if not already
+     * joined. Called by wherePivot* before adding the predicate.
+     */
+    const ensurePivotJoined = (resolved: ResolvedPivot): void => {
+      if (!meta) return
+      if (joinedTables.has(resolved.pivotTable))
+        return
+      const parentTable = String(table)
+      const parentPk = meta.primaryKeys[parentTable] ?? 'id'
+      validateIdentifier(resolved.pivotTable, 'wherePivot auto-join (pivot table)')
+      validateIdentifier(resolved.fkParent, 'wherePivot auto-join (parent FK)')
+      validateIdentifier(parentTable, 'wherePivot auto-join (parent table)')
+      validateIdentifier(parentPk, 'wherePivot auto-join (parent PK)')
+      built = sql`${ensureBuilt()} LEFT JOIN ${sql(resolved.pivotTable)} ON ${sql(`${resolved.pivotTable}.${resolved.fkParent}`)} = ${sql(`${parentTable}.${parentPk}`)}`
+      // Reflect in text so toSQL() sees it
+      text = `${text} LEFT JOIN ${resolved.pivotTable} ON ${resolved.pivotTable}.${resolved.fkParent} = ${parentTable}.${parentPk}`
+      joinedTables.add(resolved.pivotTable)
+    }
 
     // Track WHERE conditions and parameters for proper merging
     const whereConditions: string[] = []
@@ -2346,17 +2466,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     }
 
     // Helper function to build belongsToMany subquery with validation
-    const buildBelongsToManySubquery = (parentTable: string, targetTable: string, pk: string, targetPk: string, callback?: (qb: any) => any): string => {
+    const buildBelongsToManySubquery = (parentTable: string, targetTable: string, pk: string, targetPk: string, callback?: (qb: any) => any, relationKey?: string): string => {
       validateIdentifier(parentTable, 'relationship subquery (parent table)')
       validateIdentifier(targetTable, 'relationship subquery (target table)')
       validateIdentifier(pk, 'relationship subquery (primary key)')
       validateIdentifier(targetPk, 'relationship subquery (target primary key)')
 
-      const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-      const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-      const pivot = [a, b].sort().join('_')
-      const fkA = `${a}_id`
-      const fkB = `${b}_id`
+      // Honor BelongsToManyConfig overrides when the relation name is known.
+      const resolved = relationKey && meta
+        ? resolvePivot(meta as SchemaMeta, parentTable, relationKey, { singularize, models: (meta as SchemaMeta).models })
+        : null
+      const a = singularize(parentTable)
+      const b = singularize(targetTable)
+      const pivot = resolved?.pivotTable ?? [a, b].sort().join('_')
+      const fkA = resolved?.fkParent ?? `${a}_id`
+      const fkB = resolved?.fkRelated ?? `${b}_id`
 
       validateIdentifier(pivot, 'relationship subquery (pivot table)')
       validateIdentifier(fkA, 'relationship subquery (foreign key A)')
@@ -2393,15 +2517,18 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     }
 
     // Helper function to build count subquery for belongsToMany with validation
-    const buildBelongsToManyCountSubquery = (parentTable: string, targetTable: string, pk: string): string => {
+    const buildBelongsToManyCountSubquery = (parentTable: string, targetTable: string, pk: string, relationKey?: string): string => {
       validateIdentifier(parentTable, 'withCount (parent table)')
       validateIdentifier(targetTable, 'withCount (target table)')
       validateIdentifier(pk, 'withCount (primary key)')
 
-      const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-      const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-      const pivot = [a, b].sort().join('_')
-      const fkA = `${a}_id`
+      const resolved = relationKey && meta
+        ? resolvePivot(meta as SchemaMeta, parentTable, relationKey, { singularize, models: (meta as SchemaMeta).models })
+        : null
+      const a = singularize(parentTable)
+      const b = singularize(targetTable)
+      const pivot = resolved?.pivotTable ?? [a, b].sort().join('_')
+      const fkA = resolved?.fkParent ?? `${a}_id`
 
       validateIdentifier(pivot, 'withCount (pivot table)')
       validateIdentifier(fkA, 'withCount (foreign key)')
@@ -2417,26 +2544,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const allPivotColumns: string[] = []
 
       for (const [relation, columns] of pivotColumns.entries()) {
-        const parentTable = String(table)
-        const rels = meta?.relations?.[parentTable]
-        if (!rels)
+        const resolved = resolvePivotLocal(relation)
+        if (!resolved)
           continue
-
-        const targetModel = rels.belongsToMany?.[relation]
-        if (!targetModel)
-          continue
-
-        const targetTable = meta.modelToTable[targetModel] || targetModel
-        const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-        const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-        const pivot = [a, b].sort().join('_')
 
         // Validate each column name to prevent SQL injection
         for (const col of columns) {
           validateIdentifier(col, 'withPivot')
         }
 
-        const pivotColumnsStr = columns.map(col => `${pivot}.${col} AS pivot_${col}`)
+        const pivotColumnsStr = columns.map(col => `${resolved.pivotTable}.${col} AS pivot_${col}`)
         allPivotColumns.push(...pivotColumnsStr)
       }
 
@@ -2595,12 +2712,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const loadedRelationships = new Set<string>() // Track loaded relationships
         const relationConditions = new Map<string, (qb: any) => any>() // Store conditions per relation
 
-        const singularize = (name: string) => {
-          if (config.relations.singularizeStrategy === 'none')
-            return name
-          return name.endsWith('s') ? name.slice(0, -1) : name
-        }
-
         const getAvailableRelations = (fromTable: string): string[] => {
           const rels = meta.relations?.[fromTable]
           if (!rels)
@@ -2681,11 +2792,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               const modelName = m?.[relationKey]
               return modelName ? meta.modelToTable[modelName] : undefined
             }
+            const pickBtm = (m?: Record<string, string | { model: string }>) => {
+              const entry = m?.[relationKey]
+              const modelName = typeof entry === 'string' ? entry : entry?.model
+              return modelName ? meta.modelToTable[modelName] : undefined
+            }
             const pickThrough = (m?: Record<string, { through: string, target: string }>) => {
               const rel = m?.[relationKey]
               return rel?.target ? meta.modelToTable[rel.target] : undefined
             }
-            return pick(rels?.hasOne) || pick(rels?.hasMany) || pick(rels?.belongsTo) || pick(rels?.belongsToMany) || pickThrough(rels?.hasOneThrough) || pickThrough(rels?.hasManyThrough) || pick(rels?.morphOne) || pick(rels?.morphMany) || pick(rels?.morphToMany) || pick(rels?.morphedByMany)
+            return pick(rels?.hasOne) || pick(rels?.hasMany) || pick(rels?.belongsTo) || pickBtm(rels?.belongsToMany) || pickThrough(rels?.hasOneThrough) || pickThrough(rels?.hasManyThrough) || pick(rels?.morphOne) || pick(rels?.morphMany) || pick(rels?.morphToMany) || pick(rels?.morphedByMany)
           }
 
           // Resolve target table with fallback logic
@@ -2733,13 +2849,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           // belongsToMany: join through pivot
           const isBtm = Boolean(rels?.belongsToMany?.[relationKey])
           if (isBtm) {
-            const a = singularize(fromTable)
-            const b = singularize(childTable)
-            const pivot = [a, b].sort().join('_')
+            // Use the resolver so Option A/B `table:`/`through:`/`foreignKey:`/`relatedKey:` overrides apply.
+            const resolved = resolvePivot(meta, fromTable, relationKey, { singularize, models: meta.models })
+            const pivot = resolved?.pivotTable ?? [singularize(fromTable), singularize(childTable)].sort().join('_')
             const fromPk = meta.primaryKeys[fromTable] ?? 'id'
             const childPk = meta.primaryKeys[childTable] ?? 'id'
-            const fkA = `${singularize(fromTable)}_id`
-            const fkB = `${singularize(childTable)}_id`
+            const fkA = resolved?.fkParent ?? `${singularize(fromTable)}_id`
+            const fkB = resolved?.fkRelated ?? `${singularize(childTable)}_id`
             built = sql`${ensureBuilt()} LEFT JOIN ${sql(pivot)} ON ${sql(`${pivot}.${fkA}`)} = ${sql(`${fromTable}.${fromPk}`)} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${childPk}`)} = ${sql(`${pivot}.${fkB}`)}`
 
             joinedTables.add(pivot)
@@ -2857,21 +2973,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const allPivotColumns: string[] = []
 
           for (const [relation, columns] of pivotColumns.entries()) {
-            const parentTable = String(table)
-            const rels = meta.relations?.[parentTable]
-            if (!rels)
+            const resolved = resolvePivotLocal(relation)
+            if (!resolved)
               continue
-
-            const targetModel = rels.belongsToMany?.[relation]
-            if (!targetModel)
-              continue
-
-            const targetTable = meta.modelToTable[targetModel] || targetModel
-            const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-            const b = targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable
-            const pivot = [a, b].sort().join('_')
-
-            const pivotColumnsStr = columns.map(col => `${pivot}.${col} AS pivot_${col}`)
+            const pivotColumnsStr = columns.map(col => `${resolved.pivotTable}.${col} AS pivot_${col}`)
             allPivotColumns.push(...pivotColumnsStr)
           }
 
@@ -2909,7 +3014,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
 
         const [type, relMap] = relType
-        const targetModel = (relMap as any)[relation]
+        const _entry = (relMap as any)[relation]
+        const targetModel = typeof _entry === 'string' ? _entry : (_entry?.model || _entry?.target || _entry)
         const targetTable = meta.modelToTable[targetModel] || targetModel
 
         // Build raw SQL for EXISTS clause since we can't use sql in a cross-compatible way
@@ -2926,7 +3032,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         else if (type === 'belongsToMany') {
           const pk = meta.primaryKeys[parentTable] ?? 'id'
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
-          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk, callback)
+          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk, callback, relation)
         }
         else {
           throw new Error(`[query-builder] Unsupported relationship type '${type}' for whereHas`)
@@ -2962,7 +3068,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
 
         const [type, relMap] = relType
-        const targetModel = (relMap as any)[relation]
+        const _entry = (relMap as any)[relation]
+        const targetModel = typeof _entry === 'string' ? _entry : (_entry?.model || _entry?.target || _entry)
         const targetTable = meta.modelToTable[targetModel] || targetModel
 
         let subquerySQL: string
@@ -2978,7 +3085,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         else if (type === 'belongsToMany') {
           const pk = meta.primaryKeys[parentTable] ?? 'id'
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
-          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk, callback)
+          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk, callback, relation)
         }
         else {
           throw new Error(`[query-builder] Unsupported relationship type '${type}' for whereDoesntHave`)
@@ -3012,7 +3119,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
 
         const [type, relMap] = relType
-        const targetModel = (relMap as any)[relation]
+        const _entry = (relMap as any)[relation]
+        const targetModel = typeof _entry === 'string' ? _entry : (_entry?.model || _entry?.target || _entry)
         const targetTable = meta.modelToTable[targetModel] || targetModel
 
         let subquerySQL: string
@@ -3028,7 +3136,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         else if (type === 'belongsToMany') {
           const pk = meta.primaryKeys[parentTable] ?? 'id'
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
-          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk)
+          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk, undefined, relation)
         }
         else {
           throw new Error(`[query-builder] Unsupported relationship type '${type}' for has`)
@@ -3062,7 +3170,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           throw new Error(`[query-builder] Relationship '${relation}' not found on table '${parentTable}'`)
 
         const [type, relMap] = relType
-        const targetModel = (relMap as any)[relation]
+        const _entry = (relMap as any)[relation]
+        const targetModel = typeof _entry === 'string' ? _entry : (_entry?.model || _entry?.target || _entry)
         const targetTable = meta.modelToTable[targetModel] || targetModel
 
         let subquerySQL: string
@@ -3078,7 +3187,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         else if (type === 'belongsToMany') {
           const pk = meta.primaryKeys[parentTable] ?? 'id'
           const targetPk = meta.primaryKeys[targetTable] ?? 'id'
-          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk)
+          subquerySQL = buildBelongsToManySubquery(parentTable, targetTable, pk, targetPk, undefined, relation)
         }
         else {
           throw new Error(`[query-builder] Unsupported relationship type '${type}' for doesntHave`)
@@ -3114,7 +3223,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             continue
 
           const [type, relMap] = relType
-          const targetModel = (relMap as any)[relation]
+          const _entry = (relMap as any)[relation]
+          const targetModel = typeof _entry === 'string' ? _entry : (_entry?.model || _entry?.target || _entry)
           const targetTable = meta.modelToTable[targetModel] || targetModel
 
           const pk = meta.primaryKeys[parentTable] ?? 'id'
@@ -3124,7 +3234,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             countSubquery = buildHasCountSubquery(parentTable, targetTable, pk)
           }
           else if (type === 'belongsToMany') {
-            countSubquery = buildBelongsToManyCountSubquery(parentTable, targetTable, pk)
+            countSubquery = buildBelongsToManyCountSubquery(parentTable, targetTable, pk, relation)
           }
           else {
             continue // Skip unsupported relationship types
@@ -3146,28 +3256,149 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       /**
        * Include pivot table columns when eager loading belongsToMany relationships
        * Usage: .with('tags').withPivot('tags', 'created_at', 'role')
+       *
+       * When the relation uses the new BelongsToManyConfig form (Option A or
+       * Option B), result rows nest aliases under `row.pivot.<col>`. Legacy
+       * string-form relations keep emitting flat `pivot_<col>` keys.
        */
       withPivot(relation: string, ...columns: string[]) {
-        if (!meta || !columns || columns.length === 0)
+        if (!meta)
           return this as any
 
         const parentTable = String(table)
-        const rels = meta.relations?.[parentTable]
-        if (!rels)
-          return this as any
-
-        // Find if this is a belongsToMany relationship
-        const targetModel = rels.belongsToMany?.[relation]
-        if (!targetModel) {
+        const resolved = resolvePivotLocal(relation)
+        if (!resolved) {
           throw new Error(`[query-builder] Relationship '${relation}' is not a belongsToMany relationship on table '${parentTable}'`)
         }
 
+        // Default to all declared pivot columns when caller doesn't enumerate
+        // any. Only fires for the new config form, since the legacy form has
+        // no declared column list.
+        const cols = columns && columns.length > 0
+          ? columns
+          : (resolved.hasConfig ? resolved.pivotColumns : [])
+        if (cols.length === 0)
+          return this as any
+
         // Store pivot columns for this relationship
-        pivotColumns.set(relation, columns)
+        pivotColumns.set(relation, cols)
+        if (resolved.hasConfig)
+          pivotConfigRelations.add(relation)
 
         // Apply pivot columns to the current query
         applyPivotColumnsToQuery()
 
+        return this as any
+      },
+      /**
+       * Filter a `belongsToMany` query by a pivot-table column. Auto-joins
+       * the pivot table when not already joined.
+       *
+       * Two-arg form (`= ?`): `.wherePivot('athletes', 'role', 'primary')`
+       * Three-arg form: `.wherePivot('athletes', 'status', '!=', 'archived')`
+       */
+      wherePivot(relation: string, column: string, opOrValue: any, value?: any) {
+        if (!meta)
+          return this as any
+        const resolved = resolvePivotLocal(relation)
+        if (!resolved) {
+          throw new Error(`[query-builder] Relationship '${relation}' is not a belongsToMany relationship on table '${String(table)}'`)
+        }
+        validateIdentifier(resolved.pivotTable, 'wherePivot (pivot table)')
+        validateIdentifier(column, 'wherePivot (column)')
+        ensurePivotJoined(resolved)
+
+        const op = value === undefined ? '=' : String(opOrValue)
+        const val = value === undefined ? opOrValue : value
+        const paramIndex = whereParams.length + 1
+        const clause = `${resolved.pivotTable}.${column} ${op} ${getPlaceholder(paramIndex)}`
+        whereConditions.push(clause)
+        whereParams.push(val)
+        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+        text = `${text} ${kw} ${clause}`
+        built = null
+        if (resolved.hasConfig)
+          pivotConfigRelations.add(relation)
+        return this as any
+      },
+      wherePivotIn(relation: string, column: string, values: any[]) {
+        if (!meta || !Array.isArray(values) || values.length === 0)
+          return this as any
+        const resolved = resolvePivotLocal(relation)
+        if (!resolved) {
+          throw new Error(`[query-builder] Relationship '${relation}' is not a belongsToMany relationship on table '${String(table)}'`)
+        }
+        validateIdentifier(resolved.pivotTable, 'wherePivotIn (pivot table)')
+        validateIdentifier(column, 'wherePivotIn (column)')
+        ensurePivotJoined(resolved)
+
+        const placeholders = getPlaceholders(values.length, whereParams.length + 1)
+        const clause = `${resolved.pivotTable}.${column} IN (${placeholders})`
+        whereConditions.push(clause)
+        whereParams.push(...values)
+        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+        text = `${text} ${kw} ${clause}`
+        built = null
+        if (resolved.hasConfig)
+          pivotConfigRelations.add(relation)
+        return this as any
+      },
+      wherePivotNotIn(relation: string, column: string, values: any[]) {
+        if (!meta || !Array.isArray(values) || values.length === 0)
+          return this as any
+        const resolved = resolvePivotLocal(relation)
+        if (!resolved) {
+          throw new Error(`[query-builder] Relationship '${relation}' is not a belongsToMany relationship on table '${String(table)}'`)
+        }
+        validateIdentifier(resolved.pivotTable, 'wherePivotNotIn (pivot table)')
+        validateIdentifier(column, 'wherePivotNotIn (column)')
+        ensurePivotJoined(resolved)
+
+        const placeholders = getPlaceholders(values.length, whereParams.length + 1)
+        const clause = `${resolved.pivotTable}.${column} NOT IN (${placeholders})`
+        whereConditions.push(clause)
+        whereParams.push(...values)
+        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+        text = `${text} ${kw} ${clause}`
+        built = null
+        if (resolved.hasConfig)
+          pivotConfigRelations.add(relation)
+        return this as any
+      },
+      wherePivotNull(relation: string, column: string) {
+        if (!meta) return this as any
+        const resolved = resolvePivotLocal(relation)
+        if (!resolved) {
+          throw new Error(`[query-builder] Relationship '${relation}' is not a belongsToMany relationship on table '${String(table)}'`)
+        }
+        validateIdentifier(resolved.pivotTable, 'wherePivotNull (pivot table)')
+        validateIdentifier(column, 'wherePivotNull (column)')
+        ensurePivotJoined(resolved)
+        const clause = `${resolved.pivotTable}.${column} IS NULL`
+        whereConditions.push(clause)
+        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+        text = `${text} ${kw} ${clause}`
+        built = null
+        if (resolved.hasConfig)
+          pivotConfigRelations.add(relation)
+        return this as any
+      },
+      wherePivotNotNull(relation: string, column: string) {
+        if (!meta) return this as any
+        const resolved = resolvePivotLocal(relation)
+        if (!resolved) {
+          throw new Error(`[query-builder] Relationship '${relation}' is not a belongsToMany relationship on table '${String(table)}'`)
+        }
+        validateIdentifier(resolved.pivotTable, 'wherePivotNotNull (pivot table)')
+        validateIdentifier(column, 'wherePivotNotNull (column)')
+        ensurePivotJoined(resolved)
+        const clause = `${resolved.pivotTable}.${column} IS NOT NULL`
+        whereConditions.push(clause)
+        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+        text = `${text} ${kw} ${clause}`
+        built = null
+        if (resolved.hasConfig)
+          pivotConfigRelations.add(relation)
         return this as any
       },
       where(expr: any, op?: WhereOperator, value?: any) {
@@ -4077,7 +4308,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const prepareFn = (_sql as any)._prepareStatement
           if (prepareFn) {
             const stmt = prepareFn(text)
-            return whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
+            return hydratePivotRows(whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all())
           }
         }
 
@@ -4092,14 +4323,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const stmt = ensureBuilt()._stmt
           const params = ensureBuilt()._params
           if (stmt) {
-            return params && params.length > 0 ? stmt.all(...params) : stmt.all()
+            return hydratePivotRows(params && params.length > 0 ? stmt.all(...params) : stmt.all())
           }
-          return ensureBuilt().execute()
+          return hydratePivotRows(await ensureBuilt().execute())
         }
 
         // Fast path: no soft-deletes, no cache, no timeout, no signal (but may have hooks)
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal) {
-          return runWithHooks<any[]>(ensureBuilt(), 'select')
+          return hydratePivotRows(await runWithHooks<any[]>(ensureBuilt(), 'select'))
         }
 
         // Apply soft-deletes default filter if enabled and table has the column
@@ -4130,11 +4361,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           queryCache.set(cacheKey, result, cacheTtl)
         }
 
-        return result
+        return hydratePivotRows(result)
       },
       async executeTakeFirst() {
         const rows = await runWithHooks<any[]>(ensureBuilt(), 'select', { signal: abortSignal, timeoutMs })
-        return Array.isArray(rows) ? rows[0] : rows
+        return hydratePivotRow(Array.isArray(rows) ? rows[0] : rows)
       },
       async executeTakeFirstOrThrow() {
         const result = await (this as any).executeTakeFirst()
@@ -4152,12 +4383,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const firstText = text.includes(' LIMIT ') ? text : `${text} LIMIT 1`
             const stmt = prepareFn(firstText)
             const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
-            return rows[0] as any
+            return hydratePivotRow(rows[0]) as any
           }
         }
         const rows = await runWithHooks<any[]>(sql`${ensureBuilt()} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
-        return row as any
+        return hydratePivotRow(row) as any
       },
       async firstOrFail() {
         const row = await (this as any).first()
@@ -5733,8 +5964,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (typeof targetModel === 'string') {
             return meta.modelToTable[targetModel] || targetModel
           }
-          else if (targetModel && typeof targetModel === 'object' && 'target' in targetModel) {
-            return meta.modelToTable[targetModel.target] || targetModel.target
+          else if (targetModel && typeof targetModel === 'object') {
+            // BelongsToManyConfig form: { model: 'X', through?, ... }
+            // hasOneThrough/hasManyThrough form: { through, target }
+            if ('model' in targetModel) {
+              return meta.modelToTable[(targetModel as any).model] || (targetModel as any).model
+            }
+            if ('target' in targetModel) {
+              return meta.modelToTable[(targetModel as any).target] || (targetModel as any).target
+            }
           }
         }
       }

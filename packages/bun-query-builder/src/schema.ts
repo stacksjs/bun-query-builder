@@ -75,12 +75,20 @@ export interface AttributesElements {
  *
  * @example
  * ```ts
- * { name: 'user_email_unique', columns: ['email'] }
+ * { name: 'user_email_unique', columns: ['email'], unique: true }
+ * { name: 'one_primary_per_athlete', columns: ['athlete_id'], unique: true, where: "role = 'primary'" }
  * ```
  */
 export interface CompositeIndex {
   name: string
   columns: string[]
+  /** Emit as `CREATE UNIQUE INDEX` when true. */
+  unique?: boolean
+  /**
+   * Partial-index predicate. Postgres + SQLite support this; MySQL does not
+   * and will throw at migration generation if set.
+   */
+  where?: string
 }
 
 export interface Base {}
@@ -96,7 +104,61 @@ export type ModelNames = string
 export type HasOne<T extends string> = Record<string, T>
 export type HasMany<T extends string> = Record<string, T>
 export type BelongsTo<T extends string> = Record<string, T>
-export type BelongsToMany<T extends string> = Record<string, T>
+
+/**
+ * # `PivotColumnAttribute`
+ *
+ * Inline declaration of an extra column on the pivot table (Option A). When the
+ * pivot is declared via a `through` model (Option B), columns are read from
+ * that model's `attributes` instead.
+ */
+export interface PivotColumnAttribute {
+  default?: string | number | boolean | Date
+  nullable?: boolean
+  validation?: {
+    rule: ValidationType
+    message?: ValidatorMessage
+  }
+}
+
+/**
+ * # `PivotConfig`
+ *
+ * Inline pivot configuration (Option A). Used when the pivot does not have its
+ * own model in the registry. Migrations will auto-emit a table for this pivot.
+ */
+export interface PivotConfig {
+  columns?: Record<string, PivotColumnAttribute>
+  /** When true, pivot rows get `created_at` / `updated_at` populated by `attach`/`sync`. */
+  timestamps?: boolean
+  /** Composite-unique tuples to enforce on the pivot (e.g. `[['coach_id', 'athlete_id']]`). */
+  uniques?: string[][]
+}
+
+/**
+ * # `BelongsToManyConfig<T>`
+ *
+ * Object form of a `belongsToMany` relation declaration. Either `through`
+ * (Option B — pivot is a registered model) or `pivot.columns` (Option A —
+ * inline metadata) supplies the pivot column metadata. When neither is
+ * supplied the relation behaves exactly like the legacy string form.
+ */
+export interface BelongsToManyConfig<T extends string = string> {
+  /** Related model name (the *target* of the relation). */
+  model: T
+  /** Pivot model name. Resolves the pivot table from that model's `table`. */
+  through?: T
+  /** Override the pivot table name. */
+  table?: string
+  /** Override the FK column on the pivot pointing at the parent model. */
+  foreignKey?: string
+  /** Override the FK column on the pivot pointing at the related model. */
+  relatedKey?: string
+  /** Inline pivot metadata (Option A). */
+  pivot?: PivotConfig
+}
+
+export type BelongsToMany<T extends string> = Record<string, T | BelongsToManyConfig<T>>
 export type HasOneThrough<T extends string> = Record<string, { through: T, target: T }>
 export type HasManyThrough<T extends string> = Record<string, { through: T, target: T }>
 export type MorphOne<T extends string> = Record<string, T>

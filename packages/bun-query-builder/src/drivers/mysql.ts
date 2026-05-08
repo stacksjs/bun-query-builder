@@ -95,6 +95,11 @@ export class MySQLDriver implements DialectDriver {
   }
 
   createIndex(tableName: string, index: IndexPlan): string {
+    if (index.where) {
+      throw new Error(
+        `[migrations] Partial indexes (CompositeIndex.where) are not supported on MySQL. Index '${index.name}' on table '${tableName}' uses WHERE clause: ${index.where}`,
+      )
+    }
     const kind = index.type === 'unique' ? 'UNIQUE ' : ''
     const idxName = `${tableName}_${index.name}`
     const columns = index.columns.map(c => this.quoteIdentifier(c)).join(', ')
