@@ -1,3 +1,27 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.18...v0.1.19)
+
+### 🧹 Chores
+
+- release v0.1.19 ([b2f72aa](https://github.com/stacksjs/bun-query-builder/commit/b2f72aa)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 📄 Miscellaneous
+
+- fix query builder async entry bundle ([22720fe](https://github.com/stacksjs/bun-query-builder/commit/22720fe)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.18...HEAD)
+
+### 📄 Miscellaneous
+
+- fix query builder async entry bundle ([22720fe](https://github.com/stacksjs/bun-query-builder/commit/22720fe)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.17...v0.1.18)
 
 ### 🚀 Features
