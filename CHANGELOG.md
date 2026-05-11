@@ -1,3 +1,25 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.16...v0.1.17)
+
+### 🧹 Chores
+
+- release v0.1.17 ([363365e](https://github.com/stacksjs/bun-query-builder/commit/363365e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- refresh bun.lock to pick up latest pickier ([af08be7](https://github.com/stacksjs/bun-query-builder/commit/af08be7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.16...HEAD)
+
+### 🧹 Chores
+
+- refresh bun.lock to pick up latest pickier ([af08be7](https://github.com/stacksjs/bun-query-builder/commit/af08be7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.15...v0.1.16)
 
 ### 🚀 Features

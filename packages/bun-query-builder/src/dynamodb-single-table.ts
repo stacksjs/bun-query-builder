@@ -73,6 +73,16 @@ export interface SingleTableConfig {
   entities: SingleTableEntity[]
 }
 
+export interface OneToManyPattern {
+  parent: SingleTableEntity
+  child: SingleTableEntity
+}
+
+export interface ManyToManyPattern {
+  entity: SingleTableEntity
+  relation: SingleTableEntity
+}
+
 /**
  * Single Table Design Manager
  *

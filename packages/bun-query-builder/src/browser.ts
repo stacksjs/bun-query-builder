@@ -317,7 +317,7 @@ export class BrowserQueryError extends Error {
 }
 
 // Types for query building
-export type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'in' | 'not in' | 'is' | 'is not'
+export type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' | 'in' | 'not in' | 'is' | 'is not'
 
 interface WhereClause {
   column: string

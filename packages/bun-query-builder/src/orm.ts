@@ -440,32 +440,6 @@ class ModelInstance<
   }
 
   /**
-   * Plain-object snapshot suitable for JSON serialization. Today this is a
-   * shallow attribute copy with relations folded in (relations themselves
-   * are toArray'd recursively when present). Equivalent to Eloquent's
-   * `toArray()`. The instance method `toJSON()` exists separately and may
-   * apply hidden-field stripping; this one is the unfiltered raw form.
-   */
-  toArray(): Record<string, unknown> {
-    const out: Record<string, unknown> = { ...this._attributes }
-    for (const [name, rel] of Object.entries(this._relations)) {
-      if (rel == null) {
-        out[name] = null
-      }
-      else if (Array.isArray(rel)) {
-        out[name] = rel.map(r => (r && typeof (r as any).toArray === 'function' ? (r as any).toArray() : r))
-      }
-      else if (typeof (rel as any).toArray === 'function') {
-        out[name] = (rel as any).toArray()
-      }
-      else {
-        out[name] = rel
-      }
-    }
-    return out
-  }
-
-  /**
    * Get a loaded relation by name.
    * Returns the related instance(s) if the relation was loaded via .with(),
    * or undefined if the relation wasn't loaded.
