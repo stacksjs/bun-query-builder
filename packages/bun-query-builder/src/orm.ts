@@ -689,6 +689,24 @@ class ModelInstance<
     return new ModelInstance<TDef, TSelected>(this._definition, attrs as any)
   }
 
+  toArray(): Record<string, unknown> {
+    const values: Record<string, unknown> = { ...this._attributes }
+
+    for (const [relName, relData] of Object.entries(this._relations)) {
+      if (Array.isArray(relData)) {
+        values[relName] = relData.map(r => r.toArray())
+      }
+      else if (relData) {
+        values[relName] = relData.toArray()
+      }
+      else {
+        values[relName] = null
+      }
+    }
+
+    return values
+  }
+
   toJSON(): Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, HiddenKeys<TDef>> {
     const hidden = new Set<string>()
     for (const [key, attr] of Object.entries(this._definition.attributes)) {

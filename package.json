@@ -1,7 +1,7 @@
 {
   "name": "bun-query-builder",
   "type": "module",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "private": true,
   "description": "A simple yet performant query builder for TypeScript. Built with Bun.",
   "author": "Chris Breuer <chris@stacksjs.org>",
@@ -57,7 +57,7 @@
     "zip:darwin-x64": "zip -j bin/qbx-darwin-x64.zip bin/qbx-darwin-x64",
     "zip:darwin-arm64": "zip -j bin/qbx-darwin-arm64.zip bin/qbx-darwin-arm64",
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
-    "test": "bun test",
+    "test": "bun test packages/bun-query-builder/test",
     "lint": "bunx --bun pickier .",
     "lint:fix": "bunx --bun pickier . --fix",
     "format": "bunx --bun pickier . --format",

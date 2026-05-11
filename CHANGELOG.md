@@ -1,3 +1,57 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.17...v0.1.18)
+
+### 🚀 Features
+
+- **orm**: pivot table extra columns + mutations on belongsToMany ([d294f60](https://github.com/stacksjs/bun-query-builder/commit/d294f60)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- **types**: lift inline return types so dtsx emits valid .d.ts ([86c3c8c](https://github.com/stacksjs/bun-query-builder/commit/86c3c8c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **orm**: drop duplicate toArray alias + add 'not like' to WhereOperator ([bae192b](https://github.com/stacksjs/bun-query-builder/commit/bae192b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.1.18 ([761778c](https://github.com/stacksjs/bun-query-builder/commit/761778c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- release v0.1.17 ([1c8c156](https://github.com/stacksjs/bun-query-builder/commit/1c8c156)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([33ee771](https://github.com/stacksjs/bun-query-builder/commit/33ee771)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock to pick up @stacksjs/clapp@0.2.8 ([65805a9](https://github.com/stacksjs/bun-query-builder/commit/65805a9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- drop unused unconfig override ([2048431](https://github.com/stacksjs/bun-query-builder/commit/2048431)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock and apply pickier --fix ([61cf353](https://github.com/stacksjs/bun-query-builder/commit/61cf353)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock ([1cef3c0](https://github.com/stacksjs/bun-query-builder/commit/1cef3c0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- lint:fix ([a5d9e94](https://github.com/stacksjs/bun-query-builder/commit/a5d9e94)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.16...HEAD)
+
+### 🚀 Features
+
+- **orm**: pivot table extra columns + mutations on belongsToMany ([d294f60](https://github.com/stacksjs/bun-query-builder/commit/d294f60)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- **types**: lift inline return types so dtsx emits valid .d.ts ([86c3c8c](https://github.com/stacksjs/bun-query-builder/commit/86c3c8c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **orm**: drop duplicate toArray alias + add 'not like' to WhereOperator ([bae192b](https://github.com/stacksjs/bun-query-builder/commit/bae192b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.1.17 ([1c8c156](https://github.com/stacksjs/bun-query-builder/commit/1c8c156)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([33ee771](https://github.com/stacksjs/bun-query-builder/commit/33ee771)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock to pick up @stacksjs/clapp@0.2.8 ([65805a9](https://github.com/stacksjs/bun-query-builder/commit/65805a9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- drop unused unconfig override ([2048431](https://github.com/stacksjs/bun-query-builder/commit/2048431)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock and apply pickier --fix ([61cf353](https://github.com/stacksjs/bun-query-builder/commit/61cf353)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock ([1cef3c0](https://github.com/stacksjs/bun-query-builder/commit/1cef3c0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- lint:fix ([a5d9e94](https://github.com/stacksjs/bun-query-builder/commit/a5d9e94)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock to pick up latest pickier ([af08be7](https://github.com/stacksjs/bun-query-builder/commit/af08be7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.16...v0.1.17)
 
 ### 🧹 Chores
