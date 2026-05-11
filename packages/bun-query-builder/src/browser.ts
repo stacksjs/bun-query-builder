@@ -317,7 +317,7 @@ export class BrowserQueryError extends Error {
 }
 
 // Types for query building
-export type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'in' | 'not in' | 'is' | 'is not'
+export type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' | 'in' | 'not in' | 'is' | 'is not'
 
 interface WhereClause {
   column: string
@@ -1309,6 +1309,20 @@ export function createBrowserModel<const TDef extends BrowserModelDefinition>(de
   }
 }
 
+export interface BrowserAuthCredentials {
+  email: string
+  password: string
+}
+
+export interface BrowserAuthRegistrationData extends BrowserAuthCredentials {
+  name: string
+}
+
+export interface BrowserAuthResult {
+  user: Record<string, unknown>
+  token: string
+}
+
 /**
  * Auth helpers for browser
  */
@@ -1316,7 +1330,7 @@ export const browserAuth = {
   /**
    * Login and store token
    */
-  async login(credentials: { email: string, password: string }): Promise<{ user: Record<string, unknown>, token: string }> {
+  async login(credentials: BrowserAuthCredentials): Promise<BrowserAuthResult> {
     const response = await fetch(`${browserConfig.baseUrl}/login`, {
       method: 'POST',
       headers: {
@@ -1347,7 +1361,7 @@ export const browserAuth = {
   /**
    * Register a new user
    */
-  async register(data: { name: string, email: string, password: string }): Promise<{ user: Record<string, unknown>, token: string }> {
+  async register(data: BrowserAuthRegistrationData): Promise<BrowserAuthResult> {
     const response = await fetch(`${browserConfig.baseUrl}/register`, {
       method: 'POST',
       headers: {

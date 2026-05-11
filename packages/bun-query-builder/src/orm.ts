@@ -270,7 +270,7 @@ export type InferRelationNames<TDef> =
   | InferHasOneThroughNames<TDef>
   | InferHasManyThroughNames<TDef>
 
-type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'in' | 'not in'
+type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' | 'in' | 'not in'
 
 let globalDb: Database | null = null
 
@@ -388,32 +388,6 @@ class ModelInstance<
       if (!drop.has(k)) out[k] = this._attributes[k]
     }
     return out as Partial<ModelAttributes<TDef>>
-  }
-
-  /**
-   * Plain-object snapshot suitable for JSON serialization. Today this is a
-   * shallow attribute copy with relations folded in (relations themselves
-   * are toArray'd recursively when present). Equivalent to Eloquent's
-   * `toArray()`. The instance method `toJSON()` exists separately and may
-   * apply hidden-field stripping; this one is the unfiltered raw form.
-   */
-  toArray(): Record<string, unknown> {
-    const out: Record<string, unknown> = { ...this._attributes }
-    for (const [name, rel] of Object.entries(this._relations)) {
-      if (rel == null) {
-        out[name] = null
-      }
-      else if (Array.isArray(rel)) {
-        out[name] = rel.map(r => (r && typeof (r as any).toArray === 'function' ? (r as any).toArray() : r))
-      }
-      else if (typeof (rel as any).toArray === 'function') {
-        out[name] = (rel as any).toArray()
-      }
-      else {
-        out[name] = rel
-      }
-    }
-    return out
   }
 
   /**

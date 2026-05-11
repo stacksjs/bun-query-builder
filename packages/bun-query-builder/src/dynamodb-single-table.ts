@@ -73,6 +73,16 @@ export interface SingleTableConfig {
   entities: SingleTableEntity[]
 }
 
+export interface OneToManyPattern {
+  parent: SingleTableEntity
+  child: SingleTableEntity
+}
+
+export interface ManyToManyPattern {
+  entity: SingleTableEntity
+  relation: SingleTableEntity
+}
+
 /**
  * Single Table Design Manager
  *
@@ -586,7 +596,7 @@ export const SingleTablePatterns = {
     childEntity: string,
     parentIdField: string = 'id',
     childIdField: string = 'id',
-  ): { parent: SingleTableEntity, child: SingleTableEntity } => ({
+  ): OneToManyPattern => ({
     parent: {
       name: parentEntity,
       pkPattern: `${parentEntity.toUpperCase()}#\${${parentIdField}}`,
@@ -612,7 +622,7 @@ export const SingleTablePatterns = {
     relationName: string,
     idField: string = 'id',
     relatedIdField: string = 'relatedId',
-  ): { entity: SingleTableEntity, relation: SingleTableEntity } => ({
+  ): ManyToManyPattern => ({
     entity: {
       name: entityName,
       pkPattern: `${entityName.toUpperCase()}#\${${idField}}`,
