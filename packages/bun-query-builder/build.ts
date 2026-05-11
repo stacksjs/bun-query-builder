@@ -36,15 +36,16 @@ async function patchGeneratedEntry(filePath: string): Promise<void> {
   // Patch every generated init_src* wrapper that touches config so the output
   // remains parseable across Bun patch releases.
   content = content.replace(
-    /(var (init_src\d*) = __esm\()((?:async )?\(\) => \{[\s\S]*?init_config\(\);[\s\S]*?\n\}\);)/g,
-    (_match, prefix: string, name: string, initializer: string) => {
+    /var (init_src\d*) = __esm\((?:async )?\(\) => \{[\s\S]*?\n\}\);/g,
+    (wrapper: string, name: string) => {
+      if (!wrapper.includes('init_config();') && !wrapper.includes('await init_config();'))
+        return wrapper
+
       asyncInitializers.add(name)
 
-      let patched = initializer.replace(/(?<!await )init_config\(\);/, 'await init_config();')
-      if (!patched.startsWith('async '))
-        patched = `async ${patched}`
-
-      return `${prefix}${patched}`
+      return wrapper
+        .replace(`var ${name} = __esm(() => {`, `var ${name} = __esm(async () => {`)
+        .replace(/(?<!await )init_config\(\);/g, 'await init_config();')
     },
   )
 
