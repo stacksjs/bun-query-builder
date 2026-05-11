@@ -17,7 +17,17 @@ if (!result.success) {
 }
 
 async function patchGeneratedEntry(filePath: string): Promise<void> {
-  const original = await readFile(filePath, 'utf8')
+  let original: string
+  try {
+    original = await readFile(filePath, 'utf8')
+  }
+  catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+      return
+
+    throw error
+  }
+
   let content = original
   const asyncInitializers = new Set<string>()
 
@@ -45,17 +55,17 @@ async function patchGeneratedEntry(filePath: string): Promise<void> {
     )
   }
 
-// Step 2: Even with `await init_config()` in init_src, peer bundles can call
-// `setConfig(...)` from their own top-level (e.g. `@stacksjs/database` does
-// at module load). Those callers reach `setConfig` before init_config has
-// awaited bunfig, so `config3` is still `undefined` and Object.assign blows
-// up. Bun's DCE strips a TypeScript-side guard on `config` because its
-// declared type doesn't include undefined. So we patch the built `setConfig`
-// function in-place to add the guard the bundler refuses to keep.
-//
-// Replace the entire `function setConfig(userConfig) { ... }` body — match the
-// open brace through the closing brace, with or without an existing guard.
-// Idempotent: rebuilds always produce the same output.
+  // Step 2: Even with `await init_config()` in init_src, peer bundles can call
+  // `setConfig(...)` from their own top-level (e.g. `@stacksjs/database` does
+  // at module load). Those callers reach `setConfig` before init_config has
+  // awaited bunfig, so `config3` is still `undefined` and Object.assign blows
+  // up. Bun's DCE strips a TypeScript-side guard on `config` because its
+  // declared type doesn't include undefined. So we patch the built `setConfig`
+  // function in-place to add the guard the bundler refuses to keep.
+  //
+  // Replace the entire `function setConfig(userConfig) { ... }` body — match
+  // the open brace through the closing brace, with or without an existing
+  // guard. Idempotent: rebuilds always produce the same output.
   const setConfigPattern = /function setConfig\(userConfig\) \{[\s\S]*?(\n}\n)/
   if (!setConfigPattern.test(content)) {
     console.warn(`setConfig pattern not found in ${filePath} — guard skipped`)
