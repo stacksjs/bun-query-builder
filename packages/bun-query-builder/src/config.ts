@@ -120,16 +120,16 @@ export async function getConfig(): Promise<QueryBuilderConfig> {
  * your application code rather than using a config file.
  */
 export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
-  // Re-hydrate from defaults if a bundler deferred our module init far
-  // enough that `config` never got its synchronous assignment (see the
-  // long comment on `let config = ...` above). The cast through `unknown`
-  // keeps TypeScript happy; the read of an arbitrary key (`as any`) keeps
-  // Bun's bundler from DCE-ing the guard on the basis of `config`'s type.
-  if ((config as unknown as Record<string, unknown> | undefined) === undefined
-    || (config as any).dialect === undefined) {
-    config = { ...defaultConfig }
-  }
-  // Merge user config with existing config
+  // NEVER reassign `config` here (i.e. `config = { ...defaultConfig }`).
+  // Reassigning an `export let` triggers Bun's bundler to split the
+  // binding: the write goes to one identifier and every reader (e.g.
+  // `getBunSql`, `getPlaceholder`) keeps reading the original. Stacks +
+  // bun-query-builder hit this exact bug — `setConfig({dialect:'sqlite'})`
+  // looked like a no-op because consumers still saw the `postgres`
+  // default. If `config` is somehow undefined at call time, that's a
+  // bundler-init failure we can't paper over here without recreating the
+  // split, so let it surface instead. The module-top `let config = {
+  // ...defaultConfig }` is the single source of truth.
   Object.assign(config, userConfig)
 
   // Handle nested objects like database, timestamps, etc.
