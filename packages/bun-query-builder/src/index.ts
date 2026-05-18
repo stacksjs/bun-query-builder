@@ -26,7 +26,7 @@ export type { ColumnName } from './client'
 export { type ModelDefinition, defineModel } from './model'
 
 // Explicit re-exports for model registry functions
-export { getModel, getAllModels, getModelRegistry, hasModel, clearModelRegistry } from './model'
+export { getModel, getAllModels, getModelRegistry, hasModel, clearModelRegistry, registerModel } from './model'
 
 // Re-export the type-inference version of InferRelationNames (supports wrapped models)
 // to resolve the ambiguity with orm.ts's InferRelationNames (which takes raw definitions)

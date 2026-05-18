@@ -124,6 +124,28 @@ export function clearModelRegistry(): void {
   modelRegistry.clear()
 }
 
+/**
+ * Manually register a model in the global registry.
+ *
+ * `defineModel()` already self-registers, so most callers don't need this.
+ * It exists for frameworks (e.g. Stacks) that build their model instances
+ * via `createModel()` and wrap the result before registration — they need
+ * the wrapped instance in the registry, not the raw `createModel()` output.
+ *
+ * @param name - The model name to register under (e.g. 'User')
+ * @param model - The model instance to register
+ *
+ * @example
+ * ```ts
+ * const base = createModel(definition)
+ * const wrapped = applyFrameworkWrappers(base)
+ * registerModel(definition.name, wrapped)
+ * ```
+ */
+export function registerModel(name: string, model: ReturnType<typeof createBrowserModel>): void {
+  modelRegistry.set(name, model)
+}
+
 // ============================================================================
 // defineModel
 // ============================================================================
