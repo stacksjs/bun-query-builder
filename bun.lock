@@ -5,7 +5,7 @@
     "": {
       "name": "bun-query-builder",
       "dependencies": {
-        "@stacksjs/ts-validation": "^0.4.10",
+        "@stacksjs/ts-validation": "^0.5.0",
       },
       "devDependencies": {
         "@stacksjs/launchpad": "^0.6.4",
@@ -45,7 +45,7 @@
       },
       "dependencies": {
         "@stacksjs/clapp": "^0.2.0",
-        "@stacksjs/ts-validation": "^0.4.10",
+        "@stacksjs/ts-validation": "^0.5.0",
         "dynamodb-tooling": "^0.3.2",
         "ts-mocker": "^0.1.7",
       },
@@ -121,7 +121,7 @@
 
     "@stacksjs/ts-spell-check": ["@stacksjs/ts-spell-check@0.1.0", "", {}, "sha512-GnrxhHh606U6e0uPoUfbyh3sWI2VCtj6IwtSS4ik8Jz7vF11WFZ4qeCnXlUSZXLLlk0ukcdpilZr4girmx7PbA=="],
 
-    "@stacksjs/ts-validation": ["@stacksjs/ts-validation@0.4.10", "", { "dependencies": { "dompurify": "^3.3.1" } }, "sha512-HwJeypd55h2DlmPeGqMopYNCuXD3c4EzbKERDyS87YDZQ8Q5F/DmfPEWWgSSLdZ7GAmrCcXg/jac2gFdBCW9IQ=="],
+    "@stacksjs/ts-validation": ["@stacksjs/ts-validation@0.5.0", "", { "dependencies": { "dompurify": "^3.3.3" } }, "sha512-bhBGyTSevqS2FpVlvJm4wCIzCeVzkqQGc2RvBhRHjkrni7PLrQic3EviykB69DkOqaU8PWV0e1dXgV++MRN4Rg=="],
 
     "@stacksjs/ts-xml": ["@stacksjs/ts-xml@0.1.0", "", { "bin": { "bin-name": "./dist/bin/cli.js" } }, "sha512-YB7FSlFcPqopUOmjK1Qqr5E6QaarerIFJzWfUXOO/EuR1qX+IRRKxOKbWRmCvN72Mnchz8EfXhlvxEK+Zz/mQQ=="],
 
