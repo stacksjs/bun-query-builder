@@ -2411,6 +2411,46 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     }
 
+    // Allow-list of SQL comparison operators that can be safely
+    // interpolated into a query fragment. Anything outside this set
+    // is rejected at the boundary so a caller can't smuggle
+    // `= 1 OR 1=1 --` through the `op` slot of a relationship-subquery
+    // callback. See stacksjs/stacks#1858 Q-1 / Q-4 / Q-5 / Q-6.
+    const SAFE_WHERE_OPERATORS = new Set([
+      '=', '!=', '<>', '<', '<=', '>', '>=',
+      'like', 'not like', 'ilike', 'not ilike',
+      'in', 'not in', 'is', 'is not', 'between', 'not between',
+    ])
+
+    function assertSafeWhereOperator(op: unknown, context: string): string {
+      if (typeof op !== 'string')
+        throw new TypeError(`[query-builder] ${context}: operator must be a string, got ${typeof op}`)
+      const lower = op.toLowerCase()
+      if (!SAFE_WHERE_OPERATORS.has(lower))
+        throw new TypeError(`[query-builder] ${context}: refusing to use '${op}' as a SQL operator — not in the allowed set (${[...SAFE_WHERE_OPERATORS].join(', ')})`)
+      return op
+    }
+
+    /**
+     * Format a value for safe interpolation into a relationship-subquery
+     * fragment. Strings are SQL-escaped (single-quote doubled per ANSI
+     * SQL); numbers / booleans / null pass through; everything else
+     * is rejected.
+     *
+     * The previous code interpolated `'${val}'` for strings — naked
+     * single quotes, no escaping. A `val` containing `'` terminated
+     * the literal early and let an attacker inject SQL. Doubling the
+     * internal quote produces a valid SQL string literal regardless
+     * of contents. See stacksjs/stacks#1858 Q-1.
+     */
+    function formatSubqueryValue(val: unknown): string {
+      if (val === null) return 'NULL'
+      if (typeof val === 'number' && Number.isFinite(val)) return String(val)
+      if (typeof val === 'boolean') return val ? '1' : '0'
+      if (typeof val === 'string') return `'${val.replace(/'/g, '\'\'')}'`
+      throw new TypeError(`[query-builder] subquery condition: refusing to interpolate value of type ${typeof val}`)
+    }
+
     // Helper function to build hasOne/hasMany subquery with validation
     const buildHasSubquery = (parentTable: string, targetTable: string, pk: string, callback?: (qb: any) => any): string => {
       validateIdentifier(parentTable, 'relationship subquery (parent table)')
@@ -2426,7 +2466,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const subQb = {
           where: (col: string, op: string, val: any) => {
             validateIdentifier(col, 'relationship subquery condition')
-            return `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}`
+            return `${targetTable}.${col} ${assertSafeWhereOperator(op, 'whereHas callback')} ${formatSubqueryValue(val)}`
           },
         }
         const condition = callback(subQb)
@@ -3640,10 +3680,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       whereDate(column: string, op: WhereOperator, date: string | Date) {
+        validateIdentifier(column, 'whereDate(column)')
+        // Date objects need ISO format — `String(new Date())` produces
+        // `'Tue May 21 2026 ...'` which Postgres/MySQL silently reject
+        // as a date comparison. ISO yields a value the DB driver can
+        // parse on every dialect. See stacksjs/stacks#1862 #29.
+        const dateString = date instanceof Date
+          ? date.toISOString()
+          : typeof date === 'string'
+            ? date
+            : (() => { throw new TypeError(`[query-builder] whereDate(date): expected string or Date, got ${typeof date}`) })()
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const idx = whereParams.length + 1
         text += ` ${keyword} ${column} ${op} ${getPlaceholder(idx)}`
-        whereParams.push(String(date))
+        whereParams.push(dateString)
         built = null
         return this as any
       },
@@ -3654,12 +3704,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       whereColumn(left: string, op: WhereOperator, right: string) {
+        validateIdentifier(left, 'whereColumn(left)')
+        validateIdentifier(right, 'whereColumn(right)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         text += ` ${keyword} ${left} ${op} ${right}`
         built = null
         return this as any
       },
       orWhereColumn(left: string, op: WhereOperator, right: string) {
+        validateIdentifier(left, 'orWhereColumn(left)')
+        validateIdentifier(right, 'orWhereColumn(right)')
         text += ` OR ${left} ${op} ${right}`
         built = null
         return this as any
