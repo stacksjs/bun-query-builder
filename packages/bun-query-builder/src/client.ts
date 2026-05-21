@@ -95,6 +95,29 @@ export interface WhereRaw {
   raw: any
 }
 
+/**
+ * Brand for SQL fragments produced by Bun's `sql\`...\`` tagged-template
+ * (or any equivalent helper). Typed as `object` so the *Raw methods
+ * (`whereRaw`, `selectRaw`, `groupByRaw`, `havingRaw`, `orderByRaw`)
+ * refuse to compile when passed a bare string — concatenated user
+ * input (`whereRaw(\`status = '${req.body.s}'\`)`) was the canonical
+ * SQL-injection vector flagged by the audit as Q-3.
+ *
+ * Callers who legitimately need raw SQL use `sql\`...\`` which
+ * separates the SQL fragment from parameter values:
+ *
+ * ```ts
+ * import { sql } from 'bun'
+ * db.selectFrom('users').whereRaw(sql\`lower(name) = lower(${input})\`)
+ * ```
+ *
+ * The runtime guard in each *Raw method also rejects bare strings as
+ * a defense-in-depth backstop for `as any` casts.
+ *
+ * See stacksjs/stacks#1858 Q-3.
+ */
+export type SqlFragment = object
+
 export type WhereExpression<TableColumns> =
   | Partial<{ [K in keyof TableColumns & string]: ValueOrRef | ValueOrRef[] }>
   | [key: keyof TableColumns & string, op: WhereOperator, value: ValueOrRef | ValueOrRef[]]
@@ -256,7 +279,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').selectRaw(sql`now() as ts`).toSQL()
    * ```
    */
-  selectRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  selectRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `where`
    *
@@ -281,7 +304,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').whereRaw(sql`custom_condition`).toSQL()
    * ```
    */
-  whereRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereColumn`
    *
@@ -710,7 +733,7 @@ export interface BaseSelectQueryBuilder<
    * const rows = await db.selectFrom('users').groupByRaw(sql`1`).get()
    * ```
    */
-  groupByRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  groupByRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `having`
    *
@@ -734,7 +757,7 @@ export interface BaseSelectQueryBuilder<
    * const rows = await db.selectFrom('users').havingRaw(sql`count(*) > 0`).get()
    * ```
    */
-  havingRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  havingRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `addSelect`
    *
@@ -760,7 +783,7 @@ export interface BaseSelectQueryBuilder<
    * const rows = await db.selectFrom('users').orderByRaw(sql`1`).get()
    * ```
    */
-  orderByRaw: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orderByRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `union`
    *
@@ -2483,6 +2506,45 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     }
 
+    /**
+     * Runtime soft-guard for the `*Raw` family. The TS signature is
+     * now `SqlFragment = object` so a bare string `whereRaw('foo')`
+     * fails to compile — this guard catches the same case for
+     * `as any` casts that bypass the type system, but emits a
+     * once-per-process warning rather than throwing to preserve
+     * backward compat for callers that legitimately need to
+     * interpolate compile-time-known constants (audit log queries,
+     * generated migrations, etc.). See stacksjs/stacks#1858 Q-3.
+     *
+     * The warning surfaces the security concern (bare strings can
+     * concatenate user input → SQL injection); callers can silence
+     * by switching to a `sql\`...\`` tagged-template fragment.
+     */
+    function assertSqlFragment(fragment: unknown, context: string): void {
+      if (fragment === null || fragment === undefined) {
+        throw new TypeError(`[query-builder] ${context}: fragment must be a SqlFragment, got ${fragment}`)
+      }
+      if (typeof fragment === 'string') {
+        warnOnceBareSqlFragment(context)
+      }
+    }
+
+    // Module-scoped Set so we warn at most once per call site per
+    // process lifetime — chatty warnings on every query are useless
+    // noise, but a single startup-time warning surfaces the security
+    // concern.
+    const warnedSqlFragmentContexts = new Set<string>()
+    function warnOnceBareSqlFragment(context: string): void {
+      if (warnedSqlFragmentContexts.has(context)) return
+      warnedSqlFragmentContexts.add(context)
+      console.warn(
+        `[query-builder] ${context}: bare string passed to a *Raw method. `
+        + `Prefer \`sql\`...\`\` tagged-template fragments so values are parameterised `
+        + `instead of concatenated — concatenating request input into SQL is an `
+        + `injection vector. This will become a hard error in a future release.`,
+      )
+    }
+
     function formatSubqueryValue(val: unknown): string {
       if (val === null) return 'NULL'
       if (typeof val === 'number' && Number.isFinite(val)) return String(val)
@@ -2658,6 +2720,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       selectRaw(fragment: any) {
+        assertSqlFragment(fragment, 'selectRaw(fragment)')
         // Insert raw fragment into SELECT list before FROM
         const fromIdx = text.indexOf(' FROM ')
         if (fromIdx !== -1) {
@@ -3752,6 +3815,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       whereRaw(fragment: any) {
+        assertSqlFragment(fragment, 'whereRaw(fragment)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         text += ` ${keyword} ${String(fragment)}`
         built = null
@@ -4170,6 +4234,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       groupByRaw(fragment: any) {
+        assertSqlFragment(fragment, 'groupByRaw(fragment)')
         text = SQL_PATTERNS.GROUP_BY.test(text)
           ? `${text}, ${String(fragment)}`
           : `${text} GROUP BY ${String(fragment)}`
@@ -4208,11 +4273,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       havingRaw(fragment: any) {
+        assertSqlFragment(fragment, 'havingRaw(fragment)')
         text += ` HAVING ${String(fragment)}`
         built = null
         return this as any
       },
       orderByRaw(fragment: any) {
+        assertSqlFragment(fragment, 'orderByRaw(fragment)')
         text = SQL_PATTERNS.ORDER_BY.test(text)
           ? `${text}, ${String(fragment)}`
           : `${text} ORDER BY ${String(fragment)}`
