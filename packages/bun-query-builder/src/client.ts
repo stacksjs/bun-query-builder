@@ -4895,6 +4895,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return makeSelect<TTable>(table)
     },
     selectFromSub(sub, alias) {
+      // Helper that produces a method which throws when called. Used
+      // for the ~50 methods on the `selectFromSub` return shape that
+      // would otherwise return silent no-ops. See stacksjs/stacks#1862 #11.
+      function subqueryNotSupported(methodName: string): () => never {
+        return () => {
+          throw new Error(
+            `[query-builder] selectFromSub(...).${methodName}() is not supported. `
+            + `Apply ${methodName}() to the underlying subquery BEFORE passing it to selectFromSub, `
+            + `or use the regular selectFrom(...) builder. This previously silently returned without `
+            + `affecting the SQL, producing wrong results — see stacksjs/stacks#1862 #11.`,
+          )
+        }
+      }
+
       // Create a proper query builder that mimics makeSelect but works with subqueries
       const sql = _sql
       const q = _sql`SELECT * FROM (${sub.toSQL()}) AS ${_sql(alias)}`
@@ -5006,85 +5020,103 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
           catch {}
         },
-        // Add other essential methods as no-ops or basic implementations
-        whereRaw: () => this as any,
-        whereColumn: () => this as any,
-        orWhereColumn: () => this as any,
-        whereIn: () => this as any,
-        orWhereIn: () => this as any,
-        whereNotIn: () => this as any,
-        orWhereNotIn: () => this as any,
-        whereLike: () => this as any,
-        whereILike: () => this as any,
-        orWhereLike: () => this as any,
-        orWhereILike: () => this as any,
-        whereNotLike: () => this as any,
-        whereNotILike: () => this as any,
-        orWhereNotLike: () => this as any,
-        orWhereNotILike: () => this as any,
-        whereAny: () => this as any,
-        whereAll: () => this as any,
-        whereNone: () => this as any,
-        whereNested: () => this as any,
-        orWhereNested: () => this as any,
-        whereDate: () => this as any,
-        whereBetween: () => this as any,
-        whereNotBetween: () => this as any,
-        whereJsonContains: () => this as any,
-        whereJsonPath: () => this as any,
-        whereNull: () => this as any,
-        whereNotNull: () => this as any,
-        whereExists: () => this as any,
-        whereJsonDoesntContain: () => this as any,
-        whereJsonContainsKey: () => this as any,
-        whereJsonDoesntContainKey: () => this as any,
-        whereJsonLength: () => this as any,
-        join: () => this as any,
-        joinSub: () => this as any,
-        innerJoin: () => this as any,
-        leftJoin: () => this as any,
-        leftJoinSub: () => this as any,
-        rightJoin: () => this as any,
-        crossJoin: () => this as any,
-        crossJoinSub: () => this as any,
-        groupBy: () => this as any,
-        groupByRaw: () => this as any,
-        having: () => this as any,
-        havingRaw: () => this as any,
-        addSelect: () => this as any,
-        select: () => this as any,
-        selectAll: () => this as any,
-        orderByDesc: () => this as any,
-        inRandomOrder: () => this as any,
-        reorder: () => this as any,
-        orderByRaw: () => this as any,
-        union: () => this as any,
-        unionAll: () => this as any,
-        forPage: () => this as any,
-        selectAllRelations: () => this as any,
-        with: () => this as any,
-        value: () => Promise.resolve(undefined),
-        pluck: () => Promise.resolve([]),
-        cursorPaginate: () => Promise.resolve({ data: [], meta: { perPage: 0, nextCursor: null } }),
-        paginate: () => Promise.resolve({ data: [], meta: { perPage: 0, page: 1, total: 0, lastPage: 1 } }),
-        simplePaginate: () => Promise.resolve({ data: [], meta: { perPage: 0, page: 1, hasMore: false } }),
-        chunk: () => Promise.resolve(),
-        chunkById: () => Promise.resolve(),
-        eachById: () => Promise.resolve(),
-        count: () => Promise.resolve(0),
-        avg: () => Promise.resolve(0),
-        sum: () => Promise.resolve(0),
-        max: () => Promise.resolve(null),
-        min: () => Promise.resolve(null),
-        find: () => Promise.resolve(undefined),
-        findOrFail: () => Promise.reject(new Error('Not found')),
-        findMany: () => Promise.resolve([]),
-        latest: () => this as any,
-        oldest: () => this as any,
-        lazy: () => (async function* () {})(),
-        lazyById: () => (async function* () {})(),
+        // Methods NOT supported on `selectFromSub` results.
+        //
+        // The type interface declares ~40 builder methods that look
+        // chainable, but the previous implementation returned silent
+        // no-ops for each — `.whereRaw(...)` did nothing, `.join(...)`
+        // did nothing, `.count()` returned 0 regardless of the actual
+        // subquery, etc. Callers chained and got wrong results.
+        //
+        // The right answer is to either (a) implement each method
+        // against the subquery SQL, or (b) refuse loud so callers
+        // build the subquery with the filters already applied BEFORE
+        // wrapping in `selectFromSub`.
+        //
+        // We pick (b): throw on every unsupported method. Substantial
+        // (a)-style implementations land per-method in follow-ups,
+        // each replacing the throw here with a real call. Callers
+        // affected: construct your subquery with its own
+        // .where()/.join()/.groupBy() FIRST, then pass to
+        // `selectFromSub` to wrap. See stacksjs/stacks#1862 #11.
+        whereRaw: subqueryNotSupported('whereRaw'),
+        whereColumn: subqueryNotSupported('whereColumn'),
+        orWhereColumn: subqueryNotSupported('orWhereColumn'),
+        whereIn: subqueryNotSupported('whereIn'),
+        orWhereIn: subqueryNotSupported('orWhereIn'),
+        whereNotIn: subqueryNotSupported('whereNotIn'),
+        orWhereNotIn: subqueryNotSupported('orWhereNotIn'),
+        whereLike: subqueryNotSupported('whereLike'),
+        whereILike: subqueryNotSupported('whereILike'),
+        orWhereLike: subqueryNotSupported('orWhereLike'),
+        orWhereILike: subqueryNotSupported('orWhereILike'),
+        whereNotLike: subqueryNotSupported('whereNotLike'),
+        whereNotILike: subqueryNotSupported('whereNotILike'),
+        orWhereNotLike: subqueryNotSupported('orWhereNotLike'),
+        orWhereNotILike: subqueryNotSupported('orWhereNotILike'),
+        whereAny: subqueryNotSupported('whereAny'),
+        whereAll: subqueryNotSupported('whereAll'),
+        whereNone: subqueryNotSupported('whereNone'),
+        whereNested: subqueryNotSupported('whereNested'),
+        orWhereNested: subqueryNotSupported('orWhereNested'),
+        whereDate: subqueryNotSupported('whereDate'),
+        whereBetween: subqueryNotSupported('whereBetween'),
+        whereNotBetween: subqueryNotSupported('whereNotBetween'),
+        whereJsonContains: subqueryNotSupported('whereJsonContains'),
+        whereJsonPath: subqueryNotSupported('whereJsonPath'),
+        whereNull: subqueryNotSupported('whereNull'),
+        whereNotNull: subqueryNotSupported('whereNotNull'),
+        whereExists: subqueryNotSupported('whereExists'),
+        whereJsonDoesntContain: subqueryNotSupported('whereJsonDoesntContain'),
+        whereJsonContainsKey: subqueryNotSupported('whereJsonContainsKey'),
+        whereJsonDoesntContainKey: subqueryNotSupported('whereJsonDoesntContainKey'),
+        whereJsonLength: subqueryNotSupported('whereJsonLength'),
+        join: subqueryNotSupported('join'),
+        joinSub: subqueryNotSupported('joinSub'),
+        innerJoin: subqueryNotSupported('innerJoin'),
+        leftJoin: subqueryNotSupported('leftJoin'),
+        leftJoinSub: subqueryNotSupported('leftJoinSub'),
+        rightJoin: subqueryNotSupported('rightJoin'),
+        crossJoin: subqueryNotSupported('crossJoin'),
+        crossJoinSub: subqueryNotSupported('crossJoinSub'),
+        groupBy: subqueryNotSupported('groupBy'),
+        groupByRaw: subqueryNotSupported('groupByRaw'),
+        having: subqueryNotSupported('having'),
+        havingRaw: subqueryNotSupported('havingRaw'),
+        addSelect: subqueryNotSupported('addSelect'),
+        select: subqueryNotSupported('select'),
+        selectAll: subqueryNotSupported('selectAll'),
+        orderByDesc: subqueryNotSupported('orderByDesc'),
+        inRandomOrder: subqueryNotSupported('inRandomOrder'),
+        reorder: subqueryNotSupported('reorder'),
+        orderByRaw: subqueryNotSupported('orderByRaw'),
+        union: subqueryNotSupported('union'),
+        unionAll: subqueryNotSupported('unionAll'),
+        forPage: subqueryNotSupported('forPage'),
+        selectAllRelations: subqueryNotSupported('selectAllRelations'),
+        with: subqueryNotSupported('with'),
+        value: subqueryNotSupported('value'),
+        pluck: subqueryNotSupported('pluck'),
+        cursorPaginate: subqueryNotSupported('cursorPaginate'),
+        paginate: subqueryNotSupported('paginate'),
+        simplePaginate: subqueryNotSupported('simplePaginate'),
+        chunk: subqueryNotSupported('chunk'),
+        chunkById: subqueryNotSupported('chunkById'),
+        eachById: subqueryNotSupported('eachById'),
+        count: subqueryNotSupported('count'),
+        avg: subqueryNotSupported('avg'),
+        sum: subqueryNotSupported('sum'),
+        max: subqueryNotSupported('max'),
+        min: subqueryNotSupported('min'),
+        find: subqueryNotSupported('find'),
+        findOrFail: subqueryNotSupported('findOrFail'),
+        findMany: subqueryNotSupported('findMany'),
+        latest: subqueryNotSupported('latest'),
+        oldest: subqueryNotSupported('oldest'),
+        lazy: subqueryNotSupported('lazy'),
+        lazyById: subqueryNotSupported('lazyById'),
         pipe: (fn: any) => fn(this),
-        when: () => this as any,
+        when: subqueryNotSupported('when'),
         tap: () => this as any,
         dump: () => this as any,
         dd: () => { throw new Error('Dump and Die') },
