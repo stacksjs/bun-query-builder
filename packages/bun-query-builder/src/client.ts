@@ -2463,6 +2463,26 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
      * internal quote produces a valid SQL string literal regardless
      * of contents. See stacksjs/stacks#1858 Q-1.
      */
+    /**
+     * Like `validateIdentifier`, but allows one optional `table.`
+     * prefix so qualified column references (`users.id`, `posts.title`)
+     * pass through. Each segment must independently match the strict
+     * identifier shape — `users.id; --` is still rejected.
+     */
+    function validateQualifiedIdentifier(value: unknown, context: string): void {
+      if (typeof value !== 'string' || value.length === 0)
+        throw new TypeError(`[query-builder] ${context}: identifier must be a non-empty string, got ${typeof value}`)
+      if (value.length > 129) // 64 + '.' + 64
+        throw new TypeError(`[query-builder] ${context}: identifier '${value}' too long`)
+      const parts = value.split('.')
+      if (parts.length > 2)
+        throw new TypeError(`[query-builder] ${context}: identifier '${value}' has more than one dot — only \`table.column\` is allowed`)
+      for (const part of parts) {
+        if (!/^[A-Z_][A-Z0-9_]*$/i.test(part))
+          throw new TypeError(`[query-builder] ${context}: identifier segment '${part}' contains characters outside [A-Za-z0-9_]`)
+      }
+    }
+
     function formatSubqueryValue(val: unknown): string {
       if (val === null) return 'NULL'
       if (typeof val === 'number' && Number.isFinite(val)) return String(val)
@@ -3574,6 +3594,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       whereJsonPath(path: string, op: WhereOperator, value: any) {
+        // Validate operator (Q-5 from stacksjs/stacks#1858).
+        assertSafeWhereOperator(op, 'whereJsonPath(op)')
+        // Validate path shape — JSON paths can include dots, brackets,
+        // single quotes (for keys), and `$`/`->`/`->>` per dialect.
+        // We allow that set but reject anything that could break out
+        // of the path (`;`, double quotes, parentheses, etc).
+        if (typeof path !== 'string' || path.length === 0 || path.length > 256)
+          throw new TypeError(`[query-builder] whereJsonPath(path): expected non-empty string up to 256 chars, got ${typeof path === 'string' ? `'${path.slice(0, 32)}...'` : typeof path}`)
+        // Allow: A-Z, a-z, 0-9, _, ., [, ], $, ', -, >, *  (the chars
+        // needed by Postgres `col->'a'->>'b'`, MySQL/SQLite `col, '$.path[0]'`).
+        // Reject: ;, ", (, ), spaces, anything else.
+        if (!/^[A-Za-z0-9_.[\]$'\->* ,]+$/.test(path))
+          throw new TypeError(`[query-builder] whereJsonPath(path): refusing to use '${path}' — contains characters outside the allowed JSON-path set`)
+
         const dialect = config.dialect
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const idx = whereParams.length + 1
@@ -4028,6 +4062,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       joinSub(sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) {
+        // Alias goes into the SQL as a bare identifier; validate it
+        // strictly. The ON columns are typically table-qualified
+        // (`users.id`) so the strict identifier regex rejects them —
+        // they're traditionally dev-controlled (literals in code), so
+        // we accept them via `validateQualifiedIdentifier` which
+        // allows one optional `table.` prefix. See
+        // stacksjs/stacks#1858 #20.
+        validateIdentifier(alias, 'joinSub(alias)')
+        validateQualifiedIdentifier(onLeft, 'joinSub(onLeft)')
+        validateQualifiedIdentifier(onRight, 'joinSub(onRight)')
+        assertSafeWhereOperator(operator, 'joinSub(operator)')
         text += ` JOIN (${String(sub.toSQL())}) AS ${alias} ON ${onLeft} ${operator} ${onRight}`
         built = null
         joinedTables.add(alias)
@@ -4674,11 +4719,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       withCTE(name: string, sub: any) {
+        validateIdentifier(name, 'withCTE(name)')
         text = `WITH ${name} AS (${String(sub.toSQL())}) ${text}`
         built = null
         return this as any
       },
       withRecursive(name: string, sub: any) {
+        validateIdentifier(name, 'withRecursive(name)')
         text = `WITH RECURSIVE ${name} AS (${String(sub.toSQL())}) ${text}`
         built = null
         return this as any
