@@ -5219,8 +5219,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // Quote identifier with internal-quote doubling so identifiers
       // containing quote characters can't terminate the quoted string
       // (stacksjs/stacks#1858 Q-7 defense-in-depth).
-      const quoteId = (_identifier: string): string => {
-        const s = String(_identifier)
+      const quoteId = (identifier: string): string => {
+        const s = String(identifier)
         if (config.dialect === 'mysql')
           return `\`${s.replace(/`/g, '``')}\``
         return `"${s.replace(/"/g, '""')}"`
@@ -5345,8 +5345,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // Quote identifier with internal-quote doubling — see
       // `updateTable` / `insertInto` quoteId for the rationale
       // (stacksjs/stacks#1858 Q-7).
-      const quoteId = (_identifier: string): string => {
-        const s = String(_identifier)
+      const quoteId = (identifier: string): string => {
+        const s = String(identifier)
         if (config.dialect === 'mysql')
           return `\`${s.replace(/`/g, '``')}\``
         return `"${s.replace(/"/g, '""')}"`
@@ -5739,9 +5739,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // wrapped the whole "EXCLUDED.col" string as a quoted
       // identifier and broke the conflict-update entirely.
       const isPostgres = config.dialect === 'postgres'
-      const quoteCol = (_column: string): string => isPostgres
-        ? `"${_column.replace(/"/g, '""')}"`
-        : `"${_column.replace(/"/g, '""')}"` // SQLite supports double quotes
+      const quoteCol = (column: string): string => isPostgres
+        ? `"${column.replace(/"/g, '""')}"`
+        : `"${column.replace(/"/g, '""')}"` // SQLite supports double quotes
       const updateList = setCols.map(column => `${quoteCol(column)} = EXCLUDED.${quoteCol(column)}`).join(', ')
       const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON CONFLICT (${bunSql(targetCols as any)}) DO UPDATE SET ${(bunSql as any).unsafe(updateList)}`
       return (built as any).execute()
