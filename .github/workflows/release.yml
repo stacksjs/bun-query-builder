@@ -26,7 +26,8 @@ jobs:
         run: bun install
 
       - name: Publish
-        run: pantry publish --npm --access public './packages/bun-query-builder'
+        working-directory: packages/bun-query-builder
+        run: pantry publish --npm --access public
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
