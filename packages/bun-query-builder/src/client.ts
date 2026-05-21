@@ -5562,25 +5562,52 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return (_sql(strings, ...values) as any).simple()
     },
     async advisoryLock(key: number | string): Promise<void> {
-      if (config.dialect !== 'postgres')
+      if (config.dialect === 'postgres') {
+        const s = String(key)
+        let hash = 7
+        for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
+        const k = typeof key === 'number' ? key : Math.abs(hash)
+        const q = bunSql`SELECT pg_advisory_lock(${k})`
+        await runWithHooks<any[]>(q, 'raw')
         return
-      const s = String(key)
-      let hash = 7
-      for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
-      const k = typeof key === 'number' ? key : Math.abs(hash)
-      const q = bunSql`SELECT pg_advisory_lock(${k})`
-      await runWithHooks<any[]>(q, 'raw')
+      }
+      if (config.dialect === 'mysql') {
+        // MySQL has `GET_LOCK(name, timeout)`. Wait indefinitely
+        // (timeout=-1) to match Postgres `pg_advisory_lock` semantics.
+        const lockName = `bqb:${String(key)}`
+        const q = bunSql`SELECT GET_LOCK(${lockName}, -1) AS ok`
+        await runWithHooks<any[]>(q, 'raw')
+        return
+      }
+      // SQLite has no advisory-lock primitive. Refusing loud is
+      // safer than silently returning — distributed-coordination
+      // callers would otherwise believe they hold the lock.
+      // See stacksjs/stacks#1862 #17.
+      throw new Error(`[query-builder] advisoryLock() is not supported on SQLite — use a Postgres or MySQL deployment for distributed locking.`)
     },
     async tryAdvisoryLock(key: number | string): Promise<boolean> {
-      if (config.dialect !== 'postgres')
-        return false
-      const s = String(key)
-      let hash = 7
-      for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
-      const k = typeof key === 'number' ? key : Math.abs(hash)
-      const q = bunSql`SELECT pg_try_advisory_lock(${k}) as ok`
-      const rows = await runWithHooks<any[]>(q, 'raw')
-      return Boolean(rows?.[0]?.ok)
+      if (config.dialect === 'postgres') {
+        const s = String(key)
+        let hash = 7
+        for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
+        const k = typeof key === 'number' ? key : Math.abs(hash)
+        const q = bunSql`SELECT pg_try_advisory_lock(${k}) as ok`
+        const rows = await runWithHooks<any[]>(q, 'raw')
+        return Boolean(rows?.[0]?.ok)
+      }
+      if (config.dialect === 'mysql') {
+        // MySQL `GET_LOCK(name, 0)` returns 1 immediately if free, 0
+        // if held by another connection.
+        const lockName = `bqb:${String(key)}`
+        const q = bunSql`SELECT GET_LOCK(${lockName}, 0) AS ok`
+        const rows = await runWithHooks<any[]>(q, 'raw')
+        return Number(rows?.[0]?.ok) === 1
+      }
+      // SQLite: no primitive. Return false (lock unavailable) so
+      // callers fall through to whatever non-distributed path they
+      // had. Loud throw would crash apps that gracefully degrade
+      // when locks aren't held.
+      return false
     },
     unsafe(query: string, params?: any[]) {
       return (bunSql as any).unsafe(query, params)
