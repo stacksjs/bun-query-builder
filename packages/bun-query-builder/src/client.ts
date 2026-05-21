@@ -2068,6 +2068,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     // Avoid using _sql(column) as it creates "helpers" that Bun restricts
     if (Array.isArray(expr)) {
       const [col, op, val] = expr
+      // Validate column + operator so callers building either from
+      // request input (`Model.where([req.query.field, req.query.op,
+      // value])`) can't inject SQL via either slot. See
+      // stacksjs/stacks#1858 Q-6, Q-8.
+      validateIdentifier(col, 'where(column)')
       const colName = String(col)
       switch (op) {
         case 'in':
@@ -2085,9 +2090,18 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         case 'like':
           return (_sql as any).unsafe(`${colName} LIKE ${getPlaceholder(1)}`, [val])
         case 'is':
-          return (_sql as any).unsafe(`${colName} IS ${val}`)
-        case 'is not':
-          return (_sql as any).unsafe(`${colName} IS NOT ${val}`)
+        case 'is not': {
+          // `is` / `is not` is `IS NULL` / `IS NOT NULL` only. The
+          // previous shape interpolated `val` directly into the SQL
+          // (`IS ${val}`), so passing `val = 'NULL; DROP TABLE x'`
+          // landed straight in the query string. The spec says these
+          // operators only compare against NULL, so reject anything
+          // else loud. See stacksjs/stacks#1858 Q-8.
+          if (val !== null && val !== undefined) {
+            throw new TypeError(`[query-builder] where(..., '${op}', ?): operator '${op}' only accepts NULL/undefined as value, got ${typeof val} (${String(val)})`)
+          }
+          return (_sql as any).unsafe(`${colName} IS ${op === 'is not' ? 'NOT ' : ''}NULL`)
+        }
         case '!=':
           return (_sql as any).unsafe(`${colName} <> ${getPlaceholder(1)}`, [val])
         case '<':
@@ -2095,8 +2109,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         case '<=':
         case '>=':
         case '=':
-        default:
           return (_sql as any).unsafe(`${colName} ${op} ${getPlaceholder(1)}`, [val])
+        default:
+          throw new TypeError(`[query-builder] where(..., '${String(op)}', ?): unsupported operator. Allowed: =, !=, <>, <, <=, >, >=, like, in, not in, is, is not`)
       }
     }
     if ('raw' in (expr as any)) {
@@ -2112,6 +2127,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     let paramIndex = 1
 
     for (const key of keys) {
+      // Object-form `where({col: val})` — keys come from
+      // `Object.keys(arbitraryInput)`. Validate so a caller that
+      // spreads `req.body` can't smuggle a SQL expression as a key
+      // name. See stacksjs/stacks#1858 Q-6.
+      validateIdentifier(key, 'where(object key)')
       const value = (expr as any)[key]
       if (Array.isArray(value)) {
         const placeholders = getPlaceholders(value.length, paramIndex)
