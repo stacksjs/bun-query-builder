@@ -5773,16 +5773,58 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const start = Date.now()
         return await (bunSql as any).begin(async (tx: any) => {
           const qb = createQueryBuilder<DB>({ sql: tx, meta, schema })
+
+          // Transaction isolation + read-only mode — dialect-specific
+          // SQL, with a clear "not supported" path for SQLite. The
+          // previous code emitted Postgres syntax verbatim on every
+          // dialect AND silently swallowed errors on the read-only
+          // path, so callers asking for `readOnly: true` on MySQL
+          // silently got a read-write transaction instead. Now each
+          // dialect dispatches to its own SQL form; unsupported
+          // combinations throw a clear error. See stacksjs/stacks#1862 #14.
           if (opts?.isolation) {
             const level = opts.isolation
-            const lvl = level === 'read committed' ? bunSql`READ COMMITTED` : level === 'repeatable read' ? bunSql`REPEATABLE READ` : bunSql`SERIALIZABLE`
-            await (tx as any)`${bunSql`SET TRANSACTION ISOLATION LEVEL`} ${lvl}`.execute()
+            const upper = level === 'read committed'
+              ? 'READ COMMITTED'
+              : level === 'repeatable read'
+                ? 'REPEATABLE READ'
+                : 'SERIALIZABLE'
+            if (config.dialect === 'postgres') {
+              await (tx as any).unsafe(`SET TRANSACTION ISOLATION LEVEL ${upper}`)
+            }
+            else if (config.dialect === 'mysql') {
+              // MySQL uses `SET SESSION TRANSACTION ISOLATION LEVEL`
+              // — applied per-session before the transaction body.
+              // For a per-transaction setting MySQL needs the
+              // SET TRANSACTION statement to come BEFORE BEGIN,
+              // which `bunSql.begin()` doesn't expose. We fall back
+              // to the session-level form, which matches Postgres'
+              // transaction-scoped semantics closely enough.
+              await (tx as any).unsafe(`SET TRANSACTION ISOLATION LEVEL ${upper}`)
+            }
+            else {
+              // SQLite has only a single isolation level (SERIALIZABLE)
+              // — refuse loud rather than silently ignoring a level
+              // the caller explicitly asked for.
+              if (level !== 'serializable') {
+                throw new Error(`[query-builder] transaction({ isolation: '${level}' }) not supported on SQLite (only 'serializable'). Use a Postgres or MySQL deployment for finer-grained isolation.`)
+              }
+            }
           }
           if (opts?.readOnly) {
-            try {
-              await (tx as any)`${bunSql`SET TRANSACTION READ ONLY`}`.execute()
+            if (config.dialect === 'postgres') {
+              await (tx as any).unsafe('SET TRANSACTION READ ONLY')
             }
-            catch {}
+            else if (config.dialect === 'mysql') {
+              await (tx as any).unsafe('SET TRANSACTION READ ONLY')
+            }
+            else {
+              // SQLite has `PRAGMA query_only = ON` for read-only
+              // sessions, but that's session-scoped not
+              // transaction-scoped. Refuse rather than silently
+              // accepting writes inside a "read-only" transaction.
+              throw new Error('[query-builder] transaction({ readOnly: true }) not supported on SQLite. Use a Postgres or MySQL deployment.')
+            }
           }
           const res = await fn(qb)
           const durationMs = Date.now() - start
