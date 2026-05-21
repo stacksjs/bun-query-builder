@@ -26,9 +26,12 @@ jobs:
         run: bun install
 
       - name: Publish
-        run: pantry publish --npm --access public
+        run: pantry publish --npm --access public './packages/bun-query-builder'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Build Release Binaries
+        run: cd packages/bun-query-builder && bun run compile:all && bun run zip
 
       - name: Create GitHub Release
         uses: stacksjs/action-releaser@v1.2.9
