@@ -1,3 +1,32 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.22...v0.1.23)
+
+### 🐛 Bug Fixes
+
+- **release**: publish query builder package workspace ([478d1ab](https://github.com/stacksjs/bun-query-builder/commit/478d1ab)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.1.23 ([128a770](https://github.com/stacksjs/bun-query-builder/commit/128a770)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **lint**: restore used query builder parameter names ([21cd9cf](https://github.com/stacksjs/bun-query-builder/commit/21cd9cf)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.22...HEAD)
+
+### 🐛 Bug Fixes
+
+- **release**: publish query builder package workspace ([478d1ab](https://github.com/stacksjs/bun-query-builder/commit/478d1ab)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🧹 Chores
+
+- **lint**: restore used query builder parameter names ([21cd9cf](https://github.com/stacksjs/bun-query-builder/commit/21cd9cf)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.21...v0.1.22)
 
 ### 🚀 Features
