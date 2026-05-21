@@ -4941,12 +4941,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const params: any[] = []
       const isPostgres = config.dialect === 'postgres'
 
-      // Quote identifier based on dialect - skip for sqlite (not needed for simple names)
+      // Quote identifier based on dialect. SQLite supports double-quoted
+      // identifiers per the SQL standard; emitting them (with internal
+      // quote-doubling) closes a SQL-injection vector that existed when
+      // column/table names came from user input. Previously the SQLite
+      // branch was a no-op (`(id) => id`), so any caller that
+      // interpolated `Object.keys(req.body)` straight into an INSERT
+      // could smuggle SQL through the identifier slot
+      // (stacksjs/stacks#1858 Q-7).
       const quoteId = isPostgres
-        ? (id: string): string => `"${id}"`
+        ? (id: string): string => `"${String(id).replace(/"/g, '""')}"`
         : config.dialect === 'mysql'
-          ? (id: string): string => `\`${id}\``
-          : (id: string): string => id // SQLite: no quoting needed for simple identifiers
+          ? (id: string): string => `\`${String(id).replace(/`/g, '``')}\``
+          : (id: string): string => `"${String(id).replace(/"/g, '""')}"`
 
       // Get placeholder based on dialect
       const getPlaceholder = isPostgres
@@ -5097,13 +5104,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       let built: any
       const params: any[] = []
 
-      // Quote identifier based on dialect
+      // Quote identifier with internal-quote doubling so identifiers
+      // containing quote characters can't terminate the quoted string
+      // (stacksjs/stacks#1858 Q-7 defense-in-depth).
       const quoteId = (id: string): string => {
-        if (config.dialect === 'mysql') {
-          return `\`${id}\``
-        }
-        // PostgreSQL and SQLite use double quotes
-        return `"${id}"`
+        const s = String(id)
+        if (config.dialect === 'mysql')
+          return `\`${s.replace(/`/g, '``')}\``
+        return `"${s.replace(/"/g, '""')}"`
       }
 
       let sqlText = `UPDATE ${quoteId(String(table))}`
@@ -5222,13 +5230,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     },
     deleteFrom(table) {
-      // Quote identifier based on dialect
+      // Quote identifier with internal-quote doubling — see
+      // `updateTable` / `insertInto` quoteId for the rationale
+      // (stacksjs/stacks#1858 Q-7).
       const quoteId = (id: string): string => {
-        if (config.dialect === 'mysql') {
-          return `\`${id}\``
-        }
-        // PostgreSQL and SQLite use double quotes
-        return `"${id}"`
+        const s = String(id)
+        if (config.dialect === 'mysql')
+          return `\`${s.replace(/`/g, '``')}\``
+        return `"${s.replace(/"/g, '""')}"`
       }
 
       const quotedTable = quoteId(String(table))

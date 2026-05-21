@@ -27,6 +27,30 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { Faker } from 'ts-mocker'
 
+/**
+ * Strict identifier pattern for SQL column / table names: starts with
+ * a letter or underscore, then letters / digits / underscores only.
+ * No quotes, no dots, no spaces, no special characters.
+ *
+ * Used by `assertValidIdentifier` to validate user-supplied column
+ * names at the entry points where ORM methods accept them (increment,
+ * decrement, pluck, aggregate, orderBy via raw forms, …). The
+ * compile-time `keyof TAttributes` constraint catches the common case
+ * where the column name comes from a literal; this regex is the
+ * runtime backstop for `as any` casts and code that builds column
+ * names from request input. stacksjs/stacks#1858 (Q-2, Q-9, Q-10).
+ */
+const SAFE_SQL_IDENTIFIER = /^[A-Z_][A-Z0-9_]*$/i
+
+function assertValidIdentifier(name: unknown, context: string): asserts name is string {
+  if (typeof name !== 'string' || name.length === 0)
+    throw new TypeError(`[bun-query-builder] ${context}: identifier must be a non-empty string, got ${typeof name}`)
+  if (name.length > 64)
+    throw new TypeError(`[bun-query-builder] ${context}: identifier '${name}' exceeds 64 chars`)
+  if (!SAFE_SQL_IDENTIFIER.test(name))
+    throw new TypeError(`[bun-query-builder] ${context}: identifier '${name}' contains characters outside [A-Za-z0-9_] — refusing to interpolate into SQL`)
+}
+
 // Lazy reference to model registry to avoid circular dependency
 // eslint-disable-next-line pickier/no-unused-vars
 let _getModel: ((name: string) => any) | null = null
@@ -1055,12 +1079,26 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
   }
 
   orderBy(column: string, direction: 'asc' | 'desc' = 'asc'): this {
+    assertValidIdentifier(column, 'orderBy(column)')
+    if (direction !== 'asc' && direction !== 'desc')
+      throw new TypeError(`[bun-query-builder] orderBy(direction): expected 'asc' or 'desc', got '${direction}'`)
     this._orderBy.push(`${column} ${direction.toUpperCase()}`)
     return this
   }
 
-  limit(n: number): this { this._limit = n; return this }
-  offset(n: number): this { this._offset = n; return this }
+  limit(n: number): this {
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n))
+      throw new TypeError(`[bun-query-builder] limit(n): expected non-negative integer, got ${n}`)
+    this._limit = n
+    return this
+  }
+
+  offset(n: number): this {
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n))
+      throw new TypeError(`[bun-query-builder] offset(n): expected non-negative integer, got ${n}`)
+    this._offset = n
+    return this
+  }
 
   /** Build the SELECT SQL for query-side execution. */
   private buildSelect(): { sql: string, params: unknown[] } {
@@ -1390,21 +1428,25 @@ class ModelQueryBuilder<
   }
 
   whereNull<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
+    assertValidIdentifier(column, 'whereNull(column)')
     this._wheres.push({ column: column as string, operator: '=', value: null, boolean: 'and' })
     return this
   }
 
   orWhereNull<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
+    assertValidIdentifier(column, 'orWhereNull(column)')
     this._wheres.push({ column: column as string, operator: '=', value: null, boolean: 'or' })
     return this
   }
 
   whereNotNull<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
+    assertValidIdentifier(column, 'whereNotNull(column)')
     this._wheres.push({ column: column as string, operator: '!=', value: null, boolean: 'and' })
     return this
   }
 
   orWhereNotNull<K extends ColumnName<TDef>>(column: K): ModelQueryBuilder<TDef, TSelected> {
+    assertValidIdentifier(column, 'orWhereNotNull(column)')
     this._wheres.push({ column: column as string, operator: '!=', value: null, boolean: 'or' })
     return this
   }
@@ -1496,6 +1538,7 @@ class ModelQueryBuilder<
     column: K,
     range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown],
   ): ModelQueryBuilder<TDef, TSelected> {
+    assertValidIdentifier(column, 'whereBetween(column)')
     this._wheres.push({ column: column as string, operator: '>=', value: range[0], boolean: 'and' })
     this._wheres.push({ column: column as string, operator: '<=', value: range[1], boolean: 'and' })
     return this
@@ -1505,9 +1548,20 @@ class ModelQueryBuilder<
     column: K,
     range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown],
   ): ModelQueryBuilder<TDef, TSelected> {
-    // NOT BETWEEN is equivalent to (col < min OR col > max)
-    this._wheres.push({ column: column as string, operator: '<', value: range[0], boolean: 'and' })
-    this._wheres.push({ column: column as string, operator: '>', value: range[1], boolean: 'or' })
+    // `NOT BETWEEN` is `(col < min OR col > max)`. The previous shape
+    // pushed two flat clauses with `boolean: 'and'` then `boolean:
+    // 'or'`, which the builder joined as `... AND col < min OR col >
+    // max` — and SQL's AND/OR precedence makes `OR col > max` a
+    // top-level disjunction that bypasses every prior WHERE filter.
+    // Using a raw grouped clause keeps the operator inside its own
+    // parenthesised scope. See stacksjs/stacks#1862 #10.
+    assertValidIdentifier(column, 'whereNotBetween(column)')
+    const col = column as string
+    this._wheres.push({
+      raw: `(${col} < ? OR ${col} > ?)`,
+      rawParams: [range[0], range[1]],
+      boolean: 'and',
+    })
     return this
   }
 
@@ -1534,6 +1588,9 @@ class ModelQueryBuilder<
   }
 
   orderBy<K extends ColumnName<TDef>>(column: K, direction: 'asc' | 'desc' = 'asc'): ModelQueryBuilder<TDef, TSelected> {
+    assertValidIdentifier(column, 'orderBy(column)')
+    if (direction !== 'asc' && direction !== 'desc')
+      throw new TypeError(`[bun-query-builder] orderBy(direction): expected 'asc' or 'desc', got '${direction}'`)
     this._orderBy.push({ column: column as string, direction })
     return this
   }
@@ -1873,6 +1930,7 @@ class ModelQueryBuilder<
    * ```
    */
   increment<K extends NumericColumns<TDef>>(column: K, amount = 1): number {
+    assertValidIdentifier(column, 'increment(column)')
     const db = getDatabase()
     const params: unknown[] = [amount]
 
@@ -1969,6 +2027,7 @@ class ModelQueryBuilder<
   pluck<K extends ColumnName<TDef>>(
     column: K
   ): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[] {
+    assertValidIdentifier(column, 'pluck(column)')
     // Raw query — avoid creating ModelInstance objects just to extract one column
     const db = getDatabase()
     const params: unknown[] = []
@@ -1988,6 +2047,10 @@ class ModelQueryBuilder<
   }
 
   private aggregate(fn: string, column: string): number | null {
+    // The aggregate function name comes from internal call sites
+    // (max/min/avg/sum below) so it's bounded — but validate column
+    // since callers pass user-derived field names to those wrappers.
+    assertValidIdentifier(column, `${fn}(column)`)
     const db = getDatabase()
     const params: unknown[] = []
     let sql = `SELECT ${fn}(${column}) as v FROM ${this._definition.table}`
