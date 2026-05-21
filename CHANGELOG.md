@@ -1,3 +1,74 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.21...v0.1.22)
+
+### 🚀 Features
+
+- **model**: export registerModel for manual registry inserts ([15aa97e](https://github.com/stacksjs/bun-query-builder/commit/15aa97e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- **model**: expose shared model registration ([630547c](https://github.com/stacksjs/bun-query-builder/commit/630547c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **security**: validate column + operator in where() entry points (#1009 Q-6, Q-8) ([ceaaeba](https://github.com/stacksjs/bun-query-builder/commit/ceaaeba)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1009](https://github.com/stacksjs/bun-query-builder/issues/1009))
+- **security**: subquery value escape, operator allow-list, whereColumn + whereDate validation (#1009, #1010) ([2e81638](https://github.com/stacksjs/bun-query-builder/commit/2e81638)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010))
+- dialect-aware insertOrIgnore/upsert, count+groupBy subquery, numeric LIMIT/OFFSET, top-level onlyTrashed (#1010) ([c99c040](https://github.com/stacksjs/bun-query-builder/commit/c99c040)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010))
+- **security**: quote SQLite identifiers, validate ORM column args, fix whereNotBetween (#1009, #1010) ([9983c7f](https://github.com/stacksjs/bun-query-builder/commit/9983c7f)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010))
+- **config**: stop setConfig writes binding-splitting under Bun's bundler ([0b94936](https://github.com/stacksjs/bun-query-builder/commit/0b94936)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🤖 Continuous Integration
+
+- **buddy-bot**: regenerate workflow from current template ([f4ba6f4](https://github.com/stacksjs/bun-query-builder/commit/f4ba6f4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.1.22 ([c2e3069](https://github.com/stacksjs/bun-query-builder/commit/c2e3069)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **lint**: satisfy query builder pickier checks ([ebbe85c](https://github.com/stacksjs/bun-query-builder/commit/ebbe85c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: bump @stacksjs/ts-validation to ^0.5.0 ([cd89f24](https://github.com/stacksjs/bun-query-builder/commit/cd89f24)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: bump better-dx to ^0.2.15 ([8faa470](https://github.com/stacksjs/bun-query-builder/commit/8faa470)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 📄 Miscellaneous
+
+- Create query-builder.md ([dbbc105](https://github.com/stacksjs/bun-query-builder/commit/dbbc105)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.21...HEAD)
+
+### 🚀 Features
+
+- **model**: export registerModel for manual registry inserts ([15aa97e](https://github.com/stacksjs/bun-query-builder/commit/15aa97e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- **model**: expose shared model registration ([630547c](https://github.com/stacksjs/bun-query-builder/commit/630547c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **security**: validate column + operator in where() entry points (#1009 Q-6, Q-8) ([ceaaeba](https://github.com/stacksjs/bun-query-builder/commit/ceaaeba)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1009](https://github.com/stacksjs/bun-query-builder/issues/1009))
+- **security**: subquery value escape, operator allow-list, whereColumn + whereDate validation (#1009, #1010) ([2e81638](https://github.com/stacksjs/bun-query-builder/commit/2e81638)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010))
+- dialect-aware insertOrIgnore/upsert, count+groupBy subquery, numeric LIMIT/OFFSET, top-level onlyTrashed (#1010) ([c99c040](https://github.com/stacksjs/bun-query-builder/commit/c99c040)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010))
+- **security**: quote SQLite identifiers, validate ORM column args, fix whereNotBetween (#1009, #1010) ([9983c7f](https://github.com/stacksjs/bun-query-builder/commit/9983c7f)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010))
+- **config**: stop setConfig writes binding-splitting under Bun's bundler ([0b94936](https://github.com/stacksjs/bun-query-builder/commit/0b94936)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🤖 Continuous Integration
+
+- **buddy-bot**: regenerate workflow from current template ([f4ba6f4](https://github.com/stacksjs/bun-query-builder/commit/f4ba6f4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- **lint**: satisfy query builder pickier checks ([ebbe85c](https://github.com/stacksjs/bun-query-builder/commit/ebbe85c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: bump @stacksjs/ts-validation to ^0.5.0 ([cd89f24](https://github.com/stacksjs/bun-query-builder/commit/cd89f24)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: bump better-dx to ^0.2.15 ([8faa470](https://github.com/stacksjs/bun-query-builder/commit/8faa470)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 📄 Miscellaneous
+
+- Create query-builder.md ([dbbc105](https://github.com/stacksjs/bun-query-builder/commit/dbbc105)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.20...v0.1.21)
 
 ### 🧹 Chores
