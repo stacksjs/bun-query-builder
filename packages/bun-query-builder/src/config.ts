@@ -116,9 +116,39 @@ export async function getConfig(): Promise<QueryBuilderConfig> {
 
 /**
  * Programmatically set/override the query builder configuration.
+ *
  * This is useful when you want to configure bun-query-builder from
  * your application code rather than using a config file.
+ *
+ * ⚠️ **Module-scoped configuration limitation**: this writes to the
+ * single process-wide `config` object that every consumer
+ * (`getBunSql`, `getPlaceholder`, dialect dispatch in `client.ts`,
+ * etc.) reads from. **Multiple `createQueryBuilder` instances in the
+ * same process all share this state** — calling
+ * `setConfig({ dialect: 'postgres' })` after a previous
+ * `setConfig({ dialect: 'sqlite' })` flips the dialect for both
+ * builders, including in-flight queries that may have been
+ * constructed under the previous dialect.
+ *
+ * This is fine for typical apps that pick one dialect at boot and
+ * never change it. It's NOT safe for:
+ *
+ *   - Tests that spin up multiple `Database` instances with
+ *     different drivers in parallel.
+ *   - Apps that proxy to multiple back-end DBs simultaneously.
+ *
+ * If you hit this case, run the conflicting connections in separate
+ * processes (one per dialect) or pin to a single dialect for the
+ * process lifetime. A future major version will make config
+ * per-instance — see stacksjs/stacks#1862 #18.
+ *
+ * Calling setConfig with a dialect that conflicts with a prior call
+ * emits a once-per-conflict warning so the cross-contamination is
+ * visible.
  */
+let _lastConfiguredDialect: string | null = null
+const _warnedDialectConflicts = new Set<string>()
+
 export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
   // NEVER reassign `config` here (i.e. `config = { ...defaultConfig }`).
   // Reassigning an `export let` triggers Bun's bundler to split the
@@ -130,6 +160,26 @@ export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
   // bundler-init failure we can't paper over here without recreating the
   // split, so let it surface instead. The module-top `let config = {
   // ...defaultConfig }` is the single source of truth.
+
+  // Detect cross-instance dialect conflicts and warn once. The proper
+  // fix is per-instance config (stacksjs/stacks#1862 #18); this guard
+  // surfaces the symptom so callers can see the shared-state problem
+  // immediately instead of debugging mysteriously misdialected
+  // queries later.
+  if (userConfig.dialect && _lastConfiguredDialect && userConfig.dialect !== _lastConfiguredDialect) {
+    const key = `${_lastConfiguredDialect}->${userConfig.dialect}`
+    if (!_warnedDialectConflicts.has(key)) {
+      _warnedDialectConflicts.add(key)
+      console.warn(
+        `[query-builder] setConfig({ dialect: '${userConfig.dialect}' }) overrides a previous `
+        + `setConfig({ dialect: '${_lastConfiguredDialect}' }). `
+        + `Config is process-wide; in-flight queries from the previous configuration may break. `
+        + `Run conflicting connections in separate processes — see stacksjs/stacks#1862 #18.`,
+      )
+    }
+  }
+  if (userConfig.dialect) _lastConfiguredDialect = userConfig.dialect
+
   Object.assign(config, userConfig)
 
   // Handle nested objects like database, timestamps, etc.

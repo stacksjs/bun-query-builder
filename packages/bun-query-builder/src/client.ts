@@ -4346,6 +4346,26 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return !e
       },
       async paginate(perPage: number, page = 1) {
+        if (!Number.isFinite(perPage) || perPage <= 0 || !Number.isInteger(perPage))
+          throw new TypeError(`[query-builder] paginate(perPage): expected positive integer, got ${perPage}`)
+        if (!Number.isFinite(page) || page < 1 || !Number.isInteger(page))
+          throw new TypeError(`[query-builder] paginate(page): expected integer >= 1, got ${page}`)
+
+        // Count + page-data run as two separate queries, so a
+        // concurrent INSERT or DELETE between them can make `total`
+        // and `data.length` mutually inconsistent — `total = 99` with
+        // a `perPage = 20` page returning 18 rows on page 5 is a
+        // classic symptom. The fix is to wrap both in a single
+        // read-only transaction with snapshot isolation, but that
+        // doesn't compose cleanly with callers who already wrap
+        // `paginate()` in their own transaction (nested begin()
+        // semantics vary by driver). For now we run both queries
+        // back-to-back as before; under typical low-write workloads
+        // the window is small enough that users rarely notice.
+        //
+        // See stacksjs/stacks#1862 #12 — a future major version
+        // should accept a `tx` parameter so the caller can choose
+        // their isolation level.
         const countQ = sql`SELECT COUNT(*) as c FROM (${ensureBuilt()}) as sub`
         const cRows = await runWithHooks<any[]>(countQ, 'select', { signal: abortSignal, timeoutMs })
         const [cRow] = cRows
