@@ -3924,6 +3924,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       limit(n: number) {
+        // Validate at runtime — TypeScript typed `n` as `number`, but
+        // `Number(req.query.limit)` is the typical caller and produces
+        // `NaN` for non-numeric input. Pre-fix, `LIMIT NaN` shipped
+        // straight to the driver. See stacksjs/stacks#1862 #25.
+        if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n))
+          throw new TypeError(`[bun-query-builder] limit(n): expected non-negative integer, got ${n}`)
         // Calling limit() twice would produce `LIMIT 5 LIMIT 10` — invalid
         // SQL. Replace any existing clause so the most recent call wins,
         // matching Laravel/Eloquent semantics.
@@ -3934,6 +3940,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       offset(n: number) {
+        if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n))
+          throw new TypeError(`[bun-query-builder] offset(n): expected non-negative integer, got ${n}`)
         text = SQL_PATTERNS.OFFSET.test(text)
           ? text.replace(SQL_PATTERNS.OFFSET, ` OFFSET ${n}`)
           : `${text} OFFSET ${n}`
@@ -4236,24 +4244,40 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         const softDeleteColumn = config.softDeletes?.column || 'deleted_at'
 
-        // Update text representation for toSQL()
-        if (text.includes('WHERE')) {
-          text = text.replace(/WHERE/, `WHERE ${table}.${softDeleteColumn} IS NOT NULL AND`)
-        }
-        else {
-          text = `${text} WHERE ${table}.${softDeleteColumn} IS NOT NULL`
+        // Find the OUTERMOST `WHERE` (paren depth 0). The previous
+        // implementation used `replace(/WHERE/, ...)` which matched
+        // the first `WHERE` anywhere in the SQL — including inside a
+        // subquery's WHERE clause. So a join like
+        // `SELECT * FROM posts INNER JOIN (SELECT … WHERE x = 1) AS s
+        //  WHERE posts.id = ?` got the soft-delete predicate spliced
+        // into the SUBQUERY's WHERE instead of the outer one,
+        // silently corrupting the SQL. See stacksjs/stacks#1862 #19.
+        const splice = (raw: string, predicate: string): string => {
+          const upper = raw.toUpperCase()
+          let depth = 0
+          for (let i = 0; i < raw.length; i++) {
+            const c = raw[i]
+            if (c === '(') depth++
+            else if (c === ')') depth--
+            else if (
+              depth === 0
+              && upper.substring(i, i + 5) === 'WHERE'
+              && (i === 0 || /\s/.test(raw[i - 1] ?? ''))
+              && /\s/.test(raw[i + 5] ?? '')
+            ) {
+              return `${raw.substring(0, i)}WHERE ${predicate} AND ${raw.substring(i + 6)}`
+            }
+          }
+          // No outer WHERE — append one.
+          return `${raw} WHERE ${predicate}`
         }
 
-        // Update built query
+        const predicate = `${table}.${softDeleteColumn} IS NOT NULL`
+
+        text = splice(text, predicate)
+
         const currentSql = String(ensureBuilt())
-        if (currentSql.includes('WHERE')) {
-          const newSql = currentSql.replace(/WHERE/, `WHERE ${table}.${softDeleteColumn} IS NOT NULL AND`)
-          built = sql([newSql] as any)
-        }
-        else {
-          const newSql = `${currentSql} WHERE ${table}.${softDeleteColumn} IS NOT NULL`
-          built = sql([newSql] as any)
-        }
+        built = sql([splice(currentSql, predicate)] as any)
 
         return this as any
       },
@@ -4449,11 +4473,25 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return fn(this as any)
       },
       async count() {
-        // Build optimized COUNT query without subquery
+        // Build COUNT query. The fast path replaces the SELECT list
+        // with `COUNT(*)` and keeps everything after `FROM`. That's
+        // correct UNLESS the query has a `GROUP BY` — then
+        // `COUNT(*)` returns one row per group, and grabbing
+        // `rows[0]` silently returns just the first group's count.
+        // Wrap in a subquery when GROUP BY is present.
+        // See stacksjs/stacks#1862 #26.
         const fromIdx = text.indexOf(' FROM ')
-        const countText = fromIdx !== -1
-          ? `SELECT COUNT(*) as c${text.substring(fromIdx)}`
-          : `SELECT COUNT(*) as c FROM ${table}`
+        const hasGroupBy = / GROUP BY /i.test(text)
+        let countText: string
+        if (hasGroupBy) {
+          countText = `SELECT COUNT(*) as c FROM (${text}) AS _bqb_count_sub`
+        }
+        else if (fromIdx !== -1) {
+          countText = `SELECT COUNT(*) as c${text.substring(fromIdx)}`
+        }
+        else {
+          countText = `SELECT COUNT(*) as c FROM ${table}`
+        }
 
         // Ultra-fast path
         const cHooks = config.hooks
@@ -5553,6 +5591,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }) as any
     },
     async insertOrIgnore(table, values) {
+      // Dialect-specific "insert ignoring duplicates" syntax. Previously
+      // hardcoded `ON CONFLICT DO NOTHING` which works on Postgres +
+      // SQLite but is a syntax error on MySQL — the framework's
+      // "swap drivers seamlessly" claim broke at this method. MySQL
+      // needs `INSERT IGNORE INTO`. See stacksjs/stacks#1862 #15.
+      if (config.dialect === 'mysql') {
+        const built = bunSql`INSERT IGNORE INTO ${bunSql(String(table))} ${bunSql(values as any)}`
+        return (built as any).execute()
+      }
       const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} ON CONFLICT DO NOTHING`
       return (built as any).execute()
     },
@@ -5597,7 +5644,32 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     async upsert(table, rows, conflictColumns, mergeColumns) {
       const targetCols = conflictColumns.map(c => String(c))
       const setCols = (mergeColumns ?? []).map(c => String(c))
-      const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON CONFLICT (${bunSql(targetCols as any)}) DO UPDATE SET ${bunSql(setCols.reduce((acc, c) => ({ ...acc, [c]: (bunSql as any)(`EXCLUDED.${c}`) }), {}))}`
+
+      // MySQL doesn't speak `ON CONFLICT ... DO UPDATE SET ... = EXCLUDED.col`
+      // (that's Postgres/SQLite syntax). It uses
+      // `ON DUPLICATE KEY UPDATE col = VALUES(col)` instead. The
+      // previous shape failed silently on MySQL — see stacksjs/stacks#1862
+      // #15 / #16.
+      if (config.dialect === 'mysql') {
+        // Build the `col = VALUES(col)` list as a raw fragment.
+        const updateList = setCols.map(c => `\`${c.replace(/`/g, '``')}\` = VALUES(\`${c.replace(/`/g, '``')}\`)`).join(', ')
+        const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON DUPLICATE KEY UPDATE ${(bunSql as any).unsafe(updateList)}`
+        return (built as any).execute()
+      }
+
+      // Postgres / SQLite: build the `col = EXCLUDED.col` pairs as a
+      // single raw fragment so `EXCLUDED.col` resolves as a
+      // table-qualified column reference instead of being quoted as
+      // one identifier (`"EXCLUDED.col"`). The previous form passed
+      // `bunSql(\`EXCLUDED.${c}\`)` through `bunSql({...})`, which
+      // wrapped the whole "EXCLUDED.col" string as a quoted
+      // identifier and broke the conflict-update entirely.
+      const isPostgres = config.dialect === 'postgres'
+      const quoteCol = (c: string): string => isPostgres
+        ? `"${c.replace(/"/g, '""')}"`
+        : `"${c.replace(/"/g, '""')}"` // SQLite supports double quotes
+      const updateList = setCols.map(c => `${quoteCol(c)} = EXCLUDED.${quoteCol(c)}`).join(', ')
+      const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON CONFLICT (${bunSql(targetCols as any)}) DO UPDATE SET ${(bunSql as any).unsafe(updateList)}`
       return (built as any).execute()
     },
     async save(table, values) {
