@@ -4203,8 +4203,22 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       async pluck(column: any, key?: any) {
         const rows = await runWithHooks<any[]>(ensureBuilt(), 'select', { signal: abortSignal, timeoutMs })
         if (key) {
+          // Build the keyed map, but throw on duplicate keys so the
+          // caller knows their assumption ("the key column is
+          // unique") was wrong. The previous implementation
+          // silently overwrote on collision — two rows with the
+          // same `key` value left only the last one's `column`
+          // visible, which the documented `Record<string, ...>`
+          // return type implicitly promised was a unique mapping.
+          // See stacksjs/stacks#1862 #30.
           const out: Record<string, any> = {}
-          for (const r of rows) out[String(r?.[key])] = r?.[column]
+          for (const r of rows) {
+            const k = String(r?.[key])
+            if (Object.prototype.hasOwnProperty.call(out, k)) {
+              throw new Error(`[query-builder] pluck(${column}, ${key}): duplicate key '${k}' — multiple rows share this value, so the resulting map would silently drop data. Use a unique key column or pluck without a key to get an array.`)
+            }
+            out[k] = r?.[column]
+          }
           return out
         }
         return rows.map((r: any) => r?.[column])
