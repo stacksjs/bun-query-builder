@@ -3559,6 +3559,22 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const getWhereKeyword = () => text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
 
         if (typeof expr === 'string' && op !== undefined) {
+          const operator = String(op).toLowerCase()
+          // Keep `.where('col', 'in', vals)` at parity with the
+          // array form (`.where(['col', 'in', vals])`, line ~3596).
+          // Without this branch, IN-with-string-form emits a single
+          // placeholder (`col IN ?`) and SQLite rejects it. See
+          // https://github.com/stacksjs/bun-query-builder/issues/1013
+          if (operator === 'in' || operator === 'not in') {
+            const values = Array.isArray(value) ? value : [value]
+            const placeholders = getPlaceholders(values.length, whereParams.length + 1)
+            const clause = `${String(expr)} ${operator.toUpperCase()} (${placeholders})`
+            whereConditions.push(clause)
+            whereParams.push(...values)
+            text = `${text} ${getWhereKeyword()} ${clause}`
+            built = null
+            return this
+          }
           const paramIndex = whereParams.length + 1
           whereConditions.push(`${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
           whereParams.push(value)
