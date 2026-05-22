@@ -2787,16 +2787,26 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       selectAll() {
         return this as any
       },
-      select(columns: string[]) {
-        if (!columns || columns.length === 0)
+      select(columns: string | string[]) {
+        if (!columns)
+          return this as any
+        // Normalize the single-string form so `.select('col')` works at
+        // parity with `.select(['col'])`. The internal compiler calls
+        // `.join(', ')` unconditionally on the argument — without this
+        // guard a bare string passes the `.length` check (strings carry
+        // it) and then crashes on `.join` (only arrays do). Matches the
+        // Kysely / Knex / Drizzle ergonomic where either shape works.
+        // See https://github.com/stacksjs/bun-query-builder/issues/1012
+        const cols = Array.isArray(columns) ? columns : [columns]
+        if (cols.length === 0)
           return this as any
         // Replace SELECT * with SELECT specific columns, preserving FROM and JOINs
         const fromIndex = text.indexOf(' FROM ')
         if (fromIndex !== -1) {
-          text = `SELECT ${columns.join(', ')}${text.substring(fromIndex)}`
+          text = `SELECT ${cols.join(', ')}${text.substring(fromIndex)}`
         }
         else {
-          text = `SELECT ${columns.join(', ')} FROM ${table}`
+          text = `SELECT ${cols.join(', ')} FROM ${table}`
         }
         return this as any
       },
