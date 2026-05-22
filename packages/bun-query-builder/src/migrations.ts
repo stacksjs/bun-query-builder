@@ -3,8 +3,19 @@ import type { SupportedDialect } from './types'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
+import { config } from './config'
 import { getDialectDriver } from './drivers'
 import { buildSchemaMeta } from './meta'
+
+/**
+ * Informational stdout line — printed only when the active config has
+ * `verbose: true`. Same gate as the `info()` helper in
+ * `actions/migrate.ts`; kept duplicated rather than shared to avoid a
+ * cross-file import cycle through the action layer.
+ */
+function info(message: string): void {
+  if (config.verbose) console.log(message)
+}
 
 /**
  * Convert a camelCase or PascalCase string to snake_case
@@ -54,7 +65,7 @@ function ensureSqlDirectory(): string {
   const sqlDir = join(workspaceRoot, 'database', 'migrations')
   if (!existsSync(sqlDir)) {
     mkdirSync(sqlDir, { recursive: true })
-    console.log(`-- Created SQL directory: ${sqlDir}`)
+    info(`-- Created SQL directory: ${sqlDir}`)
   }
   return sqlDir
 }
@@ -78,7 +89,7 @@ function createMigrationFile(statement: string, fileName: string): boolean {
   const filePath = join(sqlDir, fullFileName)
 
   writeFileSync(filePath, statement)
-  console.log(`-- Migration file created: ${fullFileName}`)
+  info(`-- Migration file created: ${fullFileName}`)
   migrationsCreatedCount++
   return true
 }
@@ -769,7 +780,7 @@ export function generateSql(plan: MigrationPlan): string[] {
   // Show summary message
   const totalChanges = migrationsCreatedCount + migrationsUpdatedCount
   if (totalChanges === 0) {
-    console.log('-- Nothing to migrate')
+    info('-- Nothing to migrate')
   }
   else {
     const parts: string[] = []
@@ -777,7 +788,7 @@ export function generateSql(plan: MigrationPlan): string[] {
       parts.push(`${migrationsCreatedCount} created`)
     if (migrationsUpdatedCount > 0)
       parts.push(`${migrationsUpdatedCount} updated`)
-    console.log(`-- Migration files: ${parts.join(', ')}`)
+    info(`-- Migration files: ${parts.join(', ')}`)
   }
 
   return statements
@@ -898,7 +909,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       const dropTableStatement = driver.dropTable(tableName)
       chunks.push(dropTableStatement)
       createMigrationFile(dropTableStatement, `drop-${tableName}-table`)
-      console.log(`-- Detected dropped table: ${tableName}`)
+      info(`-- Detected dropped table: ${tableName}`)
     }
   }
 
@@ -1016,7 +1027,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         const dropIndexStatement = driver.dropIndex(curr.table, idx.name)
         tableChanges.push(dropIndexStatement)
         chunks.push(dropIndexStatement)
-        console.log(`-- Detected dropped index: ${idx.name} from ${curr.table}`)
+        info(`-- Detected dropped index: ${idx.name} from ${curr.table}`)
         hasChanges = true
       }
     }
@@ -1027,7 +1038,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         const dropColumnStatement = driver.dropColumn(curr.table, colName)
         tableChanges.push(dropColumnStatement)
         chunks.push(dropColumnStatement)
-        console.log(`-- Detected dropped column: ${curr.table}.${colName}`)
+        info(`-- Detected dropped column: ${curr.table}.${colName}`)
         hasChanges = true
       }
     }
@@ -1042,7 +1053,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
           const modifyColumnStatement = driver.modifyColumn(curr.table, currCol)
           tableChanges.push(modifyColumnStatement)
           chunks.push(modifyColumnStatement)
-          console.log(`-- Detected column type change: ${curr.table}.${colName} (${prevCol.type} -> ${currCol.type})`)
+          info(`-- Detected column type change: ${curr.table}.${colName} (${prevCol.type} -> ${currCol.type})`)
           hasChanges = true
         }
       }
@@ -1055,7 +1066,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         const addColumnStatement = driver.addColumn(curr.table, c)
         tableChanges.push(addColumnStatement)
         chunks.push(addColumnStatement)
-        console.log(`-- Detected new column: ${curr.table}.${c.name}`)
+        info(`-- Detected new column: ${curr.table}.${c.name}`)
         hasChanges = true
 
         if (c.references) {
@@ -1073,7 +1084,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         const createIndexStatement = driver.createIndex(curr.table, idx)
         tableChanges.push(createIndexStatement)
         chunks.push(createIndexStatement)
-        console.log(`-- Detected new index: ${idx.name} in ${curr.table}`)
+        info(`-- Detected new index: ${idx.name} in ${curr.table}`)
         hasChanges = true
       }
     }
@@ -1088,7 +1099,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   // Show summary message
   const totalChanges = migrationsCreatedCount + migrationsUpdatedCount
   if (totalChanges === 0) {
-    console.log('-- Nothing to migrate')
+    info('-- Nothing to migrate')
   }
   else {
     const parts: string[] = []
@@ -1096,7 +1107,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       parts.push(`${migrationsCreatedCount} created`)
     if (migrationsUpdatedCount > 0)
       parts.push(`${migrationsUpdatedCount} updated`)
-    console.log(`-- Migration files: ${parts.join(', ')}`)
+    info(`-- Migration files: ${parts.join(', ')}`)
   }
 
   if (chunks.length === 0)

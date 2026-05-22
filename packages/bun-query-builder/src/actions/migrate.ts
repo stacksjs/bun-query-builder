@@ -10,6 +10,18 @@ import { getDialectDriver } from '@/drivers'
 import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../index'
 
 /**
+ * Informational stdout line — printed only when the active config has
+ * `verbose: true`. Keeps the no-op `buddy migrate` (and any embedding
+ * tool that doesn't want library chatter) quiet by default, while
+ * preserving the verbose-CLI behaviour for `qb` directly. Errors and
+ * `console.error` are intentionally NOT routed through this — they
+ * always print so failures don't get swallowed.
+ */
+function info(message: string): void {
+  if (config.verbose) console.log(message)
+}
+
+/**
  * Get the path to the model snapshot file for a given dialect.
  * This file stores the serialized migration plan from the last successful migration.
  */
@@ -43,11 +55,11 @@ function loadPlanSnapshot(workspaceRoot: string, dialect: SupportedDialect): Mig
       return parsed as MigrationPlan
     }
 
-    console.log('-- Invalid snapshot format, treating as no previous state')
+    info('-- Invalid snapshot format, treating as no previous state')
     return undefined
   }
   catch (err) {
-    console.log('-- Could not load snapshot, treating as no previous state:', err)
+    info(`-- Could not load snapshot, treating as no previous state: ${err instanceof Error ? err.message : String(err)}`)
     return undefined
   }
 }
@@ -63,7 +75,7 @@ function savePlanSnapshot(workspaceRoot: string, dialect: SupportedDialect, plan
   // Ensure the .qb directory exists
   if (!existsSync(snapshotDir)) {
     mkdirSync(snapshotDir, { recursive: true })
-    console.log(`-- Created snapshot directory: ${snapshotDir}`)
+    info(`-- Created snapshot directory: ${snapshotDir}`)
   }
 
   const snapshot = {
@@ -74,7 +86,7 @@ function savePlanSnapshot(workspaceRoot: string, dialect: SupportedDialect, plan
   }
 
   writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2))
-  console.log(`-- Model snapshot saved to ${snapshotPath}`)
+  info(`-- Model snapshot saved to ${snapshotPath}`)
 }
 
 /**
@@ -88,7 +100,7 @@ function ensureSqlDirectory(workspaceRoot?: string): string {
   const sqlDir = getSqlDirectory(workspaceRoot)
   if (!existsSync(sqlDir)) {
     mkdirSync(sqlDir, { recursive: true })
-    console.log(`-- Created SQL directory: ${sqlDir}`)
+    info(`-- Created SQL directory: ${sqlDir}`)
   }
   return sqlDir
 }
@@ -130,7 +142,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
     previous = loadPlanSnapshot(workspaceRoot, dialect)
 
     if (previous) {
-      console.log('-- Comparing with stored model snapshot')
+      info('-- Comparing with stored model snapshot')
     }
     else {
       // Fallback: Try legacy state file location
@@ -143,7 +155,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
           const parsed = JSON.parse(raw)
           previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
           if (previous) {
-            console.log('-- Comparing with legacy state file (will migrate to new snapshot format)')
+            info('-- Comparing with legacy state file (will migrate to new snapshot format)')
           }
         }
         catch {
@@ -152,12 +164,12 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
       }
 
       if (!previous) {
-        console.log('-- No previous snapshot found, generating full migration')
+        info('-- No previous snapshot found, generating full migration')
       }
     }
   }
   else {
-    console.log('-- Full migration requested, ignoring any previous state')
+    info('-- Full migration requested, ignoring any previous state')
   }
 
   const sqlStatements = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
@@ -174,10 +186,10 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
     try {
       if (hasChanges) {
         writeFileSync(filePath, sql)
-        console.log('-- Migration applied')
+        info('-- Migration applied')
       }
       else {
-        console.log('-- No changes; nothing to apply')
+        info('-- No changes; nothing to apply')
       }
     }
     catch (err) {
@@ -206,11 +218,11 @@ export async function executeMigration(dir?: string): Promise<boolean> {
   const scriptFiles = files.filter(file => file.endsWith('.sql')).sort()
 
   if (scriptFiles.length === 0) {
-    console.log('-- No migration files found to execute')
+    info('-- No migration files found to execute')
     return true
   }
 
-  console.log(`-- Found ${scriptFiles.length} script files to execute`)
+  info(`-- Found ${scriptFiles.length} script files to execute`)
 
   try {
     const qb = createQueryBuilder()
@@ -239,21 +251,21 @@ export async function executeMigration(dir?: string): Promise<boolean> {
     const totalPending = permanentMigrations.length + transientMigrations.length
 
     if (totalPending === 0) {
-      console.log('-- No pending migrations to execute')
+      info('-- No pending migrations to execute')
       return true
     }
 
-    console.log(`-- Executing ${totalPending} migrations (${permanentMigrations.length} permanent, ${transientMigrations.length} transient)`)
+    info(`-- Executing ${totalPending} migrations (${permanentMigrations.length} permanent, ${transientMigrations.length} transient)`)
 
     // Execute permanent migrations first (CREATE TABLE, etc.)
     for (const file of permanentMigrations) {
       const filePath = join(sqlDir, file)
-      console.log(`-- Executing: ${file}`)
+      info(`-- Executing: ${file}`)
 
       try {
         await qb.file(filePath)
         await recordMigration(qb, file, dialect)
-        console.log(`-- ✓ Migration ${file} executed and recorded`)
+        info(`-- ✓ Migration ${file} executed and recorded`)
       }
       catch (err) {
         console.error(`-- ✗ Migration ${file} failed:`, err)
@@ -264,15 +276,15 @@ export async function executeMigration(dir?: string): Promise<boolean> {
     // Execute transient migrations (ALTER TABLE) but don't record them
     for (const file of transientMigrations) {
       const filePath = join(sqlDir, file)
-      console.log(`-- Executing: ${file} (transient)`)
+      info(`-- Executing: ${file} (transient)`)
 
       try {
         await qb.file(filePath)
-        console.log(`-- ✓ Migration ${file} executed (not recorded)`)
+        info(`-- ✓ Migration ${file} executed (not recorded)`)
 
         // Delete the transient migration file after successful execution
         unlinkSync(filePath)
-        console.log(`-- 🗑️  Deleted transient migration: ${file}`)
+        info(`-- 🗑️  Deleted transient migration: ${file}`)
       }
       catch (err) {
         console.error(`-- ✗ Migration ${file} failed:`, err)
@@ -280,7 +292,7 @@ export async function executeMigration(dir?: string): Promise<boolean> {
       }
     }
 
-    console.log('-- All migrations executed successfully')
+    info('-- All migrations executed successfully')
   }
   catch (err) {
     console.error('-- Migration execution failed:', err)
@@ -306,7 +318,7 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
     try {
       await withFreshConnection(async (bunSql) => {
         await bunSql.unsafe(dropMigrationsSql).execute()
-        console.log('-- Dropped migrations table')
+        info('-- Dropped migrations table')
       })
     }
     catch (err) {
@@ -341,10 +353,10 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
     }
 
     if (tableNames.length === 0) {
-      console.log('-- No tables found to drop')
+      info('-- No tables found to drop')
     }
     else {
-      console.log(`-- Dropping ${tableNames.length} tables: ${tableNames.join(', ')}`)
+      info(`-- Dropping ${tableNames.length} tables: ${tableNames.join(', ')}`)
 
       // Drop tables in reverse order to handle foreign key constraints
       // (drop dependent tables first)
@@ -353,20 +365,20 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
           const dropSql = driver.dropTable(tableName)
           await withFreshConnection(async (bunSql) => {
             await bunSql.unsafe(dropSql).execute()
-            console.log(`-- Dropped table: ${tableName}`)
+            info(`-- Dropped table: ${tableName}`)
           })
         }
         catch (err) {
           console.error(err)
           // Ignore errors when dropping tables (they might not exist)
-          console.log(`-- Table ${tableName} may not exist, skipping drop`)
+          info(`-- Table ${tableName} may not exist, skipping drop`)
         }
       }
     }
 
     // Drop enum types after dropping tables
     if (enumTypeNames.length > 0) {
-      console.log(`-- Dropping ${enumTypeNames.length} enum types: ${enumTypeNames.join(', ')}`)
+      info(`-- Dropping ${enumTypeNames.length} enum types: ${enumTypeNames.join(', ')}`)
 
       for (const enumTypeName of enumTypeNames) {
         try {
@@ -374,19 +386,19 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
           if (dropEnumSql) {
             await withFreshConnection(async (bunSql) => {
               await bunSql.unsafe(dropEnumSql).execute()
-              console.log(`-- Dropped enum type: ${enumTypeName}`)
+              info(`-- Dropped enum type: ${enumTypeName}`)
             })
           }
         }
         catch (err) {
           console.error(err)
           // Ignore errors when dropping enum types (they might not exist)
-          console.log(`-- Enum type ${enumTypeName} may not exist, skipping drop`)
+          info(`-- Enum type ${enumTypeName} may not exist, skipping drop`)
         }
       }
     }
     else {
-      console.log('-- No enum types found to drop')
+      info('-- No enum types found to drop')
     }
 
     // Clean up migration files
@@ -395,7 +407,7 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
     }
     catch (err) {
       console.error(err)
-      console.log('-- Could not clean up migration files')
+      info('-- Could not clean up migration files')
     }
 
     // Clear generated directory to force fresh migration generation
@@ -404,10 +416,10 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
     }
     catch (err) {
       console.error(err)
-      console.log('-- Could not clear generated directory')
+      info('-- Could not clear generated directory')
     }
 
-    console.log('-- Database reset completed successfully')
+    info('-- Database reset completed successfully')
     return true
   }
   catch (err) {
@@ -432,7 +444,7 @@ export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string,
   const snapshotPath = getSnapshotPath(workspaceRoot, dialect)
   if (existsSync(snapshotPath)) {
     unlinkSync(snapshotPath)
-    console.log(`-- Removed model snapshot file: ${snapshotPath}`)
+    info(`-- Removed model snapshot file: ${snapshotPath}`)
   }
 
   // Clean up legacy migration state file
@@ -441,7 +453,7 @@ export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string,
 
   if (existsSync(statePath)) {
     unlinkSync(statePath)
-    console.log(`-- Removed legacy migration state file: ${statePath}`)
+    info(`-- Removed legacy migration state file: ${statePath}`)
   }
 
   // Clean up all files in the sql directory
@@ -453,9 +465,9 @@ export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string,
     for (const file of migrationFiles) {
       const filePath = join(sqlDir, file)
       unlinkSync(filePath)
-      console.log(`-- Removed migration file: ${file}`)
+      info(`-- Removed migration file: ${file}`)
     }
-    console.log(`-- Cleaned up ${migrationFiles.length} migration files from migrations directory`)
+    info(`-- Cleaned up ${migrationFiles.length} migration files from migrations directory`)
   }
 }
 
@@ -482,7 +494,7 @@ export async function clearGeneratedDirectory(workspaceRoot?: string): Promise<v
   if (existsSync(generatedDir)) {
     try {
       rmSync(generatedDir, { recursive: true, force: true })
-      console.log('-- Cleared generated directory')
+      info('-- Cleared generated directory')
     }
     catch (err) {
       console.error('-- Failed to clear generated directory:', err)
@@ -504,7 +516,7 @@ async function createMigrationsTable(qb: any, dialect: SupportedDialect): Promis
 
   try {
     await qb.unsafe(createTableSql).execute()
-    console.log('-- Migrations table ready')
+    info('-- Migrations table ready')
   }
   catch (err) {
     console.error('-- Failed to create migrations table:', err)
@@ -528,9 +540,9 @@ async function getExecutedMigrations(qb: any, dialect: SupportedDialect): Promis
 async function recordMigration(qb: any, migrationFile: string, dialect: SupportedDialect): Promise<void> {
   const driver = getDialectDriver(dialect)
   try {
-    console.log(`-- Recording migration: ${migrationFile}`)
+    info(`-- Recording migration: ${migrationFile}`)
     await qb.unsafe(driver.recordMigrationQuery(), [migrationFile]).execute()
-    console.log(`-- Successfully recorded migration: ${migrationFile}`)
+    info(`-- Successfully recorded migration: ${migrationFile}`)
   }
   catch (err) {
     console.error(`-- Failed to record migration ${migrationFile}:`, err)
