@@ -5564,6 +5564,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const delParams: any[] = []
       let whereCondition: any = null
 
+      // First .where() emits ` WHERE `; subsequent calls emit ` AND `.
+      // Without this, chained `.where('a', '=', 1).where('b', '=', 2)`
+      // compiled to `... WHERE a = ? WHERE b = ?` and SQLite 500'd
+      // with `near "WHERE": syntax error`. Mirrors the same helper in
+      // updateTable() at line ~5454.
+      // See https://github.com/stacksjs/bun-query-builder/issues/1015
+      const getWhereKeyword = () => sqlText.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+
       const ensureDelBuilt = () => {
         if (built === null) {
           built = delParams.length > 0
@@ -5579,7 +5587,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           // Support 3-arg format: where(column, operator, value)
           if (typeof expr === 'string' && op !== undefined) {
             const paramIndex = delParams.length + 1
-            sqlText += ` WHERE ${quoteId(expr)} ${op} ${getPlaceholder(paramIndex)}`
+            sqlText += ` ${getWhereKeyword()} ${quoteId(expr)} ${op} ${getPlaceholder(paramIndex)}`
             delParams.push(value)
             built = null
             return this
@@ -5588,7 +5596,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (Array.isArray(expr)) {
             const [col, oper, val] = expr
             const paramIndex = delParams.length + 1
-            sqlText += ` WHERE ${quoteId(String(col))} ${oper} ${getPlaceholder(paramIndex)}`
+            sqlText += ` ${getWhereKeyword()} ${quoteId(String(col))} ${oper} ${getPlaceholder(paramIndex)}`
             delParams.push(val)
             built = null
             return this
@@ -5602,7 +5610,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               conditions.push(`${quoteId(key)} = ${getPlaceholder(paramIndex)}`)
               delParams.push((expr as any)[key])
             }
-            sqlText += ` WHERE ${conditions.join(' AND ')}`
+            sqlText += ` ${getWhereKeyword()} ${conditions.join(' AND ')}`
             built = null
             return this
           }
