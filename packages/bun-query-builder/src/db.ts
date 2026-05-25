@@ -254,25 +254,36 @@ function createSQLiteSQL(filename: string): SQL {
 
   // Add .unsafe() method for raw SQL with parameters (like Bun's SQL.unsafe)
   sqlFunction.unsafe = (sql: string, params: any[] = []) => {
+    const execute = (): Promise<any> => {
+      try {
+        const trimmed = sql.trim().toUpperCase()
+        if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA')) {
+          const result = wrapper.query(sql, params)
+          return Promise.resolve(result)
+        }
+        else {
+          const result = wrapper.run(sql, params)
+          return Promise.resolve(result)
+        }
+      }
+      catch (error) {
+        return Promise.reject(error)
+      }
+    }
+
+    // Make the returned builder Promise/A+ conformant. Without `.then`,
+    // `await db.unsafe(...)` yields the builder object itself rather
+    // than the rows — diverging from Bun's native (Postgres) `sql.unsafe`,
+    // which IS thenable. The documented signature `(...) => Promise<any>`
+    // and the JSDoc example `const rows = await db.unsafe('SELECT 1')`
+    // both assume auto-execute; aligning the SQLite path closes a
+    // silent driver-skew bug. See
+    // https://github.com/stacksjs/bun-query-builder/issues/1017
     return {
       sql,
       values: params,
-      execute: () => {
-        try {
-          const trimmed = sql.trim().toUpperCase()
-          if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA')) {
-            const result = wrapper.query(sql, params)
-            return Promise.resolve(result)
-          }
-          else {
-            const result = wrapper.run(sql, params)
-            return Promise.resolve(result)
-          }
-        }
-        catch (error) {
-          return Promise.reject(error)
-        }
-      },
+      execute,
+      then: (onFulfilled: (rows: any) => any, onRejected?: (err: any) => any) => execute().then(onFulfilled, onRejected),
       raw: () => sql,
       toString: () => sql,
       cancel: () => {},
