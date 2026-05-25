@@ -2068,6 +2068,117 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+/**
+ * Reorder a SELECT statement's trailing clauses into canonical SQL
+ * order: WHERE → GROUP BY → HAVING → ORDER BY → LIMIT → OFFSET.
+ *
+ * Why this exists:
+ *   The SELECT query builder appends clauses to its accumulated
+ *   `text` string in METHOD-CALL order. If a caller chains
+ *   `.orderBy().where()` (the natural shape for "build a base query,
+ *   then conditionally add filters"), the resulting SQL comes out as
+ *   `... ORDER BY ... WHERE ...`, which every dialect rejects. Most
+ *   query builders (Knex, Kysely, Drizzle, Laravel) reorder clauses
+ *   at compile time; bqb didn't, which made the chain-order pitfall
+ *   a frequent source of `near "WHERE": syntax error`.
+ *
+ * How it works:
+ *   Walks the string at paren-depth zero and outside string literals,
+ *   recording where each top-level clause keyword starts. Splits the
+ *   text into a base (SELECT … FROM … JOINs) plus per-clause
+ *   fragments, then re-emits the fragments in canonical order.
+ *
+ * Known limitation: stray trailing fragments that aren't keyword-led
+ * (e.g. a chained `.where()` AFTER `.orderBy()` that started with
+ * `AND` because the first WHERE already existed) end up attached to
+ * the preceding clause and stay misplaced. Workaround: chain all
+ * `.where()` calls together before adding ORDER BY / LIMIT. For the
+ * 95% case (single WHERE / single ORDER BY / single LIMIT in any
+ * chain order), the reorder yields correct SQL.
+ *
+ * Subqueries inside parens are not parsed — `WHERE id IN (SELECT …
+ * ORDER BY …)` keeps its inner ORDER BY untouched because the scan
+ * only fires at paren-depth zero. Same for string literals
+ * containing keyword text.
+ *
+ * See https://github.com/stacksjs/bun-query-builder/issues/1018
+ */
+function reorderSelectClauses(sql: string): string {
+  // Order matters in the keyword list: longer, multi-word keywords
+  // must be checked before single-word prefixes that would
+  // otherwise short-circuit them (e.g. "ORDER" alone isn't a clause
+  // start; "ORDER BY" is).
+  const KEYWORDS: Array<{ key: 'WHERE' | 'GROUP_BY' | 'HAVING' | 'ORDER_BY' | 'LIMIT' | 'OFFSET', tokens: RegExp }> = [
+    { key: 'GROUP_BY', tokens: /^GROUP\s+BY\b/i },
+    { key: 'ORDER_BY', tokens: /^ORDER\s+BY\b/i },
+    { key: 'HAVING', tokens: /^HAVING\b/i },
+    { key: 'OFFSET', tokens: /^OFFSET\b/i },
+    { key: 'LIMIT', tokens: /^LIMIT\b/i },
+    { key: 'WHERE', tokens: /^WHERE\b/i },
+  ]
+
+  const positions: Array<{ key: string, start: number }> = []
+  let depth = 0
+  let inString = false
+  let stringChar = ''
+
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i]
+    if (inString) {
+      if (ch === stringChar) {
+        // SQL escapes a quote by doubling it ('it''s'). Skip the pair.
+        if (sql[i + 1] === stringChar) { i++; continue }
+        inString = false
+      }
+      continue
+    }
+    if (ch === '\'' || ch === '"' || ch === '`') {
+      inString = true
+      stringChar = ch
+      continue
+    }
+    if (ch === '(') { depth++; continue }
+    if (ch === ')') { depth--; continue }
+    if (depth !== 0) continue
+    // Keyword must be word-boundary-led — i.e. preceded by whitespace
+    // (or start of string, which never matches a clause).
+    if (i === 0 || !/\s/.test(sql[i - 1])) continue
+    const rest = sql.slice(i)
+    for (const { key, tokens } of KEYWORDS) {
+      const m = rest.match(tokens)
+      if (!m) continue
+      positions.push({ key, start: i })
+      // Advance past the matched keyword so we don't re-detect it on
+      // the next iteration of the outer loop.
+      i += m[0].length - 1
+      break
+    }
+  }
+
+  // Nothing to reorder if zero or one clause: zero clauses means the
+  // SQL is just SELECT…FROM, and a single clause is already in
+  // canonical position relative to itself.
+  if (positions.length <= 1) return sql
+
+  const base = sql.slice(0, positions[0].start).trimEnd()
+  const fragments: Record<string, string[]> = {}
+  for (let p = 0; p < positions.length; p++) {
+    const start = positions[p].start
+    const end = p + 1 < positions.length ? positions[p + 1].start : sql.length
+    const txt = sql.slice(start, end).trim()
+    if (!fragments[positions[p].key]) fragments[positions[p].key] = []
+    fragments[positions[p].key].push(txt)
+  }
+
+  const ORDER = ['WHERE', 'GROUP_BY', 'HAVING', 'ORDER_BY', 'LIMIT', 'OFFSET']
+  const tail = ORDER
+    .filter(k => fragments[k])
+    .map(k => fragments[k].join(' '))
+    .join(' ')
+
+  return tail ? `${base} ${tail}` : base
+}
+
 function computeBackoffMs(attempt: number, cfg?: TxBackoff): number {
   const base = Math.max(1, cfg?.baseMs ?? 50)
   const factor = Math.max(1, cfg?.factor ?? 2)
@@ -2316,9 +2427,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     let built: any = null
     const ensureBuilt = () => {
       if (built === null) {
+        const finalText = reorderSelectClauses(text)
         built = whereParams.length > 0
-          ? (_sql as any).unsafe(text, whereParams)
-          : (_sql as any).unsafe(text)
+          ? (_sql as any).unsafe(finalText, whereParams)
+          : (_sql as any).unsafe(finalText)
       }
       return built
     }
@@ -4330,7 +4442,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       toSQL() {
-        return makeExecutableQuery(ensureBuilt(), text) as any
+        return makeExecutableQuery(ensureBuilt(), reorderSelectClauses(text)) as any
       },
       async value(column: string) {
         const q = sql`${ensureBuilt()} LIMIT 1`
