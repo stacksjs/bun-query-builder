@@ -68,6 +68,31 @@ describe('migrations - diffing and hashing', () => {
     expect(sql.join('\n')).toContain('ALTER TABLE "projects" ADD CONSTRAINT')
   })
 
+  it('sqlite diff emits inline REFERENCES for new tables (FK rides on CREATE)', () => {
+    const models2 = defineModels({
+      ...baseModels,
+      Project: {
+        name: 'Project',
+        table: 'projects',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} } },
+          user_id: { validation: { rule: {} } },
+          name: { validation: { rule: {} } },
+        },
+      },
+    } as const)
+    const p1 = buildMigrationPlan(baseModels as any, { dialect: 'sqlite' })
+    const p2 = buildMigrationPlan(models2 as any, { dialect: 'sqlite' })
+    const joined = generateDiffSql(p1, p2).join('\n')
+
+    expect(joined).toContain('CREATE TABLE')
+    expect(joined).toMatch(/"user_id"[^,)]*REFERENCES\s+"users"\("id"\)/)
+    // SQLite can't run ALTER TABLE ADD CONSTRAINT, so no separate
+    // ALTER must be emitted for new tables.
+    expect(joined).not.toContain('ADD CONSTRAINT')
+  })
+
   it('dialect specific types map as expected', () => {
     const planPg = buildMigrationPlan(baseModels as any, { dialect: 'postgres' })
     const sqlPg = generateSql(planPg)

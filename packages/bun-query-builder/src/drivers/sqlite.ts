@@ -107,14 +107,16 @@ export class SQLiteDriver implements DialectDriver {
     return `CREATE ${kind}INDEX IF NOT EXISTS ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns})${where};`
   }
 
-  addForeignKey(tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string): string {
-    const fkName = `${tableName}_${columnName}_fk`
-    let sql = `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD CONSTRAINT ${this.quoteIdentifier(fkName)} FOREIGN KEY (${this.quoteIdentifier(columnName)}) REFERENCES ${this.quoteIdentifier(refTable)}(${this.quoteIdentifier(refColumn)})`
-    if (onDelete)
-      sql += ` ON DELETE ${onDelete.toUpperCase()}`
-    if (onUpdate)
-      sql += ` ON UPDATE ${onUpdate.toUpperCase()}`
-    return `${sql};`
+  addForeignKey(_tableName: string, _columnName: string, _refTable: string, _refColumn: string, _onDelete?: string, _onUpdate?: string): string {
+    // SQLite doesn't support `ALTER TABLE … ADD CONSTRAINT FOREIGN
+    // KEY` — it can only declare FKs inline on `CREATE TABLE`, which
+    // `renderColumn` already does. Return an empty string so the
+    // orchestrator (`generateSql` / `generateDiffSql`) skips emitting
+    // an unrunnable ALTER migration file for SQLite.
+    //
+    // Consumers that previously stripped these files from disk after
+    // generation (e.g. stacksjs/stacks#1916) can drop that workaround.
+    return ''
   }
 
   addColumn(tableName: string, column: ColumnPlan): string {
@@ -198,6 +200,22 @@ export class SQLiteDriver implements DialectDriver {
     const defaultValue = this.getDefaultValue(column)
     if (defaultValue) {
       parts.push(defaultValue)
+    }
+
+    // Inline FK — for SQLite this is the ONLY path that works, since
+    // SQLite doesn't support `ALTER TABLE ADD CONSTRAINT`. The
+    // orchestrator (`generateSql` / `generateDiffSql` in migrations.ts)
+    // skips its post-CREATE `addForeignKey` pass when emitting CREATE
+    // TABLE so we don't duplicate the FK on dialects that accept both
+    // forms. Enforcement still requires `PRAGMA foreign_keys = ON` on
+    // the SQLite connection (off by default — set this in the
+    // consumer's connection bootstrap).
+    if (column.references) {
+      parts.push(`REFERENCES ${this.quoteIdentifier(column.references.table)}(${this.quoteIdentifier(column.references.column)})`)
+      if (column.references.onDelete)
+        parts.push(`ON DELETE ${column.references.onDelete.toUpperCase()}`)
+      if (column.references.onUpdate)
+        parts.push(`ON UPDATE ${column.references.onUpdate.toUpperCase()}`)
     }
 
     return parts.join(' ')

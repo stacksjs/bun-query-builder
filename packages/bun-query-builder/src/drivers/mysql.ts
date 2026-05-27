@@ -205,6 +205,17 @@ export class MySQLDriver implements DialectDriver {
       parts.push(defaultValue)
     }
 
+    // MySQL FKs are added via a separate `ALTER TABLE … ADD
+    // CONSTRAINT FOREIGN KEY` pass (see migrations.ts), NOT inline.
+    // MySQL strictly requires the referenced table to exist before
+    // CREATE TABLE with an inline FK, which makes inline FKs in the
+    // initial-migration pass fragile when `plan.tables` is
+    // alphabetically ordered (e.g. `comments` before `users`). The
+    // deferred-ALTER form sidesteps the dependency order entirely.
+    // SQLite is the only driver where the inline path is forced —
+    // it doesn't support ALTER TABLE ADD CONSTRAINT and is lenient
+    // about forward-reference targets.
+
     return parts.join(' ')
   }
 }
