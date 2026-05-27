@@ -757,11 +757,27 @@ export function generateSql(plan: MigrationPlan): string[] {
     createMigrationFile(combinedStatement, `create-${t.table}-table`)
   }
 
-  // First, create all foreign key constraints (ALTER statements - will execute last)
+  // Foreign key constraints (ALTER statements — execute last).
+  //
+  // MySQL/PostgreSQL strictly require the referenced table to exist
+  // before CREATE TABLE if the FK is declared inline, which makes the
+  // alphabetically-ordered `plan.tables` iteration order fragile.
+  // Deferring the FK to a separate ALTER pass means tables can be
+  // created in any order and FKs land after.
+  //
+  // SQLite skips this pass entirely — it doesn't support `ALTER TABLE
+  // ADD CONSTRAINT FOREIGN KEY` at all. Its FKs ride inline on the
+  // CREATE TABLE statement via `renderColumn`, which works because
+  // SQLite is lenient about forward-reference targets (the constraint
+  // is checked at INSERT time, not CREATE). SQLite's `addForeignKey`
+  // returns an empty string so the `if (!alterTableStatement)
+  // continue` line below skips the no-op file. See
+  // stacksjs/bun-query-builder#1019.
   for (const t of plan.tables) {
     for (const c of t.columns) {
       if (c.references) {
         const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
+        if (!alterTableStatement) continue
         statements.push(alterTableStatement)
         createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
       }
@@ -959,13 +975,17 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 3) Add foreign key constraints for new tables (ALTER statements - execute last)
+  // 3) Add foreign key constraints for new tables (ALTER statements -
+  // execute last). Mirrors the initial-migration FK pass above:
+  // MySQL/Postgres use deferred ALTER, SQLite skips (FKs are already
+  // inline from CREATE TABLE).
   for (const tableName of Object.keys(nextTables)) {
     if (!prevTables[tableName]) {
       const t = nextTables[tableName]
       for (const c of t.columns) {
         if (c.references) {
           const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
+          if (!alterTableStatement) continue
           chunks.push(alterTableStatement)
           createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
         }
