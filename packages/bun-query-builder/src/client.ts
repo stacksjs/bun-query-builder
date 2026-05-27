@@ -37,6 +37,32 @@ const SQL_PATTERNS = {
   DELETED_AT: /\bdeleted_at\b/i,
 } as const
 
+// Allow-list of SQL comparison operators that can be safely
+// interpolated into a query fragment. Anything outside this set
+// is rejected at the boundary so a caller can't smuggle
+// `= 1 OR 1=1 --` through the `op` slot of a relationship-subquery
+// callback. See stacksjs/stacks#1858 Q-1 / Q-4 / Q-5 / Q-6.
+//
+// Module-level constant: the set never varies, so we allocate it
+// once rather than rebuilding it inside every makeSelect closure.
+const SAFE_WHERE_OPERATORS = new Set([
+  '=', '!=', '<>', '<', '<=', '>', '>=',
+  'like', 'not like', 'ilike', 'not ilike',
+  'in', 'not in', 'is', 'is not', 'between', 'not between',
+])
+
+// Validate a SQL identifier (table/column name) before interpolation.
+// Module-level so it is reachable from every helper in createQueryBuilder
+// — notably applyCondition(), which previously referenced a copy scoped
+// inside makeSelect() and would throw a ReferenceError on the array-form
+// `.where([col, op, val])` path. Depends only on SQL_PATTERNS.
+function validateIdentifier(name: string, context?: string): void {
+  if (!SQL_PATTERNS.IDENTIFIER.test(name)) {
+    const contextMsg = context ? ` in ${context}` : ''
+    throw new Error(`[query-builder] Invalid identifier${contextMsg}: '${name}'. Identifiers must start with a letter or underscore and contain only alphanumeric characters, underscores, and dots.`)
+  }
+}
+
 // Simple query cache with TTL support
 interface CacheEntry {
   data: any
@@ -2533,14 +2559,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     const whereConditions: string[] = []
     const whereParams: unknown[] = []
 
-    // Helper function to validate SQL identifiers with context
-    const validateIdentifier = (name: string, context?: string): void => {
-      if (!SQL_PATTERNS.IDENTIFIER.test(name)) {
-        const contextMsg = context ? ` in ${context}` : ''
-        throw new Error(`[query-builder] Invalid identifier${contextMsg}: '${name}'. Identifiers must start with a letter or underscore and contain only alphanumeric characters, underscores, and dots.`)
-      }
-    }
-
     // Helper function to add columns to the SELECT clause
     const addToSelectClause = (columnsToAdd: string): void => {
       // Update text representation for toSQL()
@@ -2565,17 +2583,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
       }
     }
-
-    // Allow-list of SQL comparison operators that can be safely
-    // interpolated into a query fragment. Anything outside this set
-    // is rejected at the boundary so a caller can't smuggle
-    // `= 1 OR 1=1 --` through the `op` slot of a relationship-subquery
-    // callback. See stacksjs/stacks#1858 Q-1 / Q-4 / Q-5 / Q-6.
-    const SAFE_WHERE_OPERATORS = new Set([
-      '=', '!=', '<>', '<', '<=', '>', '>=',
-      'like', 'not like', 'ilike', 'not ilike',
-      'in', 'not in', 'is', 'is not', 'between', 'not between',
-    ])
 
     function assertSafeWhereOperator(op: unknown, context: string): string {
       if (typeof op !== 'string')
@@ -3668,7 +3675,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       where(expr: any, op?: WhereOperator, value?: any) {
         // Helper to get the correct keyword (WHERE for first condition, AND for subsequent)
-        const getWhereKeyword = () => text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        const getWhereKeyword = () => SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
 
         if (typeof expr === 'string' && op !== undefined) {
           const operator = String(op).toLowerCase()
@@ -3762,26 +3769,26 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       // where helpers
       whereNull(column: string) {
-        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         text = `${text} ${keyword} ${String(column)} IS NULL`
         built = null
         return this
       },
       whereNotNull(column: string) {
-        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         text = `${text} ${keyword} ${String(column)} IS NOT NULL`
         built = null
         return this
       },
       whereBetween(column: string, start: any, end: any) {
-        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         whereParams.push(start, end)
         text = `${text} ${keyword} ${String(column)} BETWEEN ? AND ?`
         built = null
         return this
       },
       whereExists(subquery: { toSQL: () => any }) {
-        const keyword = text.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         text = `${text} ${keyword} EXISTS (${subquery.toSQL()})`
         built = null
         return this
@@ -5562,7 +5569,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         },
         where(expr: any, op?: string, value?: any) {
           // Helper to get the correct keyword (WHERE for first condition, AND for subsequent)
-          const getWhereKeyword = () => sqlText.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+          const getWhereKeyword = () => SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
 
           // Handle 3-arg format: where('column', '=', value)
           if (typeof expr === 'string' && op !== undefined) {
@@ -5682,7 +5689,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // with `near "WHERE": syntax error`. Mirrors the same helper in
       // updateTable() at line ~5454.
       // See https://github.com/stacksjs/bun-query-builder/issues/1015
-      const getWhereKeyword = () => sqlText.toUpperCase().includes(' WHERE ') ? 'AND' : 'WHERE'
+      const getWhereKeyword = () => SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
 
       const ensureDelBuilt = () => {
         if (built === null) {

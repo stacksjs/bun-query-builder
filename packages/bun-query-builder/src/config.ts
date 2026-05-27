@@ -93,11 +93,19 @@ export function getPlaceholder(index: number): string {
  * MySQL/SQLite: ?, ?, ?
  */
 export function getPlaceholders(count: number, startIndex = 1): string {
+  if (count <= 0)
+    return ''
   if (config.dialect === 'postgres') {
-    return Array.from({ length: count }, (_, i) => `$${startIndex + i}`).join(', ')
+    // Build `$n, $n+1, …` with a single growing string instead of
+    // allocating an intermediate array + closure per call (hot path:
+    // every whereIn / insert row).
+    let out = `$${startIndex}`
+    for (let i = 1; i < count; i++)
+      out += `, $${startIndex + i}`
+    return out
   }
-  // MySQL and SQLite use ? placeholders
-  return Array.from({ length: count }, () => '?').join(', ')
+  // MySQL and SQLite use `?` placeholders — a fixed repeat, no array.
+  return count === 1 ? '?' : `?${', ?'.repeat(count - 1)}`
 }
 
 // Lazy-loaded config to avoid top-level await (enables bun --compile)
