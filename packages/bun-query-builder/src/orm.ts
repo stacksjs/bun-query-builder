@@ -25,7 +25,7 @@
  */
 
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
-import type { Faker } from 'ts-mocker'
+import type { Faker } from '@stacksjs/ts-faker'
 
 /**
  * Strict identifier pattern for SQL column / table names: starts with
@@ -2382,8 +2382,8 @@ export function createTableFromModel(definition: ModelDefinition): void {
   db.run(`CREATE TABLE IF NOT EXISTS ${definition.table} (${columns.join(', ')})`)
 }
 
-function createFakerCompatLayer(tsMocker: Record<string, unknown>): Record<string, unknown> {
-  return new Proxy(tsMocker, {
+function createFakerCompatLayer(underlying: Record<string, unknown>): Record<string, unknown> {
+  return new Proxy(underlying, {
     get(target, prop: string) {
       if (prop === 'location') return target.address
       if (prop === 'datatype') {
@@ -2410,11 +2410,11 @@ export async function seedModel(definition: ModelDefinition, count?: number, fak
 
   if (!faker) {
     try {
-      const tsMocker = await (import('ts-mocker' as string) as Promise<{ faker: Record<string, unknown> }>)
-      faker = createFakerCompatLayer(tsMocker.faker)
+      const tsFaker = await (import('@stacksjs/ts-faker' as string) as Promise<{ faker: Record<string, unknown> }>)
+      faker = createFakerCompatLayer(tsFaker.faker)
     }
 catch {
-      console.warn('ts-mocker not found. Install it for seeding support.')
+      console.warn('@stacksjs/ts-faker not found. Install it for seeding support.')
       return
     }
   }

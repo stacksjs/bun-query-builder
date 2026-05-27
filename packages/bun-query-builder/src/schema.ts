@@ -1,4 +1,4 @@
-import type { Faker } from 'ts-mocker'
+import type { Faker } from '@stacksjs/ts-faker'
 // Minimal schema/type definitions to describe models and attributes
 
 /**

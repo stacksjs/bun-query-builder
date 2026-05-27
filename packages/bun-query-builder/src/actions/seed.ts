@@ -176,7 +176,7 @@ export async function makeSeeder(name: string): Promise<void> {
 
   const template = `import type { QueryBuilder } from 'bun-query-builder'
 import { Seeder } from 'bun-query-builder'
-import { faker } from 'ts-mocker'
+import { faker } from '@stacksjs/ts-faker'
 
 export default class ${className} extends Seeder {
   /**

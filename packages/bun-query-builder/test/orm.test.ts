@@ -657,8 +657,8 @@ describe('Dynamic ORM', () => {
       db.run('DROP TABLE test_models')
     })
 
-    it('seeds using real ts-mocker with compatibility layer', async () => {
-      // This test verifies the @faker-js/faker -> ts-mocker compatibility
+    it('seeds using real @stacksjs/ts-faker with compatibility layer', async () => {
+      // This test verifies the @faker-js/faker -> @stacksjs/ts-faker compatibility
       const simpleModel: ModelDefinition = {
         name: 'SimpleModel',
         table: 'simple_models',
@@ -676,7 +676,7 @@ describe('Dynamic ORM', () => {
       }
 
       createTableFromModel(simpleModel)
-      // No faker passed - will use ts-mocker internally with compat layer
+      // No faker passed - will use @stacksjs/ts-faker internally with compat layer
       await seedModel(simpleModel, 2)
 
       const result = db.query('SELECT * FROM simple_models').all() as any[]

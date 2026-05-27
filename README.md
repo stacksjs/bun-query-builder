@@ -38,7 +38,7 @@ Define your data model once and get a type-safe query experience _(a la Kysely/L
 
 - **Transactions**: `transaction` with retries/backoff/isolation/onRetry/afterCommit; `savepoint`; distributed tx helpers.
 - **Migrations**: Generate and execute migrations from models with full diff support.
-- **Seeders**: Database seeding with fake data generation via `ts-mocker` (faker alternative).
+- **Seeders**: Database seeding with fake data generation via `@stacksjs/ts-faker` (faker alternative).
 - **Raw Queries**: Tagged templates and parameterized queries with `raw()` and `unsafe()`.
 
 ### Configuration & Integration
@@ -231,7 +231,7 @@ await executeMigration(migration)
 
 ## Database Seeding
 
-Populate your database with test data using seeders powered by [ts-mocker](https://github.com/stacksjs/ts-mocker):
+Populate your database with test data using seeders powered by [@stacksjs/ts-faker](https://github.com/stacksjs/ts-faker):
 
 ### Creating a Seeder
 
@@ -246,7 +246,7 @@ bun qb make:seeder User
 
 ```ts
 import { Seeder } from 'bun-query-builder'
-import { faker } from 'ts-mocker'
+import { faker } from '@stacksjs/ts-faker'
 
 export default class UserSeeder extends Seeder {
   async run(qb: any): Promise<void> {

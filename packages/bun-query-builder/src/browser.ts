@@ -39,7 +39,7 @@ import type { BrowserConfig } from './types'
 // Type inference system (mirrors orm.ts)
 // ============================================================================
 
-import type { Faker } from 'ts-mocker'
+import type { Faker } from '@stacksjs/ts-faker'
 
 // Primitive type mappings
 type PrimitiveTypeMap = {

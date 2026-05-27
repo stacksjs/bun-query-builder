@@ -4,7 +4,7 @@ This directory contains database seeders for populating your database with test 
 
 ## Overview
 
-Seeders use the [ts-mocker](https://github.com/stacksjs/ts-mocker) library (a TypeScript-first faker alternative) to generate realistic fake data for testing and development.
+Seeders use the [@stacksjs/ts-faker](https://github.com/stacksjs/ts-faker) library (a TypeScript-first faker alternative) to generate realistic fake data for testing and development.
 
 ## Creating a Seeder
 
@@ -25,7 +25,7 @@ Each seeder extends the `Seeder` base class and implements a `run` method:
 ```typescript
 import type { QueryBuilder } from 'bun-query-builder'
 import { Seeder } from 'bun-query-builder'
-import { faker } from 'ts-mocker'
+import { faker } from '@stacksjs/ts-faker'
 
 export default class UserSeeder extends Seeder {
   async run(qb: QueryBuilder): Promise<void> {
@@ -128,9 +128,9 @@ await qb.table('users').delete().where({ id: 1 }).execute()
 
 Both APIs are functionally equivalent - use whichever style you prefer!
 
-## Using ts-mocker (Faker)
+## Using @stacksjs/ts-faker (Faker)
 
-ts-mocker provides a wide range of fake data generators:
+@stacksjs/ts-faker provides a wide range of fake data generators:
 
 ```typescript
 // People
@@ -174,7 +174,7 @@ faker.location.country()
 faker.location.streetAddress()
 ```
 
-For more information, see the [ts-mocker documentation](https://github.com/stacksjs/ts-mocker).
+For more information, see the [@stacksjs/ts-faker documentation](https://github.com/stacksjs/ts-faker).
 
 ## Best Practices
 

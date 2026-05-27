@@ -36,8 +36,8 @@ beforeAll(async () => {
 
   // Create package.json with local dependencies
   const bunQBPath = resolve(__dirname, '..')
-  // Resolve ts-mocker from the root node_modules
-  const tsMockerPath = resolve(bunQBPath, '../..', 'node_modules/ts-mocker')
+  // Resolve @stacksjs/ts-faker from the root node_modules
+  const tsFakerPath = resolve(bunQBPath, '../..', 'node_modules/@stacksjs/ts-faker')
 
   writeFileSync(
     join(testWorkspace, 'package.json'),
@@ -45,7 +45,7 @@ beforeAll(async () => {
       name: 'e2e-test',
       dependencies: {
         'bun-query-builder': `file:${bunQBPath}`,
-        'ts-mocker': `file:${tsMockerPath}`,
+        '@stacksjs/ts-faker': `file:${tsFakerPath}`,
       },
     }, null, 2),
   )

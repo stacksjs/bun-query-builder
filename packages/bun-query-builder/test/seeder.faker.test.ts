@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { faker } from 'ts-mocker'
+import { faker } from '@stacksjs/ts-faker'
 
 describe('Faker Integration', () => {
   it('generates person data', () => {
@@ -75,7 +75,7 @@ describe('Faker Integration', () => {
 
   it('generates consistent data with seed', () => {
     // Note: This test assumes faker supports seeding
-    // If ts-mocker doesn't support seeding, this test may need adjustment
+    // If @stacksjs/ts-faker doesn't support seeding, this test may need adjustment
     const name1 = faker.person.fullName()
     const name2 = faker.person.fullName()
 

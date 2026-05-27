@@ -54,7 +54,7 @@ describe('makeSeeder', () => {
     const content = readFileSync(seederPath, 'utf-8')
     expect(content).toContain('class TestUserSeeder extends Seeder')
     expect(content).toContain('async run(qb: QueryBuilder)')
-    expect(content).toContain('import { faker } from \'ts-mocker\'')
+    expect(content).toContain('import { faker } from \'@stacksjs/ts-faker\'')
 
     process.chdir(originalCwd)
   })

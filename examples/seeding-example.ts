@@ -21,7 +21,7 @@ async function _manualSeed() {
   const qb = createQueryBuilder()
 
   // Import faker
-  const { faker } = await import('ts-mocker')
+  const { faker } = await import('@stacksjs/ts-faker')
 
   // Create users
   const users = Array.from({ length: 10 }, () => ({

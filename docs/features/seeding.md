@@ -1,6 +1,6 @@
 # Database Seeding
 
-Database seeding allows you to populate your database with test data using realistic fake data generation powered by [ts-mocker](https://github.com/stacksjs/ts-mocker), a TypeScript-first faker alternative built for Bun.
+Database seeding allows you to populate your database with test data using realistic fake data generation powered by [@stacksjs/ts-faker](https://github.com/stacksjs/ts-faker), a TypeScript-first faker alternative built for Bun.
 
 ## Overview
 
@@ -13,10 +13,10 @@ Seeders are classes that define how to populate your database tables with sample
 
 ## Installation
 
-Seeding functionality is built-in, but you'll need the `ts-mocker` package for fake data generation:
+Seeding functionality is built-in, but you'll need the `@stacksjs/ts-faker` package for fake data generation:
 
 ```bash
-bun add ts-mocker
+bun add @stacksjs/ts-faker
 ```
 
 ## Quick Start
@@ -34,7 +34,7 @@ This creates `database/seeders/UserSeeder.ts`:
 ```typescript
 import type { QueryBuilder } from 'bun-query-builder'
 import { Seeder } from 'bun-query-builder'
-import { faker } from 'ts-mocker'
+import { faker } from '@stacksjs/ts-faker'
 
 export default class UserSeeder extends Seeder {
   /**
@@ -90,7 +90,7 @@ bun qb seed --dir ./custom/path/to/seeders
 
 ```typescript
 import { Seeder } from 'bun-query-builder'
-import { faker } from 'ts-mocker'
+import { faker } from '@stacksjs/ts-faker'
 
 export default class ProductSeeder extends Seeder {
   async run(qb: any): Promise<void> {
@@ -220,9 +220,9 @@ export default class ConditionalSeeder extends Seeder {
 }
 ```
 
-## Using ts-mocker (Faker)
+## Using @stacksjs/ts-faker (Faker)
 
-ts-mocker provides a wide range of fake data generators:
+@stacksjs/ts-faker provides a wide range of fake data generators:
 
 ### Person Data
 
@@ -595,7 +595,7 @@ Ensure your seeder imports are correct:
 ```typescript
 // ✅ Correct
 import { Seeder } from 'bun-query-builder'
-import { faker } from 'ts-mocker'
+import { faker } from '@stacksjs/ts-faker'
 
 // ❌ Incorrect
 import Seeder from 'bun-query-builder'
@@ -626,6 +626,6 @@ class PostSeeder extends Seeder {
 
 ## Related
 
-- [ts-mocker Documentation](https://github.com/stacksjs/ts-mocker)
+- [@stacksjs/ts-faker Documentation](https://github.com/stacksjs/ts-faker)
 - [Migrations](./migrations)
 - [CLI Reference](./cli)

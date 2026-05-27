@@ -36,7 +36,7 @@
  * ```
  */
 
-import type { Faker } from 'ts-mocker'
+import type { Faker } from '@stacksjs/ts-faker'
 import type { ValidationType } from './schema'
 
 // Local mirror of the runtime PivotColumnAttribute shape (kept structural so we
