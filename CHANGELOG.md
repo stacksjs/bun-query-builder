@@ -1,3 +1,48 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.23...v0.1.24)
+
+## 🐛 Bug Fixes
+
+- **schema**: emit inline FOREIGN KEY on SQLite CREATE TABLE (#1019) (#1020) ([e90f3bf](https://github.com/stacksjs/bun-query-builder/commit/e90f3bf)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1019](https://github.com/stacksjs/bun-query-builder/issues/1019), [#1020](https://github.com/stacksjs/bun-query-builder/issues/1020), [#1019](https://github.com/stacksjs/bun-query-builder/issues/1019), [#1020](https://github.com/stacksjs/bun-query-builder/issues/1020))
+- **client**: SELECT builder reorders clauses to canonical SQL at compile time (#1018) ([d4487d4](https://github.com/stacksjs/bun-query-builder/commit/d4487d4)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1018](https://github.com/stacksjs/bun-query-builder/issues/1018), [#1018](https://github.com/stacksjs/bun-query-builder/issues/1018))
+- **db**: SQLite unsafe() is now Promise/A+ thenable — await yields rows (#1017) ([96bea02](https://github.com/stacksjs/bun-query-builder/commit/96bea02)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1017](https://github.com/stacksjs/bun-query-builder/issues/1017), [#1017](https://github.com/stacksjs/bun-query-builder/issues/1017))
+- **client**: DELETE builder where() switches WHERE→AND on chained calls (#1015) ([c8ff670](https://github.com/stacksjs/bun-query-builder/commit/c8ff670)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1015](https://github.com/stacksjs/bun-query-builder/issues/1015), [#1015](https://github.com/stacksjs/bun-query-builder/issues/1015))
+- **scripts**: stop double-generating CHANGELOG on release ([924e072](https://github.com/stacksjs/bun-query-builder/commit/924e072)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- **client**: where('col', 'in', vals) emits IN (?, ?, ?) at parity with array form (#1013) ([c359b55](https://github.com/stacksjs/bun-query-builder/commit/c359b55)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1013](https://github.com/stacksjs/bun-query-builder/issues/1013), [#1013](https://github.com/stacksjs/bun-query-builder/issues/1013))
+- **client**: accept bare string in select() at parity with array form (#1012) ([77fe29b](https://github.com/stacksjs/bun-query-builder/commit/77fe29b)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1012](https://github.com/stacksjs/bun-query-builder/issues/1012), [#1012](https://github.com/stacksjs/bun-query-builder/issues/1012))
+- **migrate**: gate informational stdout chatter on config.verbose ([2bfbbc4](https://github.com/stacksjs/bun-query-builder/commit/2bfbbc4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- warn on conflicting setConfig dialects, validate paginate args (#1010 #12, #18) ([73afbde](https://github.com/stacksjs/bun-query-builder/commit/73afbde)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#12](https://github.com/stacksjs/bun-query-builder/issues/12), [#18](https://github.com/stacksjs/bun-query-builder/issues/18), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#12](https://github.com/stacksjs/bun-query-builder/issues/12), [#18](https://github.com/stacksjs/bun-query-builder/issues/18))
+- transaction isolation + readOnly dialect dispatch (#1010 #14) ([f285921](https://github.com/stacksjs/bun-query-builder/commit/f285921)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#14](https://github.com/stacksjs/bun-query-builder/issues/14), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#14](https://github.com/stacksjs/bun-query-builder/issues/14))
+- selectFromSub builder throws on unsupported methods instead of silent no-op (#1010 #11) ([a41f924](https://github.com/stacksjs/bun-query-builder/commit/a41f924)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#11](https://github.com/stacksjs/bun-query-builder/issues/11), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#11](https://github.com/stacksjs/bun-query-builder/issues/11))
+- **security**: tighten *Raw type signatures to SqlFragment, warn on bare strings (#1009 Q-3) ([0499b55](https://github.com/stacksjs/bun-query-builder/commit/0499b55)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1009](https://github.com/stacksjs/bun-query-builder/issues/1009))
+- implement MySQL advisoryLock via GET_LOCK; throw on SQLite (#1010 #17) ([c0f40e6](https://github.com/stacksjs/bun-query-builder/commit/c0f40e6)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#17](https://github.com/stacksjs/bun-query-builder/issues/17), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#17](https://github.com/stacksjs/bun-query-builder/issues/17))
+- **security**: validate whereJsonPath/withCTE/joinSub identifiers (#1009 Q-5, Q-20) ([592d5ce](https://github.com/stacksjs/bun-query-builder/commit/592d5ce)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1009](https://github.com/stacksjs/bun-query-builder/issues/1009), [#1009](https://github.com/stacksjs/bun-query-builder/issues/1009))
+- pluck(column, key) throws on duplicate key instead of silent data loss (#1010 #30) ([001acb0](https://github.com/stacksjs/bun-query-builder/commit/001acb0)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#30](https://github.com/stacksjs/bun-query-builder/issues/30), [#1010](https://github.com/stacksjs/bun-query-builder/issues/1010), [#30](https://github.com/stacksjs/bun-query-builder/issues/30))
+- **release**: publish query builder from package directory ([87b6814](https://github.com/stacksjs/bun-query-builder/commit/87b6814)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ⚡ Performance Improvements
+
+- **client**: hoist shared helpers to module scope, fix validateIdentifier reference ([854ecd3](https://github.com/stacksjs/bun-query-builder/commit/854ecd3)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ♻️ Code Refactoring
+
+- migrate seeding faker from ts-mocker to @stacksjs/ts-faker ([3328881](https://github.com/stacksjs/bun-query-builder/commit/3328881)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🤖 Continuous Integration
+
+- **buddy-bot**: add daily cleanup cron to workflow ([aabeb06](https://github.com/stacksjs/bun-query-builder/commit/aabeb06)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.24 ([9537cf4](https://github.com/stacksjs/bun-query-builder/commit/9537cf4)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: refresh bun.lock to pick up @stacksjs/logsmith 0.2.3 ([797e4cf](https://github.com/stacksjs/bun-query-builder/commit/797e4cf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: refresh bun.lock to pick up buddy-bot 0.9.20 ([d2c0f82](https://github.com/stacksjs/bun-query-builder/commit/d2c0f82)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.22...v0.1.23)
 
 ### 🐛 Bug Fixes
