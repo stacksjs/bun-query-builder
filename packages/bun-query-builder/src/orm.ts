@@ -26,6 +26,9 @@
 
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { Faker } from '@stacksjs/ts-faker'
+import type { SupportedDialect } from './types'
+import { config } from './config'
+import { getOrCreateBunSql } from './db'
 
 /**
  * Strict identifier pattern for SQL column / table names: starts with
@@ -296,7 +299,150 @@ export type InferRelationNames<TDef> =
 
 type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' | 'in' | 'not in'
 
+// --- Dialect-aware execution layer -------------------------------------------
+//
+// The model API historically ran every query through a hardcoded in-memory
+// `bun:sqlite` Database, so projects configured for MySQL/Postgres had their
+// model calls silently routed to a fresh, empty SQLite database — every query
+// returned "no such table" (stacksjs/bun-query-builder#1021).
+//
+// All model queries now go through an `OrmExecutor` chosen from the configured
+// dialect. SQLite keeps its synchronous `bun:sqlite` engine (wrapped in
+// resolved Promises); MySQL/Postgres route through Bun's async `SQL` driver via
+// the shared `getOrCreateBunSql()` connection — the same path the direct
+// `selectFrom(...)` builder already uses. Because the network drivers are
+// async-only, every model read/write method now returns a Promise.
+
+type RunResult = { changes: number, lastInsertId: number | bigint | null }
+
+interface OrmExecutor {
+  readonly dialect: SupportedDialect
+  all: (sql: string, params: unknown[]) => Promise<Record<string, unknown>[]>
+  get: (sql: string, params: unknown[]) => Promise<Record<string, unknown> | undefined>
+  run: (sql: string, params: unknown[]) => Promise<RunResult>
+  /** INSERT that resolves the new primary-key id in a dialect-aware way. */
+  insert: (sql: string, params: unknown[], primaryKey: string) => Promise<RunResult>
+  /** The underlying bun:sqlite Database, when (and only when) the dialect is sqlite. */
+  readonly sqliteDb?: Database
+}
+
+/**
+ * Rewrite `?` placeholders to Postgres `$1, $2, …` form. The ORM only ever
+ * emits `?` as a bound-parameter marker (values are always parameterised and
+ * identifiers are validated), so a sequential left-to-right pass is safe.
+ */
+function toPostgresPlaceholders(sql: string): string {
+  let i = 0
+  return sql.replace(/\?/g, () => `$${++i}`)
+}
+
+/** Extract an affected-row count from a Bun SQL driver result. */
+function extractChanges(res: any): number {
+  if (res == null)
+    return 0
+  if (typeof res.affectedRows === 'number') // MySQL
+    return res.affectedRows
+  if (typeof res.count === 'number') // Postgres command tag
+    return res.count
+  if (Array.isArray(res))
+    return res.length
+  return 0
+}
+
+/** Extract a generated primary key from a Bun SQL driver result. */
+function extractInsertId(res: any): number | bigint | null {
+  if (res == null || typeof res !== 'object')
+    return null
+  if ('insertId' in res && res.insertId != null) // MySQL
+    return res.insertId
+  if ('lastInsertRowid' in res && res.lastInsertRowid != null) // bun:sqlite
+    return res.lastInsertRowid
+  return null
+}
+
+class SqliteExecutor implements OrmExecutor {
+  readonly dialect = 'sqlite' as const
+  constructor(public readonly sqliteDb: Database) {}
+
+  all(sql: string, params: unknown[]): Promise<Record<string, unknown>[]> {
+    return Promise.resolve(this.sqliteDb.query(sql).all(...(params as Bindings)) as Record<string, unknown>[])
+  }
+
+  get(sql: string, params: unknown[]): Promise<Record<string, unknown> | undefined> {
+    return Promise.resolve((this.sqliteDb.query(sql).get(...(params as Bindings)) as Record<string, unknown> | null) ?? undefined)
+  }
+
+  run(sql: string, params: unknown[]): Promise<RunResult> {
+    const r = this.sqliteDb.run(sql, params as Bindings)
+    return Promise.resolve({ changes: r.changes, lastInsertId: r.lastInsertRowid })
+  }
+
+  insert(sql: string, params: unknown[]): Promise<RunResult> {
+    return this.run(sql, params)
+  }
+}
+
+class DriverExecutor implements OrmExecutor {
+  constructor(public readonly dialect: SupportedDialect) {}
+
+  /** The live dialect-aware connection (handles its own reset/config-change). */
+  private conn(): any {
+    return getOrCreateBunSql()
+  }
+
+  private text(sql: string): string {
+    return this.dialect === 'postgres' ? toPostgresPlaceholders(sql) : sql
+  }
+
+  async all(sql: string, params: unknown[]): Promise<Record<string, unknown>[]> {
+    const rows = await this.conn().unsafe(this.text(sql), params)
+    return (Array.isArray(rows) ? rows : []) as Record<string, unknown>[]
+  }
+
+  async get(sql: string, params: unknown[]): Promise<Record<string, unknown> | undefined> {
+    const rows = await this.conn().unsafe(this.text(sql), params)
+    if (Array.isArray(rows))
+      return (rows[0] as Record<string, unknown> | undefined) ?? undefined
+    return (rows as Record<string, unknown> | undefined) ?? undefined
+  }
+
+  async run(sql: string, params: unknown[]): Promise<RunResult> {
+    const res = await this.conn().unsafe(this.text(sql), params)
+    return { changes: extractChanges(res), lastInsertId: extractInsertId(res) }
+  }
+
+  async insert(sql: string, params: unknown[], primaryKey: string): Promise<RunResult> {
+    if (this.dialect === 'postgres') {
+      // Postgres has no auto-increment rowid to read back — RETURNING is the
+      // portable way to recover the generated key.
+      const rows = await this.conn().unsafe(`${toPostgresPlaceholders(sql)} RETURNING ${primaryKey}`, params)
+      const row = Array.isArray(rows) ? rows[0] : rows
+      return { changes: 1, lastInsertId: row ? (row[primaryKey] ?? null) : null }
+    }
+    // MySQL: no RETURNING — read the driver's insertId, falling back to
+    // LAST_INSERT_ID() on the same connection.
+    const res = await this.conn().unsafe(sql, params)
+    let id = extractInsertId(res)
+    if (id == null) {
+      const rows = await this.conn().unsafe('SELECT LAST_INSERT_ID() as id', [])
+      const row = Array.isArray(rows) ? rows[0] : rows
+      id = (row?.id as number | bigint | undefined) ?? null
+    }
+    return { changes: extractChanges(res) || 1, lastInsertId: id }
+  }
+}
+
+// Explicit sqlite Database supplied via configureOrm() — overrides the
+// configured dialect and pins the model layer to that connection. Preserves
+// the existing `configureOrm({ database })` contract for sqlite-only consumers
+// and the test suite, which run against an in-memory database regardless of
+// the (postgres) default dialect.
 let globalDb: Database | null = null
+
+let _executor: OrmExecutor | null = null
+let _executorForDb: Database | null = null
+let _executorDialect: string | null = null
+let _executorDatabase: string | null = null
 
 export function configureOrm(options: { database?: string | Database; verbose?: boolean }): void {
   if (options.database instanceof Database) {
@@ -305,15 +451,66 @@ export function configureOrm(options: { database?: string | Database; verbose?: 
   else {
     globalDb = new Database(options.database || ':memory:', { create: true })
   }
-  // Clear prepared statement cache when database changes
-  preparedStatementCache.clear()
+  // Force the executor to rebind to the newly-supplied database.
+  _executor = null
+  _executorForDb = null
 }
 
-export function getDatabase(): Database {
-  if (!globalDb) {
-    globalDb = new Database(':memory:', { create: true })
+/**
+ * Resolve the executor for the active configuration.
+ *
+ * An explicit `configureOrm({ database })` always wins and keeps the model
+ * layer on sqlite. Otherwise the dialect from `setConfig()` decides: sqlite
+ * opens a `bun:sqlite` Database on the configured filename (or `:memory:`),
+ * while mysql / postgres route through the shared async `SQL` driver. The
+ * executor is rebuilt whenever the dialect or database name changes.
+ */
+function getExecutor(): OrmExecutor {
+  if (globalDb) {
+    if (!_executor || _executorForDb !== globalDb) {
+      _executor = new SqliteExecutor(globalDb)
+      _executorForDb = globalDb
+      _executorDialect = 'sqlite'
+      _executorDatabase = null
+    }
+    return _executor
   }
-  return globalDb
+
+  const dialect = config.dialect
+  const database = config.database?.database ?? null
+
+  if (_executor && _executorForDb === null && _executorDialect === dialect && _executorDatabase === database)
+    return _executor
+
+  _executorForDb = null
+  _executorDialect = dialect
+  _executorDatabase = database
+
+  if (dialect === 'sqlite')
+    _executor = new SqliteExecutor(new Database(database || ':memory:', { create: true }))
+  else
+    _executor = new DriverExecutor(dialect)
+
+  return _executor
+}
+
+/**
+ * Return the underlying `bun:sqlite` Database backing the model layer.
+ *
+ * Only meaningful when the active dialect is sqlite (or a sqlite Database was
+ * supplied via `configureOrm`). For mysql/postgres there is no `Database`
+ * object — use the async model API instead. Retained for backwards
+ * compatibility with callers that reach for the raw sqlite handle (tests,
+ * low-level table setup).
+ */
+export function getDatabase(): Database {
+  const exec = getExecutor()
+  if (exec.sqliteDb)
+    return exec.sqliteDb
+  throw new Error(
+    `[bun-query-builder] getDatabase() is only available for the sqlite dialect; `
+    + `the configured dialect is '${exec.dialect}'. Use the async model API instead.`,
+  )
 }
 
 /**
@@ -540,8 +737,8 @@ class ModelInstance<
     return this
   }
 
-  save(): this {
-    const db = getDatabase()
+  async save(): Promise<this> {
+    const exec = getExecutor()
     const pk = this._definition.primaryKey || 'id'
     const hooks = this._definition.hooks
 
@@ -554,7 +751,7 @@ class ModelInstance<
 
     if (this._attributes[pk]) {
       // Update
-      hooks?.beforeUpdate?.(this as unknown as ModelHookInstance, this.getChanges())
+      await hooks?.beforeUpdate?.(this as unknown as ModelHookInstance, this.getChanges())
 
       const changes = this.getChanges()
       const changeKeys = Object.keys(changes)
@@ -564,17 +761,17 @@ class ModelInstance<
 
         if (this._definition.traits?.useTimestamps) {
           const now = new Date().toISOString()
-          db.run(
+          await exec.run(
             `UPDATE ${this._definition.table} SET ${sets}, updated_at = ? WHERE ${pk} = ?`,
-            [...Object.values(changes), now, this._attributes[pk]] as Bindings
+            [...Object.values(changes), now, this._attributes[pk]]
           )
         }
-    else {
-          db.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, values as Bindings)
+        else {
+          await exec.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, values)
         }
       }
 
-      hooks?.afterUpdate?.(this as unknown as ModelHookInstance)
+      await hooks?.afterUpdate?.(this as unknown as ModelHookInstance)
     }
     else {
       // Create
@@ -597,22 +794,24 @@ class ModelInstance<
         data.uuid = crypto.randomUUID()
       }
 
-      hooks?.beforeCreate?.(data)
+      await hooks?.beforeCreate?.(data)
 
       const columns = Object.keys(data)
       const placeholders = columns.map(() => '?').join(', ')
 
-      const result = db.run(
+      const result = await exec.insert(
         `INSERT INTO ${this._definition.table} (${columns.join(', ')}) VALUES (${placeholders})`,
-        Object.values(data) as Bindings
+        Object.values(data),
+        pk,
       )
 
       for (const [key, value] of Object.entries(data)) {
         this._attributes[key] = value
       }
-      this._attributes[pk] = result.lastInsertRowid
+      if (result.lastInsertId != null)
+        this._attributes[pk] = result.lastInsertId
 
-      hooks?.afterCreate?.(this as unknown as ModelHookInstance)
+      await hooks?.afterCreate?.(this as unknown as ModelHookInstance)
     }
 
     this._original = { ...this._attributes }
@@ -620,7 +819,7 @@ class ModelInstance<
     return this
   }
 
-  update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): this {
+  async update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): Promise<this> {
     this.fill(data)
     return this.save()
   }
@@ -632,37 +831,37 @@ class ModelInstance<
    *
    * @returns the freshly-fetched row, or `null` if the row no longer exists.
    */
-  fresh(): ModelInstance<TDef, TSelected> | null {
-    const db = getDatabase()
+  async fresh(): Promise<ModelInstance<TDef, TSelected> | null> {
+    const exec = getExecutor()
     const pk = this._definition.primaryKey || 'id'
     const id = this._attributes[pk]
     if (id == null) return null
-    const row = db.query(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`).get(id as any)
+    const row = await exec.get(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`, [id])
     if (!row) return null
     return new ModelInstance(this._definition, row as Partial<ModelAttributes<TDef>>)
   }
 
-  delete(): boolean {
-    const db = getDatabase()
+  async delete(): Promise<boolean> {
+    const exec = getExecutor()
     const pk = this._definition.primaryKey || 'id'
     const pkValue = this._attributes[pk]
     const hooks = this._definition.hooks
 
     if (!pkValue) throw new Error('Cannot delete a model without a primary key')
 
-    hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
+    await hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
 
     if (this._definition.traits?.useSoftDeletes) {
-      db.run(
+      await exec.run(
         `UPDATE ${this._definition.table} SET deleted_at = ? WHERE ${pk} = ?`,
-        [new Date().toISOString(), pkValue] as Bindings
+        [new Date().toISOString(), pkValue]
       )
     }
     else {
-      db.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue] as Bindings)
+      await exec.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue])
     }
 
-    hooks?.afterDelete?.(this as unknown as ModelHookInstance)
+    await hooks?.afterDelete?.(this as unknown as ModelHookInstance)
 
     return true
   }
@@ -678,14 +877,14 @@ class ModelInstance<
    *
    * Throws only when the receiver has no primary key set.
    */
-  refresh(): this | null {
-    const db = getDatabase()
+  async refresh(): Promise<this | null> {
+    const exec = getExecutor()
     const pk = this._definition.primaryKey || 'id'
     const pkValue = this._attributes[pk]
 
     if (!pkValue) throw new Error('Cannot refresh a model without a primary key')
 
-    const row = db.query(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`).get(pkValue as SQLQueryBindings) as Record<string, unknown> | null
+    const row = await exec.get(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue])
     if (!row) return null
     this._attributes = row
     this._original = null // post-refresh, nothing is dirty
@@ -763,7 +962,6 @@ class ModelInstance<
 const snakeCaseCache = new Map<string, string>()
 const tableNameCache = new Map<string, string>()
 const relationCache = new Map<string, ReturnType<typeof resolveRelation>>()
-const preparedStatementCache = new Map<string, ReturnType<Database['prepare']>>()
 
 /**
  * Convert PascalCase model name to snake_case for foreign key convention.
@@ -1145,31 +1343,32 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     })
   }
 
-  get(): ModelInstance<TRel, any>[] {
-    const db = getDatabase()
+  async get(): Promise<ModelInstance<TRel, any>[]> {
+    const exec = getExecutor()
     const { sql, params } = this.buildSelect()
-    const rows = db.query(sql).all(...(params as Bindings)) as Record<string, unknown>[]
+    const rows = await exec.all(sql, params)
     return this.hydrateRows(rows)
   }
 
-  first(): ModelInstance<TRel, any> | undefined {
+  async first(): Promise<ModelInstance<TRel, any> | undefined> {
     this._limit = 1
-    return this.get()[0]
+    return (await this.get())[0]
   }
 
-  count(): number {
-    const db = getDatabase()
+  async count(): Promise<number> {
+    const exec = getExecutor()
     let sql = `SELECT COUNT(*) as count FROM ${this.pivotTable} WHERE ${this.fkParent} = ?`
     const params: unknown[] = [this.parentId]
     for (const w of this._pivotWheres) {
       sql += ` AND ${w.sql}`
       params.push(...w.params)
     }
-    return (db.query(sql).get(...(params as Bindings)) as { count: number }).count
+    const row = await exec.get(sql, params)
+    return Number((row as { count: number } | undefined)?.count ?? 0)
   }
 
-  exists(): boolean {
-    return this.count() > 0
+  async exists(): Promise<boolean> {
+    return (await this.count()) > 0
   }
 
   // --- mutation side --------------------------------------------------------
@@ -1183,8 +1382,8 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
    *
    * Returns the count of inserted rows.
    */
-  attach(idOrIds: unknown | unknown[], extras: Record<string, unknown> = {}): number {
-    const db = getDatabase()
+  async attach(idOrIds: unknown | unknown[], extras: Record<string, unknown> = {}): Promise<number> {
+    const exec = getExecutor()
     const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
     if (ids.length === 0) return 0
     const ts = this._resolved.pivotTimestamps ? this.now() : null
@@ -1203,7 +1402,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
       const placeholders = cols.map(() => '?').join(', ')
       const sql = `INSERT INTO ${this.pivotTable} (${cols.join(', ')}) VALUES (${placeholders})`
       const params = cols.map(c => row[c])
-      db.run(sql, params as Bindings)
+      await exec.run(sql, params)
       inserted++
     }
     return inserted
@@ -1213,8 +1412,8 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
    * Detach related rows from the parent. With no argument, detaches all.
    * Returns the count of deleted rows.
    */
-  detach(idOrIds?: unknown | unknown[]): number {
-    const db = getDatabase()
+  async detach(idOrIds?: unknown | unknown[]): Promise<number> {
+    const exec = getExecutor()
     let sql = `DELETE FROM ${this.pivotTable} WHERE ${this.fkParent} = ?`
     const params: unknown[] = [this.parentId]
     if (idOrIds !== undefined && idOrIds !== null) {
@@ -1224,15 +1423,15 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
       sql += ` AND ${this.fkRelated} IN (${placeholders})`
       params.push(...ids)
     }
-    return db.run(sql, params as Bindings).changes
+    return (await exec.run(sql, params)).changes
   }
 
   /**
    * Update extras on an existing pivot row, identified by the related id.
    * Returns the number of pivot rows updated (0 or 1).
    */
-  updateExistingPivot(relatedId: unknown, extras: Record<string, unknown>): number {
-    const db = getDatabase()
+  async updateExistingPivot(relatedId: unknown, extras: Record<string, unknown>): Promise<number> {
+    const exec = getExecutor()
     const updates = { ...extras }
     if (this._resolved.pivotTimestamps && updates.updated_at === undefined) {
       updates.updated_at = this.now()
@@ -1242,7 +1441,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     const setClause = cols.map(c => `${c} = ?`).join(', ')
     const sql = `UPDATE ${this.pivotTable} SET ${setClause} WHERE ${this.fkParent} = ? AND ${this.fkRelated} = ?`
     const params = [...cols.map(c => updates[c]), this.parentId, relatedId]
-    return db.run(sql, params as Bindings).changes
+    return (await exec.run(sql, params)).changes
   }
 
   /**
@@ -1253,8 +1452,8 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
    * `items` may be a list of plain ids (no extras) or `{ id, ...extras }`
    * objects.
    */
-  sync(items: Array<unknown | { id: unknown, [key: string]: unknown }>): { attached: unknown[], detached: unknown[], updated: unknown[] } {
-    const db = getDatabase()
+  async sync(items: Array<unknown | { id: unknown, [key: string]: unknown }>): Promise<{ attached: unknown[], detached: unknown[], updated: unknown[] }> {
+    const exec = getExecutor()
     const desired = new Map<unknown, Record<string, unknown>>()
     for (const item of items) {
       if (item != null && typeof item === 'object' && 'id' in (item as any)) {
@@ -1267,9 +1466,10 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     }
 
     // Read current pivot rows for this parent.
-    const current = db.query(
+    const current = await exec.all(
       `SELECT * FROM ${this.pivotTable} WHERE ${this.fkParent} = ?`,
-    ).all(this.parentId as any) as Record<string, unknown>[]
+      [this.parentId],
+    )
     const currentIds = new Set(current.map(r => r[this.fkRelated]))
 
     const attached: unknown[] = []
@@ -1279,18 +1479,18 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     // Detach missing
     const toDetach = [...currentIds].filter(id => !desired.has(id))
     if (toDetach.length > 0) {
-      this.detach(toDetach)
+      await this.detach(toDetach)
       detached.push(...toDetach)
     }
 
     // Attach or update
     for (const [id, extras] of desired) {
       if (!currentIds.has(id)) {
-        this.attach(id, extras)
+        await this.attach(id, extras)
         attached.push(id)
       }
       else if (Object.keys(extras).length > 0) {
-        this.updateExistingPivot(id, extras)
+        await this.updateExistingPivot(id, extras)
         updated.push(id)
       }
     }
@@ -1302,20 +1502,21 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
    * For each id, attach if currently detached, detach if currently attached.
    * Returns `{ attached, detached }`.
    */
-  toggle(idOrIds: unknown | unknown[]): { attached: unknown[], detached: unknown[] } {
-    const db = getDatabase()
+  async toggle(idOrIds: unknown | unknown[]): Promise<{ attached: unknown[], detached: unknown[] }> {
+    const exec = getExecutor()
     const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
     if (ids.length === 0) return { attached: [], detached: [] }
     const placeholders = ids.map(() => '?').join(', ')
-    const present = db.query(
+    const present = await exec.all(
       `SELECT ${this.fkRelated} FROM ${this.pivotTable} WHERE ${this.fkParent} = ? AND ${this.fkRelated} IN (${placeholders})`,
-    ).all(this.parentId as any, ...(ids as any[])) as Record<string, unknown>[]
+      [this.parentId, ...ids],
+    )
     const presentIds = new Set(present.map(r => r[this.fkRelated]))
 
     const toAttach = ids.filter(id => !presentIds.has(id))
     const toDetach = ids.filter(id => presentIds.has(id))
-    if (toAttach.length > 0) this.attach(toAttach)
-    if (toDetach.length > 0) this.detach(toDetach)
+    if (toAttach.length > 0) await this.attach(toAttach)
+    if (toDetach.length > 0) await this.detach(toDetach)
     return { attached: toAttach, detached: toDetach }
   }
 }
@@ -1704,10 +1905,10 @@ class ModelQueryBuilder<
    * Eager load relations onto a set of already-fetched instances.
    * Uses separate queries per relation (N+1 prevention via batch loading).
    */
-  private eagerLoadRelations(instances: ModelInstance<TDef, TSelected>[]): void {
+  private async eagerLoadRelations(instances: ModelInstance<TDef, TSelected>[]): Promise<void> {
     if (instances.length === 0 || this._withRelations.length === 0) return
 
-    const db = getDatabase()
+    const exec = getExecutor()
     const pk = this._definition.primaryKey || 'id'
 
     for (const relationName of this._withRelations) {
@@ -1726,9 +1927,10 @@ class ModelQueryBuilder<
         if (parentIds.length === 0) continue
 
         const placeholders = parentIds.map(() => '?').join(', ')
-        const rows = db.query(
+        const rows = await exec.all(
           `SELECT * FROM ${rel.relatedTable} WHERE ${rel.foreignKey} IN (${placeholders})`,
-        ).all(...(parentIds as any[])) as Record<string, unknown>[]
+          parentIds,
+        )
 
         // Try to get the related model's definition for proper instances
         const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
@@ -1767,9 +1969,10 @@ class ModelQueryBuilder<
         if (uniqueFkValues.length === 0) continue
 
         const placeholders = uniqueFkValues.map(() => '?').join(', ')
-        const rows = db.query(
+        const rows = await exec.all(
           `SELECT * FROM ${rel.relatedTable} WHERE ${rel.localKey} IN (${placeholders})`,
-        ).all(...(uniqueFkValues as any[])) as Record<string, unknown>[]
+          uniqueFkValues,
+        )
 
         const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
         const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
@@ -1793,9 +1996,10 @@ class ModelQueryBuilder<
 
         // 1) Fetch pivot rows for these parents.
         const pivotPlaceholders = parentIds.map(() => '?').join(', ')
-        const pivotRows = db.query(
+        const pivotRows = await exec.all(
           `SELECT * FROM ${rel.pivotTable} WHERE ${rel.pivotFkParent} IN (${pivotPlaceholders})`,
-        ).all(...(parentIds as any[])) as Record<string, unknown>[]
+          parentIds,
+        )
 
         if (pivotRows.length === 0) {
           for (const instance of instances) instance.setRelation(relationName, [])
@@ -1811,9 +2015,10 @@ class ModelQueryBuilder<
         let relatedRows: Record<string, unknown>[] = []
         if (relatedIds.length > 0) {
           const relPlaceholders = relatedIds.map(() => '?').join(', ')
-          relatedRows = db.query(
+          relatedRows = await exec.all(
             `SELECT * FROM ${rel.relatedTable} WHERE ${relatedPk} IN (${relPlaceholders})`,
-          ).all(...(relatedIds as any[])) as Record<string, unknown>[]
+            relatedIds,
+          )
         }
         const relatedByPk = new Map<unknown, Record<string, unknown>>()
         for (const r of relatedRows) relatedByPk.set(r[relatedPk], r)
@@ -1852,40 +2057,40 @@ class ModelQueryBuilder<
     }
   }
 
-  get(): ModelInstance<TDef, TSelected>[] {
-    const db = getDatabase()
+  async get(): Promise<ModelInstance<TDef, TSelected>[]> {
+    const exec = getExecutor()
     const { sql, params } = this.buildQuery()
-    const rows = db.query(sql).all(...(params as Bindings)) as Record<string, unknown>[]
+    const rows = await exec.all(sql, params)
     const instances = rows.map(row => new ModelInstance<TDef, TSelected>(this._definition, row as any))
 
     // Eager load relations
     if (this._withRelations.length > 0) {
-      this.eagerLoadRelations(instances)
+      await this.eagerLoadRelations(instances)
     }
 
     return instances
   }
 
-  first(): ModelInstance<TDef, TSelected> | undefined {
+  async first(): Promise<ModelInstance<TDef, TSelected> | undefined> {
     this._limit = 1
-    return this.get()[0]
+    return (await this.get())[0]
   }
 
-  firstOrFail(): ModelInstance<TDef, TSelected> {
-    const result = this.first()
+  async firstOrFail(): Promise<ModelInstance<TDef, TSelected>> {
+    const result = await this.first()
     if (!result) throw new Error(`No ${this._definition.name} found`)
     return result
   }
 
-  last(): ModelInstance<TDef, TSelected> | undefined {
+  async last(): Promise<ModelInstance<TDef, TSelected> | undefined> {
     const pk = this._definition.primaryKey || 'id'
     this._orderBy = [{ column: pk, direction: 'desc' }]
     this._limit = 1
-    return this.get()[0]
+    return (await this.get())[0]
   }
 
-  count(): number {
-    const db = getDatabase()
+  async count(): Promise<number> {
+    const exec = getExecutor()
     const params: unknown[] = []
     let sql = `SELECT COUNT(*) as count FROM ${this._definition.table}`
 
@@ -1893,15 +2098,16 @@ class ModelQueryBuilder<
       sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
-    return (db.query(sql).get(...(params as Bindings)) as { count: number }).count
+    const row = await exec.get(sql, params)
+    return Number((row as { count: number } | undefined)?.count ?? 0)
   }
 
-  exists(): boolean {
-    return this.count() > 0
+  async exists(): Promise<boolean> {
+    return (await this.count()) > 0
   }
 
-  doesntExist(): boolean {
-    return this.count() === 0
+  async doesntExist(): Promise<boolean> {
+    return (await this.count()) === 0
   }
 
   /**
@@ -1912,9 +2118,9 @@ class ModelQueryBuilder<
    * const admin = User.where('role', 'admin').sole()
    * ```
    */
-  sole(): ModelInstance<TDef, TSelected> {
+  async sole(): Promise<ModelInstance<TDef, TSelected>> {
     this._limit = 2 // fetch 2 to detect duplicates
-    const results = this.get()
+    const results = await this.get()
     if (results.length === 0) throw new Error(`No ${this._definition.name} found`)
     if (results.length > 1) throw new Error(`Expected one ${this._definition.name}, found multiple`)
     return results[0]
@@ -1929,9 +2135,9 @@ class ModelQueryBuilder<
    * Post.where('id', 1).increment('views', 5)
    * ```
    */
-  increment<K extends NumericColumns<TDef>>(column: K, amount = 1): number {
+  async increment<K extends NumericColumns<TDef>>(column: K, amount = 1): Promise<number> {
     assertValidIdentifier(column, 'increment(column)')
-    const db = getDatabase()
+    const exec = getExecutor()
     const params: unknown[] = [amount]
 
     let sql = `UPDATE ${this._definition.table} SET ${column as string} = ${column as string} + ?`
@@ -1946,7 +2152,7 @@ class ModelQueryBuilder<
       sql += ` WHERE ${clauses}`
     }
 
-    return db.run(sql, params as Bindings).changes
+    return (await exec.run(sql, params)).changes
   }
 
   /**
@@ -1958,7 +2164,7 @@ class ModelQueryBuilder<
    * Product.where('id', 1).decrement('stock', 3)
    * ```
    */
-  decrement<K extends NumericColumns<TDef>>(column: K, amount = 1): number {
+  decrement<K extends NumericColumns<TDef>>(column: K, amount = 1): Promise<number> {
     return this.increment(column, -amount)
   }
 
@@ -1972,7 +2178,7 @@ class ModelQueryBuilder<
    * })
    * ```
    */
-  chunk(size: number, callback: (items: ModelInstance<TDef, TSelected>[]) => void | false): void {
+  async chunk(size: number, callback: (items: ModelInstance<TDef, TSelected>[]) => void | false | Promise<void | false>): Promise<void> {
     let page = 0
     while (true) {
       const builder = new ModelQueryBuilder<TDef, TSelected>(this._definition)
@@ -1984,10 +2190,10 @@ class ModelQueryBuilder<
       builder._limit = size
       builder._offset = page * size
 
-      const results = builder.get()
+      const results = await builder.get()
       if (results.length === 0) break
 
-      const result = callback(results)
+      const result = await callback(results)
       if (result === false) break
       if (results.length < size) break
 
@@ -1995,7 +2201,7 @@ class ModelQueryBuilder<
     }
   }
 
-  paginate(page = 1, perPage = 15): {
+  async paginate(page = 1, perPage = 15): Promise<{
     data: ModelInstance<TDef, TSelected>[]
     total: number
     page: number
@@ -2005,12 +2211,12 @@ class ModelQueryBuilder<
     isEmpty: boolean
     from: number | null
     to: number | null
-  } {
-    const total = this.count()
+  }> {
+    const total = await this.count()
     const lastPage = Math.ceil(total / perPage)
     this._limit = perPage
     this._offset = (page - 1) * perPage
-    const data = this.get()
+    const data = await this.get()
     return {
       data,
       total,
@@ -2024,12 +2230,12 @@ class ModelQueryBuilder<
     }
   }
 
-  pluck<K extends ColumnName<TDef>>(
+  async pluck<K extends ColumnName<TDef>>(
     column: K
-  ): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[] {
+  ): Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]> {
     assertValidIdentifier(column, 'pluck(column)')
     // Raw query — avoid creating ModelInstance objects just to extract one column
-    const db = getDatabase()
+    const exec = getExecutor()
     const params: unknown[] = []
     let sql = `SELECT ${column as string} FROM ${this._definition.table}`
 
@@ -2042,16 +2248,16 @@ class ModelQueryBuilder<
     if (this._limit !== undefined) sql += ` LIMIT ${this._limit}`
     if (this._offset !== undefined) sql += ` OFFSET ${this._offset}`
 
-    const rows = db.query(sql).all(...(params as Bindings)) as Record<string, unknown>[]
+    const rows = await exec.all(sql, params)
     return rows.map(r => r[column as string]) as any
   }
 
-  private aggregate(fn: string, column: string): number | null {
+  private async aggregate(fn: string, column: string): Promise<number | null> {
     // The aggregate function name comes from internal call sites
     // (max/min/avg/sum below) so it's bounded — but validate column
     // since callers pass user-derived field names to those wrappers.
     assertValidIdentifier(column, `${fn}(column)`)
-    const db = getDatabase()
+    const exec = getExecutor()
     const params: unknown[] = []
     let sql = `SELECT ${fn}(${column}) as v FROM ${this._definition.table}`
 
@@ -2059,28 +2265,30 @@ class ModelQueryBuilder<
       sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
-    const row = db.query(sql).get(...(params as Bindings)) as { v: number | null } | null
-    return row?.v ?? null
+    const row = await exec.get(sql, params) as { v: number | null } | undefined
+    // Postgres returns numeric aggregates (and bigint COUNT) as strings via
+    // the driver — coerce so callers always get a number.
+    return row?.v == null ? null : Number(row.v)
   }
 
-  max<K extends ColumnName<TDef>>(column: K): number | null {
+  max<K extends ColumnName<TDef>>(column: K): Promise<number | null> {
     return this.aggregate('MAX', column as string)
   }
 
-  min<K extends ColumnName<TDef>>(column: K): number | null {
+  min<K extends ColumnName<TDef>>(column: K): Promise<number | null> {
     return this.aggregate('MIN', column as string)
   }
 
-  avg<K extends NumericColumns<TDef>>(column: K): number {
-    return this.aggregate('AVG', column as string) || 0
+  async avg<K extends NumericColumns<TDef>>(column: K): Promise<number> {
+    return (await this.aggregate('AVG', column as string)) || 0
   }
 
-  sum<K extends NumericColumns<TDef>>(column: K): number {
-    return this.aggregate('SUM', column as string) || 0
+  async sum<K extends NumericColumns<TDef>>(column: K): Promise<number> {
+    return (await this.aggregate('SUM', column as string)) || 0
   }
 
-  delete(): number {
-    const db = getDatabase()
+  async delete(): Promise<number> {
+    const exec = getExecutor()
     const params: unknown[] = []
     let sql = `DELETE FROM ${this._definition.table}`
 
@@ -2088,11 +2296,11 @@ class ModelQueryBuilder<
       sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
-    return db.run(sql, params as Bindings).changes
+    return (await exec.run(sql, params)).changes
   }
 
-  update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): number {
-    const db = getDatabase()
+  async update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): Promise<number> {
+    const exec = getExecutor()
     const entries = Object.entries(data)
     const sets = entries.map(([k]) => `${k} = ?`).join(', ')
     const params: unknown[] = entries.map(([, v]) => v)
@@ -2107,7 +2315,7 @@ class ModelQueryBuilder<
       sql += ` WHERE ${this.buildWhereClauses(params)}`
     }
 
-    return db.run(sql, params as Bindings).changes
+    return (await exec.run(sql, params)).changes
   }
 }
 
@@ -2207,30 +2415,23 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     take: (count: number) => new ModelQueryBuilder<TDef>(definition).take(count),
     skip: (count: number) => new ModelQueryBuilder<TDef>(definition).skip(count),
 
-    find(id: number | string): ModelInstance<TDef> | undefined {
-      const db = getDatabase()
+    async find(id: number | string): Promise<ModelInstance<TDef> | undefined> {
+      const exec = getExecutor()
       const pk = definition.primaryKey || 'id'
-      const sql = `SELECT * FROM ${definition.table} WHERE ${pk} = ?`
-      // Use prepared statement cache for repeated find() calls
-      let stmt = preparedStatementCache.get(sql)
-      if (!stmt) {
-        stmt = db.prepare(sql)
-        preparedStatementCache.set(sql, stmt)
-      }
-      const row = stmt.get(id) as Record<string, unknown> | null
+      const row = await exec.get(`SELECT * FROM ${definition.table} WHERE ${pk} = ?`, [id])
       return row ? new ModelInstance<TDef>(definition, row as any) : undefined
     },
 
-    findOrFail(id: number | string): ModelInstance<TDef> {
-      const result = model.find(id)
+    async findOrFail(id: number | string): Promise<ModelInstance<TDef>> {
+      const result = await model.find(id)
       if (!result) throw new Error(`${definition.name} with id ${id} not found`)
       return result
     },
 
-    findMany(ids: (number | string)[]): ModelInstance<TDef>[] {
-      const db = getDatabase()
+    async findMany(ids: (number | string)[]): Promise<ModelInstance<TDef>[]> {
+      const exec = getExecutor()
       const pk = definition.primaryKey || 'id'
-      const rows = db.query(`SELECT * FROM ${definition.table} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})`).all(...(ids as Bindings)) as Record<string, unknown>[]
+      const rows = await exec.all(`SELECT * FROM ${definition.table} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})`, ids)
       return rows.map(row => new ModelInstance<TDef>(definition, row as any))
     },
 
@@ -2251,56 +2452,60 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
       return new ModelQueryBuilder<TDef>(definition).whereNotBetween(column, range as any)
     },
 
-    create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): ModelInstance<TDef> {
+    async create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): Promise<ModelInstance<TDef>> {
       const instance = new ModelInstance<TDef>(definition, data as any)
-      instance.save()
+      await instance.save()
       return instance
     },
 
-    createMany(items: Partial<Pick<InferModelAttributes<TDef>, Fillable>>[]): ModelInstance<TDef>[] {
-      return items.map(data => this.create(data))
+    async createMany(items: Partial<Pick<InferModelAttributes<TDef>, Fillable>>[]): Promise<ModelInstance<TDef>[]> {
+      // Sequential to preserve insertion order and avoid hammering a single
+      // connection with concurrent writes.
+      const out: ModelInstance<TDef>[] = []
+      for (const data of items) out.push(await this.create(data))
+      return out
     },
 
-    updateOrCreate(
+    async updateOrCreate(
       search: Partial<Attrs>,
       data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
-    ): ModelInstance<TDef> {
+    ): Promise<ModelInstance<TDef>> {
       let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key as Cols, value as any)
       }
-      const existing = query.first()
+      const existing = await query.first()
       if (existing) {
-        existing.update(data)
+        await existing.update(data)
         return existing
       }
       return this.create({ ...search, ...data } as any)
     },
 
-    firstOrCreate(
+    async firstOrCreate(
       search: Partial<Attrs>,
       data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
-    ): ModelInstance<TDef> {
+    ): Promise<ModelInstance<TDef>> {
       let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key as Cols, value as any)
       }
-      const existing = query.first()
+      const existing = await query.first()
       return existing || this.create({ ...search, ...data } as any)
     },
 
-    destroy(id: number | string): boolean {
-      const db = getDatabase()
+    async destroy(id: number | string): Promise<boolean> {
+      const exec = getExecutor()
       const pk = definition.primaryKey || 'id'
-      return db.run(`DELETE FROM ${definition.table} WHERE ${pk} = ?`, [id] as Bindings).changes > 0
+      return (await exec.run(`DELETE FROM ${definition.table} WHERE ${pk} = ?`, [id])).changes > 0
     },
 
-    remove(id: number | string): boolean {
+    remove(id: number | string): Promise<boolean> {
       return this.destroy(id)
     },
 
-    truncate(): void {
-      getDatabase().run(`DELETE FROM ${definition.table}`)
+    async truncate(): Promise<void> {
+      await getExecutor().run(`DELETE FROM ${definition.table}`, [])
     },
 
     getDefinition: () => definition,
@@ -2341,8 +2546,8 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
   }
 }
 
-export function createTableFromModel(definition: ModelDefinition): void {
-  const db = getDatabase()
+export async function createTableFromModel(definition: ModelDefinition): Promise<void> {
+  const exec = getExecutor()
   const pk = definition.primaryKey || 'id'
   const columns: string[] = []
 
@@ -2379,7 +2584,7 @@ export function createTableFromModel(definition: ModelDefinition): void {
     columns.push('deleted_at TEXT')
   }
 
-  db.run(`CREATE TABLE IF NOT EXISTS ${definition.table} (${columns.join(', ')})`)
+  await exec.run(`CREATE TABLE IF NOT EXISTS ${definition.table} (${columns.join(', ')})`, [])
 }
 
 function createFakerCompatLayer(underlying: Record<string, unknown>): Record<string, unknown> {
@@ -2404,7 +2609,7 @@ function createFakerCompatLayer(underlying: Record<string, unknown>): Record<str
 }
 
 export async function seedModel(definition: ModelDefinition, count?: number, faker?: Record<string, unknown>): Promise<void> {
-  const db = getDatabase()
+  const exec = getExecutor()
   const seeder = definition.traits?.useSeeder
   const seedCount = count ?? (typeof seeder === 'object' && seeder ? seeder.count : 10)
 
@@ -2435,9 +2640,9 @@ catch {
     if (definition.traits?.useUuid) data.uuid = crypto.randomUUID()
 
     const columns = Object.keys(data)
-    db.run(
+    await exec.run(
       `INSERT INTO ${definition.table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
-      Object.values(data) as Bindings
+      Object.values(data)
     )
   }
 }

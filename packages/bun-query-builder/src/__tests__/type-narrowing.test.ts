@@ -64,25 +64,25 @@ describe('type narrowing', () => {
   let Post: ReturnType<typeof createModel<typeof PostDef>>
   let Tag: ReturnType<typeof createModel<typeof TagDef>>
 
-  beforeAll(() => {
+  beforeAll(async () => {
     configureOrm({ database: ':memory:' })
     User = createModel(UserDef)
     Post = createModel(PostDef)
     Tag = createModel(TagDef)
-    createTableFromModel(UserDef)
-    createTableFromModel(PostDef)
-    createTableFromModel(TagDef)
+    await createTableFromModel(UserDef)
+    await createTableFromModel(PostDef)
+    await createTableFromModel(TagDef)
   })
 
   // ---------------------------------------------------------------
   // 1. select() narrows columns on the returned ModelInstance
   // ---------------------------------------------------------------
-  test('select() narrows .get() key to selected columns only', () => {
+  test('select() narrows .get() key to selected columns only', async () => {
     const builder = User.select('name', 'email')
     // builder.get() returns ModelInstance<UserDef, 'name' | 'email'>[]
     // .get('name') should be valid, .get('password') should NOT compile
     // (we can only test runtime here, but the type param proves narrowing)
-    const results = builder.get()
+    await builder.get()
     // Verify the SQL only selects those columns
     const { sql } = builder.toSql()
     expect(sql).toContain('SELECT name, email FROM users')
@@ -108,17 +108,17 @@ describe('type narrowing', () => {
   // ---------------------------------------------------------------
   // 3. create() only accepts fillable fields
   // ---------------------------------------------------------------
-  test('create() accepts fillable fields', () => {
-    const user = User.create({ name: 'Alice', email: 'alice@test.com', password: 'secret', age: 30 })
+  test('create() accepts fillable fields', async () => {
+    const user = await User.create({ name: 'Alice', email: 'alice@test.com', password: 'secret', age: 30 })
     expect(user.get('name')).toBe('Alice')
     expect(user.get('email')).toBe('alice@test.com')
     expect(user.get('age')).toBe(30)
     expect(user.id).toBeGreaterThan(0)
   })
 
-  test('create() does not persist guarded fields', () => {
+  test('create() does not persist guarded fields', async () => {
     // 'bio' has fillable: false, guarded: true — should not be persisted via create
-    const user = User.create({ name: 'Bob', email: 'bob@test.com', password: 'secret', age: 25 })
+    const user = await User.create({ name: 'Bob', email: 'bob@test.com', password: 'secret', age: 25 })
     // bio should not be set
     expect(user.get('bio' as any)).toBeUndefined()
   })
@@ -126,8 +126,8 @@ describe('type narrowing', () => {
   // ---------------------------------------------------------------
   // 4. hidden fields excluded from toJSON()
   // ---------------------------------------------------------------
-  test('toJSON() excludes hidden fields', () => {
-    const user = User.create({ name: 'Charlie', email: 'charlie@test.com', password: 'topsecret', age: 35 })
+  test('toJSON() excludes hidden fields', async () => {
+    const user = await User.create({ name: 'Charlie', email: 'charlie@test.com', password: 'topsecret', age: 35 })
     const json = user.toJSON()
     expect(json).toHaveProperty('name')
     expect(json).toHaveProperty('email')
@@ -137,22 +137,22 @@ describe('type narrowing', () => {
   // ---------------------------------------------------------------
   // 5. System fields are conditional on traits
   // ---------------------------------------------------------------
-  test('uuid is present when useUuid trait is enabled', () => {
-    const user = User.create({ name: 'Dave', email: 'dave@test.com', password: 'pwd', age: 40 })
+  test('uuid is present when useUuid trait is enabled', async () => {
+    const user = await User.create({ name: 'Dave', email: 'dave@test.com', password: 'pwd', age: 40 })
     const uuid = user.get('uuid')
     expect(uuid).toBeDefined()
     expect(typeof uuid).toBe('string')
     expect(uuid.length).toBeGreaterThan(0)
   })
 
-  test('timestamps are present when useTimestamps trait is enabled', () => {
-    const user = User.create({ name: 'Eve', email: 'eve@test.com', password: 'pwd', age: 28 })
+  test('timestamps are present when useTimestamps trait is enabled', async () => {
+    const user = await User.create({ name: 'Eve', email: 'eve@test.com', password: 'pwd', age: 28 })
     expect(user.get('created_at')).toBeDefined()
     expect(user.get('updated_at')).toBeDefined()
   })
 
-  test('Tag model has no uuid/timestamps (no traits)', () => {
-    const tag = Tag.create({ label: 'TypeScript' })
+  test('Tag model has no uuid/timestamps (no traits)', async () => {
+    const tag = await Tag.create({ label: 'TypeScript' })
     expect(tag.id).toBeGreaterThan(0)
     expect(tag.get('label')).toBe('TypeScript')
     // Tag has no useUuid or useTimestamps — these columns don't exist
@@ -162,9 +162,9 @@ describe('type narrowing', () => {
   // ---------------------------------------------------------------
   // 6. select() + get() narrowing through chain
   // ---------------------------------------------------------------
-  test('select narrows through the full chain', () => {
-    User.create({ name: 'Frank', email: 'frank@test.com', password: 'pwd', age: 50 })
-    const results = User.select('name', 'age').where('age', '>', 40).get()
+  test('select narrows through the full chain', async () => {
+    await User.create({ name: 'Frank', email: 'frank@test.com', password: 'pwd', age: 50 })
+    const results = await User.select('name', 'age').where('age', '>', 40).get()
     expect(results.length).toBeGreaterThan(0)
     // Each result should have name and age accessible
     const first = results[0]
@@ -185,36 +185,36 @@ describe('type narrowing', () => {
   // ---------------------------------------------------------------
   // 8. Aggregate methods work
   // ---------------------------------------------------------------
-  test('aggregates return numbers', () => {
-    const count = User.count()
+  test('aggregates return numbers', async () => {
+    const count = await User.count()
     expect(typeof count).toBe('number')
     expect(count).toBeGreaterThan(0)
 
-    const maxAge = User.max('age')
+    const maxAge = await User.max('age')
     expect(typeof maxAge).toBe('number')
   })
 
   // ---------------------------------------------------------------
   // 9. find / findOrFail
   // ---------------------------------------------------------------
-  test('find returns instance or undefined', () => {
-    const user = User.find(1)
+  test('find returns instance or undefined', async () => {
+    const user = await User.find(1)
     expect(user).toBeDefined()
     expect(user!.get('name')).toBeDefined()
 
-    const missing = User.find(99999)
+    const missing = await User.find(99999)
     expect(missing).toBeUndefined()
   })
 
-  test('findOrFail throws on missing', () => {
-    expect(() => User.findOrFail(99999)).toThrow()
+  test('findOrFail throws on missing', async () => {
+    await expect(User.findOrFail(99999)).rejects.toThrow()
   })
 
   // ---------------------------------------------------------------
   // 10. Enum type inference
   // ---------------------------------------------------------------
-  test('enum attribute accepts only valid values at runtime', () => {
-    const user = User.create({ name: 'Grace', email: 'grace@test.com', password: 'pwd', age: 22, role: 'admin' })
+  test('enum attribute accepts only valid values at runtime', async () => {
+    const user = await User.create({ name: 'Grace', email: 'grace@test.com', password: 'pwd', age: 22, role: 'admin' })
     const role = user.get('role')
     // Type should be 'admin' | 'user' | 'moderator'
     expect(['admin', 'user', 'moderator']).toContain(role)
@@ -223,9 +223,9 @@ describe('type narrowing', () => {
   // ---------------------------------------------------------------
   // 11. Dynamic where methods (Proxy)
   // ---------------------------------------------------------------
-  test('dynamic whereX methods work', () => {
-    User.create({ name: 'Hank', email: 'hank@test.com', password: 'pwd', age: 33 })
-    const result = (User as any).whereName('Hank').first()
+  test('dynamic whereX methods work', async () => {
+    await User.create({ name: 'Hank', email: 'hank@test.com', password: 'pwd', age: 33 })
+    const result = await (User as any).whereName('Hank').first()
     expect(result).toBeDefined()
     expect(result.get('name')).toBe('Hank')
   })
@@ -233,15 +233,15 @@ describe('type narrowing', () => {
   // ---------------------------------------------------------------
   // 12. update / delete narrowing
   // ---------------------------------------------------------------
-  test('instance update only sets fillable fields', () => {
-    const user = User.create({ name: 'Ivy', email: 'ivy@test.com', password: 'pwd', age: 27 })
-    user.update({ name: 'Ivy Updated' })
-    user.refresh()
+  test('instance update only sets fillable fields', async () => {
+    const user = await User.create({ name: 'Ivy', email: 'ivy@test.com', password: 'pwd', age: 27 })
+    await user.update({ name: 'Ivy Updated' })
+    await user.refresh()
     expect(user.get('name')).toBe('Ivy Updated')
   })
 
-  test('isDirty / isClean tracking', () => {
-    const user = User.create({ name: 'Jake', email: 'jake@test.com', password: 'pwd', age: 29 })
+  test('isDirty / isClean tracking', async () => {
+    const user = await User.create({ name: 'Jake', email: 'jake@test.com', password: 'pwd', age: 29 })
     expect(user.isClean()).toBe(true)
     user.set('name', 'Jake Modified')
     expect(user.isDirty()).toBe(true)
@@ -252,8 +252,8 @@ describe('type narrowing', () => {
   // ---------------------------------------------------------------
   // 13. Pagination
   // ---------------------------------------------------------------
-  test('paginate returns structured result', () => {
-    const result = User.paginate(1, 2)
+  test('paginate returns structured result', async () => {
+    const result = await User.paginate(1, 2)
     expect(result).toHaveProperty('data')
     expect(result).toHaveProperty('total')
     expect(result).toHaveProperty('page')
@@ -266,19 +266,19 @@ describe('type narrowing', () => {
   // ---------------------------------------------------------------
   // 14. Chunk processing
   // ---------------------------------------------------------------
-  test('chunk processes in batches', () => {
+  test('chunk processes in batches', async () => {
     let processed = 0
-    User.query().chunk(2, (users) => {
+    await User.query().chunk(2, (users) => {
       processed += users.length
     })
-    expect(processed).toBe(User.count())
+    expect(processed).toBe(await User.count())
   })
 
   // ---------------------------------------------------------------
   // 15. Replicate
   // ---------------------------------------------------------------
-  test('replicate creates copy without primary key', () => {
-    const user = User.find(1)!
+  test('replicate creates copy without primary key', async () => {
+    const user = (await User.find(1))!
     const copy = user.replicate()
     expect(copy.id).toBeUndefined()
     expect(copy.get('name')).toBe(user.get('name'))

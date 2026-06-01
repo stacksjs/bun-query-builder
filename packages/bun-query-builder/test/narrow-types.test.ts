@@ -68,8 +68,8 @@ describe('Narrow Type Inference', () => {
   })
 
   describe('ModelInstance.get() narrow types', () => {
-    it('returns string type for string attributes', () => {
-      const user = User.find(1)!
+    it('returns string type for string attributes', async () => {
+      const user = (await User.find(1))!
       const name = user.get('name')
       const email = user.get('email')
 
@@ -84,8 +84,8 @@ describe('Narrow Type Inference', () => {
       const _emailCheck: AssertTrue<AssertEqual<typeof email, string>> = true
     })
 
-    it('returns number type for number attributes', () => {
-      const user = User.find(1)!
+    it('returns number type for number attributes', async () => {
+      const user = (await User.find(1))!
       const age = user.get('age')
       const score = user.get('score')
 
@@ -98,8 +98,8 @@ describe('Narrow Type Inference', () => {
       const _scoreCheck: AssertTrue<AssertEqual<typeof score, number>> = true
     })
 
-    it('returns boolean type for boolean attributes', () => {
-      const user = User.find(1)!
+    it('returns boolean type for boolean attributes', async () => {
+      const user = (await User.find(1))!
       const active = user.get('active')
 
       // SQLite stores booleans as integers, runtime value is 1 or 0
@@ -108,8 +108,8 @@ describe('Narrow Type Inference', () => {
       const _activeCheck: AssertTrue<AssertEqual<typeof active, boolean>> = true
     })
 
-    it('returns literal union type for role attribute', () => {
-      const user = User.find(1)!
+    it('returns literal union type for role attribute', async () => {
+      const user = (await User.find(1))!
       const role = user.get('role')
 
       expect(role).toBe('admin')
@@ -119,8 +119,8 @@ describe('Narrow Type Inference', () => {
       const _roleCheck: AssertTrue<AssertEqual<typeof role, ExpectedRoleType>> = true
     })
 
-    it('returns literal union type for status attribute', () => {
-      const user = User.find(2)!
+    it('returns literal union type for status attribute', async () => {
+      const user = (await User.find(2))!
       const status = user.get('status')
 
       expect(status).toBe('inactive')
@@ -129,8 +129,8 @@ describe('Narrow Type Inference', () => {
       const _statusCheck: AssertTrue<AssertEqual<typeof status, ExpectedStatusType>> = true
     })
 
-    it('returns literal union type for priority attribute', () => {
-      const user = User.find(3)!
+    it('returns literal union type for priority attribute', async () => {
+      const user = (await User.find(3))!
       const priority = user.get('priority')
 
       expect(priority).toBe('medium')
@@ -141,8 +141,8 @@ describe('Narrow Type Inference', () => {
   })
 
   describe('pluck() narrow types', () => {
-    it('returns string[] for string column', () => {
-      const names = User.pluck('name')
+    it('returns string[] for string column', async () => {
+      const names = await User.pluck('name')
 
       expect(Array.isArray(names)).toBe(true)
       expect(names).toContain('Alice')
@@ -151,8 +151,8 @@ describe('Narrow Type Inference', () => {
       const _namesCheck: AssertTrue<AssertEqual<typeof names, string[]>> = true
     })
 
-    it('returns number[] for number column', () => {
-      const ages = User.pluck('age')
+    it('returns number[] for number column', async () => {
+      const ages = await User.pluck('age')
 
       expect(Array.isArray(ages)).toBe(true)
       expect(ages).toContain(25)
@@ -161,8 +161,8 @@ describe('Narrow Type Inference', () => {
       const _agesCheck: AssertTrue<AssertEqual<typeof ages, number[]>> = true
     })
 
-    it('returns literal union array for role column', () => {
-      const roles = User.pluck('role')
+    it('returns literal union array for role column', async () => {
+      const roles = await User.pluck('role')
 
       expect(Array.isArray(roles)).toBe(true)
       expect(roles).toContain('admin')
@@ -173,8 +173,8 @@ describe('Narrow Type Inference', () => {
       const _rolesCheck: AssertTrue<AssertEqual<typeof roles, ExpectedRolesType>> = true
     })
 
-    it('returns literal union array for status column', () => {
-      const statuses = User.pluck('status')
+    it('returns literal union array for status column', async () => {
+      const statuses = await User.pluck('status')
 
       expect(Array.isArray(statuses)).toBe(true)
       expect(statuses).toContain('active')
@@ -184,8 +184,8 @@ describe('Narrow Type Inference', () => {
       const _statusesCheck: AssertTrue<AssertEqual<typeof statuses, ExpectedStatusesType>> = true
     })
 
-    it('returns literal union array for priority column', () => {
-      const priorities = User.pluck('priority')
+    it('returns literal union array for priority column', async () => {
+      const priorities = await User.pluck('priority')
 
       expect(Array.isArray(priorities)).toBe(true)
 
@@ -195,8 +195,8 @@ describe('Narrow Type Inference', () => {
   })
 
   describe('select() narrows available columns', () => {
-    it('limits accessible columns after select', () => {
-      const users = User.select('name', 'role').get()
+    it('limits accessible columns after select', async () => {
+      const users = await User.select('name', 'role').get()
       const user = users[0]
 
       // Can access selected columns
@@ -212,8 +212,8 @@ describe('Narrow Type Inference', () => {
       const _roleCheck: AssertTrue<AssertEqual<typeof role, ExpectedRoleType>> = true
     })
 
-    it('returns correct types with chained select', () => {
-      const users = User.where('active', true).select('email', 'status').get()
+    it('returns correct types with chained select', async () => {
+      const users = await User.where('active', true).select('email', 'status').get()
 
       expect(users.length).toBeGreaterThan(0)
       const email = users[0].get('email')
@@ -228,49 +228,49 @@ describe('Narrow Type Inference', () => {
   })
 
   describe('where() accepts correct value types', () => {
-    it('accepts string for string column', () => {
-      const users = User.where('name', 'Alice').get()
+    it('accepts string for string column', async () => {
+      const users = await User.where('name', 'Alice').get()
       expect(users.length).toBe(1)
       expect(users[0].get('name')).toBe('Alice')
     })
 
-    it('accepts number for number column', () => {
-      const users = User.where('age', 25).get()
+    it('accepts number for number column', async () => {
+      const users = await User.where('age', 25).get()
       expect(users.length).toBe(1)
     })
 
-    it('accepts literal value for literal union column', () => {
-      const admins = User.where('role', 'admin').get()
+    it('accepts literal value for literal union column', async () => {
+      const admins = await User.where('role', 'admin').get()
       expect(admins.length).toBe(1)
       expect(admins[0].get('name')).toBe('Alice')
     })
 
-    it('works with operators', () => {
-      const older = User.where('age', '>', 25).get()
+    it('works with operators', async () => {
+      const older = await User.where('age', '>', 25).get()
       expect(older.length).toBe(2)
     })
   })
 
   describe('whereIn() accepts correct array types', () => {
-    it('accepts string[] for string column', () => {
-      const users = User.whereIn('name', ['Alice', 'Bob']).get()
+    it('accepts string[] for string column', async () => {
+      const users = await User.whereIn('name', ['Alice', 'Bob']).get()
       expect(users.length).toBe(2)
     })
 
-    it('accepts number[] for number column', () => {
-      const users = User.whereIn('age', [25, 30]).get()
+    it('accepts number[] for number column', async () => {
+      const users = await User.whereIn('age', [25, 30]).get()
       expect(users.length).toBe(2)
     })
 
-    it('accepts literal union values for literal column', () => {
-      const users = User.whereIn('role', ['admin', 'moderator']).get()
+    it('accepts literal union values for literal column', async () => {
+      const users = await User.whereIn('role', ['admin', 'moderator']).get()
       expect(users.length).toBe(2)
     })
   })
 
   describe('create() accepts correct fillable types', () => {
-    it('creates with all typed fields', () => {
-      const user = User.create({
+    it('creates with all typed fields', async () => {
+      const user = await User.create({
         name: 'Test User',
         email: 'test-narrow@test.com',
         age: 28,
@@ -286,35 +286,35 @@ describe('Narrow Type Inference', () => {
       expect(user.get('priority')).toBe('medium')
 
       // Cleanup
-      user.delete()
+      await user.delete()
     })
   })
 
   describe('aggregate functions return correct types', () => {
-    it('max() returns correct type', () => {
-      const maxAge = User.max('age')
+    it('max() returns correct type', async () => {
+      const maxAge = await User.max('age')
       expect(maxAge).toBe(35)
 
       // max of numbers should be number (returns 0 if no rows)
       const _maxCheck: AssertTrue<AssertEqual<typeof maxAge, number>> = true
     })
 
-    it('min() returns correct type', () => {
-      const minAge = User.min('age')
+    it('min() returns correct type', async () => {
+      const minAge = await User.min('age')
       expect(minAge).toBe(25)
 
       const _minCheck: AssertTrue<AssertEqual<typeof minAge, number>> = true
     })
 
-    it('avg() returns number', () => {
-      const avgAge = User.avg('age')
+    it('avg() returns number', async () => {
+      const avgAge = await User.avg('age')
       expect(typeof avgAge).toBe('number')
 
       const _avgCheck: AssertTrue<AssertEqual<typeof avgAge, number>> = true
     })
 
-    it('sum() returns number', () => {
-      const totalAge = User.sum('age')
+    it('sum() returns number', async () => {
+      const totalAge = await User.sum('age')
       expect(totalAge).toBe(90) // 25 + 30 + 35
 
       const _sumCheck: AssertTrue<AssertEqual<typeof totalAge, number>> = true
@@ -322,29 +322,29 @@ describe('Narrow Type Inference', () => {
   })
 
   describe('dynamic whereColumn methods', () => {
-    it('whereName() works correctly', () => {
+    it('whereName() works correctly', async () => {
       const UserAny = User as any
-      const users = UserAny.whereName('Alice').get()
+      const users = await UserAny.whereName('Alice').get()
       expect(users.length).toBe(1)
       expect(users[0].get('name')).toBe('Alice')
     })
 
-    it('whereRole() works with literal values', () => {
+    it('whereRole() works with literal values', async () => {
       const UserAny = User as any
-      const admins = UserAny.whereRole('admin').get()
+      const admins = await UserAny.whereRole('admin').get()
       expect(admins.length).toBe(1)
     })
 
-    it('whereStatus() works with literal values', () => {
+    it('whereStatus() works with literal values', async () => {
       const UserAny = User as any
-      const activeUsers = UserAny.whereStatus('active').get()
+      const activeUsers = await UserAny.whereStatus('active').get()
       expect(activeUsers.length).toBe(1)
     })
   })
 
   describe('chained queries preserve types', () => {
-    it('preserves types through where().orderBy().limit()', () => {
-      const users = User
+    it('preserves types through where().orderBy().limit()', async () => {
+      const users = await User
         .where('active', true)
         .orderBy('name')
         .limit(2)
@@ -357,8 +357,8 @@ describe('Narrow Type Inference', () => {
       const _roleCheck: AssertTrue<AssertEqual<typeof role, ExpectedRoleType>> = true
     })
 
-    it('preserves narrow types with select().where()', () => {
-      const users = User
+    it('preserves narrow types with select().where()', async () => {
+      const users = await User
         .select('name', 'role', 'priority')
         .where('role', 'admin')
         .get()
@@ -377,8 +377,8 @@ describe('Narrow Type Inference', () => {
   })
 
   describe('first() and last() preserve types', () => {
-    it('first() returns single instance with correct types', () => {
-      const user = User.where('role', 'admin').first()!
+    it('first() returns single instance with correct types', async () => {
+      const user = (await User.where('role', 'admin').first())!
       const role = user.get('role')
 
       expect(role).toBe('admin')
@@ -387,8 +387,8 @@ describe('Narrow Type Inference', () => {
       const _roleCheck: AssertTrue<AssertEqual<typeof role, ExpectedRoleType>> = true
     })
 
-    it('last() returns single instance with correct types', () => {
-      const user = User.orderBy('id').last()!
+    it('last() returns single instance with correct types', async () => {
+      const user = (await User.orderBy('id').last())!
       const status = user.get('status')
 
       type ExpectedStatusType = 'active' | 'inactive' | 'pending'
@@ -397,20 +397,20 @@ describe('Narrow Type Inference', () => {
   })
 
   describe('update preserves types', () => {
-    it('instance update accepts typed values', () => {
-      const user = User.find(1)!
+    it('instance update accepts typed values', async () => {
+      const user = (await User.find(1))!
       user.set('role', 'moderator')
       user.set('priority', 'critical')
-      user.save()
+      await user.save()
 
-      const updated = User.find(1)!
+      const updated = (await User.find(1))!
       expect(updated.get('role')).toBe('moderator')
       expect(updated.get('priority')).toBe('critical')
 
       // Reset
       user.set('role', 'admin')
       user.set('priority', 'high')
-      user.save()
+      await user.save()
     })
   })
 })

@@ -82,11 +82,11 @@ function makeCoachAthleteModels(opts: { withPivotModel?: boolean, timestamps?: b
 }
 
 describe('BelongsToManyRelationBuilder (Option A)', () => {
-  it('attaches a single related id with extras', () => {
+  it('attaches a single related id with extras', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const athlete = Athlete.create({ name: 'Anna' })
-    const inserted = (coach as any).athletes().attach(athlete.id, { role: 'primary', status: 'active' })
+    const coach = await Coach.create({ name: 'Smith' })
+    const athlete = await Athlete.create({ name: 'Anna' })
+    const inserted = await (coach as any).athletes().attach(athlete.id, { role: 'primary', status: 'active' })
     expect(inserted).toBe(1)
 
     const rows = getDatabase().query('SELECT * FROM coach_athletes').all() as any[]
@@ -96,55 +96,55 @@ describe('BelongsToManyRelationBuilder (Option A)', () => {
     expect(rows[0].role).toBe('primary')
   })
 
-  it('attaches an array of related ids', () => {
+  it('attaches an array of related ids', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    const a2 = Athlete.create({ name: 'Bob' })
-    const a3 = Athlete.create({ name: 'Cara' })
-    const n = (coach as any).athletes().attach([a1.id, a2.id, a3.id])
+    const coach = await Coach.create({ name: 'Smith' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    const a2 = await Athlete.create({ name: 'Bob' })
+    const a3 = await Athlete.create({ name: 'Cara' })
+    const n = await (coach as any).athletes().attach([a1.id, a2.id, a3.id])
     expect(n).toBe(3)
     const rows = getDatabase().query('SELECT * FROM coach_athletes').all() as any[]
     expect(rows.length).toBe(3)
   })
 
-  it('detaches a specific id and detaches all when no id given', () => {
+  it('detaches a specific id and detaches all when no id given', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    const a2 = Athlete.create({ name: 'Bob' })
-    ;(coach as any).athletes().attach([a1.id, a2.id])
-    const removed = (coach as any).athletes().detach(a1.id)
+    const coach = await Coach.create({ name: 'Smith' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    const a2 = await Athlete.create({ name: 'Bob' })
+    await (coach as any).athletes().attach([a1.id, a2.id])
+    const removed = await (coach as any).athletes().detach(a1.id)
     expect(removed).toBe(1)
     const remaining = getDatabase().query('SELECT * FROM coach_athletes').all() as any[]
     expect(remaining.length).toBe(1)
     expect(remaining[0].athlete_id).toBe(a2.id)
 
-    const removedAll = (coach as any).athletes().detach()
+    const removedAll = await (coach as any).athletes().detach()
     expect(removedAll).toBe(1)
     expect(getDatabase().query('SELECT * FROM coach_athletes').all().length).toBe(0)
   })
 
-  it('updateExistingPivot updates extras for a specific (parent, related) pair', () => {
+  it('updateExistingPivot updates extras for a specific (parent, related) pair', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const athlete = Athlete.create({ name: 'Anna' })
-    ;(coach as any).athletes().attach(athlete.id, { role: 'shared' })
-    const updated = (coach as any).athletes().updateExistingPivot(athlete.id, { role: 'primary' })
+    const coach = await Coach.create({ name: 'Smith' })
+    const athlete = await Athlete.create({ name: 'Anna' })
+    await (coach as any).athletes().attach(athlete.id, { role: 'shared' })
+    const updated = await (coach as any).athletes().updateExistingPivot(athlete.id, { role: 'primary' })
     expect(updated).toBe(1)
     const row = getDatabase().query('SELECT * FROM coach_athletes WHERE coach_id = ? AND athlete_id = ?').get(coach.id, athlete.id) as any
     expect(row.role).toBe('primary')
   })
 
-  it('sync attaches new, detaches missing, updates existing', () => {
+  it('sync attaches new, detaches missing, updates existing', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    const a2 = Athlete.create({ name: 'Bob' })
-    const a3 = Athlete.create({ name: 'Cara' })
-    ;(coach as any).athletes().attach([a1.id, a2.id], { role: 'shared' })
+    const coach = await Coach.create({ name: 'Smith' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    const a2 = await Athlete.create({ name: 'Bob' })
+    const a3 = await Athlete.create({ name: 'Cara' })
+    await (coach as any).athletes().attach([a1.id, a2.id], { role: 'shared' })
 
-    const result = (coach as any).athletes().sync([
+    const result = await (coach as any).athletes().sync([
       { id: a2.id, role: 'primary' },
       { id: a3.id, role: 'shared' },
     ])
@@ -159,74 +159,74 @@ describe('BelongsToManyRelationBuilder (Option A)', () => {
     ])
   })
 
-  it('toggle flips attached/detached state', () => {
+  it('toggle flips attached/detached state', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    const a2 = Athlete.create({ name: 'Bob' })
-    ;(coach as any).athletes().attach(a1.id)
+    const coach = await Coach.create({ name: 'Smith' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    const a2 = await Athlete.create({ name: 'Bob' })
+    await (coach as any).athletes().attach(a1.id)
 
-    const r = (coach as any).athletes().toggle([a1.id, a2.id])
+    const r = await (coach as any).athletes().toggle([a1.id, a2.id])
     expect(r.attached).toEqual([a2.id])
     expect(r.detached).toEqual([a1.id])
     const remaining = getDatabase().query('SELECT athlete_id FROM coach_athletes').all() as any[]
     expect(remaining.map(r => r.athlete_id)).toEqual([a2.id])
   })
 
-  it('get() returns related model instances with .pivot extras', () => {
+  it('get() returns related model instances with .pivot extras', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    const a2 = Athlete.create({ name: 'Bob' })
-    ;(coach as any).athletes().attach(a1.id, { role: 'primary' })
-    ;(coach as any).athletes().attach(a2.id, { role: 'shared' })
-    const all = (coach as any).athletes().get()
+    const coach = await Coach.create({ name: 'Smith' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    const a2 = await Athlete.create({ name: 'Bob' })
+    await (coach as any).athletes().attach(a1.id, { role: 'primary' })
+    await (coach as any).athletes().attach(a2.id, { role: 'shared' })
+    const all = await (coach as any).athletes().get()
     expect(all.length).toBe(2)
     const roles = all.map((a: any) => a.pivot.role).sort()
     expect(roles).toEqual(['primary', 'shared'])
     expect(all[0].get('name')).toBeDefined()
   })
 
-  it('wherePivot filters by a pivot column', () => {
+  it('wherePivot filters by a pivot column', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    const a2 = Athlete.create({ name: 'Bob' })
-    ;(coach as any).athletes().attach(a1.id, { role: 'primary' })
-    ;(coach as any).athletes().attach(a2.id, { role: 'shared' })
-    const onlyPrimary = (coach as any).athletes().wherePivot('role', 'primary').get()
+    const coach = await Coach.create({ name: 'Smith' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    const a2 = await Athlete.create({ name: 'Bob' })
+    await (coach as any).athletes().attach(a1.id, { role: 'primary' })
+    await (coach as any).athletes().attach(a2.id, { role: 'shared' })
+    const onlyPrimary = await (coach as any).athletes().wherePivot('role', 'primary').get()
     expect(onlyPrimary.length).toBe(1)
     expect(onlyPrimary[0].get('name')).toBe('Anna')
   })
 
-  it('wherePivotIn filters by a list', () => {
+  it('wherePivotIn filters by a list', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    const a2 = Athlete.create({ name: 'Bob' })
-    const a3 = Athlete.create({ name: 'Cara' })
-    ;(coach as any).athletes().attach(a1.id, { status: 'active' })
-    ;(coach as any).athletes().attach(a2.id, { status: 'pending' })
-    ;(coach as any).athletes().attach(a3.id, { status: 'archived' })
-    const filtered = (coach as any).athletes().wherePivotIn('status', ['active', 'pending']).get()
+    const coach = await Coach.create({ name: 'Smith' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    const a2 = await Athlete.create({ name: 'Bob' })
+    const a3 = await Athlete.create({ name: 'Cara' })
+    await (coach as any).athletes().attach(a1.id, { status: 'active' })
+    await (coach as any).athletes().attach(a2.id, { status: 'pending' })
+    await (coach as any).athletes().attach(a3.id, { status: 'archived' })
+    const filtered = await (coach as any).athletes().wherePivotIn('status', ['active', 'pending']).get()
     expect(filtered.length).toBe(2)
   })
 
-  it('count and exists work via the pivot', () => {
+  it('count and exists work via the pivot', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const coach = Coach.create({ name: 'Smith' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    expect((coach as any).athletes().exists()).toBe(false)
-    ;(coach as any).athletes().attach(a1.id)
-    expect((coach as any).athletes().count()).toBe(1)
-    expect((coach as any).athletes().exists()).toBe(true)
+    const coach = await Coach.create({ name: 'Smith' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    expect(await (coach as any).athletes().exists()).toBe(false)
+    await (coach as any).athletes().attach(a1.id)
+    expect(await (coach as any).athletes().count()).toBe(1)
+    expect(await (coach as any).athletes().exists()).toBe(true)
   })
 
-  it('pivot timestamps are filled when enabled', () => {
+  it('pivot timestamps are filled when enabled', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels({ timestamps: true })
-    const coach = Coach.create({ name: 'Smith' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    ;(coach as any).athletes().attach(a1.id, { role: 'shared' })
+    const coach = await Coach.create({ name: 'Smith' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    await (coach as any).athletes().attach(a1.id, { role: 'shared' })
     const row = getDatabase().query('SELECT * FROM coach_athletes').get() as any
     expect(row.created_at).toBeTruthy()
     expect(row.updated_at).toBeTruthy()
@@ -234,17 +234,17 @@ describe('BelongsToManyRelationBuilder (Option A)', () => {
 })
 
 describe('belongsToMany eager loading via Model.query().with(...)', () => {
-  it('loads pivot extras as `.pivot` on each related instance', () => {
+  it('loads pivot extras as `.pivot` on each related instance', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels()
-    const c1 = Coach.create({ name: 'Smith' })
-    const c2 = Coach.create({ name: 'Jones' })
-    const a1 = Athlete.create({ name: 'Anna' })
-    const a2 = Athlete.create({ name: 'Bob' })
-    ;(c1 as any).athletes().attach(a1.id, { role: 'primary' })
-    ;(c1 as any).athletes().attach(a2.id, { role: 'shared' })
-    ;(c2 as any).athletes().attach(a2.id, { role: 'primary' })
+    const c1 = await Coach.create({ name: 'Smith' })
+    const c2 = await Coach.create({ name: 'Jones' })
+    const a1 = await Athlete.create({ name: 'Anna' })
+    const a2 = await Athlete.create({ name: 'Bob' })
+    await (c1 as any).athletes().attach(a1.id, { role: 'primary' })
+    await (c1 as any).athletes().attach(a2.id, { role: 'shared' })
+    await (c2 as any).athletes().attach(a2.id, { role: 'primary' })
 
-    const coaches = (Coach as any).query().with('athletes').get() as any[]
+    const coaches = await (Coach as any).query().with('athletes').get() as any[]
     const sm = coaches.find((c: any) => c.get('name') === 'Smith')
     const js = coaches.find((c: any) => c.get('name') === 'Jones')
     const smAthletes = sm.getRelation('athletes') as any[]
@@ -258,18 +258,18 @@ describe('belongsToMany eager loading via Model.query().with(...)', () => {
 })
 
 describe('BelongsToManyRelationBuilder (Option B `through:`)', () => {
-  it('reads pivot columns from the through-model attributes', () => {
+  it('reads pivot columns from the through-model attributes', async () => {
     const { Coach, Athlete } = makeCoachAthleteModels({ withPivotModel: true })
-    const coach = Coach.create({ name: 'Smith' })
-    const athlete = Athlete.create({ name: 'Anna' })
-    ;(coach as any).athletes().attach(athlete.id, { role: 'primary', status: 'active' })
-    const all = (coach as any).athletes().get()
+    const coach = await Coach.create({ name: 'Smith' })
+    const athlete = await Athlete.create({ name: 'Anna' })
+    await (coach as any).athletes().attach(athlete.id, { role: 'primary', status: 'active' })
+    const all = await (coach as any).athletes().get()
     expect(all.length).toBe(1)
     expect(all[0].pivot.role).toBe('primary')
     expect(all[0].pivot.status).toBe('active')
   })
 
-  it('throws when through-model is not registered', () => {
+  it('throws when through-model is not registered', async () => {
     defineModel({
       name: 'Athlete',
       table: 'athletes',
@@ -286,7 +286,7 @@ describe('BelongsToManyRelationBuilder (Option B `through:`)', () => {
     const db = getDatabase()
     db.run('CREATE TABLE coaches (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)')
     db.run('CREATE TABLE athletes (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)')
-    const coach = Coach.create({ name: 'Smith' })
+    const coach = await Coach.create({ name: 'Smith' })
     expect(() => (coach as any).athletes()).toThrow(/unknown through model 'GhostPivot'/)
   })
 })

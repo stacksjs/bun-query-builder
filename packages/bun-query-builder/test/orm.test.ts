@@ -113,30 +113,30 @@ describe('Dynamic ORM', () => {
   })
 
   describe('createTableFromModel', () => {
-    it('creates users table from User model', () => {
-      createTableFromModel(UserDefinition as ModelDefinition)
+    it('creates users table from User model', async () => {
+      await createTableFromModel(UserDefinition as ModelDefinition)
 
       // Check table exists
       const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").all()
       expect(tables.length).toBe(1)
     })
 
-    it('creates trails table from Trail model', () => {
-      createTableFromModel(TrailDefinition as ModelDefinition)
+    it('creates trails table from Trail model', async () => {
+      await createTableFromModel(TrailDefinition as ModelDefinition)
 
       const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='trails'").all()
       expect(tables.length).toBe(1)
     })
 
-    it('creates activities table from Activity model', () => {
-      createTableFromModel(ActivityDefinition as ModelDefinition)
+    it('creates activities table from Activity model', async () => {
+      await createTableFromModel(ActivityDefinition as ModelDefinition)
 
       const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='activities'").all()
       expect(tables.length).toBe(1)
     })
 
-    it('creates reviews table from Review model', () => {
-      createTableFromModel(ReviewDefinition as ModelDefinition)
+    it('creates reviews table from Review model', async () => {
+      await createTableFromModel(ReviewDefinition as ModelDefinition)
 
       const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='reviews'").all()
       expect(tables.length).toBe(1)
@@ -152,7 +152,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('creates a new user', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'John Doe',
         email: 'john@test.com',
         password: 'hashedpassword',
@@ -164,70 +164,70 @@ describe('Dynamic ORM', () => {
     })
 
     it('finds user by id', async () => {
-      const created = User.create({
+      const created = await User.create({
         name: 'Jane Doe',
         email: 'jane@test.com',
         password: 'hashedpassword',
       })
 
-      const found = User.find(created.id!)
+      const found = await User.find(created.id!)
       expect(found).toBeDefined()
       expect(found?.get('name')).toBe('Jane Doe')
     })
 
     it('returns undefined for non-existent id', async () => {
-      const found = User.find(99999)
+      const found = await User.find(99999)
       expect(found).toBeUndefined()
     })
 
     it('throws on findOrFail for non-existent id', async () => {
-      expect(() => User.findOrFail(99999)).toThrow('User with id 99999 not found')
+      await expect(User.findOrFail(99999)).rejects.toThrow('User with id 99999 not found')
     })
 
     it('updates a user', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'Original Name',
         email: 'original@test.com',
         password: 'pass',
       })
 
-      user.update({ name: 'Updated Name' })
-      const updated = User.find(user.id!)
+      await user.update({ name: 'Updated Name' })
+      const updated = await User.find(user.id!)
 
       expect(updated?.get('name')).toBe('Updated Name')
     })
 
     it('deletes a user', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'To Delete',
         email: 'delete@test.com',
         password: 'pass',
       })
 
       const id = user.id!
-      user.delete()
+      await user.delete()
 
-      const found = User.find(id)
+      const found = await User.find(id)
       expect(found).toBeUndefined()
     })
 
     it('destroys user by id', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'To Destroy',
         email: 'destroy@test.com',
         password: 'pass',
       })
 
       const id = user.id!
-      const result = User.destroy(id)
+      const result = await User.destroy(id)
 
       expect(result).toBe(true)
-      const found = User.find(id)
+      const found = await User.find(id)
       expect(found).toBeUndefined()
     })
 
     it('creates multiple users', async () => {
-      const users = User.createMany([
+      const users = await User.createMany([
         { name: 'User 1', email: 'user1@test.com', password: 'pass' },
         { name: 'User 2', email: 'user2@test.com', password: 'pass' },
         { name: 'User 3', email: 'user3@test.com', password: 'pass' },
@@ -246,7 +246,7 @@ describe('Dynamic ORM', () => {
       // Clear and seed test data
       db.run('DELETE FROM users')
 
-      User.createMany([
+      await User.createMany([
         { name: 'Alice', email: 'alice@test.com', password: 'pass' },
         { name: 'Bob', email: 'bob@test.com', password: 'pass' },
         { name: 'Charlie', email: 'charlie@test.com', password: 'pass' },
@@ -256,107 +256,107 @@ describe('Dynamic ORM', () => {
     })
 
     it('gets all users', async () => {
-      const users = User.all()
+      const users = await User.all()
       expect(users.length).toBe(5)
     })
 
     it('gets first user', async () => {
-      const user = User.first()
+      const user = await User.first()
       expect(user).toBeDefined()
       expect(user?.get('name')).toBe('Alice')
     })
 
     it('gets last user', async () => {
-      const user = User.last()
+      const user = await User.last()
       expect(user).toBeDefined()
       expect(user?.get('name')).toBe('Eve')
     })
 
     it('filters with where', async () => {
-      const users = User.where('name', 'Alice').get()
+      const users = await User.where('name', 'Alice').get()
       expect(users.length).toBe(1)
       expect(users[0].get('name')).toBe('Alice')
     })
 
     it('filters with whereLike', async () => {
-      const users = User.whereLike('email', '%@test.com').get()
+      const users = await User.whereLike('email', '%@test.com').get()
       expect(users.length).toBe(5)
     })
 
     it('chains where clauses', async () => {
-      const users = User.where('name', 'Alice').where('email', 'alice@test.com').get()
+      const users = await User.where('name', 'Alice').where('email', 'alice@test.com').get()
       expect(users.length).toBe(1)
     })
 
     it('uses orWhere', async () => {
-      const users = User.where('name', 'Alice').orWhere('name', 'Bob').get()
+      const users = await User.where('name', 'Alice').orWhere('name', 'Bob').get()
       expect(users.length).toBe(2)
     })
 
     it('uses whereIn', async () => {
-      const users = User.whereIn('name', ['Alice', 'Charlie', 'Eve']).get()
+      const users = await User.whereIn('name', ['Alice', 'Charlie', 'Eve']).get()
       expect(users.length).toBe(3)
     })
 
     it('uses whereNotIn', async () => {
-      const users = User.whereNotIn('name', ['Alice', 'Bob']).get()
+      const users = await User.whereNotIn('name', ['Alice', 'Bob']).get()
       expect(users.length).toBe(3)
     })
 
     it('orders by column ascending', async () => {
-      const users = User.orderBy('name', 'asc').get()
+      const users = await User.orderBy('name', 'asc').get()
       expect(users[0].get('name')).toBe('Alice')
       expect(users[4].get('name')).toBe('Eve')
     })
 
     it('orders by column descending', async () => {
-      const users = User.orderByDesc('name').get()
+      const users = await User.orderByDesc('name').get()
       expect(users[0].get('name')).toBe('Eve')
       expect(users[4].get('name')).toBe('Alice')
     })
 
     it('limits results', async () => {
-      const users = User.limit(2).get()
+      const users = await User.limit(2).get()
       expect(users.length).toBe(2)
     })
 
     it('uses take alias for limit', async () => {
-      const users = User.take(3).get()
+      const users = await User.take(3).get()
       expect(users.length).toBe(3)
     })
 
     it('skips/offsets results', async () => {
-      const users = User.orderBy('name').skip(2).take(2).get()
+      const users = await User.orderBy('name').skip(2).take(2).get()
       expect(users.length).toBe(2)
       expect(users[0].get('name')).toBe('Charlie')
     })
 
     it('selects specific columns', async () => {
-      const users = User.select('name', 'email').get()
+      const users = await User.select('name', 'email').get()
       expect(users.length).toBe(5)
       expect(users[0].get('name')).toBeDefined()
     })
 
     it('counts records', async () => {
-      const count = User.count()
+      const count = await User.count()
       expect(count).toBe(5)
     })
 
     it('counts with where', async () => {
-      const count = User.where('name', 'Alice').count()
+      const count = await User.where('name', 'Alice').count()
       expect(count).toBe(1)
     })
 
     it('checks existence', async () => {
-      const exists = User.where('name', 'Alice').exists()
+      const exists = await User.where('name', 'Alice').exists()
       expect(exists).toBe(true)
 
-      const notExists = User.where('name', 'Nobody').exists()
+      const notExists = await User.where('name', 'Nobody').exists()
       expect(notExists).toBe(false)
     })
 
     it('paginates results', async () => {
-      const result = User.paginate(1, 2)
+      const result = await User.paginate(1, 2)
       expect(result.data.length).toBe(2)
       expect(result.total).toBe(5)
       expect(result.page).toBe(1)
@@ -365,29 +365,29 @@ describe('Dynamic ORM', () => {
     })
 
     it('paginates second page', async () => {
-      const result = User.paginate(2, 2)
+      const result = await User.paginate(2, 2)
       expect(result.data.length).toBe(2)
       expect(result.page).toBe(2)
     })
 
     it('paginates last page', async () => {
-      const result = User.paginate(3, 2)
+      const result = await User.paginate(3, 2)
       expect(result.data.length).toBe(1) // 5 total, 2 per page, page 3 has 1
       expect(result.page).toBe(3)
     })
 
     it('uses latest helper', async () => {
-      const users = User.latest('id').take(1).get()
+      const users = await User.latest('id').take(1).get()
       expect(users[0].get('name')).toBe('Eve')
     })
 
     it('uses oldest helper', async () => {
-      const users = User.oldest('id').take(1).get()
+      const users = await User.oldest('id').take(1).get()
       expect(users[0].get('name')).toBe('Alice')
     })
 
     it('plucks single column', async () => {
-      const names = User.orderBy('name').pluck('name')
+      const names = await User.orderBy('name').pluck('name')
       expect(names).toEqual(['Alice', 'Bob', 'Charlie', 'Diana', 'Eve'])
     })
   })
@@ -397,7 +397,7 @@ describe('Dynamic ORM', () => {
 
     beforeEach(async () => {
       db.run('DELETE FROM users')
-      User.createMany([
+      await User.createMany([
         { name: 'Alice', email: 'alice@test.com', password: 'pass' },
         { name: 'Bob', email: 'bob@test.com', password: 'pass' },
         { name: 'Charlie', email: 'charlie@test.com', password: 'pass' },
@@ -405,24 +405,24 @@ describe('Dynamic ORM', () => {
     })
 
     it('bulk updates matching records', async () => {
-      const count = User.where('name', 'Alice').update({ name: 'Updated Alice' })
+      const count = await User.where('name', 'Alice').update({ name: 'Updated Alice' })
       expect(count).toBe(1)
 
-      const user = User.where('name', 'Updated Alice').first()
+      const user = await User.where('name', 'Updated Alice').first()
       expect(user).toBeDefined()
     })
 
     it('bulk deletes matching records', async () => {
-      const count = User.where('name', 'Alice').delete()
+      const count = await User.where('name', 'Alice').delete()
       expect(count).toBe(1)
 
-      const total = User.count()
+      const total = await User.count()
       expect(total).toBe(2)
     })
 
     it('truncates table', async () => {
-      User.truncate()
-      const count = User.count()
+      await User.truncate()
+      const count = await User.count()
       expect(count).toBe(0)
     })
   })
@@ -435,7 +435,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('tracks dirty state', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'Test User',
         email: 'test@test.com',
         password: 'pass',
@@ -450,7 +450,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('tracks clean state', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'Test User',
         email: 'test@test.com',
         password: 'pass',
@@ -462,7 +462,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('gets original values', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'Original',
         email: 'original@test.com',
         password: 'pass',
@@ -474,7 +474,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('gets changes', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'Original',
         email: 'original@test.com',
         password: 'pass',
@@ -497,7 +497,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('converts to JSON excluding hidden fields', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'Test User',
         email: 'test@test.com',
         password: 'secretpassword',
@@ -510,7 +510,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('refreshes from database', async () => {
-      const user = User.create({
+      const user = await User.create({
         name: 'Original',
         email: 'original@test.com',
         password: 'pass',
@@ -523,7 +523,7 @@ describe('Dynamic ORM', () => {
       expect(user.get('name')).toBe('Original')
 
       // Refresh from database
-      user.refresh()
+      await user.refresh()
       expect(user.get('name')).toBe('Updated')
     })
   })
@@ -536,7 +536,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('firstOrCreate creates when not exists', async () => {
-      const user = User.firstOrCreate(
+      const user = await User.firstOrCreate(
         { email: 'new@test.com' },
         { name: 'New User', password: 'pass' }
       )
@@ -546,13 +546,13 @@ describe('Dynamic ORM', () => {
     })
 
     it('firstOrCreate returns existing when exists', async () => {
-      User.create({
+      await User.create({
         name: 'Existing',
         email: 'existing@test.com',
         password: 'pass',
       })
 
-      const user = User.firstOrCreate(
+      const user = await User.firstOrCreate(
         { email: 'existing@test.com' },
         { name: 'New Name', password: 'newpass' }
       )
@@ -561,7 +561,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('updateOrCreate creates when not exists', async () => {
-      const user = User.updateOrCreate(
+      const user = await User.updateOrCreate(
         { email: 'new@test.com' },
         { name: 'New User', password: 'pass' }
       )
@@ -570,13 +570,13 @@ describe('Dynamic ORM', () => {
     })
 
     it('updateOrCreate updates when exists', async () => {
-      User.create({
+      await User.create({
         name: 'Original',
         email: 'existing@test.com',
         password: 'pass',
       })
 
-      const user = User.updateOrCreate(
+      const user = await User.updateOrCreate(
         { email: 'existing@test.com' },
         { name: 'Updated Name' }
       )
@@ -584,7 +584,7 @@ describe('Dynamic ORM', () => {
       expect(user.get('name')).toBe('Updated Name')
 
       // Verify only one record exists
-      const count = User.count()
+      const count = await User.count()
       expect(count).toBe(1)
     })
   })
@@ -594,7 +594,7 @@ describe('Dynamic ORM', () => {
 
     beforeAll(async () => {
       db.run('DELETE FROM users')
-      User.createMany([
+      await User.createMany([
         { name: 'User 1', email: 'user1@test.com', password: 'pass' },
         { name: 'User 2', email: 'user2@test.com', password: 'pass' },
         { name: 'User 3', email: 'user3@test.com', password: 'pass' },
@@ -602,10 +602,10 @@ describe('Dynamic ORM', () => {
     })
 
     it('finds multiple by ids', async () => {
-      const all = User.all()
+      const all = await User.all()
       const ids = [all[0].id, all[2].id]
 
-      const users = User.findMany(ids as number[])
+      const users = await User.findMany(ids as number[])
       expect(users.length).toBe(2)
     })
   })
@@ -620,7 +620,7 @@ describe('Dynamic ORM', () => {
       await seedModel(UserDefinition as ModelDefinition, 5, mockFaker)
 
       const User = createModel(UserDefinition as ModelDefinition)
-      const count = User.count()
+      const count = await User.count()
       expect(count).toBe(5)
     })
 
@@ -628,7 +628,7 @@ describe('Dynamic ORM', () => {
       await seedModel(TrailDefinition as ModelDefinition, 3, mockFaker)
 
       const Trail = createModel(TrailDefinition as ModelDefinition)
-      const count = Trail.count()
+      const count = await Trail.count()
       expect(count).toBe(3)
     })
 
@@ -647,7 +647,7 @@ describe('Dynamic ORM', () => {
         },
       }
 
-      createTableFromModel(smallModel)
+      await createTableFromModel(smallModel)
       await seedModel(smallModel, undefined, mockFaker)
 
       const result = db.query('SELECT COUNT(*) as count FROM test_models').get() as { count: number }
@@ -675,7 +675,7 @@ describe('Dynamic ORM', () => {
         },
       }
 
-      createTableFromModel(simpleModel)
+      await createTableFromModel(simpleModel)
       // No faker passed - will use @stacksjs/ts-faker internally with compat layer
       await seedModel(simpleModel, 2)
 
@@ -697,7 +697,7 @@ describe('Dynamic ORM', () => {
 
     beforeAll(async () => {
       db.run('DELETE FROM users')
-      User.createMany([
+      await User.createMany([
         { name: 'Alice', email: 'alice@test.com', password: 'pass' },
         { name: 'Bob', email: 'bob@test.com', password: 'pass' },
       ])
@@ -754,7 +754,7 @@ catch { /* column may exist */ }
 catch { /* column may exist */ }
 
       // Create test data
-      User.createMany([
+      await User.createMany([
         { name: 'Hiker Alice', email: 'alice@hiking.com', password: 'pass' },
         { name: 'Trail Runner Bob', email: 'bob@running.com', password: 'pass' },
       ])
@@ -781,35 +781,35 @@ catch { /* column may exist */ }
     })
 
     it('finds trails by difficulty', async () => {
-      const hardTrails = Trail.where('difficulty', 'hard').get()
+      const hardTrails = await Trail.where('difficulty', 'hard').get()
       expect(hardTrails.length).toBe(1)
       expect(hardTrails[0].get('name')).toBe('Mountain Peak Trail')
     })
 
     it('finds trails with rating above threshold', async () => {
-      const topTrails = Trail.where('rating', '>', 4.5).get()
+      const topTrails = await Trail.where('rating', '>', 4.5).get()
       expect(topTrails.length).toBe(1)
     })
 
     it('finds activities by type', async () => {
-      const hikes = Activity.where('activityType', 'Hike').get()
+      const hikes = await Activity.where('activityType', 'Hike').get()
       expect(hikes.length).toBe(1)
     })
 
     it('finds activities by user', async () => {
-      const userActivities = Activity.where('user_id', 1).get()
+      const userActivities = await Activity.where('user_id', 1).get()
       expect(userActivities.length).toBe(1)
       expect(userActivities[0].get('activityType')).toBe('Hike')
     })
 
     it('finds reviews by rating', async () => {
-      const fiveStars = Review.where('rating', 5).get()
+      const fiveStars = await Review.where('rating', 5).get()
       expect(fiveStars.length).toBe(1)
       expect(fiveStars[0].get('title')).toBe('Amazing!')
     })
 
     it('combines multiple conditions', async () => {
-      const results = Activity
+      const results = await Activity
         .where('activityType', 'Hike')
         .where('distance', '>', 5)
         .get()
@@ -818,22 +818,22 @@ catch { /* column may exist */ }
     })
 
     it('gets average trail rating', async () => {
-      const avg = Trail.avg('rating')
+      const avg = await Trail.avg('rating')
       expect(avg).toBeCloseTo(4.5, 1)
     })
 
     it('gets total activity distance', async () => {
-      const total = Activity.sum('distance')
+      const total = await Activity.sum('distance')
       expect(total).toBe(10.5)
     })
 
     it('gets max trail distance', async () => {
-      const max = Trail.max('distance')
+      const max = await Trail.max('distance')
       expect(Number(max)).toBe(8.5)
     })
 
     it('gets min elevation', async () => {
-      const min = Trail.min('elevation')
+      const min = await Trail.min('elevation')
       expect(Number(min)).toBe(100)
     })
   })
