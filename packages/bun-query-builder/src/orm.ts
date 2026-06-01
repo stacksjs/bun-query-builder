@@ -31,6 +31,21 @@ import { config } from './config'
 import { getOrCreateBunSql } from './db'
 
 /**
+ * Current timestamp formatted for the active dialect.
+ *
+ * Postgres and SQLite both accept the full ISO-8601 string
+ * (`2026-06-01T12:54:58.720Z`). MySQL's `DATETIME` does NOT — it rejects
+ * the `T` separator, the `Z` zone suffix, and sub-second precision beyond
+ * the column definition, raising `Incorrect datetime value`. So for MySQL
+ * we emit the canonical `YYYY-MM-DD HH:MM:SS` form it accepts. Used for all
+ * auto-managed `created_at` / `updated_at` / `deleted_at` writes.
+ */
+function formatNow(): string {
+  const iso = new Date().toISOString()
+  return config.dialect === 'mysql' ? iso.slice(0, 19).replace('T', ' ') : iso
+}
+
+/**
  * Strict identifier pattern for SQL column / table names: starts with
  * a letter or underscore, then letters / digits / underscores only.
  * No quotes, no dots, no spaces, no special characters.
@@ -760,7 +775,7 @@ class ModelInstance<
         const values = [...Object.values(changes), this._attributes[pk]]
 
         if (this._definition.traits?.useTimestamps) {
-          const now = new Date().toISOString()
+          const now = formatNow()
           await exec.run(
             `UPDATE ${this._definition.table} SET ${sets}, updated_at = ? WHERE ${pk} = ?`,
             [...Object.values(changes), now, this._attributes[pk]]
@@ -785,7 +800,7 @@ class ModelInstance<
       }
 
       if (this._definition.traits?.useTimestamps) {
-        const now = new Date().toISOString()
+        const now = formatNow()
         data.created_at = now
         data.updated_at = now
       }
@@ -854,7 +869,7 @@ class ModelInstance<
     if (this._definition.traits?.useSoftDeletes) {
       await exec.run(
         `UPDATE ${this._definition.table} SET deleted_at = ? WHERE ${pk} = ?`,
-        [new Date().toISOString(), pkValue]
+        [formatNow(), pkValue]
       )
     }
     else {
@@ -1373,7 +1388,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
 
   // --- mutation side --------------------------------------------------------
 
-  private now(): string { return new Date().toISOString() }
+  private now(): string { return formatNow() }
 
   /**
    * Attach one or more related rows to the parent. `extras` populate any
@@ -2144,7 +2159,7 @@ class ModelQueryBuilder<
 
     if (this._definition.traits?.useTimestamps) {
       sql += `, updated_at = ?`
-      params.push(new Date().toISOString())
+      params.push(formatNow())
     }
 
     if (this._wheres.length > 0) {
@@ -2306,7 +2321,7 @@ class ModelQueryBuilder<
     const params: unknown[] = entries.map(([, v]) => v)
 
     if (this._definition.traits?.useTimestamps) {
-      params.push(new Date().toISOString())
+      params.push(formatNow())
     }
 
     let sql = `UPDATE ${this._definition.table} SET ${sets}${this._definition.traits?.useTimestamps ? ', updated_at = ?' : ''}`
@@ -2632,7 +2647,7 @@ catch {
     }
 
     if (definition.traits?.useTimestamps) {
-      const now = new Date().toISOString()
+      const now = formatNow()
       data.created_at = now
       data.updated_at = now
     }
