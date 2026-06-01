@@ -2523,7 +2523,7 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     avg: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).avg(column),
     sum: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).sum(column),
 
-    pluck<K extends ColumnName<TDef>>(column: K): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[] {
+    pluck<K extends ColumnName<TDef>>(column: K): Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]> {
       return new ModelQueryBuilder<TDef>(definition).pluck(column)
     },
   }
