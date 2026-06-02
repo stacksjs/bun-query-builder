@@ -1,3 +1,24 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.24...v0.1.25)
+
+## 💥 Breaking Changes
+
+- fix!: route ORM model API through configured dialect (#1021) ([ceae1e0](https://github.com/stacksjs/bun-query-builder/commit/ceae1e0)) _(by chrisbreuer <chrisbreuer93@gmail.com>)_ ([#1021](https://github.com/stacksjs/bun-query-builder/issues/1021), [#1021](https://github.com/stacksjs/bun-query-builder/issues/1021))
+
+## 🐛 Bug Fixes
+
+- **db**: fail loudly on non-sqlite connection errors instead of silent in-memory fallback (#1022) ([98c871f](https://github.com/stacksjs/bun-query-builder/commit/98c871f)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1022](https://github.com/stacksjs/bun-query-builder/issues/1022), [#1022](https://github.com/stacksjs/bun-query-builder/issues/1022))
+- **orm**: correct async return types after dialect migration ([fdd4701](https://github.com/stacksjs/bun-query-builder/commit/fdd4701)) _(by chrisbreuer <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.25 ([89ffe57](https://github.com/stacksjs/bun-query-builder/commit/89ffe57)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([18a7801](https://github.com/stacksjs/bun-query-builder/commit/18a7801)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _chrisbreuer <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.23...v0.1.24)
 
 ## 🐛 Bug Fixes
