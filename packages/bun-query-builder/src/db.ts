@@ -404,22 +404,26 @@ export function getBunSql(): SQL {
     return sql
   }
   catch (error) {
-    if (config.verbose) {
-      console.warn(`[query-builder] Failed to create connection: ${(error as Error).message}`)
-    }
-    // If connection fails (e.g., database doesn't exist), use in-memory SQLite
-    // This allows tests to import modules without requiring a database
-    try {
+    // Surface the real construction failure UNCONDITIONALLY — never gate it
+    // behind `verbose`. The previous silent fallback was the root of the
+    // "no such table" confusion in stacksjs/bun-query-builder#1022: a
+    // misconfigured Postgres/MySQL connection string (e.g. an unparseable URL
+    // from un-encoded credentials/database name) was swapped for a fresh,
+    // empty in-memory SQLite, so every subsequent query failed with a
+    // misleading "no such table" instead of the actual connection error.
+    console.error(
+      `[query-builder] Failed to create database connection for dialect '${dialect}': ${(error as Error).message}`,
+    )
+
+    // Only the sqlite dialect may fall back to in-memory SQLite. For a real
+    // network driver, masking the failure with an empty SQLite db hides the
+    // misconfiguration and corrupts every later query (and poisons the cached
+    // connection until resetConnection()). Fail loudly instead — re-throw the
+    // original error so callers see the precise cause.
+    if (dialect === 'sqlite') {
       return createSQLiteSQL(':memory:')
     }
-    catch {
-      // If even the fallback fails, return a mock SQL object
-      return {
-        query: () => Promise.resolve([]),
-        execute: () => Promise.resolve([]),
-        close: () => Promise.resolve(),
-      } as any
-    }
+    throw error
   }
 }
 
