@@ -65,6 +65,81 @@ describe('migration planner', () => {
     expect(sql.join('\n').toLowerCase()).toContain('unique index')
   })
 
+  // stacksjs/bun-query-builder#1023: object-form belongsTo crashed the
+  // generator with "str.replace is not a function" because the entry object
+  // was handed straight to the snake_case helper. It must be normalized to a
+  // model name first, and its foreignKey/onDelete honored.
+  it('accepts object-form belongsTo without crashing and honors foreignKey/onDelete', () => {
+    const m = defineModels({
+      JudgeReview: {
+        name: 'JudgeReview',
+        table: 'judge_reviews',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } } },
+      },
+      User: {
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } } },
+      },
+      ReviewPhoto: {
+        name: 'ReviewPhoto',
+        table: 'review_photos',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } } },
+        // Mixed: object form (with FK config) + plain string form.
+        belongsTo: [
+          { model: 'JudgeReview', foreignKey: 'judge_review_id', onDelete: 'cascade' },
+          'User',
+        ],
+      },
+    } as const)
+
+    const plan = buildMigrationPlan(m as any, { dialect: 'sqlite' })
+    const photos = plan.tables.find(t => t.table === 'review_photos')!
+
+    // Object-form entry → FK column with declared name + ON DELETE behaviour.
+    const judgeFk = photos.columns.find(c => c.name === 'judge_review_id')!
+    expect(judgeFk.references?.table).toBe('judge_reviews')
+    expect(judgeFk.references?.onDelete).toBe('cascade')
+
+    // String-form entry still works alongside it (convention-named column).
+    const userFk = photos.columns.find(c => c.name === 'user_id')!
+    expect(userFk.references?.table).toBe('users')
+
+    // And it renders into DDL with an inline FK + ON DELETE CASCADE (SQLite
+    // uses `REFERENCES tbl(col) ON DELETE ...` on the column, not a named
+    // FOREIGN KEY constraint).
+    const sql = generateSql(plan).join('\n').toLowerCase()
+    expect(sql).toContain('references "judge_reviews"')
+    expect(sql).toContain('on delete cascade')
+  })
+
+  it('accepts record-form belongsTo with object values (#1023)', () => {
+    const m = defineModels({
+      Author: {
+        name: 'Author',
+        table: 'authors',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } } },
+      },
+      Book: {
+        name: 'Book',
+        table: 'books',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } } },
+        belongsTo: { writer: { model: 'Author', onDelete: 'set null' } },
+      },
+    } as const)
+
+    const plan = buildMigrationPlan(m as any, { dialect: 'postgres' })
+    const books = plan.tables.find(t => t.table === 'books')!
+    const fk = books.columns.find(c => c.name === 'author_id')!
+    expect(fk.references?.table).toBe('authors')
+    expect(fk.references?.onDelete).toBe('set null')
+  })
+
   it('honors CompositeIndex.unique flag', () => {
     const m = defineModels({
       Tag: {

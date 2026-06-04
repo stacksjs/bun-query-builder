@@ -49,16 +49,33 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
     tableToModel[table] = name
     primaryKeys[table] = m.primaryKey ?? 'id'
 
-    // Normalize relations to name->ModelName mapping
+    // Normalize relations to name->ModelName mapping. Entries may be plain
+    // model-name strings or object form `{ model, foreignKey?, onDelete? }`
+    // (the latter is what crashed the migration generator in
+    // stacksjs/bun-query-builder#1023); unwrap to the model name either way.
     const toRecord = (v: any): Record<string, string> => {
       if (!v)
         return {}
+      const modelName = (x: any): string | null =>
+        typeof x === 'string' ? x : (x && typeof x === 'object' && typeof x.model === 'string' ? x.model : null)
+      const rec: Record<string, string> = {}
       if (Array.isArray(v)) {
-        const rec: Record<string, string> = {}
-        for (const relName of v) rec[relName] = relName
+        for (const item of v) {
+          const name = modelName(item)
+          if (name)
+            rec[name] = name
+        }
         return rec
       }
-      return v as Record<string, string>
+      if (typeof v === 'object') {
+        for (const [key, val] of Object.entries(v)) {
+          const name = modelName(val)
+          if (name)
+            rec[key] = name
+        }
+        return rec
+      }
+      return {}
     }
     // belongsToMany variant: preserves the config object form (Option A/B).
     const toBelongsToManyRecord = (v: any): Record<string, string | BelongsToManyConfig> => {
