@@ -1,4 +1,4 @@
-import type { DatabaseConfig, SupportedDialect } from './types'
+import type { DatabaseConfig, PoolConfig, SupportedDialect } from './types'
 import { SQL } from 'bun'
 import { Database } from 'bun:sqlite'
 import process from 'node:process'
@@ -375,6 +375,36 @@ function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseCon
 }
 
 /**
+ * Map the qb-level `pool` config (ms-based, ergonomic) onto the Bun SQL
+ * driver's native option names (second resolution). Only the knobs Bun's
+ * `SQL` actually honors are emitted — `min`/`autoReconnect` are accepted on
+ * `PoolConfig` for forward-compatibility but the driver manages them itself,
+ * so they are intentionally not passed through. See
+ * stacksjs/bun-query-builder#1014.
+ */
+export function resolvePoolOptions(pool?: PoolConfig): {
+  max?: number
+  idleTimeout?: number
+  connectionTimeout?: number
+  maxLifetime?: number
+} {
+  if (!pool)
+    return {}
+  const out: { max?: number, idleTimeout?: number, connectionTimeout?: number, maxLifetime?: number } = {}
+  // Bun's pool timeouts are in seconds; convert from ms (rounded, floored at 0).
+  const toSeconds = (ms: number): number => Math.max(0, Math.round(ms / 1000))
+  if (typeof pool.max === 'number' && Number.isFinite(pool.max))
+    out.max = pool.max
+  if (typeof pool.idleTimeoutMs === 'number' && Number.isFinite(pool.idleTimeoutMs))
+    out.idleTimeout = toSeconds(pool.idleTimeoutMs)
+  if (typeof pool.acquireTimeoutMs === 'number' && Number.isFinite(pool.acquireTimeoutMs))
+    out.connectionTimeout = toSeconds(pool.acquireTimeoutMs)
+  if (typeof pool.maxLifetimeMs === 'number' && Number.isFinite(pool.maxLifetimeMs))
+    out.maxLifetime = toSeconds(pool.maxLifetimeMs)
+  return out
+}
+
+/**
  * Returns a Bun SQL instance configured for the current dialect and database settings.
  * For SQLite, uses bun:sqlite directly for better compiled binary support.
  * Handles connection errors gracefully by falling back to in-memory SQLite.
@@ -389,8 +419,12 @@ export function getBunSql(): SQL {
       return createSQLiteSQL(connectionString)
     }
 
-    // For other databases, use Bun's SQL class
-    const sql = new SQL(connectionString)
+    // For other databases, use Bun's SQL class, threading through any
+    // configured connection-pool options (#1014).
+    const poolOptions = resolvePoolOptions(config.database.pool)
+    const sql = Object.keys(poolOptions).length > 0
+      ? new SQL(connectionString, poolOptions)
+      : new SQL(connectionString)
 
     // Attach error handler to prevent unhandled promise rejections
     if (sql && typeof (sql as any).catch === 'function') {

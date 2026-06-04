@@ -235,6 +235,39 @@ export interface FeatureToggles {
   distinctOn: boolean
 }
 
+/**
+ * Connection-pool tuning for the underlying Bun SQL driver (Postgres/MySQL).
+ *
+ * All fields are optional and only apply to the network drivers — SQLite uses
+ * a single `bun:sqlite` handle and ignores pool settings. Timeouts are given in
+ * milliseconds here for ergonomics and converted to the driver's second
+ * resolution at connect time (sub-second values are rounded).
+ *
+ * See stacksjs/bun-query-builder#1014.
+ */
+export interface PoolConfig {
+  /** Max connections in the pool. Default: driver-specific (Bun: 10). Maps to Bun SQL `max`. */
+  max?: number
+  /** Idle time before an open connection is released. Maps to Bun SQL `idleTimeout`. */
+  idleTimeoutMs?: number
+  /** Max time to wait when establishing/acquiring a connection. Maps to Bun SQL `connectionTimeout`. */
+  acquireTimeoutMs?: number
+  /** Max lifetime of a connection before it is recycled. Maps to Bun SQL `maxLifetime`. */
+  maxLifetimeMs?: number
+  /**
+   * Minimum idle connections to keep open. Accepted for forward-compatibility;
+   * Bun's SQL pool manages idle connections internally and does not currently
+   * expose this knob, so it is not yet enforced.
+   */
+  min?: number
+  /**
+   * Enable automatic reconnect on a broken connection. Accepted for
+   * forward-compatibility; Bun's SQL driver reconnects automatically, so this
+   * is effectively always on. Default: true.
+   */
+  autoReconnect?: boolean
+}
+
 export interface DatabaseConfig {
   database: string
   username: string
@@ -242,6 +275,8 @@ export interface DatabaseConfig {
   host: string
   url?: string
   port: number
+  /** Connection-pool tuning passed through to the Bun SQL driver. See {@link PoolConfig}. */
+  pool?: PoolConfig
 }
 
 /**
