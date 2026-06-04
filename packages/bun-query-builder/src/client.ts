@@ -19,6 +19,41 @@ function isRawExpression(expr: unknown): expr is RawExpression {
   return typeof expr === 'object' && expr !== null && 'raw' in expr && typeof (expr as RawExpression).raw === 'string'
 }
 
+/**
+ * Render a SELECT-list entry to its SQL text, unwrapping SQL fragments instead
+ * of letting them stringify to "[object Object]" (stacksjs/bun-query-builder#1016).
+ *
+ * Handles every fragment shape in play:
+ *   - plain column string                       → as-is
+ *   - RawExpression `{ raw: string }`           → `.raw` (sql.raw(...) markers)
+ *   - tagged-template builder `{ raw(): string }`→ `raw()`
+ *   - `{ sql: string, parameters }` fragment    → `.sql` (the shape a `sql`…``
+ *                                                  tagged template emits)
+ *   - anything else with a useful `toString`    → `String(col)`
+ * Text-only, mirroring `selectRaw` — bound parameters inside a select-list
+ * fragment are not threaded (the documented use is literal expressions like
+ * `count(*) as c`).
+ */
+function renderSelectColumn(col: unknown): string {
+  if (typeof col === 'string')
+    return col
+  if (isRawExpression(col))
+    return col.raw
+  if (col && typeof col === 'object') {
+    const anyCol = col as { raw?: unknown, sql?: unknown }
+    if (typeof anyCol.raw === 'function')
+      return String((anyCol.raw as () => unknown)())
+    if (typeof anyCol.sql === 'string')
+      return anyCol.sql
+    const str = String(col)
+    if (str !== '[object Object]')
+      return str
+  }
+  throw new TypeError(
+    `[query-builder] select(): unsupported column ${String(col)} — pass a column name, a string[], or a SQL fragment (e.g. sql\`count(*) as c\`)`,
+  )
+}
+
 // Pre-compiled regex patterns for performance
 const SQL_PATTERNS = {
   SELECT_STAR: /^SELECT\s+\*/i,
@@ -795,8 +830,8 @@ export interface BaseSelectQueryBuilder<
    * const rows = await db.selectFrom('users').addSelect('email').get()
    * ```
    */
-  addSelect: (...columns: (keyof DB[TTable]['columns'] & string | string)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
-  select?: (columns: (keyof DB[TTable]['columns'] & string | string)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  addSelect: (...columns: ((keyof DB[TTable]['columns'] & string) | string | SqlFragment)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  select?: (columns: string | SqlFragment | ((keyof DB[TTable]['columns'] & string) | string | SqlFragment)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   selectAll?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orderByRaw`
@@ -2906,7 +2941,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       selectAll() {
         return this as any
       },
-      select(columns: string | string[]) {
+      select(columns: string | SqlFragment | Array<string | SqlFragment>) {
         if (!columns)
           return this as any
         // Normalize the single-string form so `.select('col')` works at
@@ -2919,25 +2954,30 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const cols = Array.isArray(columns) ? columns : [columns]
         if (cols.length === 0)
           return this as any
+        // Unwrap SQL fragments (e.g. `sql`count(*) as c``) to their text so a
+        // fragment object doesn't stringify to "[object Object]" through
+        // `.join(', ')`. See stacksjs/bun-query-builder#1016.
+        const rendered = cols.map(renderSelectColumn)
         // Replace SELECT * with SELECT specific columns, preserving FROM and JOINs
         const fromIndex = text.indexOf(' FROM ')
         if (fromIndex !== -1) {
-          text = `SELECT ${cols.join(', ')}${text.substring(fromIndex)}`
+          text = `SELECT ${rendered.join(', ')}${text.substring(fromIndex)}`
         }
         else {
-          text = `SELECT ${cols.join(', ')} FROM ${table}`
+          text = `SELECT ${rendered.join(', ')} FROM ${table}`
         }
         return this as any
       },
-      addSelect(...columns: string[]) {
+      addSelect(...columns: Array<string | SqlFragment>) {
         if (!columns.length)
           return this as any
+        const rendered = columns.map(renderSelectColumn)
         const fromIdx = text.indexOf(' FROM ')
         if (fromIdx !== -1) {
-          text = `${text.substring(0, fromIdx)}, ${columns.join(', ')}${text.substring(fromIdx)}`
+          text = `${text.substring(0, fromIdx)}, ${rendered.join(', ')}${text.substring(fromIdx)}`
         }
         else {
-          text += `, ${columns.join(', ')}`
+          text += `, ${rendered.join(', ')}`
         }
         built = null
         return this as any
