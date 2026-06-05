@@ -351,13 +351,21 @@ function toPostgresPlaceholders(sql: string): string {
   return sql.replace(/\?/g, () => `$${++i}`)
 }
 
-/** Extract an affected-row count from a Bun SQL driver result. */
-function extractChanges(res: any): number {
+/**
+ * Extract an affected-row count from a Bun SQL driver result.
+ *
+ * Verified against live Postgres (Bun 1.3): a non-RETURNING `UPDATE`/`DELETE`
+ * returns an empty array carrying `{ count: <affected>, affectedRows: null,
+ * command: 'UPDATE' }`. So `count` must be checked BEFORE the `Array.length`
+ * fallback (which would be 0) — see stacksjs/bun-query-builder#1032. MySQL
+ * surfaces `affectedRows` instead.
+ */
+export function extractChanges(res: any): number {
   if (res == null)
     return 0
   if (typeof res.affectedRows === 'number') // MySQL
     return res.affectedRows
-  if (typeof res.count === 'number') // Postgres command tag
+  if (typeof res.count === 'number') // Postgres command tag (affected rows)
     return res.count
   if (Array.isArray(res))
     return res.length
@@ -365,7 +373,7 @@ function extractChanges(res: any): number {
 }
 
 /** Extract a generated primary key from a Bun SQL driver result. */
-function extractInsertId(res: any): number | bigint | null {
+export function extractInsertId(res: any): number | bigint | null {
   if (res == null || typeof res !== 'object')
     return null
   if ('insertId' in res && res.insertId != null) // MySQL
