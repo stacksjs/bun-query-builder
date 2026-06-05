@@ -2918,6 +2918,54 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return `(SELECT COUNT(*) FROM ${pivot} WHERE ${pivot}.${fkA} = ${parentTable}.${pk})`
     }
 
+    // Add an aggregate of a related column as a correlated subquery column —
+    // withSum/withAvg/withMax/withMin. Mirrors withCount but over a real column.
+    // See stacksjs/bun-query-builder#1046.
+    const applyRelationAggregate = (fn: 'SUM' | 'AVG' | 'MAX' | 'MIN', relation: string, column: string) => {
+      if (!meta)
+        return
+      validateIdentifier(column, `with${fn[0]}${fn.slice(1).toLowerCase()} (column)`)
+      const parentTable = String(table)
+      const rels = meta.relations?.[parentTable]
+      if (!rels)
+        return
+      const found = Object.entries(rels).find(([_t, relMap]) => relMap && typeof relMap === 'object' && relation in relMap)
+      if (!found)
+        return
+      const [type, relMap] = found
+      const entry = (relMap as any)[relation]
+      const targetModel = typeof entry === 'string' ? entry : (entry?.model || entry?.target || entry)
+      const targetTable = meta.modelToTable[targetModel] || targetModel
+      const pk = meta.primaryKeys[parentTable] ?? 'id'
+      validateIdentifier(targetTable, `with${fn} (target table)`)
+      const aggExpr = `${fn}(${targetTable}.${column})`
+      let sub: string
+      if (type === 'hasMany' || type === 'hasOne') {
+        const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
+        validateIdentifier(fk, `with${fn} (foreign key)`)
+        sub = `(SELECT ${aggExpr} FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk})`
+      }
+      else if (type === 'belongsToMany') {
+        const resolved = meta
+          ? resolvePivot(meta as SchemaMeta, parentTable, relation, { singularize, models: (meta as SchemaMeta).models })
+          : null
+        const a = singularize(parentTable)
+        const b = singularize(targetTable)
+        const pivot = resolved?.pivotTable ?? [a, b].sort().join('_')
+        const fkA = resolved?.fkParent ?? `${a}_id`
+        const fkB = resolved?.fkRelated ?? `${b}_id`
+        const targetPk = meta.primaryKeys[targetTable] ?? 'id'
+        validateIdentifier(pivot, `with${fn} (pivot table)`)
+        validateIdentifier(fkA, `with${fn} (foreign key)`)
+        validateIdentifier(fkB, `with${fn} (related key)`)
+        sub = `(SELECT ${aggExpr} FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${fkB} WHERE ${pivot}.${fkA} = ${parentTable}.${pk})`
+      }
+      else {
+        return
+      }
+      addToSelectClause(`${sub} AS ${relation}_${fn.toLowerCase()}_${column}`)
+    }
+
     // Helper function to apply pivot columns to the query
     const applyPivotColumnsToQuery = () => {
       if (pivotColumns.size === 0)
@@ -3642,6 +3690,24 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           addToSelectClause(`${countSubquery} AS ${alias}`)
         }
 
+        return this as any
+      },
+      // Aggregate a related column as a correlated subquery (#1046). Result
+      // column is aliased `${relation}_${fn}_${column}`, e.g. `posts_sum_views`.
+      withSum(relation: string, column: string) {
+        applyRelationAggregate('SUM', relation, column)
+        return this as any
+      },
+      withAvg(relation: string, column: string) {
+        applyRelationAggregate('AVG', relation, column)
+        return this as any
+      },
+      withMax(relation: string, column: string) {
+        applyRelationAggregate('MAX', relation, column)
+        return this as any
+      },
+      withMin(relation: string, column: string) {
+        applyRelationAggregate('MIN', relation, column)
         return this as any
       },
       /**
