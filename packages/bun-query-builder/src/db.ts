@@ -513,8 +513,14 @@ export async function withFreshConnection<T>(fn: (sql: SQL) => Promise<T>): Prom
  * This allows setConfig() to be called before any database connection is made.
  */
 function createLazyBunSql(): SQL {
-  // Create a proxy that lazily initializes the connection on first use
-  return new Proxy({} as SQL, {
+  // Create a proxy that lazily initializes the connection on first use.
+  // The target MUST be a function: per spec a Proxy is only callable when its
+  // target has [[Call]], so a `{}` target makes the `apply` trap dead and
+  // `bunSql`...`` / `bunSql(...)` throw "not a function" — which silently broke
+  // every method built on the tagged template (upsert/insertOrIgnore/
+  // insertGetId/updateOrInsert/save). See stacksjs/bun-query-builder#1035.
+  // eslint-disable-next-line no-empty-function
+  return new Proxy((function lazyBunSql() {}) as unknown as SQL, {
     get(_target, prop) {
       // Get or create the actual SQL instance
       const sql = getOrCreateBunSql()

@@ -6271,6 +6271,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // previous shape failed silently on MySQL — see stacksjs/stacks#1862
       // #15 / #16.
       if (config.dialect === 'mysql') {
+        // No merge columns → insert-or-ignore (an empty `ON DUPLICATE KEY
+        // UPDATE` is a syntax error). MySQL's DO-NOTHING is INSERT IGNORE.
+        // See stacksjs/bun-query-builder#1035.
+        if (setCols.length === 0) {
+          const built = bunSql`INSERT IGNORE INTO ${bunSql(String(table))} ${bunSql(rows as any)}`
+          return (built as any).execute()
+        }
         // Build the `col = VALUES(col)` list as a raw fragment.
         const updateList = setCols.map(c => `\`${c.replace(/`/g, '``')}\` = VALUES(\`${c.replace(/`/g, '``')}\`)`).join(', ')
         const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON DUPLICATE KEY UPDATE ${(bunSql as any).unsafe(updateList)}`
@@ -6284,6 +6291,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // `bunSql(\`EXCLUDED.${c}\`)` through `bunSql({...})`, which
       // wrapped the whole "EXCLUDED.col" string as a quoted
       // identifier and broke the conflict-update entirely.
+      // No merge columns → DO NOTHING (an empty `DO UPDATE SET` is a syntax
+      // error). See stacksjs/bun-query-builder#1035.
+      if (setCols.length === 0) {
+        const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON CONFLICT (${bunSql(targetCols as any)}) DO NOTHING`
+        return (built as any).execute()
+      }
       const isPostgres = config.dialect === 'postgres'
       const quoteCol = (column: string): string => isPostgres
         ? `"${column.replace(/"/g, '""')}"`
