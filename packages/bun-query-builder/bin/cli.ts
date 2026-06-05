@@ -1,7 +1,7 @@
 import type { CliOption, FileOptions, MigrateOptions, SqlOptions, UnsafeOptions } from '../src/types'
 import { CLI } from '@stacksjs/clapp'
 import { version } from '../package.json'
-import { explain, file, introspect, ping, sql, unsafe, waitReady } from '../src/actions'
+import { explain, file, introspect, introspectDatabase, ping, sql, unsafe, waitReady } from '../src/actions'
 import { runBenchmark } from '../src/actions/benchmark'
 import { cacheClear, cacheConfig, cacheStats } from '../src/actions/cache'
 import { startConsole, tinker } from '../src/actions/console'
@@ -29,6 +29,18 @@ cli
   .example('query-builder introspect ./app/Models --verbose')
   .action(async (dir: string, _options?: CliOption) => {
     await introspect(dir, _options)
+  })
+
+cli
+  .command('introspect:db', 'Reverse-introspect the live database into defineModel() source (#1047)')
+  .option('--table <table>', 'Limit to a single table (repeatable)')
+  .example('query-builder introspect:db > app/Models/generated.ts')
+  .action(async (_options?: CliOption & { table?: string | string[] }) => {
+    const t = _options?.table
+    const tables = t ? (Array.isArray(t) ? t : [t]) : undefined
+    const models = await introspectDatabase({ tables })
+    // eslint-disable-next-line no-console
+    console.log(`import { defineModel } from 'bun-query-builder'\n\n${models.map(m => m.source).join('\n')}`)
   })
 
 cli

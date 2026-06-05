@@ -10,6 +10,7 @@ export { file } from './file'
 
 export { inspectTable, tableInfo } from './inspect'
 export { introspect } from './introspect'
+export { generateModelSource, introspectDatabase, modelNameForTable, sqlTypeToAttr } from './introspect-db'
 export { makeModel } from './make-model'
 export { executeMigration, generateMigration, resetDatabase } from './migrate'
 export { migrateGenerate } from './migrate-generate'
