@@ -3834,10 +3834,42 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       whereJsonContains(column: string, json: unknown) {
+        // Dialect-aware JSON containment. Previously hardcoded Postgres `@>`,
+        // which is a syntax error on MySQL/SQLite and ignored the configured
+        // `jsonContainsMode`. See stacksjs/bun-query-builder#1026.
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+        const dialect = config.dialect
         const idx = whereParams.length + 1
-        text += ` ${keyword} ${column} @> ${getPlaceholder(idx)}`
-        whereParams.push(JSON.stringify(json))
+        if (dialect === 'postgres') {
+          // operator (`@>`, default) or function (`jsonb_contains`) per config.
+          if (config.sql?.jsonContainsMode === 'function')
+            text += ` ${keyword} jsonb_contains(${column}, ${getPlaceholder(idx)})`
+          else
+            text += ` ${keyword} ${column} @> ${getPlaceholder(idx)}`
+          whereParams.push(JSON.stringify(json))
+        }
+        else if (dialect === 'mysql') {
+          text += ` ${keyword} JSON_CONTAINS(${column}, ${getPlaceholder(idx)})`
+          whereParams.push(JSON.stringify(json))
+        }
+        else {
+          // SQLite has no native JSON containment. Use json_each membership,
+          // which covers the common "array contains value(s)" case
+          // (`whereJsonContains('tags', ['bun'])`). For an array, every listed
+          // value must be present.
+          if (Array.isArray(json)) {
+            const conds = json.map((_, i) => `EXISTS (SELECT 1 FROM json_each(${column}) WHERE json_each.value = ${getPlaceholder(idx + i)})`)
+            text += ` ${keyword} (${conds.join(' AND ')})`
+            for (const v of json) whereParams.push(v as any)
+          }
+          else if (json !== null && typeof json === 'object') {
+            throw new Error('[query-builder] whereJsonContains: object containment is not supported on SQLite — pass a scalar or array, or use whereJsonPath.')
+          }
+          else {
+            text += ` ${keyword} EXISTS (SELECT 1 FROM json_each(${column}) WHERE json_each.value = ${getPlaceholder(idx)})`
+            whereParams.push(json as any)
+          }
+        }
         built = null
         return this as any
       },
