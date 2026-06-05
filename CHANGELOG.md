@@ -1,3 +1,57 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.25...v0.1.26)
+
+## 🚀 Features
+
+- **client**: snapshot-consistent paginate({ tx }) (#1051) ([d836ca1](https://github.com/stacksjs/bun-query-builder/commit/d836ca1)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1051](https://github.com/stacksjs/bun-query-builder/issues/1051), [#1051](https://github.com/stacksjs/bun-query-builder/issues/1051))
+- **client**: generalized window functions (#1050) ([0974c06](https://github.com/stacksjs/bun-query-builder/commit/0974c06)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1050](https://github.com/stacksjs/bun-query-builder/issues/1050), [#1050](https://github.com/stacksjs/bun-query-builder/issues/1050))
+- **client**: INTERSECT / EXCEPT set operators (#1049) ([6a8b4f4](https://github.com/stacksjs/bun-query-builder/commit/6a8b4f4)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1049](https://github.com/stacksjs/bun-query-builder/issues/1049), [#1049](https://github.com/stacksjs/bun-query-builder/issues/1049))
+- **migrate**: reversible rollback — derive and run down DDL (#1048) ([edb2f6c](https://github.com/stacksjs/bun-query-builder/commit/edb2f6c)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1048](https://github.com/stacksjs/bun-query-builder/issues/1048), [#1048](https://github.com/stacksjs/bun-query-builder/issues/1048))
+- **introspect**: reverse-introspect a live DB into defineModel() source (#1047) ([70ea4ff](https://github.com/stacksjs/bun-query-builder/commit/70ea4ff)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1047](https://github.com/stacksjs/bun-query-builder/issues/1047), [#1047](https://github.com/stacksjs/bun-query-builder/issues/1047))
+- **client**: withSum/withAvg/withMax/withMin relation aggregates (#1046) ([0d6b1f5](https://github.com/stacksjs/bun-query-builder/commit/0d6b1f5)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1046](https://github.com/stacksjs/bun-query-builder/issues/1046), [#1046](https://github.com/stacksjs/bun-query-builder/issues/1046))
+- **hooks**: slow-query threshold/onSlowQuery + populate params on hook events (#1045) ([71d0d9e](https://github.com/stacksjs/bun-query-builder/commit/71d0d9e)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1045](https://github.com/stacksjs/bun-query-builder/issues/1045), [#1045](https://github.com/stacksjs/bun-query-builder/issues/1045))
+- **config**: expose connection-pool tuning via DatabaseConfig.pool (#1014) ([d91259a](https://github.com/stacksjs/bun-query-builder/commit/d91259a)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1014](https://github.com/stacksjs/bun-query-builder/issues/1014), [#1014](https://github.com/stacksjs/bun-query-builder/issues/1014))
+
+## 🐛 Bug Fixes
+
+- **client**: rebuild upsert/insertOrIgnore/insertGetId/updateOrInsert with explicit SQL (#1052) ([2d33f86](https://github.com/stacksjs/bun-query-builder/commit/2d33f86)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1052](https://github.com/stacksjs/bun-query-builder/issues/1052), [#1052](https://github.com/stacksjs/bun-query-builder/issues/1052))
+- **config**: store config on a globalThis singleton to harden against bundler splits (#1043) ([014a86d](https://github.com/stacksjs/bun-query-builder/commit/014a86d)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1043](https://github.com/stacksjs/bun-query-builder/issues/1043), [#1043](https://github.com/stacksjs/bun-query-builder/issues/1043))
+- **db**: connection cache keys on full connection signature (#1041) ([c5d4457](https://github.com/stacksjs/bun-query-builder/commit/c5d4457)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1041](https://github.com/stacksjs/bun-query-builder/issues/1041), [#1041](https://github.com/stacksjs/bun-query-builder/issues/1041))
+- **db**: stop installing a process-wide unhandledRejection handler (#1040) ([83854a3](https://github.com/stacksjs/bun-query-builder/commit/83854a3)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1040](https://github.com/stacksjs/bun-query-builder/issues/1040), [#1040](https://github.com/stacksjs/bun-query-builder/issues/1040))
+- **migrations**: diff detects foreign-key reference changes (#1037) ([04e2629](https://github.com/stacksjs/bun-query-builder/commit/04e2629)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1037](https://github.com/stacksjs/bun-query-builder/issues/1037), [#1037](https://github.com/stacksjs/bun-query-builder/issues/1037))
+- **orm**: belongsToMany SELECT aliases related columns to avoid pivot collision (#1036) ([44daffd](https://github.com/stacksjs/bun-query-builder/commit/44daffd)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1036](https://github.com/stacksjs/bun-query-builder/issues/1036), [#1036](https://github.com/stacksjs/bun-query-builder/issues/1036))
+- upsert no-mergeColumns -> DO NOTHING/INSERT IGNORE; make lazy bunSql callable (#1035) ([a4e1011](https://github.com/stacksjs/bun-query-builder/commit/a4e1011)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1035](https://github.com/stacksjs/bun-query-builder/issues/1035), [#1035](https://github.com/stacksjs/bun-query-builder/issues/1035))
+- **client**: chained having() joins with AND, not a second HAVING (#1034) ([b21dd32](https://github.com/stacksjs/bun-query-builder/commit/b21dd32)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1034](https://github.com/stacksjs/bun-query-builder/issues/1034), [#1034](https://github.com/stacksjs/bun-query-builder/issues/1034))
+- **client**: quote identifiers on single-row INSERT + createMany (#1033) ([41d569e](https://github.com/stacksjs/bun-query-builder/commit/41d569e)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1033](https://github.com/stacksjs/bun-query-builder/issues/1033), [#1033](https://github.com/stacksjs/bun-query-builder/issues/1033))
+- **orm**: honor timestampable/softDeletable trait aliases at runtime (#1031) ([f3250ab](https://github.com/stacksjs/bun-query-builder/commit/f3250ab)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1031](https://github.com/stacksjs/bun-query-builder/issues/1031), [#1031](https://github.com/stacksjs/bun-query-builder/issues/1031))
+- **client**: splice JOINs before WHERE/trailing clauses + invalidate built (#1030) ([060f58c](https://github.com/stacksjs/bun-query-builder/commit/060f58c)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1030](https://github.com/stacksjs/bun-query-builder/issues/1030), [#1030](https://github.com/stacksjs/bun-query-builder/issues/1030))
+- **client**: union/unionAll merge the other side's params + renumber placeholders (#1029) ([bf77dce](https://github.com/stacksjs/bun-query-builder/commit/bf77dce)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1029](https://github.com/stacksjs/bun-query-builder/issues/1029), [#1029](https://github.com/stacksjs/bun-query-builder/issues/1029))
+- **client**: LIKE/ILIKE family pushes its pattern + dialect-aware placeholder (#1028) ([256a074](https://github.com/stacksjs/bun-query-builder/commit/256a074)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1028](https://github.com/stacksjs/bun-query-builder/issues/1028), [#1028](https://github.com/stacksjs/bun-query-builder/issues/1028))
+- **client**: whereBetween/whereNotBetween use dialect-aware placeholders (#1027) ([fd52e92](https://github.com/stacksjs/bun-query-builder/commit/fd52e92)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1027](https://github.com/stacksjs/bun-query-builder/issues/1027), [#1027](https://github.com/stacksjs/bun-query-builder/issues/1027))
+- **client**: make whereJsonContains dialect-aware + honor jsonContainsMode (#1026) ([ad05ba7](https://github.com/stacksjs/bun-query-builder/commit/ad05ba7)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1026](https://github.com/stacksjs/bun-query-builder/issues/1026), [#1026](https://github.com/stacksjs/bun-query-builder/issues/1026))
+- **orm**: create()/save() persists explicitly-set non-fillable columns (#1025) ([955ef72](https://github.com/stacksjs/bun-query-builder/commit/955ef72)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1025](https://github.com/stacksjs/bun-query-builder/issues/1025), [#1025](https://github.com/stacksjs/bun-query-builder/issues/1025))
+- **orm**: soft deletes now filter reads + add withTrashed/onlyTrashed/restore (#1024) ([d016b46](https://github.com/stacksjs/bun-query-builder/commit/d016b46)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1024](https://github.com/stacksjs/bun-query-builder/issues/1024), [#1024](https://github.com/stacksjs/bun-query-builder/issues/1024))
+- **client**: unwrap SQL fragments in select()/addSelect() instead of [object Object] (#1016) ([b9e2e69](https://github.com/stacksjs/bun-query-builder/commit/b9e2e69)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1016](https://github.com/stacksjs/bun-query-builder/issues/1016), [#1016](https://github.com/stacksjs/bun-query-builder/issues/1016))
+- **migrations**: accept object-form belongsTo/hasMany/hasOne in the generator (#1023) ([0b455b2](https://github.com/stacksjs/bun-query-builder/commit/0b455b2)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1023](https://github.com/stacksjs/bun-query-builder/issues/1023), [#1023](https://github.com/stacksjs/bun-query-builder/issues/1023))
+
+## ♻️ Code Refactoring
+
+- type the driver boundary with DriverConnection/DriverQuery (#1044) ([8efb4ba](https://github.com/stacksjs/bun-query-builder/commit/8efb4ba)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1044](https://github.com/stacksjs/bun-query-builder/issues/1044), [#1044](https://github.com/stacksjs/bun-query-builder/issues/1044))
+- dedupe relation normalization into src/relation-utils (#1042) ([4051a01](https://github.com/stacksjs/bun-query-builder/commit/4051a01)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1042](https://github.com/stacksjs/bun-query-builder/issues/1042), [#1042](https://github.com/stacksjs/bun-query-builder/issues/1042))
+- **db**: remove dead sql.catch handler in getBunSql (#1039) ([4bbb15a](https://github.com/stacksjs/bun-query-builder/commit/4bbb15a)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1039](https://github.com/stacksjs/bun-query-builder/issues/1039), [#1039](https://github.com/stacksjs/bun-query-builder/issues/1039))
+
+## 🧪 Tests
+
+- add live-Postgres execution integration coverage (#1038) ([89e9bc6](https://github.com/stacksjs/bun-query-builder/commit/89e9bc6)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1038](https://github.com/stacksjs/bun-query-builder/issues/1038), [#1038](https://github.com/stacksjs/bun-query-builder/issues/1038))
+- **orm**: lock in extractChanges Postgres affected-row handling (#1032) ([4f3ae8b](https://github.com/stacksjs/bun-query-builder/commit/4f3ae8b)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1032](https://github.com/stacksjs/bun-query-builder/issues/1032), [#1032](https://github.com/stacksjs/bun-query-builder/issues/1032))
+
+## 🧹 Chores
+
+- release v0.1.26 ([347b840](https://github.com/stacksjs/bun-query-builder/commit/347b840)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.24...v0.1.25)
 
 ## 💥 Breaking Changes
