@@ -667,10 +667,13 @@ describe('Edge Cases', () => {
       const result = await item.delete()
       expect(result).toBe(true)
 
-      // With soft deletes, record still exists but has deleted_at set
-      const found = await TestModel.find(id)
-      expect(found).toBeDefined()
-      expect(found!.get('deleted_at')).not.toBeNull()
+      // Soft delete: the in-memory instance reflects deleted_at, and the row is
+      // hidden from default reads but still retrievable via withTrashed() (#1024).
+      expect(item.get('deleted_at')).not.toBeNull()
+      expect(await TestModel.find(id)).toBeUndefined()
+      const trashed = await TestModel.withTrashed().where('id', id).first()
+      expect(trashed).toBeDefined()
+      expect(trashed!.get('deleted_at')).not.toBeNull()
     })
 
     it('delete via static destroy()', async () => {

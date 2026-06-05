@@ -528,6 +528,19 @@ export function getDatabase(): Database {
   )
 }
 
+/** The column soft deletes are tracked on (matches the migration + `delete()`). */
+const SOFT_DELETE_COLUMN = 'deleted_at'
+
+/**
+ * Whether a model has soft-deletes enabled. Accepts both `useSoftDeletes` and
+ * the `softDeletable` alias (stacksjs/bun-query-builder#1031), in boolean or
+ * object form.
+ */
+function softDeletesEnabled(definition: ModelDefinition): boolean {
+  const t = definition.traits
+  return Boolean(t?.useSoftDeletes || t?.softDeletable)
+}
+
 /**
  * Collect every `belongsToMany` relation key declared on a model definition.
  * Used by ModelInstance's Proxy to know which property reads should resolve
@@ -867,10 +880,14 @@ class ModelInstance<
     await hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
 
     if (this._definition.traits?.useSoftDeletes) {
+      const now = formatNow()
       await exec.run(
         `UPDATE ${this._definition.table} SET deleted_at = ? WHERE ${pk} = ?`,
-        [formatNow(), pkValue]
+        [now, pkValue]
       )
+      // Reflect the soft delete on the in-memory instance so `trashed()` and
+      // reads of `deleted_at` are consistent without a refresh. See #1024.
+      this._attributes[SOFT_DELETE_COLUMN] = now
     }
     else {
       await exec.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue])
@@ -879,6 +896,30 @@ class ModelInstance<
     await hooks?.afterDelete?.(this as unknown as ModelHookInstance)
 
     return true
+  }
+
+  /**
+   * Restore a soft-deleted row by clearing `deleted_at`. Throws if the model
+   * doesn't use soft deletes. See stacksjs/bun-query-builder#1024.
+   */
+  async restore(): Promise<this> {
+    if (!softDeletesEnabled(this._definition as ModelDefinition))
+      throw new Error(`[orm] restore() requires soft deletes on '${this._definition.name}'`)
+    const pk = this._definition.primaryKey || 'id'
+    const pkValue = this._attributes[pk]
+    if (!pkValue) throw new Error('Cannot restore a model without a primary key')
+    await getExecutor().run(
+      `UPDATE ${this._definition.table} SET ${SOFT_DELETE_COLUMN} = ? WHERE ${pk} = ?`,
+      [null, pkValue],
+    )
+    this._attributes[SOFT_DELETE_COLUMN] = null
+    this._original = null
+    return this
+  }
+
+  /** Whether this instance is soft-deleted (has a non-null `deleted_at`). */
+  trashed(): boolean {
+    return this._attributes[SOFT_DELETE_COLUMN] != null
   }
 
   /**
@@ -1550,9 +1591,26 @@ class ModelQueryBuilder<
   private _offset?: number
   private _select: string[] = ['*']
   private _withRelations: string[] = []
+  // Soft-delete scope: 'exclude' (default — hide trashed), 'include' (withTrashed), 'only' (onlyTrashed).
+  private _trashed: 'exclude' | 'include' | 'only' = 'exclude'
 
   constructor(definition: TDef) {
     this._definition = definition
+  }
+
+  /**
+   * Include soft-deleted rows in the results. No-op on models without soft
+   * deletes. See stacksjs/bun-query-builder#1024.
+   */
+  withTrashed(): ModelQueryBuilder<TDef, TSelected> {
+    this._trashed = 'include'
+    return this
+  }
+
+  /** Return ONLY soft-deleted rows. No-op on models without soft deletes. */
+  onlyTrashed(): ModelQueryBuilder<TDef, TSelected> {
+    this._trashed = 'only'
+    return this
   }
 
   // Two-arg form: .where('column', value)
@@ -1885,12 +1943,38 @@ class ModelQueryBuilder<
     return clauses.join(' ')
   }
 
+  /**
+   * The soft-delete predicate for the current `_trashed` scope, or '' when the
+   * model isn't soft-deletable or trashed rows are explicitly included.
+   */
+  private softDeleteClause(): string {
+    if (this._trashed === 'include' || !softDeletesEnabled(this._definition as ModelDefinition))
+      return ''
+    return this._trashed === 'only'
+      ? `${SOFT_DELETE_COLUMN} IS NOT NULL`
+      : `${SOFT_DELETE_COLUMN} IS NULL`
+  }
+
+  /**
+   * Build the full WHERE body (no `WHERE` keyword), combining user clauses with
+   * the soft-delete predicate. User clauses are parenthesised when both are
+   * present so a top-level `OR` can't escape the soft-delete filter.
+   */
+  private composeWhere(params: unknown[]): string {
+    const userClause = this._wheres.length > 0 ? this.buildWhereClauses(params) : ''
+    const sd = this.softDeleteClause()
+    if (userClause && sd)
+      return `(${userClause}) AND ${sd}`
+    return userClause || sd
+  }
+
   private buildQuery(): { sql: string; params: unknown[] } {
     const params: unknown[] = []
     let sql = `SELECT ${this._select.join(', ')} FROM ${this._definition.table}`
 
-    if (this._wheres.length > 0) {
-      sql += ` WHERE ${this.buildWhereClauses(params)}`
+    const whereBody = this.composeWhere(params)
+    if (whereBody) {
+      sql += ` WHERE ${whereBody}`
     }
 
     if (this._orderBy.length > 0) {
@@ -2109,8 +2193,9 @@ class ModelQueryBuilder<
     const params: unknown[] = []
     let sql = `SELECT COUNT(*) as count FROM ${this._definition.table}`
 
-    if (this._wheres.length > 0) {
-      sql += ` WHERE ${this.buildWhereClauses(params)}`
+    const whereBody = this.composeWhere(params)
+    if (whereBody) {
+      sql += ` WHERE ${whereBody}`
     }
 
     const row = await exec.get(sql, params)
@@ -2202,6 +2287,7 @@ class ModelQueryBuilder<
       builder._orderBy = [...this._orderBy]
       builder._select = [...this._select]
       builder._withRelations = [...this._withRelations]
+      builder._trashed = this._trashed
       builder._limit = size
       builder._offset = page * size
 
@@ -2254,8 +2340,9 @@ class ModelQueryBuilder<
     const params: unknown[] = []
     let sql = `SELECT ${column as string} FROM ${this._definition.table}`
 
-    if (this._wheres.length > 0) {
-      sql += ` WHERE ${this.buildWhereClauses(params)}`
+    const whereBody = this.composeWhere(params)
+    if (whereBody) {
+      sql += ` WHERE ${whereBody}`
     }
     if (this._orderBy.length > 0) {
       sql += ` ORDER BY ${this._orderBy.map(o => `${o.column} ${o.direction.toUpperCase()}`).join(', ')}`
@@ -2276,8 +2363,9 @@ class ModelQueryBuilder<
     const params: unknown[] = []
     let sql = `SELECT ${fn}(${column}) as v FROM ${this._definition.table}`
 
-    if (this._wheres.length > 0) {
-      sql += ` WHERE ${this.buildWhereClauses(params)}`
+    const whereBody = this.composeWhere(params)
+    if (whereBody) {
+      sql += ` WHERE ${whereBody}`
     }
 
     const row = await exec.get(sql, params) as { v: number | null } | undefined
@@ -2430,10 +2518,17 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     take: (count: number) => new ModelQueryBuilder<TDef>(definition).take(count),
     skip: (count: number) => new ModelQueryBuilder<TDef>(definition).skip(count),
 
+    /** Start a query that includes soft-deleted rows. See #1024. */
+    withTrashed: () => new ModelQueryBuilder<TDef>(definition).withTrashed(),
+    /** Start a query restricted to soft-deleted rows. See #1024. */
+    onlyTrashed: () => new ModelQueryBuilder<TDef>(definition).onlyTrashed(),
+
     async find(id: number | string): Promise<ModelInstance<TDef> | undefined> {
       const exec = getExecutor()
       const pk = definition.primaryKey || 'id'
-      const row = await exec.get(`SELECT * FROM ${definition.table} WHERE ${pk} = ?`, [id])
+      // Exclude soft-deleted rows by default (use withTrashed()/query() to override).
+      const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
+      const row = await exec.get(`SELECT * FROM ${definition.table} WHERE ${pk} = ?${sd}`, [id])
       return row ? new ModelInstance<TDef>(definition, row as any) : undefined
     },
 
@@ -2446,7 +2541,8 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     async findMany(ids: (number | string)[]): Promise<ModelInstance<TDef>[]> {
       const exec = getExecutor()
       const pk = definition.primaryKey || 'id'
-      const rows = await exec.all(`SELECT * FROM ${definition.table} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})`, ids)
+      const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
+      const rows = await exec.all(`SELECT * FROM ${definition.table} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})${sd}`, ids)
       return rows.map(row => new ModelInstance<TDef>(definition, row as any))
     },
 

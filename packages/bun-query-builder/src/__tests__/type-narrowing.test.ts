@@ -98,10 +98,12 @@ describe('type narrowing', () => {
     const q3 = User.where('id', 1)
     const q4 = User.where('age', '>', 18)
 
-    // Verify the queries build correctly
-    expect(q1.toSql().sql).toContain('WHERE name = ?')
-    expect(q3.toSql().sql).toContain('WHERE id = ?')
-    expect(q4.toSql().sql).toContain('WHERE age > ?')
+    // Verify the queries build correctly. (User has useSoftDeletes, so the
+    // WHERE body is wrapped + suffixed with `AND deleted_at IS NULL` — #1024 —
+    // hence asserting the column predicate rather than the exact WHERE prefix.)
+    expect(q1.toSql().sql).toContain('name = ?')
+    expect(q3.toSql().sql).toContain('id = ?')
+    expect(q4.toSql().sql).toContain('age > ?')
     expect(q4.toSql().params).toEqual([18])
   })
 
