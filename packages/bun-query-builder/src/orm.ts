@@ -542,6 +542,16 @@ function softDeletesEnabled(definition: ModelDefinition): boolean {
 }
 
 /**
+ * Whether a model auto-manages `created_at`/`updated_at`. Accepts both
+ * `useTimestamps` and the `timestampable` alias (stacksjs/bun-query-builder#1031),
+ * in boolean or object form.
+ */
+function timestampsEnabled(definition: ModelDefinition): boolean {
+  const t = definition.traits
+  return Boolean(t?.useTimestamps || t?.timestampable)
+}
+
+/**
  * Collect every `belongsToMany` relation key declared on a model definition.
  * Used by ModelInstance's Proxy to know which property reads should resolve
  * to a callable RelationBuilder.
@@ -787,7 +797,7 @@ class ModelInstance<
         const sets = changeKeys.map(k => `${k} = ?`).join(', ')
         const values = [...Object.values(changes), this._attributes[pk]]
 
-        if (this._definition.traits?.useTimestamps) {
+        if (timestampsEnabled(this._definition)) {
           const now = formatNow()
           await exec.run(
             `UPDATE ${this._definition.table} SET ${sets}, updated_at = ? WHERE ${pk} = ?`,
@@ -819,7 +829,7 @@ class ModelInstance<
         }
       }
 
-      if (this._definition.traits?.useTimestamps) {
+      if (timestampsEnabled(this._definition)) {
         const now = formatNow()
         data.created_at = now
         data.updated_at = now
@@ -886,7 +896,7 @@ class ModelInstance<
 
     await hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
 
-    if (this._definition.traits?.useSoftDeletes) {
+    if (softDeletesEnabled(this._definition)) {
       const now = formatNow()
       await exec.run(
         `UPDATE ${this._definition.table} SET deleted_at = ? WHERE ${pk} = ?`,
@@ -2249,7 +2259,7 @@ class ModelQueryBuilder<
 
     let sql = `UPDATE ${this._definition.table} SET ${column as string} = ${column as string} + ?`
 
-    if (this._definition.traits?.useTimestamps) {
+    if (timestampsEnabled(this._definition)) {
       sql += `, updated_at = ?`
       params.push(formatNow())
     }
@@ -2415,11 +2425,11 @@ class ModelQueryBuilder<
     const sets = entries.map(([k]) => `${k} = ?`).join(', ')
     const params: unknown[] = entries.map(([, v]) => v)
 
-    if (this._definition.traits?.useTimestamps) {
+    if (timestampsEnabled(this._definition)) {
       params.push(formatNow())
     }
 
-    let sql = `UPDATE ${this._definition.table} SET ${sets}${this._definition.traits?.useTimestamps ? ', updated_at = ?' : ''}`
+    let sql = `UPDATE ${this._definition.table} SET ${sets}${timestampsEnabled(this._definition) ? ', updated_at = ?' : ''}`
 
     if (this._wheres.length > 0) {
       sql += ` WHERE ${this.buildWhereClauses(params)}`
@@ -2695,10 +2705,10 @@ export async function createTableFromModel(definition: ModelDefinition): Promise
     columns.push(colDef)
   }
 
-  if (definition.traits?.useTimestamps) {
+  if (timestampsEnabled(definition)) {
     columns.push('created_at TEXT', 'updated_at TEXT')
   }
-  if (definition.traits?.useSoftDeletes) {
+  if (softDeletesEnabled(definition)) {
     columns.push('deleted_at TEXT')
   }
 
@@ -2749,7 +2759,7 @@ catch {
       if (attr.factory) data[name] = (attr.factory as (_f: unknown) => unknown)(faker)
     }
 
-    if (definition.traits?.useTimestamps) {
+    if (timestampsEnabled(definition)) {
       const now = formatNow()
       data.created_at = now
       data.updated_at = now
