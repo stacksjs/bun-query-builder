@@ -5,6 +5,7 @@ import type { SchemaMeta } from './meta'
 import type { ResolvedPivot } from './pivot'
 import type { DatabaseSchema } from './schema'
 import { config, getPlaceholder, getPlaceholders } from './config'
+import type { DriverConnection } from './db'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
 
@@ -2254,7 +2255,10 @@ function computeBackoffMs(attempt: number, cfg?: TxBackoff): number {
 
 // eslint-disable-next-line pickier/no-unused-vars
 export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Partial<InternalState>): QueryBuilder<DB> {
-  const _sql = state?.sql ?? getOrCreateBunSql()
+  // Single boundary cast: `state.sql` is `any` (allows mock/tx injection) and
+  // getOrCreateBunSql() returns Bun's `SQL`; both satisfy DriverConnection. With
+  // `_sql` typed, the downstream `.unsafe(...)` calls no longer need casts (#1044).
+  const _sql: DriverConnection = (state?.sql ?? getOrCreateBunSql()) as unknown as DriverConnection
   const meta = state?.meta
   const schema = state?.schema
 
@@ -2273,17 +2277,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         case 'in':
           if (Array.isArray(val)) {
             const placeholders = getPlaceholders(val.length)
-            return (_sql as any).unsafe(`${colName} IN (${placeholders})`, val)
+            return _sql.unsafe(`${colName} IN (${placeholders})`, val)
           }
-          return (_sql as any).unsafe(`${colName} IN (${getPlaceholder(1)})`, [val])
+          return _sql.unsafe(`${colName} IN (${getPlaceholder(1)})`, [val])
         case 'not in':
           if (Array.isArray(val)) {
             const placeholders = getPlaceholders(val.length)
-            return (_sql as any).unsafe(`${colName} NOT IN (${placeholders})`, val)
+            return _sql.unsafe(`${colName} NOT IN (${placeholders})`, val)
           }
-          return (_sql as any).unsafe(`${colName} NOT IN (${getPlaceholder(1)})`, [val])
+          return _sql.unsafe(`${colName} NOT IN (${getPlaceholder(1)})`, [val])
         case 'like':
-          return (_sql as any).unsafe(`${colName} LIKE ${getPlaceholder(1)}`, [val])
+          return _sql.unsafe(`${colName} LIKE ${getPlaceholder(1)}`, [val])
         case 'is':
         case 'is not': {
           // `is` / `is not` is `IS NULL` / `IS NOT NULL` only. The
@@ -2295,16 +2299,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (val !== null && val !== undefined) {
             throw new TypeError(`[query-builder] where(..., '${op}', ?): operator '${op}' only accepts NULL/undefined as value, got ${typeof val} (${String(val)})`)
           }
-          return (_sql as any).unsafe(`${colName} IS ${op === 'is not' ? 'NOT ' : ''}NULL`)
+          return _sql.unsafe(`${colName} IS ${op === 'is not' ? 'NOT ' : ''}NULL`)
         }
         case '!=':
-          return (_sql as any).unsafe(`${colName} <> ${getPlaceholder(1)}`, [val])
+          return _sql.unsafe(`${colName} <> ${getPlaceholder(1)}`, [val])
         case '<':
         case '>':
         case '<=':
         case '>=':
         case '=':
-          return (_sql as any).unsafe(`${colName} ${op} ${getPlaceholder(1)}`, [val])
+          return _sql.unsafe(`${colName} ${op} ${getPlaceholder(1)}`, [val])
         default:
           throw new TypeError(`[query-builder] where(..., '${String(op)}', ?): unsupported operator. Allowed: =, !=, <>, <, <=, >, >=, like, in, not in, is, is not`)
       }
@@ -2315,7 +2319,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     // Object notation: {name: 'Alice', age: 25}
     const keys = Object.keys(expr)
     if (keys.length === 0)
-      return (_sql as any).unsafe('')
+      return _sql.unsafe('')
 
     const conditions: string[] = []
     const allParams: any[] = []
@@ -2340,7 +2344,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     }
 
-    return (_sql as any).unsafe(conditions.join(' AND '), allParams)
+    return _sql.unsafe(conditions.join(' AND '), allParams)
   }
 
   // eslint-disable-next-line pickier/no-unused-vars
@@ -2490,8 +2494,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       if (built === null) {
         const finalText = reorderSelectClauses(text)
         built = whereParams.length > 0
-          ? (_sql as any).unsafe(finalText, whereParams)
-          : (_sql as any).unsafe(finalText)
+          ? _sql.unsafe(finalText, whereParams)
+          : _sql.unsafe(finalText)
       }
       return built
     }
@@ -2652,13 +2656,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const currentSelect = String(ensureBuilt())
       if (SQL_PATTERNS.SELECT_STAR.test(currentSelect)) {
         const newSql = currentSelect.replace(SQL_PATTERNS.SELECT_STAR, `SELECT *, ${columnsToAdd}`)
-        built = (_sql as any).unsafe(newSql)
+        built = _sql.unsafe(newSql)
       }
       else if (SQL_PATTERNS.SELECT.test(currentSelect)) {
         const selectPart = SQL_PATTERNS.SELECT_FROM.exec(currentSelect)
         if (selectPart) {
           const newSql = currentSelect.replace(SQL_PATTERNS.SELECT_FROM, `SELECT $1, ${columnsToAdd} FROM`)
-          built = (_sql as any).unsafe(newSql)
+          built = _sql.unsafe(newSql)
         }
       }
     }
@@ -4829,7 +4833,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         // Ultra-fast path: skip unsafe() entirely, use _prepareStatement for direct stmt access
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
-          const prepareFn = (_sql as any)._prepareStatement
+          const prepareFn = _sql._prepareStatement
           if (prepareFn) {
             const stmt = prepareFn(text)
             return hydratePivotRows(whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all())
@@ -4838,8 +4842,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         // Build query at execution time (statement will be cached by db-clients.ts)
         built = whereParams.length > 0
-          ? (_sql as any).unsafe(text, whereParams)
-          : (_sql as any).unsafe(text)
+          ? _sql.unsafe(text, whereParams)
+          : _sql.unsafe(text)
 
         // Fast path: no soft-deletes, no cache, no timeout, no signal, no hooks
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
@@ -4902,7 +4906,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const fHooks = config.hooks
         const fHasQueryHooks = fHooks && (fHooks.onQueryStart || fHooks.onQueryEnd || fHooks.onQueryError || fHooks.startSpan)
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !fHasQueryHooks) {
-          const prepareFn = (_sql as any)._prepareStatement
+          const prepareFn = _sql._prepareStatement
           if (prepareFn) {
             const firstText = text.includes(' LIMIT ') ? text : `${text} LIMIT 1`
             const stmt = prepareFn(firstText)
@@ -4997,7 +5001,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const cHooks = config.hooks
         const cHasHooks = cHooks && (cHooks.onQueryStart || cHooks.onQueryEnd || cHooks.onQueryError || cHooks.startSpan)
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !cHasHooks) {
-          const prepareFn = (_sql as any)._prepareStatement
+          const prepareFn = _sql._prepareStatement
           if (prepareFn) {
             const stmt = prepareFn(countText)
             const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
@@ -5006,8 +5010,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
 
         const q = whereParams.length > 0
-          ? (_sql as any).unsafe(countText, whereParams)
-          : (_sql as any).unsafe(countText)
+          ? _sql.unsafe(countText, whereParams)
+          : _sql.unsafe(countText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.c ?? 0)
@@ -5023,7 +5027,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const aHooks = config.hooks
         const aHasHooks = aHooks && (aHooks.onQueryStart || aHooks.onQueryEnd || aHooks.onQueryError || aHooks.startSpan)
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !aHasHooks) {
-          const prepareFn = (_sql as any)._prepareStatement
+          const prepareFn = _sql._prepareStatement
           if (prepareFn) {
             const stmt = prepareFn(avgText)
             const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
@@ -5032,8 +5036,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
 
         const q = whereParams.length > 0
-          ? (_sql as any).unsafe(avgText, whereParams)
-          : (_sql as any).unsafe(avgText)
+          ? _sql.unsafe(avgText, whereParams)
+          : _sql.unsafe(avgText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.a ?? 0)
@@ -5044,8 +5048,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           ? `SELECT SUM(${column}) as s${text.substring(fromIdx)}`
           : `SELECT SUM(${column}) as s FROM ${table}`
         const q = whereParams.length > 0
-          ? (_sql as any).unsafe(sumText, whereParams)
-          : (_sql as any).unsafe(sumText)
+          ? _sql.unsafe(sumText, whereParams)
+          : _sql.unsafe(sumText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.s ?? 0)
@@ -5056,8 +5060,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           ? `SELECT MAX(${column}) as m${text.substring(fromIdx)}`
           : `SELECT MAX(${column}) as m FROM ${table}`
         const q = whereParams.length > 0
-          ? (_sql as any).unsafe(maxText, whereParams)
-          : (_sql as any).unsafe(maxText)
+          ? _sql.unsafe(maxText, whereParams)
+          : _sql.unsafe(maxText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row?.m
@@ -5068,8 +5072,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           ? `SELECT MIN(${column}) as m${text.substring(fromIdx)}`
           : `SELECT MIN(${column}) as m FROM ${table}`
         const q = whereParams.length > 0
-          ? (_sql as any).unsafe(minText, whereParams)
-          : (_sql as any).unsafe(minText)
+          ? _sql.unsafe(minText, whereParams)
+          : _sql.unsafe(minText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row?.m
@@ -5543,7 +5547,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const rows = Array.isArray(data) ? data : [data]
           const rowCount = rows.length
           if (rowCount === 0) {
-            built = (_sql as any).unsafe('SELECT 1')
+            built = _sql.unsafe('SELECT 1')
             return this
           }
 
@@ -5610,15 +5614,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
 
           // Defer unsafe() call - execute() will use _prepareStatement if available
-          if (!(_sql as any)._prepareStatement) {
-            built = (_sql as any).unsafe(sqlText, params)
+          if (!_sql._prepareStatement) {
+            built = _sql.unsafe(sqlText, params)
           }
           return this
         },
         returning(...cols: (keyof any & string)[]) {
           // Append RETURNING clause to the existing SQL
           const returningSql = `${sqlText} RETURNING ${cols.join(', ')}`
-          const q = (_sql as any).unsafe(returningSql, params)
+          const q = _sql.unsafe(returningSql, params)
           return {
             where: () => this,
             andWhere: () => this,
@@ -5631,7 +5635,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
         },
         toSQL() {
-          if (!built) built = (_sql as any).unsafe(sqlText, params)
+          if (!built) built = _sql.unsafe(sqlText, params)
           return makeExecutableQuery(built, sqlText) as any
         },
         execute() {
@@ -5639,22 +5643,22 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const hooks = config.hooks
           const hasHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hooks.beforeCreate || hooks.afterCreate)
           if (!hasHooks) {
-            const prepareFn = (_sql as any)._prepareStatement
+            const prepareFn = _sql._prepareStatement
             if (prepareFn) {
               const stmt = prepareFn(sqlText)
               return params.length > 0 ? stmt.run(...params) : stmt.run()
             }
           }
-          if (!built) built = (_sql as any).unsafe(sqlText, params)
+          if (!built) built = _sql.unsafe(sqlText, params)
           return runWithHooks(built, 'insert')
         },
         async executeTakeFirst() {
-          if (!built) built = (_sql as any).unsafe(sqlText, params)
+          if (!built) built = _sql.unsafe(sqlText, params)
           const result = await runWithHooks(built, 'insert')
           return result
         },
         async executeTakeFirstOrThrow() {
-          if (!built) built = (_sql as any).unsafe(sqlText, params)
+          if (!built) built = _sql.unsafe(sqlText, params)
           const result = await runWithHooks(built, 'insert')
           if (!result)
             throw new Error('Insert failed')
@@ -5662,7 +5666,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         },
         returningAll() {
           const returningSql = `${sqlText} RETURNING *`
-          const q = (_sql as any).unsafe(returningSql, params)
+          const q = _sql.unsafe(returningSql, params)
           return {
             toSQL: () => makeExecutableQuery(q, returningSql) as any,
             execute: () => runWithHooks<any[]>(q, 'insert'),
@@ -5708,7 +5712,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             params.push((values as any)[key])
           }
           sqlText = `${sqlText} SET ${setClauses.join(', ')}`
-          built = (_sql as any).unsafe(sqlText, params)
+          built = _sql.unsafe(sqlText, params)
           return this
         },
         where(expr: any, op?: string, value?: any) {
@@ -5720,7 +5724,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const paramIndex = params.length + 1
             sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(expr)} ${op} ${getPlaceholder(paramIndex)}`
             params.push(value)
-            built = (_sql as any).unsafe(sqlText, params)
+            built = _sql.unsafe(sqlText, params)
             return this
           }
 
@@ -5730,7 +5734,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const paramIndex = params.length + 1
             sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(String(col))} ${String(op)} ${getPlaceholder(paramIndex)}`
             params.push(val)
-            built = (_sql as any).unsafe(sqlText, params)
+            built = _sql.unsafe(sqlText, params)
             return this
           }
 
@@ -5745,15 +5749,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               params.push((expr as any)[keys[i]])
             }
             sqlText = `${sqlText} ${getWhereKeyword()} ${conditions.join(' AND ')}`
-            built = (_sql as any).unsafe(sqlText, params)
+            built = _sql.unsafe(sqlText, params)
           }
           return this
         },
         returning(...cols) {
           const retText = `${sqlText} RETURNING ${cols.join(', ')}`
           const q = params.length > 0
-            ? (_sql as any).unsafe(retText, params)
-            : (_sql as any).unsafe(retText)
+            ? _sql.unsafe(retText, params)
+            : _sql.unsafe(retText)
           const obj: any = {
             where: () => obj,
             andWhere: () => obj,
@@ -5769,8 +5773,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         toSQL() {
           if (!built) {
             built = params.length > 0
-              ? (_sql as any).unsafe(sqlText, params)
-              : (_sql as any).unsafe(sqlText)
+              ? _sql.unsafe(sqlText, params)
+              : _sql.unsafe(sqlText)
           }
           return makeExecutableQuery(built, sqlText) as any
         },
@@ -5790,8 +5794,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         returningAll() {
           const retAllText = `${sqlText} RETURNING *`
           const q = params.length > 0
-            ? (_sql as any).unsafe(retAllText, params)
-            : (_sql as any).unsafe(retAllText)
+            ? _sql.unsafe(retAllText, params)
+            : _sql.unsafe(retAllText)
           return {
             toSQL: () => makeExecutableQuery(q, retAllText) as any,
             execute: () => runWithHooks<any[]>(q, 'update'),
@@ -5838,8 +5842,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const ensureDelBuilt = () => {
         if (built === null) {
           built = delParams.length > 0
-            ? (_sql as any).unsafe(sqlText, delParams)
-            : (_sql as any).unsafe(sqlText)
+            ? _sql.unsafe(sqlText, delParams)
+            : _sql.unsafe(sqlText)
         }
         return built
       }
@@ -5883,8 +5887,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         returning(...cols) {
           const retText = `${sqlText} RETURNING ${cols.join(', ')}`
           const q = delParams.length > 0
-            ? (_sql as any).unsafe(retText, delParams)
-            : (_sql as any).unsafe(retText)
+            ? _sql.unsafe(retText, delParams)
+            : _sql.unsafe(retText)
           const obj: any = {
             where: () => obj,
             andWhere: () => obj,
@@ -5930,8 +5934,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         returningAll() {
           const retAllText = `${sqlText} RETURNING *`
           const q = delParams.length > 0
-            ? (_sql as any).unsafe(retAllText, delParams)
-            : (_sql as any).unsafe(retAllText)
+            ? _sql.unsafe(retAllText, delParams)
+            : _sql.unsafe(retAllText)
           return {
             toSQL: () => makeExecutableQuery(q, retAllText) as any,
             execute: () => runWithHooks<any[]>(q, 'delete'),
@@ -6459,7 +6463,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         sql += ')'
       }
 
-      return (_sql as any).unsafe(sql, params).execute()
+      return _sql.unsafe(sql, params).execute()
     },
     async insertMany(table, rows) {
       if (!rows?.length)
@@ -6500,7 +6504,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
         }
         // Join with commas between row templates
-        return (_sql as any).unsafe(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
+        return _sql.unsafe(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
       }
 
       // Postgres path: positional placeholders
@@ -6513,7 +6517,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
         sqlParts[r + 1] = `(${placeholders.join(',')})`
       }
-      return (_sql as any).unsafe(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
+      return _sql.unsafe(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
     },
     async updateMany(table, conditions, data) {
       // Ultra-optimized direct SQL construction
@@ -6552,7 +6556,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
       }
 
-      return (_sql as any).unsafe(sql, params).execute()
+      return _sql.unsafe(sql, params).execute()
     },
     async deleteMany(table, ids) {
       if (!Array.isArray(ids) || ids.length === 0)
@@ -6564,12 +6568,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       if (config.dialect === 'postgres') {
         const placeholders = new Array(len)
         for (let i = 0; i < len; i++) placeholders[i] = `$${i + 1}`
-        return (_sql as any).unsafe(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
+        return _sql.unsafe(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
       }
       // SQLite/MySQL: use ? placeholders
       const placeholders = new Array(len)
       for (let i = 0; i < len; i++) placeholders[i] = '?'
-      return (_sql as any).unsafe(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
+      return _sql.unsafe(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
     },
     async firstOrCreate(table, match, defaults) {
       const existing = await (this as any).selectFrom(table).where(match as any).first()

@@ -28,6 +28,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { Faker } from '@stacksjs/ts-faker'
 import type { SupportedDialect } from './types'
 import { config } from './config'
+import type { DriverConnection } from './db'
 import { getOrCreateBunSql } from './db'
 
 /**
@@ -409,8 +410,8 @@ class DriverExecutor implements OrmExecutor {
   constructor(public readonly dialect: SupportedDialect) {}
 
   /** The live dialect-aware connection (handles its own reset/config-change). */
-  private conn(): any {
-    return getOrCreateBunSql()
+  private conn(): DriverConnection {
+    return getOrCreateBunSql() as unknown as DriverConnection
   }
 
   private text(sql: string): string {

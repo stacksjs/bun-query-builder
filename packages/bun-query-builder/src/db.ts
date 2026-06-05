@@ -1,5 +1,44 @@
 import type { DatabaseConfig, PoolConfig, SupportedDialect } from './types'
 import { SQL } from 'bun'
+
+/**
+ * The query object returned by `connection.unsafe(...)` / a tagged template.
+ * Both Bun's native `SQL` query and our `createSQLiteSQL` wrapper satisfy this.
+ * See stacksjs/bun-query-builder#1044.
+ */
+export interface DriverQuery {
+  execute: () => Promise<any>
+  values?: () => any
+  raw?: () => any
+  toString: () => string
+  cancel?: () => void
+  readonly sql?: string
+  // Escape hatch: the two driver implementations expose slightly different
+  // extras; the index signature keeps unknown members typed `any` (no cast)
+  // while the named members above are properly typed.
+  [key: string]: any
+}
+
+/** An `unsafe(...)` result: a query object that is ALSO directly awaitable. */
+export type AwaitableDriverQuery = DriverQuery & PromiseLike<any>
+
+/**
+ * The shared connection surface used across the dispatch path — both the
+ * `bun:sqlite` wrapper and Bun's native `SQL` satisfy it. Typing `_sql` against
+ * this (instead of `any`) is what lets the ~hundreds of `(_sql as any).unsafe`
+ * casts be dropped. See stacksjs/bun-query-builder#1044.
+ */
+export interface DriverConnection {
+  /** Tagged-template form: `` sql`SELECT 1` ``. */
+  (strings: TemplateStringsArray, ...values: any[]): DriverQuery
+  /** Function form for raw identifiers / value helpers: `sql('col')`. */
+  (value: any): any
+  unsafe: (sql: string, values?: any[]) => AwaitableDriverQuery
+  query?: (sql: string, params?: any[]) => any
+  close?: () => Promise<void> | void
+  _prepareStatement?: (sql: string) => any
+  [key: string]: any
+}
 import { Database } from 'bun:sqlite'
 import process from 'node:process'
 import { config } from './config'
