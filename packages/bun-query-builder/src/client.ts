@@ -5554,16 +5554,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (rowCount === 1) {
             // Ultra-fast path for single row - build SQL in one shot
             if (!isPostgres) {
-              // SQLite/MySQL: simple ? placeholders, no quoting needed for sqlite
-              let cols = keys[0]
+              // SQLite/MySQL: `?` placeholders. Quote the table + column
+              // identifiers (like the multi-row and Postgres paths) — the
+              // previous unquoted form let a column name smuggle SQL through
+              // this common single-row path. See stacksjs/bun-query-builder#1033.
+              let cols = quoteId(keys[0])
               let placeholders = '?'
               params[0] = firstRow[keys[0]]
               for (let c = 1; c < colCount; c++) {
-                cols += `,${keys[c]}`
+                cols += `,${quoteId(keys[c])}`
                 placeholders += ',?'
                 params[c] = firstRow[keys[c]]
               }
-              sqlText = `INSERT INTO ${table}(${cols})VALUES(${placeholders})`
+              sqlText = `INSERT INTO ${quoteId(table)}(${cols})VALUES(${placeholders})`
             }
             else {
               // PostgreSQL: quoted identifiers + $N placeholders
@@ -6418,7 +6421,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const rowCount = rows.length
       const params = Array.from({ length: rowCount * colCount })
 
-      let sql = `INSERT INTO ${table}(${keys.join(',')})VALUES`
+      // Quote table + column identifiers (#1033) — MySQL backticks, else
+      // double quotes (Postgres/SQLite).
+      const quoteId = config.dialect === 'mysql'
+        ? (id: string): string => `\`${String(id).replace(/`/g, '``')}\``
+        : (id: string): string => `"${String(id).replace(/"/g, '""')}"`
+      let sql = `INSERT INTO ${quoteId(String(table))}(${keys.map(quoteId).join(',')})VALUES`
       let pidx = 0
       for (let r = 0; r < rowCount; r++) {
         if (r > 0)
