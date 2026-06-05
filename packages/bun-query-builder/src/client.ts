@@ -20,6 +20,40 @@ function isRawExpression(expr: unknown): expr is RawExpression {
   return typeof expr === 'object' && expr !== null && 'raw' in expr && typeof (expr as RawExpression).raw === 'string'
 }
 
+/** Dialect-aware identifier quoting for the explicit INSERT builders (#1052). */
+function quoteInsertIdent(id: string): string {
+  return config.dialect === 'mysql'
+    ? `\`${id.replace(/`/g, '``')}\``
+    : `"${id.replace(/"/g, '""')}"`
+}
+
+/**
+ * Build the `(c1, c2) VALUES (?, ?), (?, ?)` fragment + flattened params for an
+ * INSERT, with dialect-aware placeholders. Used by upsert/insertOrIgnore/
+ * insertGetId/updateOrInsert, which previously relied on Bun's
+ * `${sql(table)} ${sql(values)}` helper composition — broken on every dialect
+ * (Postgres "Cannot INSERT with no columns" + no sqlite values-helper). See
+ * stacksjs/bun-query-builder#1052.
+ */
+function buildInsertClause(rows: Record<string, any>[], startIndex = 1): { colsSql: string, valuesSql: string, params: any[], nextIndex: number } {
+  const cols = Object.keys(rows[0] ?? {})
+  const params: any[] = []
+  let idx = startIndex
+  const tuples = rows.map((row) => {
+    const phs = cols.map((c) => {
+      params.push(row[c])
+      return getPlaceholder(idx++)
+    })
+    return `(${phs.join(', ')})`
+  })
+  return {
+    colsSql: cols.map(quoteInsertIdent).join(', '),
+    valuesSql: tuples.join(', '),
+    params,
+    nextIndex: idx,
+  }
+}
+
 /** Options shared by the generalized window functions (#1050). */
 interface WindowOpts {
   partitionBy?: string | string[]
@@ -6426,99 +6460,86 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }) as any
     },
     async insertOrIgnore(table, values) {
-      // Dialect-specific "insert ignoring duplicates" syntax. Previously
-      // hardcoded `ON CONFLICT DO NOTHING` which works on Postgres +
-      // SQLite but is a syntax error on MySQL — the framework's
-      // "swap drivers seamlessly" claim broke at this method. MySQL
-      // needs `INSERT IGNORE INTO`. See stacksjs/stacks#1862 #15.
-      if (config.dialect === 'mysql') {
-        const built = bunSql`INSERT IGNORE INTO ${bunSql(String(table))} ${bunSql(values as any)}`
-        return (built as any).execute()
-      }
-      const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} ON CONFLICT DO NOTHING`
-      return (built as any).execute()
+      // Built with explicit columns + placeholders rather than Bun's
+      // `${sql(table)} ${sql(values)}` helper, which is broken on every dialect
+      // (#1052). MySQL uses `INSERT IGNORE`; Postgres/SQLite `ON CONFLICT DO NOTHING`.
+      const rows = (Array.isArray(values) ? values : [values]) as Record<string, any>[]
+      if (!rows.length)
+        return undefined as any
+      const { colsSql, valuesSql, params } = buildInsertClause(rows)
+      const tbl = quoteInsertIdent(String(table))
+      const sqlText = config.dialect === 'mysql'
+        ? `INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
+        : `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} ON CONFLICT DO NOTHING`
+      return (bunSql.unsafe(sqlText, params) as any).execute()
     },
     async insertGetId(table, values, idColumn = 'id' as any) {
+      const { colsSql, valuesSql, params } = buildInsertClause([values as Record<string, any>])
+      const tbl = quoteInsertIdent(String(table))
       if (config.dialect === 'mysql') {
-        // MySQL doesn't support RETURNING, so we need to insert and then get the last insert ID
-        // Use a single query to avoid connection issues
-        const insertQuery = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)}`
-        const result = await insertQuery.execute()
-
-        // For MySQL, the result should contain the insertId
-        if (result && typeof result === 'object' && 'insertId' in result) {
-          return result.insertId
-        }
-
-        // Fallback: try to get LAST_INSERT_ID() in the same connection
-        const [lastIdResult] = await bunSql`SELECT LAST_INSERT_ID() as id`.execute()
-        return lastIdResult?.id
-      }
-      else {
-        // PostgreSQL and other databases that support RETURNING
-        const q = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} RETURNING ${bunSql(String(idColumn))} as id`
-        const [row] = await q.execute()
+        // MySQL has no RETURNING — insert then read LAST_INSERT_ID().
+        await (bunSql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+        const [row] = await (bunSql.unsafe(`SELECT LAST_INSERT_ID() as id`) as any).execute()
         return row?.id
       }
+      if (config.dialect === 'sqlite') {
+        // The bun:sqlite wrapper returns { changes, lastInsertRowid } rather
+        // than RETURNING rows, so read the rowid directly.
+        const res = await (bunSql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+        if (res?.lastInsertRowid != null)
+          return res.lastInsertRowid
+        const [row] = await (bunSql.unsafe(`SELECT last_insert_rowid() as id`) as any).execute()
+        return row?.id
+      }
+      // Postgres supports RETURNING.
+      const [row] = await (bunSql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} RETURNING ${quoteInsertIdent(String(idColumn))} as id`, params) as any).execute()
+      return row?.id
     },
     async updateOrInsert(table, match, values) {
-      const whereParts = Object.keys(match).map(k => bunSql`${bunSql(String(k))} = ${bunSql((match as any)[k])}`)
-      const existsQ = bunSql`SELECT 1 FROM ${bunSql(String(table))} WHERE ${bunSql(whereParts as any)} LIMIT 1`
-      const existsRows = await (existsQ as any).execute()
-      if (existsRows.length) {
-        const upd = bunSql`UPDATE ${bunSql(String(table))} SET ${bunSql(values as any)} WHERE ${bunSql(whereParts as any)}`
-        await (upd as any).execute()
+      const tbl = quoteInsertIdent(String(table))
+      const matchKeys = Object.keys(match)
+      let idx = 1
+      const whereSql = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(idx++)}`).join(' AND ')
+      const whereParams = matchKeys.map(k => (match as any)[k])
+      const existsRows = await (bunSql.unsafe(`SELECT 1 FROM ${tbl} WHERE ${whereSql} LIMIT 1`, whereParams) as any).execute()
+      if ((existsRows as any[]).length) {
+        const setKeys = Object.keys(values)
+        let i = 1
+        const setSql = setKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(', ')
+        const whereSql2 = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(' AND ')
+        const params = [...setKeys.map(k => (values as any)[k]), ...matchKeys.map(k => (match as any)[k])]
+        await (bunSql.unsafe(`UPDATE ${tbl} SET ${setSql} WHERE ${whereSql2}`, params) as any).execute()
         return true
       }
-      else {
-        const ins = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql({ ...match, ...values } as any)}`
-        await (ins as any).execute()
-        return true
-      }
+      const { colsSql, valuesSql, params } = buildInsertClause([{ ...match, ...values } as Record<string, any>])
+      await (bunSql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+      return true
     },
     async upsert(table, rows, conflictColumns, mergeColumns) {
       const targetCols = conflictColumns.map(c => String(c))
       const setCols = (mergeColumns ?? []).map(c => String(c))
+      const list = rows as Record<string, any>[]
+      if (!list.length)
+        return undefined as any
+      const { colsSql, valuesSql, params } = buildInsertClause(list)
+      const tbl = quoteInsertIdent(String(table))
+      const insert = `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
 
-      // MySQL doesn't speak `ON CONFLICT ... DO UPDATE SET ... = EXCLUDED.col`
-      // (that's Postgres/SQLite syntax). It uses
-      // `ON DUPLICATE KEY UPDATE col = VALUES(col)` instead. The
-      // previous shape failed silently on MySQL — see stacksjs/stacks#1862
-      // #15 / #16.
+      // MySQL uses ON DUPLICATE KEY UPDATE / INSERT IGNORE; Postgres + SQLite
+      // use ON CONFLICT ... DO UPDATE / DO NOTHING. Empty mergeColumns => the
+      // "do nothing" form (an empty SET is a syntax error). See #1035, #1052.
       if (config.dialect === 'mysql') {
-        // No merge columns → insert-or-ignore (an empty `ON DUPLICATE KEY
-        // UPDATE` is a syntax error). MySQL's DO-NOTHING is INSERT IGNORE.
-        // See stacksjs/bun-query-builder#1035.
-        if (setCols.length === 0) {
-          const built = bunSql`INSERT IGNORE INTO ${bunSql(String(table))} ${bunSql(rows as any)}`
-          return (built as any).execute()
-        }
-        // Build the `col = VALUES(col)` list as a raw fragment.
-        const updateList = setCols.map(c => `\`${c.replace(/`/g, '``')}\` = VALUES(\`${c.replace(/`/g, '``')}\`)`).join(', ')
-        const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON DUPLICATE KEY UPDATE ${(bunSql as any).unsafe(updateList)}`
-        return (built as any).execute()
+        if (setCols.length === 0)
+          return (bunSql.unsafe(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+        const updateList = setCols.map(c => `${quoteInsertIdent(c)} = VALUES(${quoteInsertIdent(c)})`).join(', ')
+        return (bunSql.unsafe(`${insert} ON DUPLICATE KEY UPDATE ${updateList}`, params) as any).execute()
       }
 
-      // Postgres / SQLite: build the `col = EXCLUDED.col` pairs as a
-      // single raw fragment so `EXCLUDED.col` resolves as a
-      // table-qualified column reference instead of being quoted as
-      // one identifier (`"EXCLUDED.col"`). The previous form passed
-      // `bunSql(\`EXCLUDED.${c}\`)` through `bunSql({...})`, which
-      // wrapped the whole "EXCLUDED.col" string as a quoted
-      // identifier and broke the conflict-update entirely.
-      // No merge columns → DO NOTHING (an empty `DO UPDATE SET` is a syntax
-      // error). See stacksjs/bun-query-builder#1035.
-      if (setCols.length === 0) {
-        const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON CONFLICT (${bunSql(targetCols as any)}) DO NOTHING`
-        return (built as any).execute()
-      }
-      const isPostgres = config.dialect === 'postgres'
-      const quoteCol = (column: string): string => isPostgres
-        ? `"${column.replace(/"/g, '""')}"`
-        : `"${column.replace(/"/g, '""')}"` // SQLite supports double quotes
-      const updateList = setCols.map(column => `${quoteCol(column)} = EXCLUDED.${quoteCol(column)}`).join(', ')
-      const built = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(rows as any)} ON CONFLICT (${bunSql(targetCols as any)}) DO UPDATE SET ${(bunSql as any).unsafe(updateList)}`
-      return (built as any).execute()
+      const targets = targetCols.map(quoteInsertIdent).join(', ')
+      if (setCols.length === 0)
+        return (bunSql.unsafe(`${insert} ON CONFLICT (${targets}) DO NOTHING`, params) as any).execute()
+      const updateList = setCols.map(c => `${quoteInsertIdent(c)} = EXCLUDED.${quoteInsertIdent(c)}`).join(', ')
+      return (bunSql.unsafe(`${insert} ON CONFLICT (${targets}) DO UPDATE SET ${updateList}`, params) as any).execute()
     },
     async save(table, values) {
       const pk = meta?.primaryKeys[String(table)] ?? 'id'
