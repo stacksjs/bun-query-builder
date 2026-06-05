@@ -3822,8 +3822,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       whereBetween(column: string, start: any, end: any) {
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+        // Dialect-aware placeholders: Postgres needs `$n`, not `?` (#1027).
+        const i = whereParams.length + 1
+        text = `${text} ${keyword} ${String(column)} BETWEEN ${getPlaceholder(i)} AND ${getPlaceholder(i + 1)}`
         whereParams.push(start, end)
-        text = `${text} ${keyword} ${String(column)} BETWEEN ? AND ?`
         built = null
         return this
       },
@@ -4008,7 +4010,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       whereNotBetween(column: string, start: any, end: any) {
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text += ` ${keyword} ${column} NOT BETWEEN ? AND ?`
+        const i = whereParams.length + 1
+        text += ` ${keyword} ${column} NOT BETWEEN ${getPlaceholder(i)} AND ${getPlaceholder(i + 1)}`
         whereParams.push(start, end)
         built = null
         return this as any
