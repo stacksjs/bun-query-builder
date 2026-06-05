@@ -4684,6 +4684,25 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         appendSetOp('UNION ALL', other)
         return this as any
       },
+      // INTERSECT / EXCEPT set operators (#1049), sharing union()'s param-merging
+      // seam. The ALL variants are Postgres/MySQL-only (SQLite has no
+      // INTERSECT ALL / EXCEPT ALL).
+      intersect(other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) {
+        appendSetOp('INTERSECT', other)
+        return this as any
+      },
+      intersectAll(other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) {
+        appendSetOp('INTERSECT ALL', other)
+        return this as any
+      },
+      except(other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) {
+        appendSetOp('EXCEPT', other)
+        return this as any
+      },
+      exceptAll(other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) {
+        appendSetOp('EXCEPT ALL', other)
+        return this as any
+      },
       forPage(page: number, perPage: number) {
         const p = Math.max(1, Math.floor(page))
         const pp = Math.max(1, Math.floor(perPage))
