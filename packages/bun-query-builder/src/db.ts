@@ -426,15 +426,11 @@ export function getBunSql(): SQL {
       ? new SQL(connectionString, poolOptions)
       : new SQL(connectionString)
 
-    // Attach error handler to prevent unhandled promise rejections
-    if (sql && typeof (sql as any).catch === 'function') {
-      (sql as any).catch((error: Error) => {
-        if (config.verbose && !error.message.includes('database') && !error.message.includes('does not exist')) {
-          console.warn(`[query-builder] Database connection error: ${error.message}`)
-        }
-      })
-    }
-
+    // NOTE: a Bun `SQL` instance is not a Promise and has no `.catch`, so the
+    // previous `if (typeof sql.catch === 'function')` handler here was dead
+    // code (and would have re-masked exactly the "database does not exist"
+    // errors #1022 made loud). Async connection errors surface at query time
+    // and via the process-level handler below. See #1039.
     return sql
   }
   catch (error) {
