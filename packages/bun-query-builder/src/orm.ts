@@ -806,8 +806,15 @@ class ModelInstance<
       const attrs = this._definition.attributes
       const data: Record<string, unknown> = {}
 
+      // Persist every declared attribute that's explicitly present on the
+      // instance — not just `fillable` ones. Previously a non-fillable value
+      // set via create() data / .set() / forceFill() (the common case for FK
+      // columns like `user_id`) was dropped from the INSERT while remaining on
+      // the in-memory instance, desyncing the two and breaking NOT-NULL FKs on
+      // Postgres. `guarded` columns stay mass-assignment protected. See #1025.
       for (const [key, attr] of Object.entries(attrs)) {
-        if (attr.fillable && this._attributes[key] !== undefined) {
+        if (attr.guarded) continue
+        if (this._attributes[key] !== undefined) {
           data[key] = this._attributes[key]
         }
       }
