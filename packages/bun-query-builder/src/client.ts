@@ -20,6 +20,14 @@ function isRawExpression(expr: unknown): expr is RawExpression {
   return typeof expr === 'object' && expr !== null && 'raw' in expr && typeof (expr as RawExpression).raw === 'string'
 }
 
+/** Options shared by the generalized window functions (#1050). */
+interface WindowOpts {
+  partitionBy?: string | string[]
+  orderBy?: [string, 'asc' | 'desc'][]
+  /** Output column alias (each window helper has a sensible default). */
+  alias?: string
+}
+
 /**
  * Whether slow-query reporting is active, so the prepared-statement fast paths
  * (which otherwise bypass runWithHooks) still route through it to measure
@@ -2705,6 +2713,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     }
 
+    // Shared OVER (...) builder + window-expression injection for the window
+    // functions (rowNumber/rank/... and lag/lead/sumOver/...). See #1050.
+    const buildOverClause = (partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]): string => {
+      const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
+      const parts: string[] = []
+      if (cols.length)
+        parts.push(`PARTITION BY ${cols.join(', ')}`)
+      if (orderBy && orderBy.length)
+        parts.push(`ORDER BY ${orderBy.map(([c, d]) => `${c} ${d === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`)
+      return parts.length ? `OVER (${parts.join(' ')})` : 'OVER ()'
+    }
+    const addWindowFunction = (fnExpr: string, alias: string, partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]): void => {
+      addToSelectClause(`${fnExpr} ${buildOverClause(partitionBy, orderBy)} AS ${alias}`)
+    }
+
     function assertSafeWhereOperator(op: unknown, context: string): string {
       if (typeof op !== 'string')
         throw new TypeError(`[query-builder] ${context}: operator must be a string, got ${typeof op}`)
@@ -3070,6 +3093,55 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         else
           text += `, ${windowExpr}`
         built = null
+        return this as any
+      },
+      // Generalized window functions (#1050). `over()` is the escape hatch for
+      // any expression; the rest are conveniences. opts: { partitionBy, orderBy,
+      // alias, offset (lag/lead) }.
+      over(expression: string, alias: string, opts: WindowOpts = {}) {
+        addWindowFunction(expression, alias, opts.partitionBy, opts.orderBy)
+        return this as any
+      },
+      lag(column: string, opts: WindowOpts & { offset?: number, defaultValue?: string | number } = {}) {
+        const args = [column, String(opts.offset ?? 1)]
+        if (opts.defaultValue !== undefined)
+          args.push(String(opts.defaultValue))
+        addWindowFunction(`LAG(${args.join(', ')})`, opts.alias ?? `${column}_lag`, opts.partitionBy, opts.orderBy)
+        return this as any
+      },
+      lead(column: string, opts: WindowOpts & { offset?: number, defaultValue?: string | number } = {}) {
+        const args = [column, String(opts.offset ?? 1)]
+        if (opts.defaultValue !== undefined)
+          args.push(String(opts.defaultValue))
+        addWindowFunction(`LEAD(${args.join(', ')})`, opts.alias ?? `${column}_lead`, opts.partitionBy, opts.orderBy)
+        return this as any
+      },
+      sumOver(column: string, opts: WindowOpts = {}) {
+        addWindowFunction(`SUM(${column})`, opts.alias ?? `${column}_sum`, opts.partitionBy, opts.orderBy)
+        return this as any
+      },
+      avgOver(column: string, opts: WindowOpts = {}) {
+        addWindowFunction(`AVG(${column})`, opts.alias ?? `${column}_avg`, opts.partitionBy, opts.orderBy)
+        return this as any
+      },
+      countOver(column: string = '*', opts: WindowOpts = {}) {
+        addWindowFunction(`COUNT(${column})`, opts.alias ?? 'count_over', opts.partitionBy, opts.orderBy)
+        return this as any
+      },
+      minOver(column: string, opts: WindowOpts = {}) {
+        addWindowFunction(`MIN(${column})`, opts.alias ?? `${column}_min`, opts.partitionBy, opts.orderBy)
+        return this as any
+      },
+      maxOver(column: string, opts: WindowOpts = {}) {
+        addWindowFunction(`MAX(${column})`, opts.alias ?? `${column}_max`, opts.partitionBy, opts.orderBy)
+        return this as any
+      },
+      firstValue(column: string, opts: WindowOpts = {}) {
+        addWindowFunction(`FIRST_VALUE(${column})`, opts.alias ?? `${column}_first`, opts.partitionBy, opts.orderBy)
+        return this as any
+      },
+      lastValue(column: string, opts: WindowOpts = {}) {
+        addWindowFunction(`LAST_VALUE(${column})`, opts.alias ?? `${column}_last`, opts.partitionBy, opts.orderBy)
         return this as any
       },
       selectAll() {
