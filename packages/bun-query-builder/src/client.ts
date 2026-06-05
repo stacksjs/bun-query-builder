@@ -2502,6 +2502,27 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       text = `${text} ${p} ${clause}`
     }
 
+    // Append a UNION/UNION ALL (extensible to INTERSECT/EXCEPT) while MERGING
+    // the other side's bound params and renumbering its `$n` placeholders past
+    // ours on Postgres — previously the set-op appended text only, dropping the
+    // right side's params and colliding `$1`. See stacksjs/bun-query-builder#1029.
+    const appendSetOp = (op: string, other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) => {
+      const st = other.__rawState?.()
+      if (st) {
+        const offset = whereParams.length
+        const otherSql = config.dialect === 'postgres'
+          ? st.sql.replace(/\$(\d+)/g, (_m: string, n: string) => `$${Number(n) + offset}`)
+          : st.sql
+        text += ` ${op} ${otherSql}`
+        whereParams.push(...st.params)
+      }
+      else {
+        // Foreign builder without __rawState — fall back to text-only (no param merge).
+        text += ` ${op} ${String(other.toSQL())}`
+      }
+      built = null
+    }
+
     const joinedTables = new Set<string>()
     let timeoutMs: number | undefined
     let abortSignal: AbortSignal | undefined
@@ -4527,14 +4548,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = null
         return this as any
       },
-      union(other: { toSQL: () => any }) {
-        text += ` UNION ${String(other.toSQL())}`
-        built = null
+      union(other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) {
+        appendSetOp('UNION', other)
         return this as any
       },
-      unionAll(other: { toSQL: () => any }) {
-        text += ` UNION ALL ${String(other.toSQL())}`
-        built = null
+      unionAll(other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) {
+        appendSetOp('UNION ALL', other)
         return this as any
       },
       forPage(page: number, perPage: number) {
@@ -5066,6 +5085,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       toParams() {
         return (ensureBuilt() as any).values?.() ?? []
+      },
+      // Internal: the builder's finalized SQL text + ordered bound params, used
+      // by union()/unionAll() on the other side to merge params and renumber
+      // placeholders. See stacksjs/bun-query-builder#1029.
+      __rawState() {
+        return { sql: reorderSelectClauses(text), params: [...whereParams] }
       },
       raw() {
         return (ensureBuilt() as any).raw()
