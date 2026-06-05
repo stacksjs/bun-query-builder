@@ -1,4 +1,5 @@
 import type { BelongsToManyConfig, ModelRecord } from './schema'
+import { normalizeRelationEntry } from './relation-utils'
 
 export interface SchemaMeta {
   modelToTable: Record<string, string>
@@ -56,22 +57,22 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
     const toRecord = (v: any): Record<string, string> => {
       if (!v)
         return {}
-      const modelName = (x: any): string | null =>
-        typeof x === 'string' ? x : (x && typeof x === 'object' && typeof x.model === 'string' ? x.model : null)
       const rec: Record<string, string> = {}
       if (Array.isArray(v)) {
+        // Array form: relation name is the (unwrapped) model name.
         for (const item of v) {
-          const name = modelName(item)
-          if (name)
-            rec[name] = name
+          const n = normalizeRelationEntry(item)
+          if (n)
+            rec[n.model] = n.model
         }
         return rec
       }
       if (typeof v === 'object') {
+        // Record form: relation name is the key, value unwraps to the model name.
         for (const [key, val] of Object.entries(v)) {
-          const name = modelName(val)
-          if (name)
-            rec[key] = name
+          const n = normalizeRelationEntry(val)
+          if (n)
+            rec[key] = n.model
         }
         return rec
       }

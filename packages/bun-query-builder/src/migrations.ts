@@ -1,4 +1,5 @@
 import type { ForeignKeyConfig, ModelRecord, OnForeignKeyAction } from './schema'
+import { normalizeRelationList } from './relation-utils'
 import type { SupportedDialect } from './types'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -301,51 +302,6 @@ export interface InferenceOptions {
   dialect: SupportedDialect
 }
 
-/** A belongsTo relation reduced to the fields the migration generator needs. */
-interface NormalizedBelongsTo {
-  model: string
-  /** Custom FK column name from object form; defaults to `${snake(model)}_id`. */
-  foreignKey?: string
-  /** ON DELETE behaviour from object form. */
-  onDelete?: OnForeignKeyAction
-}
-
-/**
- * Normalize a `belongsTo` declaration into a flat list of relation descriptors.
- *
- * Accepts every supported shape and — crucially — unwraps the object form
- * (`{ model, foreignKey?, onDelete? }`) BEFORE any string operation runs on it.
- * Previously the entry was returned verbatim, so an object-form entry reached
- * `snakeCase(...)` and threw `str.replace is not a function`
- * (stacksjs/bun-query-builder#1023). This mirrors the normalization
- * `belongsToMany` already performs.
- *
- *   - string array:          ['Order', 'Customer']
- *   - object-in-array:       [{ model: 'Order', foreignKey: 'order_id', onDelete: 'cascade' }, 'User']
- *   - record (name->Model):  { order: 'Order' }
- *   - record (name->config): { order: { model: 'Order', foreignKey: 'order_id' } }
- */
-function normalizeBelongsTo(belongsTo: unknown): NormalizedBelongsTo[] {
-  if (!belongsTo)
-    return []
-
-  const fromEntry = (entry: unknown): NormalizedBelongsTo | null => {
-    if (typeof entry === 'string')
-      return { model: entry }
-    if (entry && typeof entry === 'object' && typeof (entry as any).model === 'string') {
-      const e = entry as { model: string, foreignKey?: string, onDelete?: OnForeignKeyAction }
-      return { model: e.model, foreignKey: e.foreignKey, onDelete: e.onDelete }
-    }
-    return null
-  }
-
-  const entries = Array.isArray(belongsTo)
-    ? belongsTo
-    : (typeof belongsTo === 'object' ? Object.values(belongsTo as Record<string, unknown>) : [])
-
-  return entries.map(fromEntry).filter((x): x is NormalizedBelongsTo => x !== null)
-}
-
 export function buildMigrationPlan(models: ModelRecord, options: InferenceOptions): MigrationPlan {
   const meta = buildSchemaMeta(models)
   const tables: TablePlan[] = []
@@ -474,7 +430,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     // Auto-generate FK columns from belongsTo relationships
     // If a model declares belongsTo: ['Order', 'Customer'], automatically add
     // order_id and customer_id columns with FK constraints (unless already defined in attributes)
-    const belongsToRelations = normalizeBelongsTo(model.belongsTo)
+    const belongsToRelations = normalizeRelationList(model.belongsTo)
     for (const rel of belongsToRelations) {
       // Object form may pin a custom FK column name; otherwise use convention.
       const fkColumnName = rel.foreignKey ?? `${snakeCase(rel.model)}_id`
