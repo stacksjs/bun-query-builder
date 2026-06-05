@@ -538,27 +538,14 @@ function createLazyBunSql(): SQL {
 // Export a lazy proxy - no connection is made until first use
 export const bunSql: SQL = createLazyBunSql()
 
-// Add global error handler for unhandled rejections from SQL connections
-if (typeof process !== 'undefined' && process.on) {
-  const existingHandler = process.listeners('unhandledRejection').find(
-    h => h.name === 'sqlConnectionErrorHandler',
-  )
-  if (!existingHandler) {
-    function sqlConnectionErrorHandler(reason: any) {
-      // Silently ignore PostgreSQL/MySQL connection errors during tests
-      if (
-        reason
-        && (reason.message?.includes('database') || reason.message?.includes('does not exist')
-          || reason.code === 'ERR_POSTGRES_SERVER_ERROR'
-          || reason.code === '3D000')
-      ) {
-        // Suppress these errors - they're expected when database isn't available
-      }
-    }
-    Object.defineProperty(sqlConnectionErrorHandler, 'name', { value: 'sqlConnectionErrorHandler' })
-    process.on('unhandledRejection', sqlConnectionErrorHandler)
-  }
-}
+// NOTE: this module no longer installs a process-wide `unhandledRejection`
+// handler. A library has no business doing so: ANY such listener suppresses the
+// runtime's default crash for EVERY unhandled rejection in the consumer's
+// process (the old handler's body matched only DB errors but silently swallowed
+// the rest), masking genuine production bugs. Expected "database does not exist"
+// errors during tests are surfaced/awaited at query time now (#1022); a test
+// harness that needs to tolerate a missing DB should install its own handler.
+// See stacksjs/bun-query-builder#1040.
 
 // Also export the SQL class for advanced usage
 export { SQL } from 'bun'
