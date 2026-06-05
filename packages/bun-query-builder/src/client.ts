@@ -4520,10 +4520,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       having(expr: any) {
+        // Chained having() calls join with AND, not a second HAVING keyword
+        // (`HAVING a HAVING b` is invalid). See stacksjs/bun-query-builder#1034.
+        const kw = /\bHAVING\b/i.test(text) ? 'AND' : 'HAVING'
         // Handle array format: ['COUNT(id)', '>', 3]
         if (Array.isArray(expr)) {
           const paramIdx = whereParams.length + 1
-          text = `${text} HAVING ${expr[0]} ${expr[1]} ${getPlaceholder(paramIdx)}`
+          text = `${text} ${kw} ${expr[0]} ${expr[1]} ${getPlaceholder(paramIdx)}`
           whereParams.push(expr[2])
           built = null
         }
@@ -4539,20 +4542,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               conditions[i] = `${key} = ${getPlaceholder(baseIdx + i + 1)}`
               whereParams.push(expr[key])
             }
-            text = `${text} HAVING ${conditions.join(' AND ')}`
+            text = `${text} ${kw} ${conditions.join(' AND ')}`
             built = null
           }
         }
         // Handle raw expressions
         else if (expr && typeof (expr as any).raw !== 'undefined') {
-          text += ` HAVING ${(expr as any).raw}`
+          text += ` ${kw} ${(expr as any).raw}`
           built = null
         }
         return this as any
       },
       havingRaw(fragment: any) {
         assertSqlFragment(fragment, 'havingRaw(fragment)')
-        text += ` HAVING ${String(fragment)}`
+        const kw = /\bHAVING\b/i.test(text) ? 'AND' : 'HAVING'
+        text += ` ${kw} ${String(fragment)}`
         built = null
         return this as any
       },
