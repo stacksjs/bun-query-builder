@@ -1307,7 +1307,7 @@ export interface BaseSelectQueryBuilder<
    * const res2 = await db.selectFrom('users').where({ active: true }).paginate(25)
    * ```
    */
-  paginate: (perPage: number, page?: number) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
+  paginate: (perPage: number, page?: number, opts?: { tx?: { unsafe: (sql: string, params?: any[]) => any } }) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
   /**
    * # `simplePaginate`
    *
@@ -4824,11 +4824,27 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const e = await (this as any).exists()
         return !e
       },
-      async paginate(perPage: number, page = 1) {
+      async paginate(perPage: number, page = 1, opts: { tx?: { unsafe: (sql: string, params?: any[]) => any } } = {}) {
         if (!Number.isFinite(perPage) || perPage <= 0 || !Number.isInteger(perPage))
           throw new TypeError(`[query-builder] paginate(perPage): expected positive integer, got ${perPage}`)
         if (!Number.isFinite(page) || page < 1 || !Number.isInteger(page))
           throw new TypeError(`[query-builder] paginate(page): expected integer >= 1, got ${page}`)
+
+        // Snapshot-consistent pagination (#1051): when the caller supplies a
+        // transaction handle, run BOTH the count and the page-data through it,
+        // so a concurrent INSERT/DELETE can't desync `total` from `data.length`.
+        // The caller owns the transaction (and thus the isolation level).
+        if (opts.tx) {
+          const baseSql = reorderSelectClauses(text)
+          const baseParams = [...whereParams]
+          const cRows = await opts.tx.unsafe(`SELECT COUNT(*) as c FROM (${baseSql}) as sub`, baseParams) as any[]
+          const total = Number(cRows?.[0]?.c ?? 0)
+          const lastPage = Math.max(1, Math.ceil(total / perPage))
+          const p = Math.max(1, Math.min(page, lastPage))
+          const offset = (p - 1) * perPage
+          const data = await opts.tx.unsafe(`${baseSql} LIMIT ${perPage} OFFSET ${offset}`, baseParams) as any[]
+          return { data, meta: { perPage, page: p, total, lastPage } }
+        }
 
         // Count + page-data run as two separate queries, so a
         // concurrent INSERT or DELETE between them can make `total`
