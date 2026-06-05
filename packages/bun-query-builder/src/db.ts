@@ -459,21 +459,37 @@ export function getBunSql(): SQL {
 
 // Note: Connection is created lazily on first access, not at module load time
 let _bunSqlInstance: SQL | null = null
-let _currentDialect: string | null = null
-let _currentDatabase: string | null = null
+let _currentSignature: string | null = null
+
+/**
+ * Signature of every config field that affects the connection — so a
+ * `setConfig` change to host/port/url/credentials/pool (not just dialect +
+ * database name) invalidates the cached connection. Previously only
+ * dialect + database.database were compared, so e.g. pointing at a new host
+ * via setConfig kept the stale connection. See stacksjs/bun-query-builder#1041.
+ */
+function connectionSignature(): string {
+  const d = config.database
+  return JSON.stringify({
+    dialect: config.dialect,
+    database: d.database,
+    username: d.username,
+    password: d.password,
+    host: d.host,
+    port: d.port,
+    url: d.url,
+    pool: resolvePoolOptions(d.pool),
+  })
+}
 
 export function getOrCreateBunSql(forceNew = false): SQL {
-  // Check if config has changed since we created the connection
-  const configChanged = _bunSqlInstance !== null && (
-    _currentDialect !== config.dialect
-    || _currentDatabase !== config.database.database
-  )
+  const signature = connectionSignature()
+  const configChanged = _bunSqlInstance !== null && _currentSignature !== signature
 
   // If forceNew is true, config changed, or we don't have an instance, create a new one
   if (forceNew || configChanged || !_bunSqlInstance) {
     _bunSqlInstance = getBunSql()
-    _currentDialect = config.dialect
-    _currentDatabase = config.database.database
+    _currentSignature = signature
   }
   return _bunSqlInstance
 }
@@ -484,8 +500,7 @@ export function getOrCreateBunSql(forceNew = false): SQL {
  */
 export function resetConnection(): void {
   _bunSqlInstance = null
-  _currentDialect = null
-  _currentDatabase = null
+  _currentSignature = null
 }
 
 // Wrapper that catches "Connection closed" errors and retries with a fresh connection
