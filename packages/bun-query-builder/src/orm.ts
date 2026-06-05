@@ -540,6 +540,16 @@ export function getDatabase(): Database {
 const SOFT_DELETE_COLUMN = 'deleted_at'
 
 /**
+ * Alias prefix for the related table's columns in a belongsToMany SELECT, so a
+ * same-named pivot column (`id`, `status`, `created_at`, …) can't overwrite the
+ * related value when both tables are selected into one flat row. We alias the
+ * RELATED side (fully known from its model definition) and keep `pivot.*`, so
+ * this doesn't depend on the pivot's declared columns (which are empty for
+ * `through:` models). See stacksjs/bun-query-builder#1036.
+ */
+const BTM_RELATED_ALIAS = '__btm_rel__'
+
+/**
  * Whether a model has soft-deletes enabled. Accepts both `useSoftDeletes` and
  * the `softDeletable` alias (stacksjs/bun-query-builder#1031), in boolean or
  * object form.
@@ -1380,9 +1390,29 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
   }
 
   /** Build the SELECT SQL for query-side execution. */
+  /** All known columns of the related model (pk + attributes + trait columns). */
+  private relatedSelectColumns(): string[] {
+    const cols = new Set<string>([this.relatedPk, ...Object.keys(this._relatedDef.attributes ?? {})])
+    const t = this._relatedDef.traits
+    if (t?.useTimestamps || t?.timestampable) {
+      cols.add('created_at')
+      cols.add('updated_at')
+    }
+    if (t?.useSoftDeletes || t?.softDeletable) cols.add('deleted_at')
+    if (t?.useUuid) cols.add('uuid')
+    return [...cols]
+  }
+
   private buildSelect(): { sql: string, params: unknown[] } {
     const params: unknown[] = []
-    let sql = `SELECT ${this.relatedTable}.*, ${this.pivotTable}.* FROM ${this.relatedTable}`
+    // Alias the related columns (`related.col AS __btm_rel__col`) and keep
+    // `pivot.*`, so a same-named pivot column can't overwrite a related one.
+    // Aliasing the related side avoids depending on the pivot's declared
+    // columns (empty for `through:` models). See #1036.
+    const relatedSelect = this.relatedSelectColumns()
+      .map(c => `${this.relatedTable}.${c} AS ${BTM_RELATED_ALIAS}${c}`)
+      .join(', ')
+    let sql = `SELECT ${relatedSelect}, ${this.pivotTable}.* FROM ${this.relatedTable}`
     sql += ` INNER JOIN ${this.pivotTable} ON ${this.pivotTable}.${this.fkRelated} = ${this.relatedTable}.${this.relatedPk}`
     sql += ` WHERE ${this.pivotTable}.${this.fkParent} = ?`
     params.push(this.parentId)
@@ -1402,22 +1432,19 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
 
   /** Hydrate raw rows into related ModelInstances with `.pivot` extras. */
   private hydrateRows(rows: Record<string, unknown>[]): ModelInstance<TRel, any>[] {
-    const relatedAttrs = new Set(Object.keys(this._relatedDef.attributes ?? {}))
-    relatedAttrs.add(this.relatedPk)
-    // System columns from related model traits — best effort.
-    relatedAttrs.add('created_at'); relatedAttrs.add('updated_at'); relatedAttrs.add('deleted_at')
+    // Related columns are uniquely aliased (`__btm_rel__col`); everything else
+    // is a pivot column (minus the two FKs). See #1036.
     const fkParent = this.fkParent
     const fkRelated = this.fkRelated
     return rows.map((raw) => {
       const relatedRow: Record<string, unknown> = {}
       const pivotExtras: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(raw)) {
-        if (k === fkParent || k === fkRelated) continue
-        if (relatedAttrs.has(k)) relatedRow[k] = v
-        else pivotExtras[k] = v
+        if (k.startsWith(BTM_RELATED_ALIAS))
+          relatedRow[k.slice(BTM_RELATED_ALIAS.length)] = v
+        else if (k !== fkParent && k !== fkRelated)
+          pivotExtras[k] = v
       }
-      // The related PK always belongs to the related row; force it.
-      relatedRow[this.relatedPk] = raw[this.relatedPk]
       const inst = new ModelInstance(this._relatedDef, relatedRow as any)
       ;(inst as any).pivot = pivotExtras
       return inst
