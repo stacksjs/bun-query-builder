@@ -3906,76 +3906,97 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = null
         return this as any
       },
+      // The LIKE/ILIKE family keeps a `built` tagged-template representation AND
+      // a `text`/`whereParams` shadow. Each must push the pattern into
+      // `whereParams` (with a dialect-aware placeholder), or a later `built =
+      // null` invalidation rebuilds from `text` with the pattern missing and
+      // the placeholders misaligned. See stacksjs/bun-query-builder#1028.
       whereLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? sql`${sql(String(column))} LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
         built = sql`${ensureBuilt()} WHERE ${expr}`
-        addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
+        const ph = getPlaceholder(whereParams.length + 1)
+        addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
+        whereParams.push(pattern)
         return this as any
       },
       whereILike(column: string, pattern: string) {
+        const ph = getPlaceholder(whereParams.length + 1)
         if (config.dialect === 'postgres') {
           built = sql`${ensureBuilt()} WHERE ${sql(String(column))} ILIKE ${pattern}`
-          addWhereText('WHERE', `${String(column)} ILIKE ?`)
+          addWhereText('WHERE', `${String(column)} ILIKE ${ph}`)
         }
         else {
           const expr = sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
           built = sql`${ensureBuilt()} WHERE ${expr}`
-          addWhereText('WHERE', `LOWER(${String(column)}) LIKE LOWER(?)`)
+          addWhereText('WHERE', `LOWER(${String(column)}) LIKE LOWER(${ph})`)
         }
+        whereParams.push(pattern)
         return this as any
       },
       orWhereLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? sql`${sql(String(column))} LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
         built = sql`${ensureBuilt()} OR ${expr}`
-        addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
+        const ph = getPlaceholder(whereParams.length + 1)
+        addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
+        whereParams.push(pattern)
         return this as any
       },
       orWhereILike(column: string, pattern: string) {
+        const ph = getPlaceholder(whereParams.length + 1)
         if (config.dialect === 'postgres') {
           built = sql`${ensureBuilt()} OR ${sql(String(column))} ILIKE ${pattern}`
-          addWhereText('OR', `${String(column)} ILIKE ?`)
+          addWhereText('OR', `${String(column)} ILIKE ${ph}`)
         }
         else {
           const expr = sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
           built = sql`${ensureBuilt()} OR ${expr}`
-          addWhereText('OR', `LOWER(${String(column)}) LIKE LOWER(?)`)
+          addWhereText('OR', `LOWER(${String(column)}) LIKE LOWER(${ph})`)
         }
+        whereParams.push(pattern)
         return this as any
       },
       whereNotLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? sql`${sql(String(column))} NOT LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
         built = sql`${ensureBuilt()} WHERE ${expr}`
-        addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
+        const ph = getPlaceholder(whereParams.length + 1)
+        addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
+        whereParams.push(pattern)
         return this as any
       },
       whereNotILike(column: string, pattern: string) {
+        const ph = getPlaceholder(whereParams.length + 1)
         if (config.dialect === 'postgres') {
           built = sql`${ensureBuilt()} WHERE ${sql(String(column))} NOT ILIKE ${pattern}`
-          addWhereText('WHERE', `${String(column)} NOT ILIKE ?`)
+          addWhereText('WHERE', `${String(column)} NOT ILIKE ${ph}`)
         }
         else {
           const expr = sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
           built = sql`${ensureBuilt()} WHERE ${expr}`
-          addWhereText('WHERE', `LOWER(${String(column)}) NOT LIKE LOWER(?)`)
+          addWhereText('WHERE', `LOWER(${String(column)}) NOT LIKE LOWER(${ph})`)
         }
+        whereParams.push(pattern)
         return this as any
       },
       orWhereNotLike(column: string, pattern: string, caseSensitive = false) {
         const expr = caseSensitive ? sql`${sql(String(column))} NOT LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
         built = sql`${ensureBuilt()} OR ${expr}`
-        addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? '?' : 'LOWER(?)'}`)
+        const ph = getPlaceholder(whereParams.length + 1)
+        addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
+        whereParams.push(pattern)
         return this as any
       },
       orWhereNotILike(column: string, pattern: string) {
+        const ph = getPlaceholder(whereParams.length + 1)
         if (config.dialect === 'postgres') {
           built = sql`${ensureBuilt()} OR ${sql(String(column))} NOT ILIKE ${pattern}`
-          addWhereText('OR', `${String(column)} NOT ILIKE ?`)
+          addWhereText('OR', `${String(column)} NOT ILIKE ${ph}`)
         }
         else {
           const expr = sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
           built = sql`${ensureBuilt()} OR ${expr}`
-          addWhereText('OR', `LOWER(${String(column)}) NOT LIKE LOWER(?)`)
+          addWhereText('OR', `LOWER(${String(column)}) NOT LIKE LOWER(${ph})`)
         }
+        whereParams.push(pattern)
         return this as any
       },
       whereAny(cols: string[], op: WhereOperator, value: any) {
