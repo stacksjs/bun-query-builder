@@ -21,6 +21,15 @@ function isRawExpression(expr: unknown): expr is RawExpression {
 }
 
 /**
+ * Whether slow-query reporting is active, so the prepared-statement fast paths
+ * (which otherwise bypass runWithHooks) still route through it to measure
+ * duration. See stacksjs/bun-query-builder#1045.
+ */
+function hasSlowQueryHook(h: any): boolean {
+  return Boolean(h && (h.onSlowQuery || (h.slowQueryThresholdMs != null && h.slowQueryThresholdMs >= 0)))
+}
+
+/**
  * Render a SELECT-list entry to its SQL text, unwrapping SQL fragments instead
  * of letting them stringify to "[object Object]" (stacksjs/bun-query-builder#1016).
  *
@@ -2365,9 +2374,30 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     return s
   }
 
+  /**
+   * Best-effort extraction of a query's bound parameters for the hook events
+   * (#1045). The bun:sqlite wrapper exposes them as a `.values` array; Bun's
+   * native query exposes `.values` as a method (skipped). Returns undefined
+   * when not cheaply available.
+   */
+  function computeParams(q: any): any[] | undefined {
+    if (!q || typeof q !== 'object')
+      return undefined
+    if (Array.isArray(q.values))
+      return q.values
+    if (Array.isArray(q.parameters))
+      return q.parameters
+    if (Array.isArray(q.params))
+      return q.params
+    return undefined
+  }
+
   function runWithHooks<T = any>(q: any, kind: 'select' | 'insert' | 'update' | 'delete' | 'raw', opts?: { signal?: AbortSignal, timeoutMs?: number }): Promise<T> {
     const hooks = config.hooks
-    const hasHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan)
+    const slowMs = hooks?.slowQueryThresholdMs
+    const slowEnabled = slowMs != null && slowMs >= 0
+    const hasSlowQuery = Boolean(hooks?.onSlowQuery || slowEnabled)
+    const hasHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hasSlowQuery)
     const hasTimeoutOrSignal = (opts?.timeoutMs && opts.timeoutMs > 0) || opts?.signal
 
     // Fast path: no hooks, no timeout, no signal - direct execute
@@ -2376,13 +2406,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     }
 
     const text = computeSqlText(q)
+    const params = computeParams(q)
     const startAt = Date.now()
     let span: { end: (error?: any) => void } | undefined
 
     try {
-      hooks?.onQueryStart?.({ sql: text, kind })
+      hooks?.onQueryStart?.({ sql: text, params, kind })
       if (hooks?.startSpan)
-        span = hooks.startSpan({ sql: text, kind })
+        span = hooks.startSpan({ sql: text, params, kind })
     }
     catch {}
 
@@ -2394,10 +2425,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const durationMs = Date.now() - startAt
       try {
         if (err) {
-          hooks?.onQueryError?.({ sql: text, error: err, durationMs, kind })
+          hooks?.onQueryError?.({ sql: text, params, error: err, durationMs, kind })
         }
         else {
-          hooks?.onQueryEnd?.({ sql: text, durationMs, rowCount, kind })
+          hooks?.onQueryEnd?.({ sql: text, params, durationMs, rowCount, kind })
+          // Slow-query reporting reuses the duration just measured (#1045).
+          if (slowEnabled && durationMs >= (slowMs as number)) {
+            if (hooks?.onSlowQuery)
+              hooks.onSlowQuery({ sql: text, params, durationMs, kind })
+            else
+              console.warn(`[query-builder] slow query (${durationMs}ms >= ${slowMs}ms): ${text}`)
+          }
         }
       }
       catch {}
@@ -4829,7 +4867,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async get() {
         const hooks = config.hooks
-        const hasQueryHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan)
+        const hasQueryHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hasSlowQueryHook(hooks))
 
         // Ultra-fast path: skip unsafe() entirely, use _prepareStatement for direct stmt access
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
@@ -4904,7 +4942,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       async first() {
         // Ultra-fast path: skip overhead, prepare statement directly from text
         const fHooks = config.hooks
-        const fHasQueryHooks = fHooks && (fHooks.onQueryStart || fHooks.onQueryEnd || fHooks.onQueryError || fHooks.startSpan)
+        const fHasQueryHooks = fHooks && (fHooks.onQueryStart || fHooks.onQueryEnd || fHooks.onQueryError || fHooks.startSpan || hasSlowQueryHook(fHooks))
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !fHasQueryHooks) {
           const prepareFn = _sql._prepareStatement
           if (prepareFn) {
@@ -4999,7 +5037,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         // Ultra-fast path
         const cHooks = config.hooks
-        const cHasHooks = cHooks && (cHooks.onQueryStart || cHooks.onQueryEnd || cHooks.onQueryError || cHooks.startSpan)
+        const cHasHooks = cHooks && (cHooks.onQueryStart || cHooks.onQueryEnd || cHooks.onQueryError || cHooks.startSpan || hasSlowQueryHook(cHooks))
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !cHasHooks) {
           const prepareFn = _sql._prepareStatement
           if (prepareFn) {
@@ -5025,7 +5063,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         // Ultra-fast path
         const aHooks = config.hooks
-        const aHasHooks = aHooks && (aHooks.onQueryStart || aHooks.onQueryEnd || aHooks.onQueryError || aHooks.startSpan)
+        const aHasHooks = aHooks && (aHooks.onQueryStart || aHooks.onQueryEnd || aHooks.onQueryError || aHooks.startSpan || hasSlowQueryHook(aHooks))
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !aHasHooks) {
           const prepareFn = _sql._prepareStatement
           if (prepareFn) {
@@ -5641,7 +5679,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         execute() {
           // Ultra-fast path: use _prepareStatement to skip unsafe() and runWithHooks overhead
           const hooks = config.hooks
-          const hasHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hooks.beforeCreate || hooks.afterCreate)
+          const hasHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hooks.beforeCreate || hooks.afterCreate || hasSlowQueryHook(hooks))
           if (!hasHooks) {
             const prepareFn = _sql._prepareStatement
             if (prepareFn) {

@@ -209,6 +209,14 @@ export interface QueryHooks {
   onQueryError?: (event: { sql: string, params?: any[], error: any, durationMs: number, kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
   /** Optional tracer integration. Return an object with end() to finish a span. */
   startSpan?: (event: { sql: string, params?: any[], kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => { end: (error?: any) => void }
+  /**
+   * When set, a query whose duration meets/exceeds this many milliseconds is
+   * reported as slow (via `onSlowQuery`, or a `console.warn` if no handler is
+   * set). Reuses the timing already measured for `onQueryEnd`.
+   */
+  slowQueryThresholdMs?: number
+  /** Called when a query's duration meets/exceeds `slowQueryThresholdMs`. */
+  onSlowQuery?: (event: { sql: string, params?: any[], durationMs: number, kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
   /** Called before creating a record. Can modify data or throw to prevent creation. */
   beforeCreate?: (event: { table: string, data: any }) => void | Promise<void>
   /** Called after creating a record. */
