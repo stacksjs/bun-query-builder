@@ -916,6 +916,23 @@ function columnsAreDifferent(col1: ColumnPlan, col2: ColumnPlan): boolean {
   return false
 }
 
+/**
+ * Whether two columns' foreign-key references differ (added, removed, or a
+ * changed target/onDelete/onUpdate). columnsAreDifferent intentionally omitted
+ * this, so FK-only changes produced no migration diff — see
+ * stacksjs/bun-query-builder#1037.
+ */
+function referencesAreDifferent(r1?: ColumnPlan['references'], r2?: ColumnPlan['references']): boolean {
+  if (Boolean(r1) !== Boolean(r2))
+    return true
+  if (!r1 || !r2)
+    return false
+  return r1.table !== r2.table
+    || r1.column !== r2.column
+    || r1.onDelete !== r2.onDelete
+    || r1.onUpdate !== r2.onUpdate
+}
+
 function mapIndexesByKey(indexes: IndexPlan[]): Record<string, IndexPlan> {
   const map: Record<string, IndexPlan> = {}
   for (const i of indexes) {
@@ -1108,6 +1125,16 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
           tableChanges.push(modifyColumnStatement)
           chunks.push(modifyColumnStatement)
           info(`-- Detected column type change: ${curr.table}.${colName} (${prevCol.type} -> ${currCol.type})`)
+          hasChanges = true
+        }
+
+        // Foreign-key reference changes are independent of column attributes
+        // (an FK-only change leaves type/nullable/etc identical). #1037.
+        if (referencesAreDifferent(prevCol.references, currCol.references) && currCol.references) {
+          const addFkStatement = driver.addForeignKey(curr.table, currCol.name, currCol.references.table, currCol.references.column, currCol.references.onDelete, currCol.references.onUpdate)
+          tableChanges.push(addFkStatement)
+          chunks.push(addFkStatement)
+          info(`-- Detected foreign-key change: ${curr.table}.${colName} -> ${currCol.references.table}(${currCol.references.column})${currCol.references.onDelete ? ` ON DELETE ${currCol.references.onDelete}` : ''}`)
           hasChanges = true
         }
       }
