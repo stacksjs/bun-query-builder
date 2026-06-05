@@ -59,21 +59,25 @@ export const defaultConfig: QueryBuilderConfig = {
   },
 }
 
-// For backwards compatibility — synchronous access with default fallback.
+// The single, process-wide config object — stored on a `globalThis` symbol so
+// that EVERY copy of this module shares one object, even if Bun's bundler
+// inlines `config.ts` more than once. Previously this was an `export let` that
+// `setConfig` mutated in place: it worked, but relied on the bundler keeping a
+// never-reassigned live binding as a single shared binding, and the build had
+// to regex-patch the emitted `__esm(init_config)` wrapper to keep readers and
+// writers on the same binding. A `globalThis`-keyed `export const` removes both
+// hazards — there is no module-local binding to split or rename, and `const`
+// makes the "never reassign config" rule unenforceable-to-break.
 //
-// Why `let` + an explicit `Object.assign(config, defaultConfig)` instead of
-// the obvious `export const config = defaultConfig`: when downstream code
-// (e.g. `bunfig`, our config loader) introduces a top-level `await`, Bun's
-// bundler may wrap this module's initializer in `__esm(async () => {...})`.
-// Static `const x = y` exports inside such a wrapper are reassigned only
-// once the async init runs, so callers that reach `setConfig(...)` before
-// that init (e.g. another module's top-level `setConfig` call mid-graph)
-// see `config` as `undefined` and `Object.assign(undefined, ...)` throws.
-// Initializing as `let config = {...defaultConfig}` outside the wrapper, and
-// having `setConfig` re-hydrate from defaults if it's somehow still empty,
-// keeps the surface synchronous for every consumer regardless of how the
-// module ends up bundled.
-export let config: QueryBuilderConfig = { ...defaultConfig }
+// Notes:
+//  - `??=` so the first-evaluated copy wins and the rest reuse it.
+//  - `Symbol.for` is a process-global registry key (shared across copies). It
+//    is also shared across package versions in one process — that's the intended
+//    hardening; pin a versioned key if you ever need per-version isolation.
+//  - Synchronous + no top-level await here, so `bun --compile` is unaffected.
+const CONFIG_SINGLETON_KEY = Symbol.for('bun-query-builder.config')
+export const config: QueryBuilderConfig
+  = ((globalThis as any)[CONFIG_SINGLETON_KEY] ??= { ...defaultConfig })
 
 /**
  * Get the placeholder format for the current dialect.
