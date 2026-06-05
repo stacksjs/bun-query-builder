@@ -386,6 +386,24 @@ function createSQLiteSQL(filename: string): SQL {
  * Creates a database connection string based on the configured dialect and database settings.
  */
 function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseConfig): string {
+  // When the host process declares a matching connection via env, prefer it.
+  // Consumers that bundle multiple bun-query-builder instances (e.g. the
+  // vendored Stacks framework) can leave a given instance on the built-in
+  // `test_db`/`postgres` defaults because `setConfig()` only mutates one
+  // instance's module-scoped config. Honoring DB_* env here makes every
+  // instance connect to the real database + credentials regardless of which
+  // config object setConfig reached.
+  if ((dialect === 'postgres' || dialect === 'mysql') && process.env.DB_CONNECTION === dialect) {
+    const e = process.env
+    const envDb = (e.DB_DATABASE || dbConfig.database || '').replace(/^['"]|['"]$/g, '')
+    const envUser = e.DB_USERNAME || dbConfig.username
+    const envPass = e.DB_PASSWORD ?? dbConfig.password ?? ''
+    const envHost = e.DB_HOST || dbConfig.host || 'localhost'
+    const envPort = e.DB_PORT || dbConfig.port
+    const scheme = dialect === 'postgres' ? 'postgres' : 'mysql'
+    return `${scheme}://${envUser}:${envPass}@${envHost}${envPort ? `:${envPort}` : ''}/${envDb}`
+  }
+
   // If a full URL is provided, use it directly
   if (dbConfig.url) {
     return dbConfig.url
