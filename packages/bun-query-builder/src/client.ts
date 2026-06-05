@@ -2523,6 +2523,29 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       built = null
     }
 
+    // Splice a JOIN clause into its correct position — after FROM/existing
+    // joins but before the first TOP-LEVEL trailing clause (WHERE/GROUP BY/
+    // HAVING/ORDER BY/LIMIT/OFFSET/UNION). Previously joins were appended to the
+    // end of `text`, so `.where(...).join(...)` emitted `... WHERE ... JOIN ...`
+    // (invalid on every dialect). Also invalidates `built`. Paren-depth scan so
+    // a subquery's inner WHERE doesn't get matched. See #1030.
+    const insertJoin = (joinClause: string) => {
+      const re = /\(|\)|\b(?:WHERE|GROUP BY|HAVING|ORDER BY|LIMIT|OFFSET|UNION)\b/gi
+      let depth = 0
+      let cut = -1
+      let mm: RegExpExecArray | null
+      // eslint-disable-next-line no-cond-assign
+      while ((mm = re.exec(text))) {
+        if (mm[0] === '(') { depth++ }
+        else if (mm[0] === ')') { depth = Math.max(0, depth - 1) }
+        else if (depth === 0) { cut = mm.index; break }
+      }
+      text = cut >= 0
+        ? `${text.slice(0, cut)}${joinClause} ${text.slice(cut)}`
+        : `${text} ${joinClause}`
+      built = null
+    }
+
     const joinedTables = new Set<string>()
     let timeoutMs: number | undefined
     let abortSignal: AbortSignal | undefined
@@ -4383,7 +4406,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        text = `${text} JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
+        insertJoin(`JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(table2)
         return this as any
       },
@@ -4399,44 +4422,37 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         validateQualifiedIdentifier(onLeft, 'joinSub(onLeft)')
         validateQualifiedIdentifier(onRight, 'joinSub(onRight)')
         assertSafeWhereOperator(operator, 'joinSub(operator)')
-        text += ` JOIN (${String(sub.toSQL())}) AS ${alias} ON ${onLeft} ${operator} ${onRight}`
-        built = null
+        insertJoin(`JOIN (${String(sub.toSQL())}) AS ${alias} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(alias)
         return this as any
       },
       innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        text = `${text} INNER JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        built = null
+        insertJoin(`INNER JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(table2)
         return this as any
       },
       leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        text = `${text} LEFT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        built = null
+        insertJoin(`LEFT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(table2)
         return this as any
       },
       leftJoinSub(sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        text += ` LEFT JOIN (${String(sub.toSQL())}) AS ${alias} ON ${onLeft} ${operator} ${onRight}`
-        built = null
+        insertJoin(`LEFT JOIN (${String(sub.toSQL())}) AS ${alias} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(alias)
         return this as any
       },
       rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        text = `${text} RIGHT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`
-        built = null
+        insertJoin(`RIGHT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(table2)
         return this as any
       },
       crossJoin(table2: string) {
-        text = `${text} CROSS JOIN ${table2}`
-        built = null
+        insertJoin(`CROSS JOIN ${table2}`)
         joinedTables.add(table2)
         return this as any
       },
       crossJoinSub(sub: { toSQL: () => any }, alias: string) {
-        text += ` CROSS JOIN (${String(sub.toSQL())}) AS ${alias}`
-        built = null
+        insertJoin(`CROSS JOIN (${String(sub.toSQL())}) AS ${alias}`)
         joinedTables.add(alias)
         return this as any
       },
