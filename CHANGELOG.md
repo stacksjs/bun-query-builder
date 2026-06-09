@@ -1,3 +1,23 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.26...v0.1.27)
+
+## 🚀 Features
+
+- narrow relation typing end-to-end, harden SQL boundaries, true LRU cache ([3827868](https://github.com/stacksjs/bun-query-builder/commit/3827868)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **db**: prefer DB_* env in createConnectionString ([4b92f81](https://github.com/stacksjs/bun-query-builder/commit/4b92f81)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.27 ([a158c8e](https://github.com/stacksjs/bun-query-builder/commit/a158c8e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: refresh bun.lock to pick up pickier 0.1.33 ([b9cde8c](https://github.com/stacksjs/bun-query-builder/commit/b9cde8c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.25...v0.1.26)
 
 ## 🚀 Features
