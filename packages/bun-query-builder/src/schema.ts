@@ -307,12 +307,87 @@ export type InferTableName<M extends ModelDefinition> = M extends {
     ? `${Lowercase<N>}s`
     : string
 
+// ============================================================================
+// Type-level relation inference (mirrors the runtime normalization in meta.ts)
+// ============================================================================
+
+/**
+ * Resolve a models-record entry to the raw definition. `defineModel()` (and
+ * `createModel`/`createBrowserModel`) wrap definitions in an object exposing
+ * `getDefinition()` / `definition`; `buildDatabaseSchema` unwraps these at
+ * runtime, so the type level must unwrap them too or the schema degrades to
+ * an untyped index signature.
+ */
+type UnwrapModelDefinition<M> =
+  M extends { getDefinition: () => infer D } ? D :
+    M extends { definition: infer D } ? D :
+      M
+
+/**
+ * Unwrap a relation entry to the related model's name. Entries may be a plain
+ * model-name string, a `{ model: 'X' }` config (belongsToMany Option A/B), or
+ * a `{ through, target }` through-relation descriptor.
+ */
+type RelationEntryModelName<E> =
+  E extends string ? E :
+    E extends { model: infer M extends string } ? M :
+      E extends { target: infer T extends string } ? T :
+        never
+
+/**
+ * Normalize one relation declaration (array or record form) into a
+ * `relationName -> relatedModelName` record, mirroring `buildSchemaMeta`:
+ * array entries use the (unwrapped) model name as the relation name; record
+ * entries use the key.
+ */
+type RelationRecordOf<V> =
+  [V] extends [never]
+    ? {} // absent relation kind — must yield {} (not never) so intersections survive
+    : V extends readonly (infer E)[]
+      ? { [K in RelationEntryModelName<E> & string]: K }
+      : V extends Readonly<Record<string, unknown>>
+        ? { [K in keyof V & string]: RelationEntryModelName<V[K]> }
+        : {}
+
+/** All relations of a model as a `relationName -> relatedModelName` record. */
+type ModelRelationsRecord<M> =
+  RelationRecordOf<M extends { hasOne: infer V } ? V : never>
+  & RelationRecordOf<M extends { hasMany: infer V } ? V : never>
+  & RelationRecordOf<M extends { belongsTo: infer V } ? V : never>
+  & RelationRecordOf<M extends { belongsToMany: infer V } ? V : never>
+  & RelationRecordOf<M extends { hasOneThrough: infer V } ? V : never>
+  & RelationRecordOf<M extends { hasManyThrough: infer V } ? V : never>
+  & RelationRecordOf<M extends { morphOne: infer V } ? V : never>
+  & RelationRecordOf<M extends { morphMany: infer V } ? V : never>
+  & RelationRecordOf<M extends { morphToMany: infer V } ? V : never>
+  & RelationRecordOf<M extends { morphedByMany: infer V } ? V : never>
+
+/** Resolve a related model name to its table name within the models record. */
+type RelatedTableName<MRecord extends ModelRecord, ModelName> =
+  ModelName extends keyof MRecord ? InferTableName<UnwrapModelDefinition<MRecord[ModelName]>> : string
+
+/**
+ * # `InferTableRelations<M, MRecord>`
+ *
+ * `relationName -> relatedTableName` record for one model, resolved against
+ * the full models record. Powers the type-level narrowing of `.with()`,
+ * `.whereHas()`, `.withCount()`, etc. on the query builder.
+ */
+export type InferTableRelations<M, MRecord extends ModelRecord> = {
+  [K in keyof ModelRelationsRecord<UnwrapModelDefinition<M>> & string]: RelatedTableName<MRecord, ModelRelationsRecord<UnwrapModelDefinition<M>>[K]>
+}
+
 /**
  * # `DatabaseSchema<Models>`
  *
  * Maps model definitions to a concrete database schema shape containing the
  * table columns and primary key. This is the primary input for the query
  * builder's type-safety.
+ *
+ * The `relations` field is type-level only (phantom): `buildDatabaseSchema`
+ * never materializes it at runtime. It maps relation names to related table
+ * names so builder methods like `.with()` can narrow their accepted relation
+ * names per table.
  *
  * @example
  * ```ts
@@ -321,8 +396,10 @@ export type InferTableName<M extends ModelDefinition> = M extends {
  * ```
  */
 export type DatabaseSchema<MRecord extends ModelRecord> = {
-  [MName in keyof MRecord & string as InferTableName<MRecord[MName]>]: {
-    columns: InferAttributes<MRecord[MName]>
-    primaryKey: InferPrimaryKey<MRecord[MName]>
+  [MName in keyof MRecord & string as InferTableName<UnwrapModelDefinition<MRecord[MName]>>]: {
+    columns: InferAttributes<UnwrapModelDefinition<MRecord[MName]>>
+    primaryKey: InferPrimaryKey<UnwrapModelDefinition<MRecord[MName]>>
+    /** Phantom, type-level only: relation name -> related table name. */
+    relations?: InferTableRelations<MRecord[MName], MRecord>
   };
 }

@@ -6,6 +6,8 @@
  * Lines without that marker MUST succeed.
  */
 
+import type { SelectQueryBuilder } from '../client'
+import type { DatabaseSchema } from '../schema'
 import { createModel, type ModelDefinition } from '../orm'
 
 const UserDef = {
@@ -173,4 +175,107 @@ async function _typeChecks() {
 
   // @ts-expect-error — 'email' was not selected, can't select it
   User.select('name', 'invalid_col')
+
+  // ---------------------------------------------------------------
+  // 11. getRelation() narrows name AND cardinality
+  // ---------------------------------------------------------------
+  const loaded = await User.with('post', 'team').first()
+  if (loaded) {
+    // hasMany → array (or undefined when not loaded)
+    const posts = loaded.getRelation('post')
+    if (posts) {
+      // eslint-disable-next-line pickier/no-unused-vars
+      const count: number = posts.length // OK — to-many relations are arrays
+    }
+
+    // belongsTo → single instance (or null/undefined)
+    const team = loaded.getRelation('team')
+    if (team) {
+      // @ts-expect-error — to-one relations are not arrays
+      team.length
+    }
+
+    // @ts-expect-error — 'bogus' is not a declared relation
+    loaded.getRelation('bogus')
+  }
+}
+
+// -----------------------------------------------------------------
+// 12. Query-builder level: with()/whereHas()/withCount() narrow
+//     relation names from the DatabaseSchema's phantom relations map
+// -----------------------------------------------------------------
+const QbUser = {
+  name: 'User',
+  table: 'users',
+  primaryKey: 'id',
+  hasMany: { posts: 'Post' },
+  belongsTo: { team: 'Team' },
+  attributes: {
+    name: { type: 'string' as const, fillable: true as const },
+  },
+} as const
+
+const QbPost = {
+  name: 'Post',
+  table: 'posts',
+  primaryKey: 'id',
+  belongsTo: { user: 'User' },
+  attributes: {
+    title: { type: 'string' as const, fillable: true as const },
+  },
+} as const
+
+const QbTeam = {
+  name: 'Team',
+  table: 'teams',
+  primaryKey: 'id',
+  attributes: {
+    label: { type: 'string' as const, fillable: true as const },
+  },
+} as const
+
+const qbModels = { User: QbUser, Post: QbPost, Team: QbTeam }
+type QbSchema = DatabaseSchema<typeof qbModels>
+
+// eslint-disable-next-line pickier/no-unused-vars
+function _qbTypeChecks(qb: SelectQueryBuilder<QbSchema, 'users', QbSchema['users']['columns']>) {
+  qb.with?.('posts') // OK — declared hasMany relation
+  qb.with?.('team') // OK — declared belongsTo relation
+  qb.with?.('posts.comments') // OK — nested path rooted at a declared relation
+  qb.with?.({ posts: q => q }) // OK — record form with constraint callback
+
+  // @ts-expect-error — 'orders' is not a declared relation on users
+  qb.with?.('orders')
+
+  qb.whereHas?.('posts') // OK
+  // @ts-expect-error — 'orders' is not a declared relation on users
+  qb.whereHas?.('orders')
+
+  qb.withCount?.('posts') // OK
+  // @ts-expect-error — 'orders' is not a declared relation on users
+  qb.withCount?.('orders')
+
+  qb.has?.('team') // OK
+  // @ts-expect-error — 'bogus' is not a declared relation on users
+  qb.doesntHave?.('bogus')
+}
+
+// -----------------------------------------------------------------
+// 13. Hand-written schemas without relation metadata stay permissive
+// -----------------------------------------------------------------
+interface LooseSchema {
+  legacy: {
+    columns: { id: number, name: string }
+    primaryKey: 'id'
+  }
+  [table: string]: {
+    columns: Record<string, unknown>
+    primaryKey: string
+  }
+}
+
+// eslint-disable-next-line pickier/no-unused-vars
+function _looseTypeChecks(qb: SelectQueryBuilder<LooseSchema, 'legacy', LooseSchema['legacy']['columns']>) {
+  qb.with?.('anything') // OK — no relation metadata, falls back to string
+  qb.whereHas?.('anything') // OK
 }

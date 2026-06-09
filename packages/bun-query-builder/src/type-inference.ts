@@ -484,4 +484,44 @@ export type RelationCardinality<TModel, R extends string> =
     | (TDef extends { belongsToMany: Readonly<Record<infer K, unknown>> }
         ? K extends string ? K extends R ? 'many' : never : never
         : never)
+    // hasOneThrough array syntax ({ model } entries)
+    | (TDef extends { hasOneThrough: readonly (infer M)[] }
+        ? M extends string
+          ? Lowercase<M> extends R ? 'one' : never
+          : M extends { model: infer N extends string }
+            ? Lowercase<N> extends R ? 'one' : never
+            : never
+        : never)
+    // hasOneThrough object syntax
+    | (TDef extends { hasOneThrough: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'one' : never : never
+        : never)
+    // hasManyThrough array syntax ({ model } entries)
+    | (TDef extends { hasManyThrough: readonly (infer M)[] }
+        ? M extends string
+          ? Lowercase<M> extends R ? 'many' : never
+          : M extends { model: infer N extends string }
+            ? Lowercase<N> extends R ? 'many' : never
+            : never
+        : never)
+    // hasManyThrough object syntax
+    | (TDef extends { hasManyThrough: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'many' : never : never
+        : never)
+    // morphOne object syntax
+    | (TDef extends { morphOne: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'one' : never : never
+        : never)
+    // morphMany object syntax
+    | (TDef extends { morphMany: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'many' : never : never
+        : never)
+    // morphToMany object syntax
+    | (TDef extends { morphToMany: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'many' : never : never
+        : never)
+    // morphedByMany object syntax
+    | (TDef extends { morphedByMany: Readonly<Record<infer K, unknown>> }
+        ? K extends string ? K extends R ? 'many' : never : never
+        : never)
     : never

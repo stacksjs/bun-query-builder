@@ -170,15 +170,40 @@ class QueryCache {
       return null
     }
 
+    // True LRU: a Map iterates in insertion order, so re-inserting on every
+    // hit keeps the least-recently-USED entry first. The previous version
+    // skipped this step, which made eviction FIFO — hot entries were evicted
+    // as readily as cold ones once the cache filled.
+    this.cache.delete(key)
+    this.cache.set(key, entry)
+
     return entry.data
   }
 
   set(key: string, data: any, ttlMs: number): void {
-    // Simple LRU: if cache is full, delete oldest entry
+    // Re-inserted keys must move to the back or they'd be evicted as if old.
+    if (this.cache.has(key))
+      this.cache.delete(key)
+
     if (this.cache.size >= this.maxSize) {
-      const firstKey = this.cache.keys().next().value
-      if (firstKey)
-        this.cache.delete(firstKey)
+      // Prefer dropping expired entries over live ones; entries are checked
+      // in least-recently-used order so the scan usually ends immediately.
+      const now = Date.now()
+      let evicted = false
+      for (const [k, v] of this.cache) {
+        if (now > v.expiresAt) {
+          this.cache.delete(k)
+          evicted = true
+          if (this.cache.size < this.maxSize)
+            break
+        }
+      }
+      if (!evicted) {
+        // No expired entries — evict the least recently used (first) one.
+        const lruKey = this.cache.keys().next().value
+        if (lruKey !== undefined)
+          this.cache.delete(lruKey)
+      }
     }
 
     this.cache.set(key, {
@@ -261,6 +286,31 @@ export type SelectedRow<
 type JoinColumn<DB extends DatabaseSchema<any>, TTables extends string> = TTables extends any
   ? `${TTables}.${keyof DB[TTables]['columns'] & string}`
   : never
+
+/**
+ * # `TableRelationName<DB, TTable>`
+ *
+ * The relation names declared for a table, read from the type-level
+ * `relations` map that `DatabaseSchema` carries. Falls back to `string`
+ * for hand-written schema types that don't declare relation metadata, so
+ * existing untyped schemas keep compiling.
+ */
+export type TableRelationName<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> =
+  DB[TTable] extends { relations?: infer R }
+    ? [keyof NonNullable<R>] extends [never] ? string : keyof NonNullable<R> & string
+    : string
+
+/**
+ * # `WithRelationArg<DB, TTable>`
+ *
+ * Argument accepted by `.with()`: a declared relation name, a dotted nested
+ * path rooted at a declared relation (`'posts.comments'`), or a record
+ * mapping relation names to constraint callbacks.
+ */
+export type WithRelationArg<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> =
+  | TableRelationName<DB, TTable>
+  | `${TableRelationName<DB, TTable>}.${string}`
+  | Partial<Record<TableRelationName<DB, TTable>, (qb: any) => any>>
 
 // Convert snake_case to PascalCase at the type level (e.g. created_at -> CreatedAt)
 type SnakeToPascal<S extends string> = S extends `${infer H}_${infer T}`
@@ -1037,7 +1087,58 @@ export interface BaseSelectQueryBuilder<
    * const sql = db.selectFrom('users').with('posts').toSQL()
    * ```
    */
-  with?: (...relations: string[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  with?: (...relations: WithRelationArg<DB, TTable>[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `whereHas`
+   *
+   * Filter records that have at least one related record, with an optional
+   * constraint callback applied to the related table.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').whereHas('posts').get()
+   * const active = await db.selectFrom('users').whereHas('posts', qb => qb.where('published', '=', true)).get()
+   * ```
+   */
+  whereHas?: (relation: TableRelationName<DB, TTable>, callback?: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `whereDoesntHave`
+   *
+   * Filter records that have no related records, with an optional constraint
+   * callback applied to the related table.
+   */
+  whereDoesntHave?: (relation: TableRelationName<DB, TTable>, callback?: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `has`
+   *
+   * Shorthand for `whereHas(relation)` without a constraint callback.
+   */
+  has?: (relation: TableRelationName<DB, TTable>) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `doesntHave`
+   *
+   * Shorthand for `whereDoesntHave(relation)` without a constraint callback.
+   */
+  doesntHave?: (relation: TableRelationName<DB, TTable>) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /**
+   * # `withCount`
+   *
+   * Select a correlated count of related records as `${relation}_count`.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users').withCount('posts').get()
+   * ```
+   */
+  withCount?: (...relations: TableRelationName<DB, TTable>[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /** Select a correlated SUM of a related column as `${relation}_sum_${column}`. */
+  withSum?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /** Select a correlated AVG of a related column as `${relation}_avg_${column}`. */
+  withAvg?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /** Select a correlated MAX of a related column as `${relation}_max_${column}`. */
+  withMax?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  /** Select a correlated MIN of a related column as `${relation}_min_${column}`. */
+  withMin?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
   /**
    * # `withPivot`
    *
@@ -1048,7 +1149,7 @@ export interface BaseSelectQueryBuilder<
    * const rows = await db.selectFrom('users').with('tags').withPivot('tags', 'created_at', 'role').get()
    * ```
    */
-  withPivot?: (relation: string, ...columns: string[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  withPivot?: (relation: TableRelationName<DB, TTable>, ...columns: string[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
   /**
    * # `wherePivot`
    *
@@ -1061,31 +1162,31 @@ export interface BaseSelectQueryBuilder<
    * await db.selectFrom('coaches').with('athletes').wherePivot('athletes', 'status', '!=', 'archived').get()
    * ```
    */
-  wherePivot?: (relation: string, column: string, opOrValue: any, value?: any) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivot?: (relation: TableRelationName<DB, TTable>, column: string, opOrValue: any, value?: any) => SelectQueryBuilder<DB, TTable, TSelected, any>
   /**
    * # `wherePivotIn`
    *
    * Filter a `belongsToMany` query by a column on the pivot table being in a list.
    */
-  wherePivotIn?: (relation: string, column: string, values: any[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivotIn?: (relation: TableRelationName<DB, TTable>, column: string, values: any[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
   /**
    * # `wherePivotNotIn`
    *
    * Filter a `belongsToMany` query by a column on the pivot table being not in a list.
    */
-  wherePivotNotIn?: (relation: string, column: string, values: any[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivotNotIn?: (relation: TableRelationName<DB, TTable>, column: string, values: any[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
   /**
    * # `wherePivotNull`
    *
    * Filter a `belongsToMany` query by a column on the pivot table being NULL.
    */
-  wherePivotNull?: (relation: string, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivotNull?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
   /**
    * # `wherePivotNotNull`
    *
    * Filter a `belongsToMany` query by a column on the pivot table being NOT NULL.
    */
-  wherePivotNotNull?: (relation: string, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivotNotNull?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
   /**
    * # `applyPivotColumns`
    *
@@ -2256,6 +2357,10 @@ function reorderSelectClauses(sql: string): string {
     // Keyword must be word-boundary-led — i.e. preceded by whitespace
     // (or start of string, which never matches a clause).
     if (i === 0 || !/\s/.test(sql[i - 1])) continue
+    // Cheap pre-filter: every clause keyword starts with G/O/H/L/W. Skip the
+    // slice + regex battery (the hot part of this scan) for any other char.
+    const lead = sql.charCodeAt(i) & ~32 // ASCII uppercase
+    if (lead !== 71 && lead !== 79 && lead !== 72 && lead !== 76 && lead !== 87) continue
     const rest = sql.slice(i)
     for (const { key, tokens } of KEYWORDS) {
       const m = rest.match(tokens)
@@ -3296,40 +3401,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             return fromTable
           }
 
-          // Helper to build conditional JOIN clause
-          const _buildConditionalJoin = (baseJoinCondition: string, targetTable: string): string => {
-            let joinCondition = baseJoinCondition
-
-            // Add soft delete filter if enabled
-            if (config.softDeletes?.enabled && config.softDeletes?.defaultFilter) {
-              const softDeleteColumn = config.softDeletes.column || 'deleted_at'
-              joinCondition = `${joinCondition} AND ${targetTable}.${softDeleteColumn} IS NULL`
-            }
-
-            if (!condition)
-              return joinCondition
-
-            // Create a simple query builder for the condition
-            const conditionBuilder = {
-              where: (col: string, op: string, val: any) => {
-                const valStr = typeof val === 'string' ? `'${val}'` : String(val)
-                return `${targetTable}.${col} ${op} ${valStr}`
-              },
-            }
-
-            try {
-              const additionalCondition = condition(conditionBuilder)
-              if (additionalCondition && typeof additionalCondition === 'string') {
-                return `${joinCondition} AND ${additionalCondition}`
-              }
-            }
-            catch {
-              // If condition fails, just use base condition
-            }
-
-            return joinCondition
-          }
-
           // Helper to add soft delete check to JOIN
           const addSoftDeleteCheck = (table: string): string => {
             if (config.softDeletes?.enabled && config.softDeletes?.defaultFilter) {
@@ -3976,6 +4047,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const getWhereKeyword = () => SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
 
         if (typeof expr === 'string' && op !== undefined) {
+          // Boundary validation: the column and operator are interpolated
+          // into SQL text (values stay parameterized). Compile-time types
+          // constrain both, but `as any` casts and dynamically-built strings
+          // bypass them — reject anything outside a (qualified) identifier
+          // and the operator allow-list. Mirrors applyCondition().
+          validateIdentifier(String(expr), 'where(column)')
+          assertSafeWhereOperator(op, 'where(operator)')
           const operator = String(op).toLowerCase()
           // Keep `.where('col', 'in', vals)` at parity with the
           // array form (`.where(['col', 'in', vals])`, line ~3596).
@@ -4005,7 +4083,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (Array.isArray(expr)) {
           const [col, op, val] = expr
           const colName = String(col)
-          const operator = String(op)
+          validateIdentifier(colName, 'where(column)')
+          const operator = assertSafeWhereOperator(op, 'where(operator)')
 
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(val) ? val : [val]
@@ -4033,6 +4112,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const conditions: string[] = []
 
           for (const key of keys) {
+            validateIdentifier(key, 'where(column)')
             const value = whereObject[key]
             if (Array.isArray(value)) {
               const placeholders = getPlaceholders(value.length, whereParams.length + 1)
@@ -4067,18 +4147,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       // where helpers
       whereNull(column: string) {
+        validateIdentifier(String(column), 'whereNull(column)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         text = `${text} ${keyword} ${String(column)} IS NULL`
         built = null
         return this
       },
       whereNotNull(column: string) {
+        validateIdentifier(String(column), 'whereNotNull(column)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         text = `${text} ${keyword} ${String(column)} IS NOT NULL`
         built = null
         return this
       },
       whereBetween(column: string, start: any, end: any) {
+        validateIdentifier(String(column), 'whereBetween(column)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         // Dialect-aware placeholders: Postgres needs `$n`, not `?` (#1027).
         const i = whereParams.length + 1
@@ -4097,6 +4180,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // Dialect-aware JSON containment. Previously hardcoded Postgres `@>`,
         // which is a syntax error on MySQL/SQLite and ignored the configured
         // `jsonContainsMode`. See stacksjs/bun-query-builder#1026.
+        validateIdentifier(String(column), 'whereJsonContains(column)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const dialect = config.dialect
         const idx = whereParams.length + 1
@@ -4288,6 +4372,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       whereNotBetween(column: string, start: any, end: any) {
+        validateIdentifier(String(column), 'whereNotBetween(column)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const i = whereParams.length + 1
         text += ` ${keyword} ${column} NOT BETWEEN ${getPlaceholder(i)} AND ${getPlaceholder(i + 1)}`
@@ -4336,6 +4421,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       whereIn(column: string, values: any[] | { toSQL: () => any }) {
+        validateIdentifier(String(column), 'whereIn(column)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
@@ -4349,6 +4435,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       orWhereIn(column: string, values: any[] | { toSQL: () => any }) {
+        validateIdentifier(String(column), 'orWhereIn(column)')
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
           text += ` OR ${column} IN (${placeholders})`
@@ -4361,6 +4448,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       whereNotIn(column: string, values: any[] | { toSQL: () => any }) {
+        validateIdentifier(String(column), 'whereNotIn(column)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
@@ -4374,6 +4462,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       orWhereNotIn(column: string, values: any[] | { toSQL: () => any }) {
+        validateIdentifier(String(column), 'orWhereNotIn(column)')
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
           text += ` OR ${column} NOT IN (${placeholders})`
@@ -4400,6 +4489,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       andWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
+          validateIdentifier(String(expr), 'andWhere(column)')
+          assertSafeWhereOperator(op, 'andWhere(operator)')
           const paramIndex = whereParams.length + 1
           whereConditions.push(`${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
           whereParams.push(value)
@@ -4412,7 +4503,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (Array.isArray(expr)) {
           const [col, op, val] = expr
           const colName = String(col)
-          const operator = String(op)
+          validateIdentifier(colName, 'andWhere(column)')
+          const operator = assertSafeWhereOperator(op, 'andWhere(operator)')
 
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(val) ? val : [val]
@@ -4473,6 +4565,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       orWhere(expr: any, op?: WhereOperator, value?: any) {
         if (typeof expr === 'string' && op !== undefined) {
+          validateIdentifier(String(expr), 'orWhere(column)')
+          assertSafeWhereOperator(op, 'orWhere(operator)')
           const paramIndex = whereParams.length + 1
           whereConditions.push(`OR ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
           whereParams.push(value)
@@ -4485,7 +4579,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (Array.isArray(expr)) {
           const [col, op, val] = expr
           const colName = String(col)
-          const operator = String(op)
+          validateIdentifier(colName, 'orWhere(column)')
+          const operator = assertSafeWhereOperator(op, 'orWhere(operator)')
 
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(val) ? val : [val]
@@ -4620,6 +4715,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this
       },
       join(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
+        // Same boundary validation as joinSub: identifiers and the operator
+        // are interpolated into SQL text, so reject anything that isn't a
+        // plain (optionally table-qualified) identifier or allow-listed
+        // operator. Compile-time types already constrain these; this guards
+        // the `as any` / dynamic-string escape hatch.
+        validateIdentifier(table2, 'join(table)')
+        validateQualifiedIdentifier(onLeft, 'join(onLeft)')
+        validateQualifiedIdentifier(onRight, 'join(onRight)')
+        assertSafeWhereOperator(operator, 'join(operator)')
         insertJoin(`JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(table2)
         return this as any
@@ -4641,31 +4745,49 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
+        validateIdentifier(table2, 'innerJoin(table)')
+        validateQualifiedIdentifier(onLeft, 'innerJoin(onLeft)')
+        validateQualifiedIdentifier(onRight, 'innerJoin(onRight)')
+        assertSafeWhereOperator(operator, 'innerJoin(operator)')
         insertJoin(`INNER JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(table2)
         return this as any
       },
       leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
+        validateIdentifier(table2, 'leftJoin(table)')
+        validateQualifiedIdentifier(onLeft, 'leftJoin(onLeft)')
+        validateQualifiedIdentifier(onRight, 'leftJoin(onRight)')
+        assertSafeWhereOperator(operator, 'leftJoin(operator)')
         insertJoin(`LEFT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(table2)
         return this as any
       },
       leftJoinSub(sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) {
+        validateIdentifier(alias, 'leftJoinSub(alias)')
+        validateQualifiedIdentifier(onLeft, 'leftJoinSub(onLeft)')
+        validateQualifiedIdentifier(onRight, 'leftJoinSub(onRight)')
+        assertSafeWhereOperator(operator, 'leftJoinSub(operator)')
         insertJoin(`LEFT JOIN (${String(sub.toSQL())}) AS ${alias} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(alias)
         return this as any
       },
       rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
+        validateIdentifier(table2, 'rightJoin(table)')
+        validateQualifiedIdentifier(onLeft, 'rightJoin(onLeft)')
+        validateQualifiedIdentifier(onRight, 'rightJoin(onRight)')
+        assertSafeWhereOperator(operator, 'rightJoin(operator)')
         insertJoin(`RIGHT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
         joinedTables.add(table2)
         return this as any
       },
       crossJoin(table2: string) {
+        validateIdentifier(table2, 'crossJoin(table)')
         insertJoin(`CROSS JOIN ${table2}`)
         joinedTables.add(table2)
         return this as any
       },
       crossJoinSub(sub: { toSQL: () => any }, alias: string) {
+        validateIdentifier(alias, 'crossJoinSub(alias)')
         insertJoin(`CROSS JOIN (${String(sub.toSQL())}) AS ${alias}`)
         joinedTables.add(alias)
         return this as any

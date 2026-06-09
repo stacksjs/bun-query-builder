@@ -27,6 +27,7 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { Faker } from '@stacksjs/ts-faker'
 import type { SupportedDialect } from './types'
+import type { RelationCardinality } from './type-inference'
 import { config } from './config'
 import type { DriverConnection } from './db'
 import { getOrCreateBunSql } from './db'
@@ -312,6 +313,20 @@ export type InferRelationNames<TDef> =
   | InferBelongsToManyNames<TDef>
   | InferHasOneThroughNames<TDef>
   | InferHasManyThroughNames<TDef>
+
+/**
+ * Cardinality-aware value of a loaded relation as returned by
+ * `ModelInstance.getRelation()`. Relations declared as to-many (hasMany,
+ * belongsToMany, hasManyThrough) yield arrays; to-one relations (hasOne,
+ * belongsTo, hasOneThrough) yield a single instance or null. `undefined`
+ * means the relation was not eager-loaded.
+ */
+type LoadedRelationValue<TDef, R extends string> =
+  'one' extends RelationCardinality<TDef, R>
+    ? ModelInstance<any, any> | null | undefined
+    : 'many' extends RelationCardinality<TDef, R>
+      ? ModelInstance<any, any>[] | undefined
+      : ModelInstance<any, any>[] | ModelInstance<any, any> | null | undefined
 
 type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' | 'in' | 'not in'
 
@@ -721,9 +736,13 @@ class ModelInstance<
    * Get a loaded relation by name.
    * Returns the related instance(s) if the relation was loaded via .with(),
    * or undefined if the relation wasn't loaded.
+   *
+   * The relation name is narrowed to the relations declared on the model, and
+   * the return type is cardinality-aware: hasMany/belongsToMany relations
+   * return an array, hasOne/belongsTo return a single instance or null.
    */
-  getRelation(name: string): ModelInstance<any, any>[] | ModelInstance<any, any> | null | undefined {
-    return this._relations[name]
+  getRelation<R extends InferRelationNames<TDef> & string>(name: R): LoadedRelationValue<TDef, R> {
+    return this._relations[name] as LoadedRelationValue<TDef, R>
   }
 
   /**
@@ -1054,6 +1073,10 @@ class ModelInstance<
 const snakeCaseCache = new Map<string, string>()
 const tableNameCache = new Map<string, string>()
 const relationCache = new Map<string, ReturnType<typeof resolveRelation>>()
+// Cache keys include the caller-supplied relation name (`Model:relation`), so
+// arbitrary/dynamic relation strings (e.g. from request params) would grow the
+// map without bound. Declared relations in any real app number far below this.
+const RELATION_CACHE_MAX = 1000
 
 /**
  * Convert PascalCase model name to snake_case for foreign key convention.
@@ -2069,6 +2092,8 @@ class ModelQueryBuilder<
       let rel = relationCache.get(cacheKey)
       if (rel === undefined) {
         rel = resolveRelation(this._definition as ModelDefinition, relationName)
+        if (relationCache.size >= RELATION_CACHE_MAX)
+          relationCache.clear()
         relationCache.set(cacheKey, rel)
       }
       if (!rel) continue
@@ -2115,9 +2140,13 @@ class ModelQueryBuilder<
       }
 
       if (rel.type === 'belongsTo') {
-        // Get foreign key values from instances
-        const fkValues = instances.map(i => (i as any)._attributes[rel.foreignKey]).filter(v => v != null)
-        const uniqueFkValues = [...new Set(fkValues)]
+        // Get distinct foreign key values in one pass (no intermediate arrays)
+        const fkSet = new Set<unknown>()
+        for (const i of instances) {
+          const v = (i as any)._attributes[rel.foreignKey]
+          if (v != null) fkSet.add(v)
+        }
+        const uniqueFkValues = [...fkSet]
         if (uniqueFkValues.length === 0) continue
 
         const placeholders = uniqueFkValues.map(() => '?').join(', ')
@@ -2158,8 +2187,13 @@ class ModelQueryBuilder<
           continue
         }
 
-        // 2) Fetch related rows in one batch.
-        const relatedIds = [...new Set(pivotRows.map(p => p[rel.pivotFkRelated!]))].filter(v => v != null)
+        // 2) Fetch related rows in one batch (distinct ids in one pass).
+        const relatedIdSet = new Set<unknown>()
+        for (const p of pivotRows) {
+          const v = p[rel.pivotFkRelated!]
+          if (v != null) relatedIdSet.add(v)
+        }
+        const relatedIds = [...relatedIdSet]
         const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
         const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
         const relatedPk = relDef?.primaryKey || 'id'
