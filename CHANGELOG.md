@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.32...v0.1.33)
+
+## 🐛 Bug Fixes
+
+- chained where double-WHERE, chunk() infinite loop, cursorPaginate() row-skip ([4c20d43](https://github.com/stacksjs/bun-query-builder/commit/4c20d43)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.33 ([1ae0325](https://github.com/stacksjs/bun-query-builder/commit/1ae0325)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.31...v0.1.32)
 
 ## 🐛 Bug Fixes
