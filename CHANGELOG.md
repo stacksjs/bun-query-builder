@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.30...v0.1.31)
+
+## 🐛 Bug Fixes
+
+- .with() eager loading broken on real drivers; implement constraint callbacks; perf hoists ([58f2bbb](https://github.com/stacksjs/bun-query-builder/commit/58f2bbb)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.31 ([69328f4](https://github.com/stacksjs/bun-query-builder/commit/69328f4)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.29...v0.1.30)
 
 ## ⚡ Performance Improvements
