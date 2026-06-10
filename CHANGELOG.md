@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.28...v0.1.29)
+
+## 🐛 Bug Fixes
+
+- result-shape typing for pluck/value/select/min/max & friends; MAX(text) no longer NaN ([b9c94cb](https://github.com/stacksjs/bun-query-builder/commit/b9c94cb)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.29 ([90ef3e1](https://github.com/stacksjs/bun-query-builder/commit/90ef3e1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.27...v0.1.28)
 
 ## 🐛 Bug Fixes
