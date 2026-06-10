@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.27...v0.1.28)
+
+## 🐛 Bug Fixes
+
+- persist fill()/update() changes, param-aware cache keys, pk-aware types; add extensive type-usage suite ([d7c3a16](https://github.com/stacksjs/bun-query-builder/commit/d7c3a16)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.28 ([5b7f2c9](https://github.com/stacksjs/bun-query-builder/commit/5b7f2c9)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.26...v0.1.27)
 
 ## 🚀 Features
