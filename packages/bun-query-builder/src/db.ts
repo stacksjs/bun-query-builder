@@ -376,6 +376,70 @@ function createSQLiteSQL(filename: string): SQL {
     }
   }
 
+  // Transaction support. Bun's native `SQL` exposes `.begin(fn)` /
+  // `.begin(name, fn)`, which the query builder's `db.transaction()` calls.
+  // The SQLite wrapper previously had NO `.begin`, so `db.transaction()` threw
+  // "bunSql.begin is not a function" on the sqlite dialect — transactions were
+  // entirely broken there (and untested at runtime). bun:sqlite is synchronous,
+  // so BEGIN/COMMIT/ROLLBACK are plain statements; nesting uses SAVEPOINTs.
+  let txDepth = 0
+  sqlFunction.begin = async (fnOrName: any, maybeFn?: any): Promise<any> => {
+    const fn = typeof fnOrName === 'function' ? fnOrName : maybeFn
+    if (typeof fn !== 'function')
+      throw new TypeError('[query-builder] sqlite begin(): a transaction callback is required')
+
+    const isSavepoint = txDepth > 0
+    // Unique per nesting level; savepoint names are plain identifiers.
+    const spName = `qb_sp_${txDepth}`
+    if (isSavepoint)
+      wrapper.run(`SAVEPOINT ${spName}`)
+    else
+      wrapper.run('BEGIN')
+    txDepth++
+
+    try {
+      // The transaction handle IS this same connection — bun:sqlite is a single
+      // connection, so statements run on the open BEGIN/SAVEPOINT scope.
+      const result = await fn(sqlFunction)
+      txDepth--
+      if (isSavepoint)
+        wrapper.run(`RELEASE SAVEPOINT ${spName}`)
+      else
+        wrapper.run('COMMIT')
+      return result
+    }
+    catch (err) {
+      txDepth--
+      try {
+        if (isSavepoint) {
+          // Roll back the inner work but keep the outer transaction alive,
+          // then release the (now-rolled-back) savepoint.
+          wrapper.run(`ROLLBACK TO SAVEPOINT ${spName}`)
+          wrapper.run(`RELEASE SAVEPOINT ${spName}`)
+        }
+        else {
+          wrapper.run('ROLLBACK')
+        }
+      }
+      catch {
+        // If the rollback itself fails (e.g. the connection is already in an
+        // aborted state), surface the ORIGINAL error rather than the cleanup one.
+      }
+      throw err
+    }
+  }
+
+  // Nested transactions use savepoint() (matching Bun's native SQL tx API).
+  // begin() already switches to SAVEPOINT when txDepth > 0, so aliasing is
+  // correct: a nested call always runs with txDepth > 0.
+  sqlFunction.savepoint = sqlFunction.begin
+
+  // Postgres two-phase commit — not supported by SQLite. Throw a clear error
+  // instead of "not a function" if someone calls it on the sqlite dialect.
+  sqlFunction.beginDistributed = async (): Promise<never> => {
+    throw new Error('[query-builder] beginDistributed() (two-phase commit) is not supported on SQLite. Use begin()/transaction().')
+  }
+
   // Store the wrapper for access
   sqlFunction._wrapper = wrapper
 

@@ -2422,6 +2422,13 @@ interface InternalState {
   meta?: SchemaMeta
   schema?: any
   txDefaults?: TransactionOptions
+  /**
+   * Set on the builder handed to a `transaction()` callback. A nested
+   * `transaction()` must open a SAVEPOINT (`tx.savepoint(...)`) rather than a
+   * new top-level transaction (`tx.begin(...)`) — Bun's driver throws "cannot
+   * call begin inside a transaction" otherwise.
+   */
+  inTransaction?: boolean
 }
 
 // applyCondition and applyWhere moved inside createQueryBuilder to use the correct SQL instance
@@ -6768,11 +6775,23 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     async transaction(fn, options) {
       const defaults = state?.txDefaults
       const opts: TransactionOptions = { ...defaults, ...options }
+      // Use THIS builder's connection (the injected one when present, the same
+      // one its reads use), not the always-global `bunSql`. Otherwise a builder
+      // created with `createQueryBuilder({ sql })` ran its transactions on a
+      // different connection than its queries — which silently breaks when the
+      // two aren't the same database (e.g. distinct in-memory sqlite handles).
+      const txConn: any = state?.sql ?? bunSql
+      // A nested transaction() must open a SAVEPOINT, not a new top-level
+      // transaction — Bun's driver throws "cannot call begin inside a
+      // transaction" otherwise. The builder handed to a tx callback is flagged
+      // with `inTransaction`, so a nested call dispatches to `savepoint`.
+      const nested = state?.inTransaction === true
+      const txMethod = nested && typeof txConn?.savepoint === 'function' ? 'savepoint' : 'begin'
       const runWith = async (attempt: number): Promise<any> => {
         opts.logger?.({ type: 'start', attempt })
         const start = Date.now()
-        return await (bunSql as any).begin(async (tx: any) => {
-          const qb = createQueryBuilder<DB>({ sql: tx, meta, schema })
+        return await (txConn as any)[txMethod](async (tx: any) => {
+          const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, inTransaction: true })
 
           // Transaction isolation + read-only mode — dialect-specific
           // SQL, with a clear "not supported" path for SQLite. The
@@ -6782,7 +6801,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           // silently got a read-write transaction instead. Now each
           // dialect dispatches to its own SQL form; unsupported
           // combinations throw a clear error. See stacksjs/stacks#1862 #14.
-          if (opts?.isolation) {
+          // Skipped for a nested savepoint: isolation is a property of the
+          // enclosing transaction and can't be set on a savepoint.
+          if (opts?.isolation && !nested) {
             const level = opts.isolation
             const upper = level === 'read committed'
               ? 'READ COMMITTED'
@@ -6873,7 +6894,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       })
     },
     async beginDistributed(name, fn) {
-      const res = await (bunSql as any).beginDistributed(name, async (tx: any) => {
+      const txConn: any = state?.sql ?? bunSql
+      const res = await (txConn as any).beginDistributed(name, async (tx: any) => {
         const qb = createQueryBuilder<DB>({ sql: tx, meta, schema })
         return await fn(qb)
       })
