@@ -378,10 +378,23 @@ interface OrmExecutor {
  * Rewrite `?` placeholders to Postgres `$1, $2, …` form. The ORM only ever
  * emits `?` as a bound-parameter marker (values are always parameterised and
  * identifiers are validated), so a sequential left-to-right pass is safe.
+ *
+ * Memoized: query TEXT repeats heavily (values are placeholders), and this
+ * regex pass runs on every Postgres query the ORM executes. Bounded; cleared
+ * wholesale at the cap.
  */
+const pgPlaceholderCache = new Map<string, string>()
+const PG_PLACEHOLDER_CACHE_MAX = 500
+
 function toPostgresPlaceholders(sql: string): string {
+  const hit = pgPlaceholderCache.get(sql)
+  if (hit !== undefined) return hit
   let i = 0
-  return sql.replace(/\?/g, () => `$${++i}`)
+  const out = sql.replace(/\?/g, () => `$${++i}`)
+  if (pgPlaceholderCache.size >= PG_PLACEHOLDER_CACHE_MAX)
+    pgPlaceholderCache.clear()
+  pgPlaceholderCache.set(sql, out)
+  return out
 }
 
 /**
@@ -606,20 +619,30 @@ function timestampsEnabled(definition: ModelDefinition): boolean {
  * Collect every `belongsToMany` relation key declared on a model definition.
  * Used by ModelInstance's Proxy to know which property reads should resolve
  * to a callable RelationBuilder.
+ *
+ * Cached per definition object: this runs in the ModelInstance CONSTRUCTOR,
+ * i.e. once per hydrated row — without the cache a 10k-row result re-derived
+ * the same Set 10k times.
  */
+const btmKeysCache = new WeakMap<ModelDefinition, Set<string>>()
+
 function collectBelongsToManyKeys(definition: ModelDefinition): Set<string> {
+  const cached = btmKeysCache.get(definition)
+  if (cached) return cached
   const keys = new Set<string>()
   const rel = definition.belongsToMany
-  if (!rel) return keys
-  if (Array.isArray(rel)) {
-    for (const item of rel) {
-      if (typeof item === 'string') keys.add(item.toLowerCase())
-      else if (item && typeof item === 'object' && (item as any).model) keys.add(((item as any).model as string).toLowerCase())
+  if (rel) {
+    if (Array.isArray(rel)) {
+      for (const item of rel) {
+        if (typeof item === 'string') keys.add(item.toLowerCase())
+        else if (item && typeof item === 'object' && (item as any).model) keys.add(((item as any).model as string).toLowerCase())
+      }
+    }
+    else if (typeof rel === 'object') {
+      for (const k of Object.keys(rel)) keys.add(k)
     }
   }
-  else if (typeof rel === 'object') {
-    for (const k of Object.keys(rel)) keys.add(k)
-  }
+  btmKeysCache.set(definition, keys)
   return keys
 }
 

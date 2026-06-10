@@ -150,6 +150,97 @@ function validateIdentifier(name: string, context?: string): void {
   }
 }
 
+// The helpers below are module-level on purpose: they are stateless, and
+// declaring them inside makeSelect() allocated a fresh closure for each of
+// them on EVERY selectFrom() call — pure per-query overhead.
+
+function assertSafeWhereOperator(op: unknown, context: string): string {
+  if (typeof op !== 'string')
+    throw new TypeError(`[query-builder] ${context}: operator must be a string, got ${typeof op}`)
+  const lower = op.toLowerCase()
+  if (!SAFE_WHERE_OPERATORS.has(lower))
+    throw new TypeError(`[query-builder] ${context}: refusing to use '${op}' as a SQL operator — not in the allowed set (${[...SAFE_WHERE_OPERATORS].join(', ')})`)
+  return op
+}
+
+/**
+ * Like `validateIdentifier`, but allows one optional `table.`
+ * prefix so qualified column references (`users.id`, `posts.title`)
+ * pass through. Each segment must independently match the strict
+ * identifier shape — `users.id; --` is still rejected.
+ */
+function validateQualifiedIdentifier(value: unknown, context: string): void {
+  if (typeof value !== 'string' || value.length === 0)
+    throw new TypeError(`[query-builder] ${context}: identifier must be a non-empty string, got ${typeof value}`)
+  if (value.length > 129) // 64 + '.' + 64
+    throw new TypeError(`[query-builder] ${context}: identifier '${value}' too long`)
+  const parts = value.split('.')
+  if (parts.length > 2)
+    throw new TypeError(`[query-builder] ${context}: identifier '${value}' has more than one dot — only \`table.column\` is allowed`)
+  for (const part of parts) {
+    if (!/^[A-Z_][A-Z0-9_]*$/i.test(part))
+      throw new TypeError(`[query-builder] ${context}: identifier segment '${part}' contains characters outside [A-Za-z0-9_]`)
+  }
+}
+
+/**
+ * Runtime soft-guard for the `*Raw` family. The TS signature is
+ * `SqlFragment = object` so a bare string `whereRaw('foo')` fails to
+ * compile — this guard catches the same case for `as any` casts that
+ * bypass the type system, but emits a once-per-process warning rather
+ * than throwing to preserve backward compat for callers that
+ * legitimately need to interpolate compile-time-known constants
+ * (audit log queries, generated migrations, etc.). See stacksjs/stacks#1858 Q-3.
+ */
+function assertSqlFragment(fragment: unknown, context: string): void {
+  if (fragment === null || fragment === undefined) {
+    throw new TypeError(`[query-builder] ${context}: fragment must be a SqlFragment, got ${fragment}`)
+  }
+  if (typeof fragment === 'string') {
+    warnOnceBareSqlFragment(context)
+  }
+}
+
+// Module-scoped Set so we warn at most once per call site per process
+// lifetime (previously this lived inside makeSelect, so it actually
+// warned once per BUILDER — i.e. on every query).
+const warnedSqlFragmentContexts = new Set<string>()
+function warnOnceBareSqlFragment(context: string): void {
+  if (warnedSqlFragmentContexts.has(context)) return
+  warnedSqlFragmentContexts.add(context)
+  console.warn(
+    `[query-builder] ${context}: bare string passed to a *Raw method. `
+    + `Prefer \`sql\`...\`\` tagged-template fragments so values are parameterised `
+    + `instead of concatenated — concatenating request input into SQL is an `
+    + `injection vector. This will become a hard error in a future release.`,
+  )
+}
+
+/**
+ * Format a value for safe interpolation into a relationship-subquery
+ * fragment. Strings are SQL-escaped (single-quote doubled per ANSI SQL);
+ * numbers / booleans / null pass through; everything else is rejected.
+ */
+function formatSubqueryValue(val: unknown): string {
+  if (val === null) return 'NULL'
+  if (typeof val === 'number' && Number.isFinite(val)) return String(val)
+  if (typeof val === 'boolean') return val ? '1' : '0'
+  if (typeof val === 'string') return `'${val.replace(/'/g, '\'\'')}'`
+  throw new TypeError(`[query-builder] subquery condition: refusing to interpolate value of type ${typeof val}`)
+}
+
+// Shared OVER (...) builder for the window functions (rowNumber/rank/... and
+// lag/lead/sumOver/...). Stateless — see the note above on module-level helpers.
+function buildOverClause(partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]): string {
+  const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
+  const parts: string[] = []
+  if (cols.length)
+    parts.push(`PARTITION BY ${cols.join(', ')}`)
+  if (orderBy && orderBy.length)
+    parts.push(`ORDER BY ${orderBy.map(([c, d]) => `${c} ${d === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`)
+  return parts.length ? `OVER (${parts.join(' ')})` : 'OVER ()'
+}
+
 // Simple query cache with TTL support
 interface CacheEntry {
   data: any
@@ -2349,7 +2440,24 @@ function sleep(ms: number): Promise<void> {
  *
  * See https://github.com/stacksjs/bun-query-builder/issues/1018
  */
+// Memo for reorderSelectClauses: the scan runs on every built/executed query
+// (ensureBuilt + toSQL + computeSqlText), and query TEXT repeats heavily in
+// real apps because values travel as placeholders, not literals. Bounded;
+// cleared wholesale at the cap (cheaper than LRU bookkeeping at this size).
+const reorderCache = new Map<string, string>()
+const REORDER_CACHE_MAX = 500
+
 function reorderSelectClauses(sql: string): string {
+  const hit = reorderCache.get(sql)
+  if (hit !== undefined) return hit
+  const out = computeReorderedClauses(sql)
+  if (reorderCache.size >= REORDER_CACHE_MAX)
+    reorderCache.clear()
+  reorderCache.set(sql, out)
+  return out
+}
+
+function computeReorderedClauses(sql: string): string {
   // Order matters in the keyword list: longer, multi-word keywords
   // must be checked before single-word prefixes that would
   // otherwise short-circuit them (e.g. "ORDER" alone isn't a clause
@@ -2449,6 +2557,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   const _sql: DriverConnection = (state?.sql ?? getOrCreateBunSql()) as unknown as DriverConnection
   const meta = state?.meta
   const schema = state?.schema
+
+  // `whereCreatedAt` → `created_at` resolution for the dynamic-where Proxy,
+  // cached per (table, prop): the schema is fixed for this builder, and the
+  // resolution (regex strip + snake-case + column scan) otherwise re-runs on
+  // every property access in query hot paths.
+  const dynamicWhereColumnCache = new Map<string, string>()
 
   function applyCondition(expr: WhereExpression<any>): any {
     // Returns just the condition part without WHERE keyword
@@ -2884,107 +2998,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     }
 
-    // Shared OVER (...) builder + window-expression injection for the window
-    // functions (rowNumber/rank/... and lag/lead/sumOver/...). See #1050.
-    const buildOverClause = (partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]): string => {
-      const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
-      const parts: string[] = []
-      if (cols.length)
-        parts.push(`PARTITION BY ${cols.join(', ')}`)
-      if (orderBy && orderBy.length)
-        parts.push(`ORDER BY ${orderBy.map(([c, d]) => `${c} ${d === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`)
-      return parts.length ? `OVER (${parts.join(' ')})` : 'OVER ()'
-    }
     const addWindowFunction = (fnExpr: string, alias: string, partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]): void => {
       addToSelectClause(`${fnExpr} ${buildOverClause(partitionBy, orderBy)} AS ${alias}`)
-    }
-
-    function assertSafeWhereOperator(op: unknown, context: string): string {
-      if (typeof op !== 'string')
-        throw new TypeError(`[query-builder] ${context}: operator must be a string, got ${typeof op}`)
-      const lower = op.toLowerCase()
-      if (!SAFE_WHERE_OPERATORS.has(lower))
-        throw new TypeError(`[query-builder] ${context}: refusing to use '${op}' as a SQL operator — not in the allowed set (${[...SAFE_WHERE_OPERATORS].join(', ')})`)
-      return op
-    }
-
-    /**
-     * Format a value for safe interpolation into a relationship-subquery
-     * fragment. Strings are SQL-escaped (single-quote doubled per ANSI
-     * SQL); numbers / booleans / null pass through; everything else
-     * is rejected.
-     *
-     * The previous code interpolated `'${val}'` for strings — naked
-     * single quotes, no escaping. A `val` containing `'` terminated
-     * the literal early and let an attacker inject SQL. Doubling the
-     * internal quote produces a valid SQL string literal regardless
-     * of contents. See stacksjs/stacks#1858 Q-1.
-     */
-    /**
-     * Like `validateIdentifier`, but allows one optional `table.`
-     * prefix so qualified column references (`users.id`, `posts.title`)
-     * pass through. Each segment must independently match the strict
-     * identifier shape — `users.id; --` is still rejected.
-     */
-    function validateQualifiedIdentifier(value: unknown, context: string): void {
-      if (typeof value !== 'string' || value.length === 0)
-        throw new TypeError(`[query-builder] ${context}: identifier must be a non-empty string, got ${typeof value}`)
-      if (value.length > 129) // 64 + '.' + 64
-        throw new TypeError(`[query-builder] ${context}: identifier '${value}' too long`)
-      const parts = value.split('.')
-      if (parts.length > 2)
-        throw new TypeError(`[query-builder] ${context}: identifier '${value}' has more than one dot — only \`table.column\` is allowed`)
-      for (const part of parts) {
-        if (!/^[A-Z_][A-Z0-9_]*$/i.test(part))
-          throw new TypeError(`[query-builder] ${context}: identifier segment '${part}' contains characters outside [A-Za-z0-9_]`)
-      }
-    }
-
-    /**
-     * Runtime soft-guard for the `*Raw` family. The TS signature is
-     * now `SqlFragment = object` so a bare string `whereRaw('foo')`
-     * fails to compile — this guard catches the same case for
-     * `as any` casts that bypass the type system, but emits a
-     * once-per-process warning rather than throwing to preserve
-     * backward compat for callers that legitimately need to
-     * interpolate compile-time-known constants (audit log queries,
-     * generated migrations, etc.). See stacksjs/stacks#1858 Q-3.
-     *
-     * The warning surfaces the security concern (bare strings can
-     * concatenate user input → SQL injection); callers can silence
-     * by switching to a `sql\`...\`` tagged-template fragment.
-     */
-    function assertSqlFragment(fragment: unknown, context: string): void {
-      if (fragment === null || fragment === undefined) {
-        throw new TypeError(`[query-builder] ${context}: fragment must be a SqlFragment, got ${fragment}`)
-      }
-      if (typeof fragment === 'string') {
-        warnOnceBareSqlFragment(context)
-      }
-    }
-
-    // Module-scoped Set so we warn at most once per call site per
-    // process lifetime — chatty warnings on every query are useless
-    // noise, but a single startup-time warning surfaces the security
-    // concern.
-    const warnedSqlFragmentContexts = new Set<string>()
-    function warnOnceBareSqlFragment(context: string): void {
-      if (warnedSqlFragmentContexts.has(context)) return
-      warnedSqlFragmentContexts.add(context)
-      console.warn(
-        `[query-builder] ${context}: bare string passed to a *Raw method. `
-        + `Prefer \`sql\`...\`\` tagged-template fragments so values are parameterised `
-        + `instead of concatenated — concatenating request input into SQL is an `
-        + `injection vector. This will become a hard error in a future release.`,
-      )
-    }
-
-    function formatSubqueryValue(val: unknown): string {
-      if (val === null) return 'NULL'
-      if (typeof val === 'number' && Number.isFinite(val)) return String(val)
-      if (typeof val === 'boolean') return val ? '1' : '0'
-      if (typeof val === 'string') return `'${val.replace(/'/g, '\'\'')}'`
-      throw new TypeError(`[query-builder] subquery condition: refusing to interpolate value of type ${typeof val}`)
     }
 
     // Helper function to build hasOne/hasMany subquery with validation
@@ -3027,9 +3042,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
       if (callback) {
         const subQb = {
+          // Same boundary guards as the hasOne/hasMany variant: the operator
+          // is allow-listed and string values are SQL-escaped. The previous
+          // `'${val}'` interpolation let a quote in `val` terminate the
+          // literal — a whereHas(belongsTo, cb) injection vector.
           where: (col: string, op: string, val: any) => {
             validateIdentifier(col, 'relationship subquery condition')
-            return `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}`
+            return `${targetTable}.${col} ${assertSafeWhereOperator(op, 'whereHas callback')} ${formatSubqueryValue(val)}`
           },
         }
         const condition = callback(subQb)
@@ -3066,9 +3085,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
       if (callback) {
         const subQb = {
+          // Same boundary guards as the hasOne/hasMany variant — see
+          // buildBelongsToSubquery above for why.
           where: (col: string, op: string, val: any) => {
             validateIdentifier(col, 'relationship subquery condition')
-            return `${targetTable}.${col} ${op} ${typeof val === 'string' ? `'${val}'` : val}`
+            return `${targetTable}.${col} ${assertSafeWhereOperator(op, 'whereHas callback')} ${formatSubqueryValue(val)}`
           },
         }
         const condition = callback(subQb)
@@ -4971,7 +4992,18 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       toSQL() {
-        return makeExecutableQuery(ensureBuilt(), reorderSelectClauses(text)) as any
+        // Lazy: don't construct the driver Query object just to read SQL
+        // text — most toSQL() calls never execute the returned handle.
+        // ensureBuilt() still runs (memoized) if execute()/values()/raw()
+        // is actually invoked.
+        const sqlText = reorderSelectClauses(text)
+        return {
+          sql: sqlText,
+          toString: () => sqlText,
+          execute: () => ensureBuilt().execute(),
+          values: () => ensureBuilt().values(),
+          raw: () => ensureBuilt().raw(),
+        } as any
       },
       async value(column: string) {
         const q = sql`${ensureBuilt()} LIMIT 1`
@@ -5545,27 +5577,59 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (typeof prop === 'string' && (prop.startsWith('where') || prop.startsWith('orWhere') || prop.startsWith('andWhere'))) {
           const isOr = prop.startsWith('orWhere')
           const isAnd = prop.startsWith('andWhere')
-          const raw = prop.replace(/^or?where/i, '').replace(/^andwhere/i, '')
-          if (!raw)
+          // Resolve `whereCreatedAt` → `created_at` once per (table, prop)
+          // pair — this get trap runs on EVERY dynamic-where access, and the
+          // regex/Object.keys/find work below showed up in profiles.
+          //
+          // NOTE the prefix regex: `(?:or|and)?where`. The previous
+          // `/^or?where/i` parsed as `o` + optional `r` + `where`, which
+          // NEVER matched plain `whereName` — the un-stripped prop then
+          // snake-cased to `where_name` and every plain dynamic where
+          // failed on a real database with "no such column".
+          const cacheKey = `${String(table)}|${prop}`
+          let chosen = dynamicWhereColumnCache.get(cacheKey)
+          if (chosen === undefined) {
+            const raw = prop.replace(/^(?:or|and)?where/i, '')
+            if (!raw) {
+              dynamicWhereColumnCache.set(cacheKey, '')
+              chosen = ''
+            }
+            else {
+              const lowerFirst = raw.charAt(0).toLowerCase() + raw.slice(1)
+              const snake = raw.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+              const available: string[] = schema ? Object.keys(((schema as any)[String(table)]?.columns) ?? {}) : []
+              chosen = [snake, lowerFirst, lowerFirst.toLowerCase()].find(n => available.includes(n)) ?? snake
+              dynamicWhereColumnCache.set(cacheKey, chosen)
+            }
+          }
+          if (chosen === '')
             return () => receiver
-          const lowerFirst = raw.charAt(0).toLowerCase() + raw.slice(1)
-          const toSnake = (s: string) => s.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
-          const snake = toSnake(raw)
-          const tbl = String(table)
-          const available: string[] = schema ? Object.keys(((schema as any)[tbl]?.columns) ?? {}) : []
-          const chosen = [snake, lowerFirst, lowerFirst.toLowerCase()].find(n => available.includes(n)) ?? snake
+          const column = chosen
           return (value: any) => {
             const expr = Array.isArray(value)
-              ? sql`${sql(String(chosen))} IN ${sql(value as any)}`
-              : sql`${sql(String(chosen))} = ${value}`
+              ? sql`${sql(column)} IN ${sql(value as any)}`
+              : sql`${sql(column)} = ${value}`
             built = isOr
               ? sql`${ensureBuilt()} OR ${expr}`
               : isAnd
                 ? sql`${ensureBuilt()} AND ${expr}`
                 : sql`${ensureBuilt()} WHERE ${expr}`
-            // update textual representation
-            const clause = Array.isArray(value) ? `${String(chosen)} IN (?)` : `${String(chosen)} = ?`
-            addWhereText(isOr ? 'OR' : isAnd ? 'AND' : 'WHERE', clause)
+            // Mirror into text AND whereParams with dialect-aware
+            // placeholders. The params must be pushed: any later call that
+            // invalidates `built` (orderBy, limit, ...) rebuilds from
+            // text+whereParams, and the previous version left the value
+            // only inside the template-built query — the rebuilt statement
+            // had a dangling placeholder. Same bug class as #1028.
+            if (Array.isArray(value)) {
+              const phs = getPlaceholders(value.length, whereParams.length + 1)
+              addWhereText(isOr ? 'OR' : isAnd ? 'AND' : 'WHERE', `${column} IN (${phs})`)
+              whereParams.push(...value)
+            }
+            else {
+              const ph = getPlaceholder(whereParams.length + 1)
+              addWhereText(isOr ? 'OR' : isAnd ? 'AND' : 'WHERE', `${column} = ${ph}`)
+              whereParams.push(value)
+            }
             return receiver
           }
         }
