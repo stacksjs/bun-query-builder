@@ -1171,11 +1171,19 @@ function toTableName(modelName: string): string {
  * populated only for `belongsToMany` relations.
  */
 interface ResolvedRelation {
-  type: 'hasMany' | 'hasOne' | 'belongsTo' | 'belongsToMany'
+  type: 'hasMany' | 'hasOne' | 'belongsTo' | 'belongsToMany' | 'hasManyThrough' | 'hasOneThrough'
   relatedModelName: string
   relatedTable: string
   foreignKey: string
   localKey: string
+  /** Intermediate table name (has*Through only). */
+  throughTable?: string
+  /** FK on the through table pointing at the parent (has*Through only). */
+  throughForeignKey?: string
+  /** PK on the through table (has*Through only). */
+  throughLocalKey?: string
+  /** FK on the target table pointing at the through table (has*Through only). */
+  targetForeignKey?: string
   /** Pivot table name (belongsToMany only). */
   pivotTable?: string
   /** FK on pivot pointing at the parent (belongsToMany only). */
@@ -1346,7 +1354,55 @@ function resolveRelation(definition: ModelDefinition, relationName: string): Res
     }
   }
 
+  // Check hasOneThrough / hasManyThrough. Declared as
+  // `{ <relation>: { through: ThroughModel, target: TargetModel } }`.
+  // Chain: parent.pk → through.<singular(parent)>_id, through.pk →
+  // target.<singular(through)>_id. Mirrors the JOIN convention used by the
+  // schema-level builder's `.with()`.
+  const resolveThrough = (
+    field: unknown,
+    type: 'hasOneThrough' | 'hasManyThrough',
+  ): ResolvedRelation | null => {
+    if (!field || typeof field !== 'object' || Array.isArray(field)) return null
+    const entry = (field as Record<string, any>)[relationName]
+      ?? (field as Record<string, any>)[Object.keys(field as object).find(k => k.toLowerCase() === relationName.toLowerCase()) ?? '']
+    if (!entry || typeof entry !== 'object') return null
+    const throughModelName: string = entry.through
+    const targetModelName: string = entry.target
+    if (!throughModelName || !targetModelName) return null
+
+    const throughModel = getModelFromRegistry(throughModelName)
+    const throughDef = throughModel?.getDefinition?.() || throughModel?.definition
+    const throughTable = throughModel?.getTable?.() || throughDef?.table || toTableName(throughModelName)
+    const throughPk = throughDef?.primaryKey || 'id'
+
+    const targetModel = getModelFromRegistry(targetModelName)
+    const targetTable = targetModel?.getTable?.() || toTableName(targetModelName)
+
+    return {
+      type,
+      relatedModelName: targetModelName,
+      relatedTable: targetTable,
+      foreignKey: `${toSnakeCase(parentName)}_id`, // unused for through, kept for shape
+      localKey: parentPk,
+      throughTable,
+      throughForeignKey: `${toSnakeCase(parentName)}_id`, // FK on through → parent
+      throughLocalKey: throughPk,
+      targetForeignKey: `${singularizeWord(throughTable)}_id`, // FK on target → through
+    }
+  }
+
+  const hmt = resolveThrough(definition.hasManyThrough, 'hasManyThrough')
+  if (hmt) return hmt
+  const hot = resolveThrough(definition.hasOneThrough, 'hasOneThrough')
+  if (hot) return hot
+
   return null
+}
+
+/** Singularize a table name for FK derivation (naive trailing-`s` strip). */
+function singularizeWord(table: string): string {
+  return table.endsWith('s') ? table.slice(0, -1) : table
 }
 
 /**
@@ -2285,6 +2341,54 @@ class ModelQueryBuilder<
             })
             .filter((x): x is ModelInstance<any, any> => x !== null)
           instance.setRelation(relationName, relatedInstances)
+        }
+      }
+
+      if (rel.type === 'hasManyThrough' || rel.type === 'hasOneThrough') {
+        // parent.pk → through.<throughForeignKey>, through.pk →
+        // target.<targetForeignKey>. Two batched IN queries, no N+1.
+        const parentIds = instances.map(i => i.get(pk as any)).filter(id => id != null)
+        if (parentIds.length === 0) continue
+
+        // 1) through rows linking parents to the intermediate table.
+        const throughPk = rel.throughLocalKey || 'id'
+        const throughPh = parentIds.map(() => '?').join(', ')
+        const throughRows = await exec.all(
+          `SELECT ${throughPk}, ${rel.throughForeignKey} FROM ${rel.throughTable} WHERE ${rel.throughForeignKey} IN (${throughPh})`,
+          parentIds,
+        )
+        if (throughRows.length === 0) {
+          for (const instance of instances)
+            instance.setRelation(relationName, rel.type === 'hasManyThrough' ? [] : null)
+          continue
+        }
+        // throughId → parentId
+        const throughToParent = new Map<unknown, unknown>()
+        for (const t of throughRows) throughToParent.set(t[throughPk], t[rel.throughForeignKey!])
+
+        // 2) target rows in one batch.
+        const throughIds = [...new Set(throughRows.map(t => t[throughPk]))]
+        const targetPh = throughIds.map(() => '?').join(', ')
+        const targetRows = await exec.all(
+          `SELECT * FROM ${rel.relatedTable} WHERE ${rel.targetForeignKey} IN (${targetPh})`,
+          throughIds,
+        )
+
+        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+
+        // Group target rows by parent (target.targetFk → throughId → parentId).
+        const byParent = new Map<unknown, ModelInstance<any, any>[]>()
+        for (const row of targetRows) {
+          const parentVal = throughToParent.get(row[rel.targetForeignKey!])
+          if (parentVal == null) continue
+          if (!byParent.has(parentVal)) byParent.set(parentVal, [])
+          byParent.get(parentVal)!.push(new ModelInstance(relDef as any, row as any))
+        }
+
+        for (const instance of instances) {
+          const group = byParent.get(instance.get(pk as any)) || []
+          instance.setRelation(relationName, rel.type === 'hasManyThrough' ? group : (group[0] ?? null))
         }
       }
     }
