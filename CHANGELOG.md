@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.31...v0.1.32)
+
+## 🐛 Bug Fixes
+
+- *Raw fragments broken on real drivers, returning() missing row methods, distinct().select() drops DISTINCT ([01f8d9a](https://github.com/stacksjs/bun-query-builder/commit/01f8d9a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.32 ([c7e680e](https://github.com/stacksjs/bun-query-builder/commit/c7e680e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.30...v0.1.31)
 
 ## 🐛 Bug Fixes
