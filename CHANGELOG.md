@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.34...v0.1.35)
+
+## 🐛 Bug Fixes
+
+- transactions were completely broken on sqlite; honor builder connection; support nesting ([a40e961](https://github.com/stacksjs/bun-query-builder/commit/a40e961)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.35 ([939a93c](https://github.com/stacksjs/bun-query-builder/commit/939a93c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.33...v0.1.34)
 
 ## 🐛 Bug Fixes
