@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.29...v0.1.30)
+
+## ⚡ Performance Improvements
+
+- 4.7x faster query building; fix dynamic whereX on real DBs + whereHas callback escaping ([ee54eea](https://github.com/stacksjs/bun-query-builder/commit/ee54eea)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.30 ([0ed8333](https://github.com/stacksjs/bun-query-builder/commit/0ed8333)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.28...v0.1.29)
 
 ## 🐛 Bug Fixes
