@@ -2899,7 +2899,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
     const addWhereText = (prefix: 'WHERE' | 'AND' | 'OR', clause: string) => {
       const hasWhere = SQL_PATTERNS.WHERE.test(text)
-      const p = hasWhere ? prefix : 'WHERE'
+      // When a WHERE already exists the new clause needs a CONNECTOR, not a
+      // second WHERE keyword. Callers pass 'WHERE' to mean "a where-type
+      // clause" (whereLike/whereExists/whereILike/dynamic whereX all do); if
+      // one is chained after an existing WHERE, that must become AND — emitting
+      // a literal second `WHERE` produced invalid SQL (`WHERE a = ? WHERE b = ?`).
+      // 'OR'/'AND' connectors pass through unchanged. The first clause is always
+      // forced to WHERE regardless of the requested prefix.
+      const p = !hasWhere ? 'WHERE' : (prefix === 'WHERE' ? 'AND' : prefix)
       text = `${text} ${p} ${clause}`
     }
 
@@ -4439,97 +4446,80 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         built = null
         return this as any
       },
-      // The LIKE/ILIKE family keeps a `built` tagged-template representation AND
-      // a `text`/`whereParams` shadow. Each must push the pattern into
-      // `whereParams` (with a dialect-aware placeholder), or a later `built =
-      // null` invalidation rebuilds from `text` with the pattern missing and
-      // the placeholders misaligned. See stacksjs/bun-query-builder#1028.
+      // The LIKE/ILIKE family records the clause in `text` + `whereParams`
+      // (dialect-aware placeholder) and invalidates `built` so the next
+      // ensureBuilt() rebuilds from text. The previous version ALSO built a
+      // `sql\`${ensureBuilt()} WHERE ...\`` tagged-template directly with an
+      // UNCONDITIONAL `WHERE`/`OR`, so chaining after an existing WHERE emitted
+      // a second `WHERE` (invalid SQL). addWhereText() now picks the right
+      // connector; building from text keeps the two representations in sync.
+      // See stacksjs/bun-query-builder#1028.
       whereLike(column: string, pattern: string, caseSensitive = false) {
-        const expr = caseSensitive ? sql`${sql(String(column))} LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
-        built = sql`${ensureBuilt()} WHERE ${expr}`
         const ph = getPlaceholder(whereParams.length + 1)
         addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
         whereParams.push(pattern)
+        built = null
         return this as any
       },
       whereILike(column: string, pattern: string) {
         const ph = getPlaceholder(whereParams.length + 1)
-        if (config.dialect === 'postgres') {
-          built = sql`${ensureBuilt()} WHERE ${sql(String(column))} ILIKE ${pattern}`
+        if (config.dialect === 'postgres')
           addWhereText('WHERE', `${String(column)} ILIKE ${ph}`)
-        }
-        else {
-          const expr = sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
-          built = sql`${ensureBuilt()} WHERE ${expr}`
+        else
           addWhereText('WHERE', `LOWER(${String(column)}) LIKE LOWER(${ph})`)
-        }
         whereParams.push(pattern)
+        built = null
         return this as any
       },
       orWhereLike(column: string, pattern: string, caseSensitive = false) {
-        const expr = caseSensitive ? sql`${sql(String(column))} LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
-        built = sql`${ensureBuilt()} OR ${expr}`
         const ph = getPlaceholder(whereParams.length + 1)
         addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
         whereParams.push(pattern)
+        built = null
         return this as any
       },
       orWhereILike(column: string, pattern: string) {
         const ph = getPlaceholder(whereParams.length + 1)
-        if (config.dialect === 'postgres') {
-          built = sql`${ensureBuilt()} OR ${sql(String(column))} ILIKE ${pattern}`
+        if (config.dialect === 'postgres')
           addWhereText('OR', `${String(column)} ILIKE ${ph}`)
-        }
-        else {
-          const expr = sql`LOWER(${sql(String(column))}) LIKE LOWER(${pattern})`
-          built = sql`${ensureBuilt()} OR ${expr}`
+        else
           addWhereText('OR', `LOWER(${String(column)}) LIKE LOWER(${ph})`)
-        }
         whereParams.push(pattern)
+        built = null
         return this as any
       },
       whereNotLike(column: string, pattern: string, caseSensitive = false) {
-        const expr = caseSensitive ? sql`${sql(String(column))} NOT LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
-        built = sql`${ensureBuilt()} WHERE ${expr}`
         const ph = getPlaceholder(whereParams.length + 1)
         addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
         whereParams.push(pattern)
+        built = null
         return this as any
       },
       whereNotILike(column: string, pattern: string) {
         const ph = getPlaceholder(whereParams.length + 1)
-        if (config.dialect === 'postgres') {
-          built = sql`${ensureBuilt()} WHERE ${sql(String(column))} NOT ILIKE ${pattern}`
+        if (config.dialect === 'postgres')
           addWhereText('WHERE', `${String(column)} NOT ILIKE ${ph}`)
-        }
-        else {
-          const expr = sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
-          built = sql`${ensureBuilt()} WHERE ${expr}`
+        else
           addWhereText('WHERE', `LOWER(${String(column)}) NOT LIKE LOWER(${ph})`)
-        }
         whereParams.push(pattern)
+        built = null
         return this as any
       },
       orWhereNotLike(column: string, pattern: string, caseSensitive = false) {
-        const expr = caseSensitive ? sql`${sql(String(column))} NOT LIKE ${pattern}` : sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
-        built = sql`${ensureBuilt()} OR ${expr}`
         const ph = getPlaceholder(whereParams.length + 1)
         addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
         whereParams.push(pattern)
+        built = null
         return this as any
       },
       orWhereNotILike(column: string, pattern: string) {
         const ph = getPlaceholder(whereParams.length + 1)
-        if (config.dialect === 'postgres') {
-          built = sql`${ensureBuilt()} OR ${sql(String(column))} NOT ILIKE ${pattern}`
+        if (config.dialect === 'postgres')
           addWhereText('OR', `${String(column)} NOT ILIKE ${ph}`)
-        }
-        else {
-          const expr = sql`LOWER(${sql(String(column))}) NOT LIKE LOWER(${pattern})`
-          built = sql`${ensureBuilt()} OR ${expr}`
+        else
           addWhereText('OR', `LOWER(${String(column)}) NOT LIKE LOWER(${ph})`)
-        }
         whereParams.push(pattern)
+        built = null
         return this as any
       },
       whereAny(cols: string[], op: WhereOperator, value: any) {
@@ -5261,21 +5251,34 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           q = sql`${q} ORDER BY ${sql(String(column))} ${direction === 'asc' ? sql`ASC` : sql`DESC`} LIMIT ${perPage + 1}`
         }
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
-        const next = rows.length > perPage
-          ? (Array.isArray(column) ? column.map(c => rows[perPage]?.[c]) : rows[perPage]?.[column])
-          : null
+        // We fetch perPage+1 rows to detect whether more exist; the extra row
+        // is only a "has more?" probe and is NOT delivered. The next cursor
+        // MUST be the LAST DELIVERED row — using the probe row (rows[perPage])
+        // made the next page query `col > <probe>`, which skipped that row
+        // entirely, dropping one row at every page boundary (and silently
+        // truncating chunkById/eachById).
+        const hasMore = rows.length > perPage
         const data = rows.slice(0, perPage)
+        const lastRow = data[data.length - 1]
+        const next = hasMore && lastRow
+          ? (Array.isArray(column) ? column.map(c => lastRow[c]) : lastRow[column])
+          : null
         const prevCursor = data.length ? (Array.isArray(column) ? column.map(c => data[0]?.[c]) : data[0]?.[column]) : null
         return { data, meta: { perPage, nextCursor: next ?? null, prevCursor } }
       },
       async chunk(size: number, handler: (rows: any[]) => Promise<void> | void) {
         let page = 1
         while (true) {
-          const { data } = await (this as any).paginate(size, page)
+          const { data, meta } = await (this as any).paginate(size, page)
           if (data.length === 0)
             break
           await handler(data as any[])
-          if (data.length < size)
+          // Terminate on lastPage, NOT on `data.length < size`: paginate()
+          // CLAMPS an out-of-range page back to the last page, so when the row
+          // count is an exact multiple of `size` the final page is full and a
+          // `< size` check would request page after page forever, each clamped
+          // to the same last page (infinite loop). meta.lastPage is authoritative.
+          if (page >= meta.lastPage)
             break
           page += 1
         }
