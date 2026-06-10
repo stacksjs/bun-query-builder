@@ -718,3 +718,267 @@ type DB1 = Expect<Equal<QDB['users']['columns']['login_count'], number>>
 type DB2 = Expect<Equal<QDB['users']['columns']['active'], boolean>>
 // eslint-disable-next-line pickier/no-unused-vars
 type DB3 = Expect<Equal<QDB['posts']['primaryKey'], 'id'>>
+
+// ---------------------------------------------------------------------------
+// 7. Result-shape adjustments — every method whose RETURN type must track its
+//    inputs (pluck/value/select/min/max/only/except/paginate/returning/...)
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line pickier/no-unused-vars
+async function _ormResultShapes() {
+  // --- pluck: element type follows the column -------------------------------
+  const titles = await Post.pluck('title')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS1 = Expect<Equal<typeof titles, string[]>>
+  const views = await Post.pluck('views')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS2 = Expect<Equal<typeof views, number[]>>
+  const plans = await Member.pluck('plan')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS3 = Expect<Equal<typeof plans, ('free' | 'pro' | 'enterprise')[]>>
+  const nicknames = await Member.pluck('nickname')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS4 = Expect<Equal<typeof nicknames, (string | null)[]>>
+  const ids = await Member.pluck('id') // system pk column
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS5 = Expect<Equal<typeof ids, number[]>>
+
+  // --- aggregates: count/exists fixed; max/min follow the column ------------
+  const count = await Post.count()
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS6 = Expect<Equal<typeof count, number>>
+  const exists = await Post.exists()
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS7 = Expect<Equal<typeof exists, boolean>>
+
+  const maxViews = await Post.max('views')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS8 = Expect<Equal<typeof maxViews, number | null>>
+  const maxTitle = await Post.max('title') // TEXT column → string, not NaN
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS9 = Expect<Equal<typeof maxTitle, string | null>>
+  const minStatus = await Post.min('status') // enum column keeps its union
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS10 = Expect<Equal<typeof minStatus, 'draft' | 'published' | 'archived' | null>>
+  const minCreated = await Post.min('created_at') // trait column → string
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS11 = Expect<Equal<typeof minCreated, string | null>>
+
+  const sum = await Post.sum('views')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS12 = Expect<Equal<typeof sum, number>>
+  const avg = await Post.avg('rating')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS13 = Expect<Equal<typeof avg, number>>
+
+  // --- paginate: full meta shape ---------------------------------------------
+  const page = await Post.paginate(1, 10)
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS14 = Expect<Equal<typeof page.total, number>>
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS15 = Expect<Equal<typeof page.hasMorePages, boolean>>
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS16 = Expect<Equal<typeof page.from, number | null>>
+  const pageRow = page.data[0]
+  if (pageRow) {
+    const t = pageRow.get('title')
+    // eslint-disable-next-line pickier/no-unused-vars
+    type RS17 = Expect<Equal<typeof t, string>>
+  }
+
+  // --- toSql shape -------------------------------------------------------------
+  const built = Post.where('status', 'draft').toSql()
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS18 = Expect<Equal<typeof built, { sql: string, params: unknown[] }>>
+
+  // --- instance shapes: only/except/getChanges/attributes ----------------------
+  const inst = await Member.firstOrFail()
+
+  const picked = inst.only(['name', 'age'] as const)
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS19 = Expect<Equal<typeof picked, { name: string, age: number }>>
+  picked.name
+  picked.age
+  // @ts-expect-error — 'email' was not picked
+  picked.email
+
+  const safe = inst.except(['password'] as const)
+  safe.name // still present
+  safe.email
+  // @ts-expect-error — 'password' was dropped by except()
+  safe.password
+
+  const changes = inst.getChanges()
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS20 = Expect<Equal<typeof changes.age, number | undefined>> // Partial of attrs
+
+  // id accessor is the pk value
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS21 = Expect<Equal<typeof inst.id, number>>
+
+  // toJSON: hidden keys are absent at the TYPE level (not just optional)
+  const json = inst.toJSON()
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS22 = Expect<Equal<'password' extends keyof typeof json ? true : false, false>>
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS23 = Expect<Equal<typeof json.plan, 'free' | 'pro' | 'enterprise'>>
+
+  // --- select() narrows everything downstream ----------------------------------
+  const slim = await Member.select('name', 'plan').firstOrFail()
+  const slimAttrs = slim.getAttributes()
+  slimAttrs.name
+  slimAttrs.plan
+  // @ts-expect-error — 'age' was not selected
+  slimAttrs.age
+
+  // --- find family ---------------------------------------------------------------
+  const maybe = await Member.find(1)
+  // eslint-disable-next-line pickier/no-unused-vars
+  type RS24 = Expect<Equal<typeof maybe extends undefined ? true : false, false>>
+  if (maybe) maybe.get('email')
+}
+
+// eslint-disable-next-line pickier/no-unused-vars
+async function _clientResultShapes(
+  users: SelectQueryBuilder<QDB, 'users', QDB['users']['columns']>,
+  typedUsers: TypedSelectQueryBuilder<QDB, 'users', QDB['users']['columns'], 'users', 'SELECT * FROM users'>,
+  db: {
+    select: {
+      <T extends keyof QDB & string, K extends keyof QDB[T]['columns'] & string>(table: T, ...columns: K[]): SelectQueryBuilder<QDB, T, Pick<QDB[T]['columns'], K>>
+    }
+    insertInto: <T extends keyof QDB & string>(table: T) => import('../client').TypedInsertQueryBuilder<QDB, T>
+    updateTable: <T extends keyof QDB & string>(table: T) => import('../client').UpdateQueryBuilder<QDB, T>
+    table: <T extends keyof QDB & string>(table: T) => import('../client').TableQueryBuilder<QDB, T>
+  },
+) {
+  // --- value(): exact column type ----------------------------------------------
+  const email = await users.value('email')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS1 = Expect<Equal<typeof email, string>>
+  const active = await users.value('active')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS2 = Expect<Equal<typeof active, boolean>>
+
+  // --- pluck(): element type, and keyed overload → Record ------------------------
+  const counts = await users.pluck('login_count')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS3 = Expect<Equal<typeof counts, number[]>>
+  const byId = await users.pluck('email', 'id')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS4 = Expect<Equal<typeof byId, Record<string, string>>>
+
+  // --- aggregates ------------------------------------------------------------------
+  const n = await users.count()
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS5 = Expect<Equal<typeof n, number>>
+  const maxName = await users.max('name') // string column → string | null
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS6 = Expect<Equal<typeof maxName, string | null>>
+  const minId = await users.min('id')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS7 = Expect<Equal<typeof minId, number | null>>
+  // @ts-expect-error — unknown column in max()
+  await users.max('seats')
+
+  // --- select([...]) narrows rows for get/first/value/pluck ----------------------
+  const slim = users.select?.(['id', 'name'])
+  if (slim) {
+    const rows = await slim.get()
+    if (rows.length > 0) {
+      rows[0].id
+      rows[0].name
+      // @ts-expect-error — 'email' was not selected
+      rows[0].email
+    }
+    const one = await slim.first()
+    if (one) {
+      one.name
+      // @ts-expect-error — 'active' was not selected
+      one.active
+    }
+    const nm = await slim.value('name')
+    // eslint-disable-next-line pickier/no-unused-vars
+    type CS8 = Expect<Equal<typeof nm, string>>
+    // @ts-expect-error — value() only sees selected columns
+    await slim.value('email')
+  }
+
+  // selectAll() restores the full row type
+  const all = users.select?.(['id'])?.selectAll?.()
+  if (all) {
+    const row = await all.first()
+    if (row) row.email // visible again
+  }
+
+  // --- db.select(table, ...cols) narrows too -------------------------------------
+  const narrow = db.select('users', 'id', 'email')
+  const nrows = await narrow.get()
+  if (nrows.length > 0) {
+    nrows[0].email
+    // @ts-expect-error — 'name' was not selected
+    nrows[0].name
+  }
+
+  // --- table().select(...cols) narrows -------------------------------------------
+  const trows = await db.table('posts').select('id', 'title').get()
+  if (trows.length > 0) {
+    trows[0].title
+    // @ts-expect-error — 'published' was not selected
+    trows[0].published
+  }
+
+  // --- insert: values constrained, returning() narrows ----------------------------
+  db.insertInto('users').values({ name: 'A', email: 'a@b.co' })
+  // @ts-expect-error — unknown column in values()
+  db.insertInto('users').values({ seats: 4 })
+
+  const ret = await db.insertInto('users').values({ name: 'A' }).returning('id', 'email').first()
+  if (ret) {
+    ret.id
+    ret.email
+    // @ts-expect-error — 'name' was not in RETURNING
+    ret.name
+  }
+  // @ts-expect-error — unknown column in returning()
+  db.insertInto('users').values({ name: 'A' }).returning('seats')
+
+  // --- update: set constrained, returning() narrows --------------------------------
+  db.updateTable('users').set({ active: false })
+  // @ts-expect-error — unknown column in set()
+  db.updateTable('users').set({ seats: 9 })
+  const updated = await db.updateTable('users').set({ active: true }).returning('id').first()
+  if (updated) {
+    updated.id
+    // @ts-expect-error — only 'id' was returned
+    updated.email
+  }
+
+  // --- pagination shapes -------------------------------------------------------------
+  const cursor = await users.cursorPaginate(10)
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS9 = Expect<Equal<typeof cursor.meta.nextCursor, string | number | null>>
+  if (cursor.data.length > 0) {
+    cursor.data[0].email // rows are typed, not any
+    // @ts-expect-error — unknown column on cursor-paginated rows
+    cursor.data[0].seats
+  }
+
+  // --- lazy iteration keeps the row type ----------------------------------------------
+  for await (const row of users.lazy()) {
+    row.email
+    // @ts-expect-error — unknown column on lazily-iterated rows
+    row.seats
+    break
+  }
+
+  // --- typed SQL strings compose through result-affecting chains -----------------------
+  const q1 = typedUsers.whereId(1)
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS10 = Expect<Equal<ReturnType<typeof q1.toSQL>, 'SELECT * FROM users WHERE id = ?'>>
+  const q2 = typedUsers.whereActive(true).limit(3)
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS11 = Expect<Equal<ReturnType<typeof q2.toSQL>, 'SELECT * FROM users WHERE active = ? LIMIT 3'>>
+  const q3 = typedUsers.where({ email: 'a@b.co' }).orderBy('id', 'desc')
+  // eslint-disable-next-line pickier/no-unused-vars
+  type CS12 = Expect<Equal<ReturnType<typeof q3.toSQL>, 'SELECT * FROM users WHERE email = ? ORDER BY id desc'>>
+}

@@ -725,28 +725,29 @@ class ModelInstance<
   /**
    * Subset of attributes containing only the named columns. Mirrors Lodash
    * `pick` / Laravel's `Collection::only`. Useful for narrowing a model
-   * down to a response shape without mutating it.
+   * down to a response shape without mutating it. The return type is the
+   * exact Pick of the requested keys.
    */
-  only<K extends TSelected>(keys: ReadonlyArray<K>): Partial<ModelAttributes<TDef>> {
+  only<K extends TSelected>(keys: ReadonlyArray<K>): Pick<ModelAttributes<TDef>, K & keyof ModelAttributes<TDef>> {
     const out: Record<string, unknown> = {}
     for (const k of keys) {
       out[k as string] = this._attributes[k as string]
     }
-    return out as Partial<ModelAttributes<TDef>>
+    return out as Pick<ModelAttributes<TDef>, K & keyof ModelAttributes<TDef>>
   }
 
   /**
    * Inverse of `only` — every attribute *except* the named columns. Use
    * for stripping `password` / `remember_token` etc. without enumerating
-   * the rest of the schema.
+   * the rest of the schema. The return type omits the dropped keys.
    */
-  except<K extends TSelected>(keys: ReadonlyArray<K>): Partial<ModelAttributes<TDef>> {
+  except<K extends TSelected>(keys: ReadonlyArray<K>): Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, K> {
     const drop = new Set<string>(keys.map(k => k as string))
     const out: Record<string, unknown> = {}
     for (const k of Object.keys(this._attributes)) {
       if (!drop.has(k)) out[k] = this._attributes[k]
     }
-    return out as Partial<ModelAttributes<TDef>>
+    return out as Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, K>
   }
 
   /**
@@ -2464,7 +2465,7 @@ class ModelQueryBuilder<
     return rows.map(r => r[column as string]) as any
   }
 
-  private async aggregate(fn: string, column: string): Promise<number | null> {
+  private async aggregate(fn: string, column: string): Promise<unknown> {
     // The aggregate function name comes from internal call sites
     // (max/min/avg/sum below) so it's bounded — but validate column
     // since callers pass user-derived field names to those wrappers.
@@ -2478,26 +2479,35 @@ class ModelQueryBuilder<
       sql += ` WHERE ${whereBody}`
     }
 
-    const row = await exec.get(sql, params) as { v: number | null } | undefined
+    const row = await exec.get(sql, params) as { v: unknown } | undefined
+    const v = row?.v
+    if (v == null) return null
     // Postgres returns numeric aggregates (and bigint COUNT) as strings via
-    // the driver — coerce so callers always get a number.
-    return row?.v == null ? null : Number(row.v)
+    // the driver — coerce those. But MAX/MIN on a TEXT column legitimately
+    // yields text: the previous unconditional Number() turned it into NaN.
+    // Genuinely numeric-looking text values still coerce; that ambiguity is
+    // inherent to the driver's string transport.
+    if (typeof v === 'string') {
+      const n = Number(v)
+      return v.trim() !== '' && !Number.isNaN(n) ? n : v
+    }
+    return v
   }
 
-  max<K extends ColumnName<TDef>>(column: K): Promise<number | null> {
-    return this.aggregate('MAX', column as string)
+  max<K extends ColumnName<TDef>>(column: K): Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null> {
+    return this.aggregate('MAX', column as string) as Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null>
   }
 
-  min<K extends ColumnName<TDef>>(column: K): Promise<number | null> {
-    return this.aggregate('MIN', column as string)
+  min<K extends ColumnName<TDef>>(column: K): Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null> {
+    return this.aggregate('MIN', column as string) as Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null>
   }
 
   async avg<K extends NumericColumns<TDef>>(column: K): Promise<number> {
-    return (await this.aggregate('AVG', column as string)) || 0
+    return Number(await this.aggregate('AVG', column as string) ?? 0) || 0
   }
 
   async sum<K extends NumericColumns<TDef>>(column: K): Promise<number> {
-    return (await this.aggregate('SUM', column as string)) || 0
+    return Number(await this.aggregate('SUM', column as string) ?? 0) || 0
   }
 
   async delete(): Promise<number> {

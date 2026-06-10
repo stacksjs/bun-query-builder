@@ -174,6 +174,23 @@ describe('typed usage e2e (multi-model domain)', () => {
     expect(await Post.min('views')).toBe(1)
   })
 
+  it('max/min on TEXT columns return the text value, not NaN', async () => {
+    // Posts: 'Hello', 'World', 'Quiet'. The aggregate path used to coerce
+    // every driver value through Number(), turning MAX(title) into NaN.
+    expect(await Post.max('title')).toBe('World')
+    expect(await Post.min('title')).toBe('Hello')
+  })
+
+  it('only()/except() return exact attribute subsets', async () => {
+    const ada = await User.whereEmail('ada@e2e.dev').firstOrFail()
+    const picked = ada.only(['name', 'plan'] as const)
+    expect(picked).toEqual({ name: 'Ada', plan: 'pro' })
+
+    const safe = ada.except(['email'] as const)
+    expect('email' in safe).toBe(false)
+    expect(safe.name).toBe('Ada')
+  })
+
   it('pluck returns typed primitives', async () => {
     const views = await Post.pluck('views')
     expect(views.sort((a, b) => a - b)).toEqual([1, 10, 32])

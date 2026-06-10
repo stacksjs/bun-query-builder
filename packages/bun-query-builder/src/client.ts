@@ -347,6 +347,11 @@ type _TypedDynamicWhereMethods<
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${K} = ?`>
 }
 
+// NOTE: TypedSelectQueryBuilder must NOT also intersect DynamicWhereMethods —
+// _TypedDynamicWhereMethods declares the same `where<Column>` keys, and the
+// untyped variant (returning a plain SelectQueryBuilder) would win overload
+// resolution, silently downgrading `toSQL()` from the composed literal SQL
+// type back to `string` after any dynamic-where call.
 export type TypedSelectQueryBuilder<
   DB extends DatabaseSchema<any>,
   TTable extends keyof DB & string,
@@ -356,8 +361,7 @@ export type TypedSelectQueryBuilder<
 > = Omit<
   BaseSelectQueryBuilder<DB, TTable, TSelected, TJoined>,
   'toSQL' | 'where' | 'andWhere' | 'orWhere' | 'orderBy' | 'limit'
-> & DynamicWhereMethods<DB, TTable, TSelected, TJoined>
-& _TypedDynamicWhereMethods<DB, TTable, TSelected, TJoined, TSql>
+> & _TypedDynamicWhereMethods<DB, TTable, TSelected, TJoined, TSql>
 & {
   toSQL: () => TSql
   where: (<K extends keyof DB[TTable]['columns'] & string>(
@@ -940,8 +944,19 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   addSelect: (...columns: ((keyof DB[TTable]['columns'] & string) | string | SqlFragment)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
-  select?: (columns: string | SqlFragment | ((keyof DB[TTable]['columns'] & string) | string | SqlFragment)[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
-  selectAll?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  select?: {
+    /**
+     * # `select(columns)`
+     *
+     * Restrict the SELECT list to the given columns. When every entry is a
+     * plain column name the result row type narrows to exactly those
+     * columns — `get()`, `first()`, `value()`, `pluck()` all follow.
+     */
+    <K extends keyof DB[TTable]['columns'] & string>(columns: K[]): SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>, TJoined>
+    /** Raw/aliased select lists keep the current row type. */
+    (columns: string | SqlFragment | (string | SqlFragment)[]): SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  }
+  selectAll?: () => SelectQueryBuilder<DB, TTable, DB[TTable]['columns'], TJoined>
   /**
    * # `orderByRaw`
    *
@@ -1326,7 +1341,7 @@ export interface BaseSelectQueryBuilder<
    * const page2 = await db.selectFrom('users').cursorPaginate(10, page1.meta.nextCursor)
    * ```
    */
-  cursorPaginate: (perPage: number, cursor?: string | number, column?: string, direction?: 'asc' | 'desc') => Promise<{ data: any[], meta: { perPage: number, nextCursor: string | number | null } }>
+  cursorPaginate: (perPage: number, cursor?: string | number, column?: string, direction?: 'asc' | 'desc') => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, nextCursor: string | number | null } }>
   /**
    * # `chunk`
    *
@@ -1523,8 +1538,10 @@ export interface BaseSelectQueryBuilder<
   count: () => Promise<number>
   avg: (column: keyof DB[TTable]['columns'] & string) => Promise<number>
   sum: (column: keyof DB[TTable]['columns'] & string) => Promise<number>
-  max: (column: keyof DB[TTable]['columns'] & string) => Promise<any>
-  min: (column: keyof DB[TTable]['columns'] & string) => Promise<any>
+  /** MAX of a column — typed as that column's value (string columns yield strings), or null on an empty set. */
+  max: <K extends keyof DB[TTable]['columns'] & string>(column: K) => Promise<DB[TTable]['columns'][K] | null>
+  /** MIN of a column — typed as that column's value (string columns yield strings), or null on an empty set. */
+  min: <K extends keyof DB[TTable]['columns'] & string>(column: K) => Promise<DB[TTable]['columns'][K] | null>
   // Type-only convenience properties for IDE hovers; not implemented at runtime
   readonly rows: TSelected[]
   readonly row: TSelected
@@ -1767,7 +1784,7 @@ export interface TableQueryBuilder<DB extends DatabaseSchema<any>, TTable extend
    * const rows = await db.table('users').select('id', 'name').execute()
    * ```
    */
-  select: (...columns: (keyof DB[TTable]['columns'] & string)[]) => SelectQueryBuilder<DB, TTable, any>
+  select: <K extends keyof DB[TTable]['columns'] & string>(...columns: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
 }
 
 export interface QueryBuilder<DB extends DatabaseSchema<any>> {
@@ -1783,10 +1800,18 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * const sql = db.select('users', 'id', `count(*) as c`).toSQL()
    * ```
    */
-  select: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(
-    table: TTable,
-    ...columns: (K | `${string} as ${string}`)[]
-  ) => SelectQueryBuilder<DB, TTable, any>
+  select: {
+    /** Plain column names narrow the result rows to exactly those columns. */
+    <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(
+      table: TTable,
+      ...columns: K[]
+    ): SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
+    /** Raw `expr as alias` entries fall back to untyped rows. */
+    <TTable extends keyof DB & string>(
+      table: TTable,
+      ...columns: ((keyof DB[TTable]['columns'] & string) | `${string} as ${string}`)[]
+    ): SelectQueryBuilder<DB, TTable, any>
+  }
   /**
    * # `selectFrom`
    *
