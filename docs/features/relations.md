@@ -401,59 +401,55 @@ const chrisMenteesWithoutCompletions = await db
 
 ## Constraint Callbacks with with()
 
-Apply query constraints when eager loading relations using callback functions:
+Apply **filters** when eager loading relations using callback functions. The
+constraint is compiled into the relation's `LEFT JOIN ... ON` clause, so parent
+rows are always kept while only matching related rows are joined — e.g. "load
+every user, but only their published posts":
 
 ```ts
 // Load only published posts with users
 const usersWithPublishedPosts = await db
   .selectFrom('users')
   .with({
-    posts: (qb) => qb
-      .where('published', '=', true)
-      .orderBy('created_at', 'desc')
-      .limit(5)
+    posts: qb => qb.where('published', '=', true)
   })
   .execute()
 
-// Load multiple relations with different constraints
+// Load multiple relations with different filters
 const usersWithFilteredRelations = await db
   .selectFrom('users')
   .with({
-    posts: (qb) => qb.where('published', '=', true),
-    comments: (qb) => qb.where('approved', '=', true).orderBy('created_at', 'desc'),
-    projects: (qb) => qb.where('status', 'in', ['active', 'completed'])
+    posts: qb => qb.where('published', '=', true),
+    comments: qb => qb.where('approved', '=', true),
+    projects: qb => qb.whereIn('status', ['active', 'completed'])
   })
   .execute()
 
-// Complex constraints with multiple conditions
+// Multiple conditions, date values, and IS [NOT] NULL
 const teamData = await db
   .selectFrom('teams')
   .with({
-    members: (qb) => qb
+    members: qb => qb
       .where('active', '=', true)
       .where(['joined_at', '>', new Date('2024-01-01')])
-      .orderBy('role', 'asc')
+      .whereNotNull('confirmed_at')
   })
   .execute()
-
-// Chris's projects with recent activity
-const chrisActiveProjects = await db
-  .selectFrom('users')
-  .where({ name: 'Chris' })
-  .with({
-    projects: (qb) => qb
-      .where('status', '=', 'active')
-      .where(['last_activity', '>', new Date(Date.now() - 7 _ 24 _ 60 _ 60 _ 1000)])
-      .orderBy('priority', 'desc')
-  })
-  .first()
 ```
+
+Supported inside the callback: `where(col, op, value)`, `where([col, op, value])`,
+`where({ col: value })`, `whereIn`, `whereNull`, `whereNotNull`. Values are
+SQL-escaped and operators are validated.
+
+**Not supported on the JOIN-based builder**: `orderBy()`, `limit()`, `offset()`.
+A flattening join has no per-parent ordering or row cap, so these **throw** (a
+clear error) rather than silently returning wrong data. If you need to sort or
+cap related rows per parent, load that relation with a separate query, or use
+the model layer's eager loading.
 
 **Use Cases**:
 
 - Load only specific related records (e.g., published posts, active projects)
-- Sort related records (e.g., most recent comments first)
-- Limit the number of related records loaded
 - Apply complex filtering logic to related data
 
 **Note**: Constraint callbacks provide more flexibility than simple array-based filters in `withCount()` and `whereHas()`.

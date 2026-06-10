@@ -226,6 +226,9 @@ function formatSubqueryValue(val: unknown): string {
   if (typeof val === 'number' && Number.isFinite(val)) return String(val)
   if (typeof val === 'boolean') return val ? '1' : '0'
   if (typeof val === 'string') return `'${val.replace(/'/g, '\'\'')}'`
+  // Dates are common in relation/`with()` constraints — emit an escaped ISO
+  // literal rather than rejecting the value.
+  if (val instanceof Date) return `'${val.toISOString()}'`
   throw new TypeError(`[query-builder] subquery condition: refusing to interpolate value of type ${typeof val}`)
 }
 
@@ -3463,6 +3466,71 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             return ''
           }
 
+          // Build the ` AND (...)` suffix for a constraint callback passed to
+          // `.with({ rel: qb => qb.where(...) })`. The client builder eager
+          // loads via a flattening LEFT JOIN, so a constraint becomes part of
+          // the JOIN ON clause — `LEFT JOIN posts ON posts.user_id = users.id
+          // AND posts.published = 1` keeps every parent (LEFT) while joining
+          // only matching children, which is exactly "load only published
+          // posts". The previous code applied NONE of this (silent no-op,
+          // despite being documented).
+          //
+          // Values are inline-escaped via formatSubqueryValue rather than
+          // bound: the JOIN appears BEFORE the WHERE in the SQL, but `.with()`
+          // may be chained AFTER `.where()`, so pushing to the positional
+          // `whereParams` array would bind them in the wrong order. This is
+          // the same approach the whereHas subquery builders use. Identifiers
+          // and operators are still validated/allow-listed. orderBy/limit/
+          // offset have no per-parent meaning in a flat join, so they throw
+          // rather than silently drop.
+          const buildJoinConstraint = (targetTbl: string): string => {
+            if (!condition)
+              return ''
+            const frags: string[] = []
+            const addCmp = (col: unknown, op: unknown, val: unknown): void => {
+              validateIdentifier(String(col), 'with() constraint column')
+              const operator = assertSafeWhereOperator(op, 'with() constraint operator')
+              frags.push(`${targetTbl}.${String(col)} ${operator} ${formatSubqueryValue(val)}`)
+            }
+            const unsupported = (m: string) => () => {
+              throw new Error(`[query-builder] with('${relationKey}', ...): ${m} is not supported inside a constraint callback on the JOIN-based builder — apply it to the outer query, or use the model layer's eager loading. (Silently ignoring it would return wrong data.)`)
+            }
+            const constraintQb: any = {
+              where: (expr: any, op?: any, val?: any) => {
+                if (Array.isArray(expr))
+                  addCmp(expr[0], expr[1], expr[2])
+                else if (expr && typeof expr === 'object')
+                  for (const k of Object.keys(expr)) addCmp(k, '=', expr[k])
+                else if (op !== undefined && val !== undefined)
+                  addCmp(expr, op, val)
+                else if (op !== undefined)
+                  addCmp(expr, '=', op)
+                return constraintQb
+              },
+              whereIn: (col: any, vals: any[]) => {
+                validateIdentifier(String(col), 'with() constraint column')
+                frags.push(`${targetTbl}.${String(col)} IN (${vals.map(formatSubqueryValue).join(', ')})`)
+                return constraintQb
+              },
+              whereNull: (col: any) => {
+                validateIdentifier(String(col), 'with() constraint column')
+                frags.push(`${targetTbl}.${String(col)} IS NULL`)
+                return constraintQb
+              },
+              whereNotNull: (col: any) => {
+                validateIdentifier(String(col), 'with() constraint column')
+                frags.push(`${targetTbl}.${String(col)} IS NOT NULL`)
+                return constraintQb
+              },
+              orderBy: unsupported('orderBy()'),
+              limit: unsupported('limit()'),
+              offset: unsupported('offset()'),
+              take: unsupported('take()'),
+            }
+            condition(constraintQb)
+            return frags.length ? ` AND ${frags.join(' AND ')}` : ''
+          }
+
           const resolveTarget = (): string | undefined => {
             const pick = (m?: Record<string, string>) => {
               const modelName = m?.[relationKey]
@@ -3516,7 +3584,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const throughPk = meta.primaryKeys[throughTable] ?? 'id'
             const fkInThrough = `${singularize(fromTable)}_id`
             const fkInFinal = `${singularize(throughTable)}_id`
-            built = sql`${ensureBuilt()} LEFT JOIN ${sql(throughTable)} ON ${sql(`${throughTable}.${fkInThrough}`)} = ${sql(`${fromTable}.${fromPk}`)} LEFT JOIN ${sql(finalTable)} ON ${sql(`${finalTable}.${fkInFinal}`)} = ${sql(`${throughTable}.${throughPk}`)}`
+            // insertJoin maintains `text` directly (and nulls `built` so it
+            // rebuilds from text) — the previous `built = sql\`...\`` + a
+            // `text = computeSqlText(built)` resync produced "[object Promise]"
+            // text on real drivers, whose query objects can't be stringified.
+            insertJoin(`LEFT JOIN ${throughTable} ON ${throughTable}.${fkInThrough} = ${fromTable}.${fromPk} LEFT JOIN ${finalTable} ON ${finalTable}.${fkInFinal} = ${throughTable}.${throughPk}`)
             joinedTables.add(throughTable)
             joinedTables.add(finalTable)
             return finalTable
@@ -3532,7 +3604,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const childPk = meta.primaryKeys[childTable] ?? 'id'
             const fkA = resolved?.fkParent ?? `${singularize(fromTable)}_id`
             const fkB = resolved?.fkRelated ?? `${singularize(childTable)}_id`
-            built = sql`${ensureBuilt()} LEFT JOIN ${sql(pivot)} ON ${sql(`${pivot}.${fkA}`)} = ${sql(`${fromTable}.${fromPk}`)} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${childPk}`)} = ${sql(`${pivot}.${fkB}`)}`
+            insertJoin(`LEFT JOIN ${pivot} ON ${pivot}.${fkA} = ${fromTable}.${fromPk} LEFT JOIN ${childTable} ON ${childTable}.${childPk} = ${pivot}.${fkB}${buildJoinConstraint(childTable)}`)
 
             joinedTables.add(pivot)
             joinedTables.add(childTable)
@@ -3549,7 +3621,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const morphType = `${morphName}_type`
             const morphId = `${morphName}_id`
             const targetFk = `${singularize(childTable)}_id`
-            built = sql`${ensureBuilt()} LEFT JOIN ${sql(pivotTable)} ON ${sql(`${pivotTable}.${morphId}`)} = ${sql(`${fromTable}.${fromPk}`)} AND ${sql(`${pivotTable}.${morphType}`)} = ${sql(meta.tableToModel[fromTable] || fromTable)} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${childPk}`)} = ${sql(`${pivotTable}.${targetFk}`)}`
+            const morphVal = formatSubqueryValue(meta.tableToModel[fromTable] || fromTable)
+            insertJoin(`LEFT JOIN ${pivotTable} ON ${pivotTable}.${morphId} = ${fromTable}.${fromPk} AND ${pivotTable}.${morphType} = ${morphVal} LEFT JOIN ${childTable} ON ${childTable}.${childPk} = ${pivotTable}.${targetFk}`)
             joinedTables.add(pivotTable)
             joinedTables.add(childTable)
             return childTable
@@ -3567,7 +3640,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const morphType = `${morphName}_type`
             const morphId = `${morphName}_id`
             const relatedFk = `${singularize(relatedTable)}_id`
-            built = sql`${ensureBuilt()} LEFT JOIN ${sql(pivotTable)} ON ${sql(`${pivotTable}.${relatedFk}`)} = ${sql(`${fromTable}.${fromPk}`)} LEFT JOIN ${sql(relatedTable)} ON ${sql(`${relatedTable}.${relatedPk}`)} = ${sql(`${pivotTable}.${morphId}`)} AND ${sql(`${pivotTable}.${morphType}`)} = ${sql(meta.tableToModel[relatedTable] || relatedTable)}`
+            const morphVal = formatSubqueryValue(meta.tableToModel[relatedTable] || relatedTable)
+            insertJoin(`LEFT JOIN ${pivotTable} ON ${pivotTable}.${relatedFk} = ${fromTable}.${fromPk} LEFT JOIN ${relatedTable} ON ${relatedTable}.${relatedPk} = ${pivotTable}.${morphId} AND ${pivotTable}.${morphType} = ${morphVal}`)
             joinedTables.add(pivotTable)
             joinedTables.add(relatedTable)
             return relatedTable
@@ -3578,7 +3652,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (isBt) {
             const fkInParent = `${singularize(childTable)}_id`
             const childPk = meta.primaryKeys[childTable] ?? 'id'
-            built = sql`${ensureBuilt()} LEFT JOIN ${sql(childTable)} ON ${sql(`${fromTable}.${fkInParent}`)} = ${sql(`${childTable}.${childPk}`)}`
+            insertJoin(`LEFT JOIN ${childTable} ON ${fromTable}.${fkInParent} = ${childTable}.${childPk}${buildJoinConstraint(childTable)}`)
             joinedTables.add(childTable)
             return childTable
           }
@@ -3590,7 +3664,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const morphType = `${relationKey}_type`
             const morphId = `${relationKey}_id`
             const fromPk = meta.primaryKeys[fromTable] ?? 'id'
-            built = sql`${ensureBuilt()} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${morphId}`)} = ${sql(`${fromTable}.${fromPk}`)} AND ${sql(`${childTable}.${morphType}`)} = ${sql(meta.tableToModel[fromTable] || fromTable)}`
+            const morphVal = formatSubqueryValue(meta.tableToModel[fromTable] || fromTable)
+            insertJoin(`LEFT JOIN ${childTable} ON ${childTable}.${morphId} = ${fromTable}.${fromPk} AND ${childTable}.${morphType} = ${morphVal}`)
             joinedTables.add(childTable)
             return childTable
           }
@@ -3598,19 +3673,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           // hasOne/hasMany: child has fk to parent
           const fkInChild = `${singularize(fromTable)}_id`
           const pk = meta.primaryKeys[fromTable] ?? 'id'
-          const softDeleteCheck = addSoftDeleteCheck(childTable)
-
-          if (softDeleteCheck) {
-            // Use raw SQL for complex condition
-            const currentSql = String(ensureBuilt())
-            const joinCondition = `${childTable}.${fkInChild} = ${fromTable}.${pk}${softDeleteCheck}`
-            built = sql`${sql(currentSql)} LEFT JOIN ${sql(childTable)} ON ${sql(joinCondition)}`
-          }
-          else {
-            // Use standard JOIN
-            built = sql`${ensureBuilt()} LEFT JOIN ${sql(childTable)} ON ${sql(`${childTable}.${fkInChild}`)} = ${sql(`${fromTable}.${pk}`)}`
-          }
-
+          const extraOn = `${addSoftDeleteCheck(childTable)}${buildJoinConstraint(childTable)}`
+          insertJoin(`LEFT JOIN ${childTable} ON ${childTable}.${fkInChild} = ${fromTable}.${pk}${extraOn}`)
           joinedTables.add(childTable)
           return childTable
         }
@@ -3662,8 +3726,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
         }
 
-        // Update text representation for toSQL()
-        text = computeSqlText(ensureBuilt())
+        // `text` is maintained directly by insertJoin() / addToSelectClause()
+        // above. We no longer resync via computeSqlText(ensureBuilt()) — real
+        // driver query objects stringify to "[object Promise]", which used to
+        // corrupt `text` (and thus toSQL() and the prepared-statement fast
+        // path) for every .with() on a non-mock connection.
+        built = null
 
         return this as any
       },

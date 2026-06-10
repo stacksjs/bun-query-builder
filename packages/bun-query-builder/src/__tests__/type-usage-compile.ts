@@ -580,6 +580,9 @@ async function _clientUsage(
   posts.with?.('comments', 'user', 'tags')
   posts.with?.('comments.user') // nested path rooted at a declared relation
   posts.with?.({ comments: q => q })
+  posts.with?.({ comments: q => q.where('id', '=', 1) }) // constraint callback
+  // @ts-expect-error — record-form keys are narrowed to declared relations
+  posts.with?.({ subscribers: q => q })
   posts.whereHas?.('comments')
   posts.whereDoesntHave?.('tags')
   posts.has?.('user')
