@@ -153,6 +153,15 @@ describe('query builder - subqueries and relations', () => {
     expect(typeof q.execute).toBe('function')
   })
 
+  it('toParams() returns the ordered bound params (not garbage)', () => {
+    expect((qb().selectFrom('users').where(['age', '>', 18]).where(['name', '=', 'x']) as any).toParams())
+      .toEqual([18, 'x'])
+    expect((qb().selectFrom('users').whereIn('id', [1, 2, 3]) as any).toParams())
+      .toEqual([1, 2, 3])
+    expect((qb().selectFrom('users').whereLike('name', '%a%') as any).toParams())
+      .toEqual(['%a%'])
+  })
+
   it('with() and selectAllRelations aliasing composes', () => {
     const q = (qb().selectFrom('users') as any).with('Project').selectAllRelations().toSQL() as any
     expect(typeof q.execute).toBe('function')

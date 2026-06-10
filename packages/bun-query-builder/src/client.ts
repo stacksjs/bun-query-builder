@@ -5690,7 +5690,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return (ensureBuilt() as any).values()
       },
       toParams() {
-        return (ensureBuilt() as any).values?.() ?? []
+        // Return the builder's ordered bound params directly. The previous
+        // `ensureBuilt().values?.()` was unreliable: `.values` is a params
+        // ARRAY on the sqlite wrapper but a METHOD on Bun's native query, so
+        // calling it yielded `{}`/garbage instead of the params. `whereParams`
+        // is the single source of truth (same as __rawState()).
+        return [...whereParams]
       },
       // Internal: the builder's finalized SQL text + ordered bound params, used
       // by union()/unionAll() on the other side to merge params and renumber
