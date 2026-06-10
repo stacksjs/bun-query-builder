@@ -315,6 +315,39 @@ describe('Dynamic ORM', () => {
       expect(users[4].get('name')).toBe('Alice')
     })
 
+    describe('orderBy identifier safety', () => {
+      it('composes a plain column into ORDER BY <col> <DIR>', () => {
+        const { sql } = User.orderBy('name', 'asc').toSql()
+        expect(sql).toContain('ORDER BY name ASC')
+      })
+
+      it('chains multiple orderBy calls into one comma-separated clause', () => {
+        const { sql } = User.orderBy('name', 'asc').orderBy('email', 'desc').toSql()
+        expect(sql).toContain('ORDER BY name ASC, email DESC')
+      })
+
+      it('accepts the table-qualified table.column form unchanged', () => {
+        const { sql } = (User as any).orderBy('users.name', 'desc').toSql()
+        expect(sql).toContain('ORDER BY users.name DESC')
+      })
+
+      it('rejects a statement-injection-shaped column', () => {
+        expect(() => (User as any).orderBy('name; DROP TABLE users')).toThrow(/invalid ORDER BY column/)
+      })
+
+      it('rejects a sub-select-shaped column', () => {
+        expect(() => (User as any).orderBy('(SELECT password FROM users)')).toThrow(/invalid ORDER BY column/)
+      })
+
+      it('rejects a multi-dot / schema-qualified column', () => {
+        expect(() => (User as any).orderBy('public.users.name')).toThrow(/invalid ORDER BY column/)
+      })
+
+      it('rejects a non-asc/desc direction', () => {
+        expect(() => (User as any).orderBy('name', 'asc; DROP TABLE users')).toThrow(/expected 'asc' or 'desc'/)
+      })
+    })
+
     it('limits results', async () => {
       const users = await User.limit(2).get()
       expect(users.length).toBe(2)

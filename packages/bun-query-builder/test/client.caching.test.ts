@@ -223,4 +223,42 @@ describe('Query Caching - Integration', () => {
     expect(qb).toBeDefined()
     expect(typeof qb.toSQL).toBe('function')
   })
+
+  test('cache() keys include bound params — same SQL, different values do not collide', async () => {
+    // The query cache is module-global; other test files may have cached
+    // rows under the same SQL text. Start from a clean slate.
+    clearQueryCache()
+    // Mock whose execute() echoes its bound params so each distinct value
+    // set produces a distinguishable result. Pre-fix, the cache key was the
+    // SQL text only (`WHERE id = $1`), so the second query returned the
+    // first query's cached rows.
+    // Template-tag calls (e.g. the soft-delete wrapper) compose fragments;
+    // resolve any nested executable fragment so the echoed params surface
+    // regardless of how many layers wrap the unsafe(text, params) core.
+    const echoSql: any = (strings: TemplateStringsArray | any, ...values: any[]) => ({
+      toString: () => Array.isArray(strings)
+        ? strings.reduce((acc: string, s: string, i: number) => acc + s + (values[i] !== undefined ? String(values[i]) : ''), '')
+        : String(strings),
+      execute: async () => {
+        const nested = await Promise.all(values.filter(v => typeof v?.execute === 'function').map(v => v.execute()))
+        return nested.flat()
+      },
+    })
+    echoSql.unsafe = (query: string, params?: any[]) => ({
+      toString: () => query,
+      execute: async () => [...(params ?? [])],
+    })
+
+    const cachedDb = createQueryBuilder<DB>({ sql: echoSql })
+
+    const first = await cachedDb.selectFrom('users').where({ id: 1 }).cache(5000).get()
+    const second = await cachedDb.selectFrom('users').where({ id: 2 }).cache(5000).get()
+
+    expect(first).toEqual([1])
+    expect(second).toEqual([2]) // would be [1] if the key ignored params
+
+    // Identical SQL AND params still hit the cache (same reference back)
+    const firstAgain = await cachedDb.selectFrom('users').where({ id: 1 }).cache(5000).get()
+    expect(firstAgain).toEqual([1])
+  })
 })

@@ -71,6 +71,25 @@ function assertValidIdentifier(name: unknown, context: string): asserts name is 
     throw new TypeError(`[bun-query-builder] ${context}: identifier '${name}' contains characters outside [A-Za-z0-9_] — refusing to interpolate into SQL`)
 }
 
+/**
+ * Validate an ORDER BY target column. Like `assertValidIdentifier` but
+ * additionally accepts the table-qualified `table.column` form by
+ * validating each side of a single dot with the same strict rule. Any
+ * other shape (multiple dots, quotes, spaces, `;`, sub-selects, …) is
+ * rejected before it can be interpolated into the ORDER BY clause.
+ *
+ * The column name is interpolated RAW into SQL at the build sites, so a
+ * malformed/malicious identifier here is a SQL-injection /
+ * column-enumeration vector. stacksjs/stacks#1858.
+ */
+function assertValidOrderByColumn(name: unknown, context: string): asserts name is string {
+  if (typeof name !== 'string' || name.length === 0)
+    throw new TypeError(`[bun-query-builder] ${context}: identifier must be a non-empty string, got ${typeof name}`)
+  const parts = name.split('.')
+  if (parts.length > 2 || parts.some(p => p.length === 0 || p.length > 64 || !SAFE_SQL_IDENTIFIER.test(p)))
+    throw new TypeError(`[bun-query-builder] ${context}: invalid ORDER BY column '${name}' — expected 'column' or 'table.column' of [A-Za-z0-9_] — refusing to interpolate into SQL`)
+}
+
 // Lazy reference to model registry to avoid circular dependency
 // eslint-disable-next-line pickier/no-unused-vars
 let _getModel: ((name: string) => any) | null = null
@@ -222,14 +241,19 @@ type InferAttributeType<TAttr> =
   TAttr extends { factory: (faker: Faker) => infer R } ? R :
   unknown
 
-// Build the full attributes type from definition
+// Build the full attributes type from definition. Columns declared
+// `nullable: true` admit null — mirrors InferAttributes in type-inference.ts.
 type InferModelAttributes<TDef extends ModelDefinition> = {
-  [K in AttributeKeys<TDef>]: InferAttributeType<TDef['attributes'][K]>
+  [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { nullable: true }
+    ? InferAttributeType<TDef['attributes'][K]> | null
+    : InferAttributeType<TDef['attributes'][K]>
 }
 
-// System fields added by traits
+// System fields added by traits. The primary-key column honors the model's
+// declared `primaryKey` (default 'id') — a custom-pk model exposes THAT
+// column, not a phantom 'id'. Mirrors InferAttributes in type-inference.ts.
 type SystemFields<TDef extends ModelDefinition> =
-  { id: number } &
+  { [K in TDef extends { primaryKey: infer PK extends string } ? PK : 'id']: number } &
   (TDef['traits'] extends { useUuid: true } ? { uuid: string } : {}) &
   (TDef['traits'] extends { useTimestamps: true } ? { created_at: string; updated_at: string | null } : {}) &
   (TDef['traits'] extends { timestampable: true | object } ? { created_at: string; updated_at: string | null } : {}) &
@@ -245,7 +269,7 @@ type ModelAttributes<TDef extends ModelDefinition> =
 // All valid column names
 type ColumnName<TDef extends ModelDefinition> =
   | AttributeKeys<TDef>
-  | 'id'
+  | (TDef extends { primaryKey: infer PK extends string } ? PK : 'id')
   | (TDef['traits'] extends { useUuid: true } ? 'uuid' : never)
   | (TDef['traits'] extends { useTimestamps: true } ? 'created_at' | 'updated_at' : never)
   | (TDef['traits'] extends { timestampable: true | object } ? 'created_at' | 'updated_at' : never)
@@ -270,41 +294,34 @@ type NumericColumns<TDef extends ModelDefinition> = {
 }[AttributeKeys<TDef>]
 
 // Infer relation names from model definition (supports both array and object syntax)
-type InferBelongsToNames<TDef> =
-  (TDef extends { belongsTo: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never)
-  | (TDef extends { belongsTo: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
 
-type InferHasManyNames<TDef> =
-  (TDef extends { hasMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never)
-  | (TDef extends { hasMany: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+/**
+ * Relation names of one relation declaration. Array form lowercases the
+ * (unwrapped) model name; record form uses the keys. The array case MUST be
+ * checked first: a tuple also structurally matches `Readonly<Record<...>>`
+ * and would otherwise leak its own keys ('length', indices, ...) into the
+ * relation-name union.
+ */
+type RelationKeyOf<V> =
+  V extends readonly (infer E)[]
+    ? E extends string ? Lowercase<E>
+      : E extends { model: infer M extends string } ? Lowercase<M>
+        : never
+    : V extends Readonly<Record<infer K, unknown>>
+      ? K & string
+      : never
 
-type InferHasOneNames<TDef> =
-  (TDef extends { hasOne: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never)
-  | (TDef extends { hasOne: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+type InferBelongsToNames<TDef> = TDef extends { belongsTo: infer V } ? RelationKeyOf<V> : never
 
-type InferBelongsToManyNames<TDef> =
-  (TDef extends { belongsToMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
-  | (TDef extends { belongsToMany: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+type InferHasManyNames<TDef> = TDef extends { hasMany: infer V } ? RelationKeyOf<V> : never
 
-type InferHasOneThroughNames<TDef> =
-  (TDef extends { hasOneThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
-  | (TDef extends { hasOneThrough: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+type InferHasOneNames<TDef> = TDef extends { hasOne: infer V } ? RelationKeyOf<V> : never
 
-type InferHasManyThroughNames<TDef> =
-  (TDef extends { hasManyThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
-  | (TDef extends { hasManyThrough: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+type InferBelongsToManyNames<TDef> = TDef extends { belongsToMany: infer V } ? RelationKeyOf<V> : never
+
+type InferHasOneThroughNames<TDef> = TDef extends { hasOneThrough: infer V } ? RelationKeyOf<V> : never
+
+type InferHasManyThroughNames<TDef> = TDef extends { hasManyThrough: infer V } ? RelationKeyOf<V> : never
 
 export type InferRelationNames<TDef> =
   | InferBelongsToNames<TDef>
@@ -802,6 +819,11 @@ class ModelInstance<
     for (const [key, value] of Object.entries(data)) {
       const attr = attrs[key]
       if (attr?.fillable && !attr?.guarded) {
+        // Snapshot original on first mutation (copy-on-write) — same as
+        // set(). Skipping this left getChanges() empty, so a save() after
+        // fill()/update() on a clean instance SILENTLY SKIPPED the UPDATE
+        // statement while the in-memory instance showed the new values.
+        if (this._original === null) this._original = { ...this._attributes }
         this._attributes[key] = value
       }
     }
@@ -809,6 +831,7 @@ class ModelInstance<
   }
 
   forceFill(data: Partial<InferModelAttributes<TDef>>): this {
+    if (this._original === null) this._original = { ...this._attributes }
     Object.assign(this._attributes, data)
     return this
   }
@@ -1392,7 +1415,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
   }
 
   orderBy(column: string, direction: 'asc' | 'desc' = 'asc'): this {
-    assertValidIdentifier(column, 'orderBy(column)')
+    assertValidOrderByColumn(column, 'orderBy(column)')
     if (direction !== 'asc' && direction !== 'desc')
       throw new TypeError(`[bun-query-builder] orderBy(direction): expected 'asc' or 'desc', got '${direction}'`)
     this._orderBy.push(`${column} ${direction.toUpperCase()}`)
@@ -1938,7 +1961,7 @@ class ModelQueryBuilder<
   }
 
   orderBy<K extends ColumnName<TDef>>(column: K, direction: 'asc' | 'desc' = 'asc'): ModelQueryBuilder<TDef, TSelected> {
-    assertValidIdentifier(column, 'orderBy(column)')
+    assertValidOrderByColumn(column, 'orderBy(column)')
     if (direction !== 'asc' && direction !== 'desc')
       throw new TypeError(`[bun-query-builder] orderBy(direction): expected 'asc' or 'desc', got '${direction}'`)
     this._orderBy.push({ column: column as string, direction })

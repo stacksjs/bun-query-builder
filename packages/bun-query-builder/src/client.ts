@@ -292,12 +292,14 @@ type JoinColumn<DB extends DatabaseSchema<any>, TTables extends string> = TTable
  *
  * The relation names declared for a table, read from the type-level
  * `relations` map that `DatabaseSchema` carries. Falls back to `string`
- * for hand-written schema types that don't declare relation metadata, so
- * existing untyped schemas keep compiling.
+ * for hand-written schema types that don't declare relation metadata
+ * (inferred `R` is `unknown` when the property is absent), so existing
+ * untyped schemas keep compiling. A table that declares ZERO relations
+ * yields `never` — every relation name is rejected.
  */
 export type TableRelationName<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> =
   DB[TTable] extends { relations?: infer R }
-    ? [keyof NonNullable<R>] extends [never] ? string : keyof NonNullable<R> & string
+    ? unknown extends R ? string : keyof NonNullable<R> & string
     : string
 
 /**
@@ -305,12 +307,17 @@ export type TableRelationName<DB extends DatabaseSchema<any>, TTable extends key
  *
  * Argument accepted by `.with()`: a declared relation name, a dotted nested
  * path rooted at a declared relation (`'posts.comments'`), or a record
- * mapping relation names to constraint callbacks.
+ * mapping relation names to constraint callbacks. A table with zero declared
+ * relations accepts nothing (the bare `Partial<Record<never, ...>>` would be
+ * `{}`, which strings are assignable to — hence the explicit never guard).
  */
 export type WithRelationArg<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> =
-  | TableRelationName<DB, TTable>
-  | `${TableRelationName<DB, TTable>}.${string}`
-  | Partial<Record<TableRelationName<DB, TTable>, (qb: any) => any>>
+  [TableRelationName<DB, TTable>] extends [never]
+    ? never
+    :
+      | TableRelationName<DB, TTable>
+      | `${TableRelationName<DB, TTable>}.${string}`
+      | Partial<Record<TableRelationName<DB, TTable>, (qb: any) => any>>
 
 // Convert snake_case to PascalCase at the type level (e.g. created_at -> CreatedAt)
 type SnakeToPascal<S extends string> = S extends `${infer H}_${infer T}`
@@ -5240,9 +5247,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
         }
 
-        // Check cache if enabled
+        // Check cache if enabled. The key must include the BOUND PARAMS:
+        // `String(query)` is only the SQL text with placeholders, so
+        // `where id = $1` with [1] and with [2] would otherwise share one
+        // cache entry and the second query would return the first's rows.
+        const cacheKey = useCache
+          ? `${String(finalQuery)} ${JSON.stringify(whereParams)}`
+          : ''
         if (useCache) {
-          const cacheKey = String(finalQuery)
           const cached = queryCache.get(cacheKey)
           if (cached)
             return cached
@@ -5251,10 +5263,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const result = await runWithHooks<any[]>(finalQuery, 'select', { signal: abortSignal, timeoutMs })
 
         // Store in cache if enabled
-        if (useCache) {
-          const cacheKey = String(finalQuery)
+        if (useCache)
           queryCache.set(cacheKey, result, cacheTtl)
-        }
 
         return hydratePivotRows(result)
       },

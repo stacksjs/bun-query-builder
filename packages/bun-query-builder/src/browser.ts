@@ -124,9 +124,12 @@ type InferBrowserAttributeType<TAttr> =
   TAttr extends { factory: (faker: unknown) => infer R } ? R :
   unknown
 
-// Build the full attributes type from definition
+// Build the full attributes type from definition. Columns declared
+// `nullable: true` admit null — mirrors InferAttributes in type-inference.ts.
 type InferBrowserModelAttributes<TDef extends BrowserModelDefinition> = {
-  [K in BrowserAttributeKeys<TDef>]: InferBrowserAttributeType<TDef['attributes'][K]>
+  [K in BrowserAttributeKeys<TDef>]: TDef['attributes'][K] extends { nullable: true }
+    ? InferBrowserAttributeType<TDef['attributes'][K]> | null
+    : InferBrowserAttributeType<TDef['attributes'][K]>
 }
 
 // System fields added by traits

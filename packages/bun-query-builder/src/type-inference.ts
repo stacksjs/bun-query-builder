@@ -402,41 +402,33 @@ export type InferPivotColumns<TModel, R extends string> =
 // Internal relation name inference helpers
 // ============================================================================
 
-type InferBelongsToNames<TDef> =
-  (TDef extends { belongsTo: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never)
-  | (TDef extends { belongsTo: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+/**
+ * Relation names of one relation declaration. Array form lowercases the
+ * (unwrapped) model name; record form uses the keys. The array case MUST be
+ * checked first: a tuple also structurally matches `Readonly<Record<...>>`
+ * and would otherwise leak its own keys ('length', indices, ...) into the
+ * relation-name union.
+ */
+type RelationKeyOf<V> =
+  V extends readonly (infer E)[]
+    ? E extends string ? Lowercase<E>
+      : E extends { model: infer M extends string } ? Lowercase<M>
+        : never
+    : V extends Readonly<Record<infer K, unknown>>
+      ? K & string
+      : never
 
-type InferHasManyNames<TDef> =
-  (TDef extends { hasMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never)
-  | (TDef extends { hasMany: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+type InferBelongsToNames<TDef> = TDef extends { belongsTo: infer V } ? RelationKeyOf<V> : never
 
-type InferHasOneNames<TDef> =
-  (TDef extends { hasOne: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : never : never)
-  | (TDef extends { hasOne: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+type InferHasManyNames<TDef> = TDef extends { hasMany: infer V } ? RelationKeyOf<V> : never
 
-type InferBelongsToManyNames<TDef> =
-  (TDef extends { belongsToMany: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
-  | (TDef extends { belongsToMany: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+type InferHasOneNames<TDef> = TDef extends { hasOne: infer V } ? RelationKeyOf<V> : never
 
-type InferHasOneThroughNames<TDef> =
-  (TDef extends { hasOneThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
-  | (TDef extends { hasOneThrough: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+type InferBelongsToManyNames<TDef> = TDef extends { belongsToMany: infer V } ? RelationKeyOf<V> : never
 
-type InferHasManyThroughNames<TDef> =
-  (TDef extends { hasManyThrough: readonly (infer R)[] }
-    ? R extends string ? Lowercase<R> : R extends { model: infer M extends string } ? Lowercase<M> : never : never)
-  | (TDef extends { hasManyThrough: Readonly<Record<infer K, unknown>> }
-    ? K extends string ? K : never : never)
+type InferHasOneThroughNames<TDef> = TDef extends { hasOneThrough: infer V } ? RelationKeyOf<V> : never
+
+type InferHasManyThroughNames<TDef> = TDef extends { hasManyThrough: infer V } ? RelationKeyOf<V> : never
 
 // ============================================================================
 // Relation cardinality inference
@@ -444,84 +436,21 @@ type InferHasManyThroughNames<TDef> =
 
 /**
  * Determine the cardinality of a relation on a model.
- * hasMany → 'many', hasOne/belongsTo → 'one'
+ * hasMany / belongsToMany / hasManyThrough / morphMany / morphToMany /
+ * morphedByMany → 'many'; hasOne / belongsTo / hasOneThrough / morphOne →
+ * 'one'. Both array and record declaration forms are supported via
+ * `RelationKeyOf` (array-first, so tuple keys never leak in).
  */
 export type RelationCardinality<TModel, R extends string> =
   ResolveDefinition<TModel> extends infer TDef
-    ? // hasMany array syntax
-    (TDef extends { hasMany: readonly (infer M)[] }
-        ? Lowercase<M & string> extends R ? 'many' : never
-        : never)
-    // hasMany object syntax
-    | (TDef extends { hasMany: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'many' : never : never
-        : never)
-    // hasOne array syntax
-    | (TDef extends { hasOne: readonly (infer M)[] }
-        ? Lowercase<M & string> extends R ? 'one' : never
-        : never)
-    // hasOne object syntax
-    | (TDef extends { hasOne: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'one' : never : never
-        : never)
-    // belongsTo array syntax
-    | (TDef extends { belongsTo: readonly (infer M)[] }
-        ? Lowercase<M & string> extends R ? 'one' : never
-        : never)
-    // belongsTo object syntax
-    | (TDef extends { belongsTo: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'one' : never : never
-        : never)
-    // belongsToMany array syntax
-    | (TDef extends { belongsToMany: readonly (infer M)[] }
-        ? M extends string
-          ? Lowercase<M> extends R ? 'many' : never
-          : M extends { model: infer N extends string }
-            ? Lowercase<N> extends R ? 'many' : never
-            : never
-        : never)
-    // belongsToMany object syntax
-    | (TDef extends { belongsToMany: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'many' : never : never
-        : never)
-    // hasOneThrough array syntax ({ model } entries)
-    | (TDef extends { hasOneThrough: readonly (infer M)[] }
-        ? M extends string
-          ? Lowercase<M> extends R ? 'one' : never
-          : M extends { model: infer N extends string }
-            ? Lowercase<N> extends R ? 'one' : never
-            : never
-        : never)
-    // hasOneThrough object syntax
-    | (TDef extends { hasOneThrough: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'one' : never : never
-        : never)
-    // hasManyThrough array syntax ({ model } entries)
-    | (TDef extends { hasManyThrough: readonly (infer M)[] }
-        ? M extends string
-          ? Lowercase<M> extends R ? 'many' : never
-          : M extends { model: infer N extends string }
-            ? Lowercase<N> extends R ? 'many' : never
-            : never
-        : never)
-    // hasManyThrough object syntax
-    | (TDef extends { hasManyThrough: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'many' : never : never
-        : never)
-    // morphOne object syntax
-    | (TDef extends { morphOne: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'one' : never : never
-        : never)
-    // morphMany object syntax
-    | (TDef extends { morphMany: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'many' : never : never
-        : never)
-    // morphToMany object syntax
-    | (TDef extends { morphToMany: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'many' : never : never
-        : never)
-    // morphedByMany object syntax
-    | (TDef extends { morphedByMany: Readonly<Record<infer K, unknown>> }
-        ? K extends string ? K extends R ? 'many' : never : never
-        : never)
+    ? (TDef extends { hasMany: infer V } ? (R extends RelationKeyOf<V> ? 'many' : never) : never)
+    | (TDef extends { hasOne: infer V } ? (R extends RelationKeyOf<V> ? 'one' : never) : never)
+    | (TDef extends { belongsTo: infer V } ? (R extends RelationKeyOf<V> ? 'one' : never) : never)
+    | (TDef extends { belongsToMany: infer V } ? (R extends RelationKeyOf<V> ? 'many' : never) : never)
+    | (TDef extends { hasOneThrough: infer V } ? (R extends RelationKeyOf<V> ? 'one' : never) : never)
+    | (TDef extends { hasManyThrough: infer V } ? (R extends RelationKeyOf<V> ? 'many' : never) : never)
+    | (TDef extends { morphOne: infer V } ? (R extends RelationKeyOf<V> ? 'one' : never) : never)
+    | (TDef extends { morphMany: infer V } ? (R extends RelationKeyOf<V> ? 'many' : never) : never)
+    | (TDef extends { morphToMany: infer V } ? (R extends RelationKeyOf<V> ? 'many' : never) : never)
+    | (TDef extends { morphedByMany: infer V } ? (R extends RelationKeyOf<V> ? 'many' : never) : never)
     : never
