@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.35...v0.1.36)
+
+## 🐛 Bug Fixes
+
+- **client**: toParams() returned garbage instead of the bound params ([b48721f](https://github.com/stacksjs/bun-query-builder/commit/b48721f)) _(by Chris <chrisbreuer93@gmail.com>)_
+- selectFromSub() produced [object Promise] SQL and dropped subquery params ([a8bb7dc](https://github.com/stacksjs/bun-query-builder/commit/a8bb7dc)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.36 ([91298a5](https://github.com/stacksjs/bun-query-builder/commit/91298a5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.34...v0.1.35)
 
 ## 🐛 Bug Fixes
