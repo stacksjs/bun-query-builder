@@ -43,16 +43,42 @@ await db.execute('TRUNCATE TABLE logs')
 
 ```
 
+## Raw Fragments in the Builder (`raw`)
+
+For raw fragments inside builder methods — `selectRaw`, `whereRaw`,
+`orderByRaw`, `groupByRaw`, `havingRaw`, and `select()` — use the exported
+`raw` helper:
+
+```typescript
+import { raw } from 'bun-query-builder'
+
+await db.selectFrom('users').selectRaw(raw`count(*) as c`).get()
+await db.selectFrom('users').whereRaw(raw('age > 18')).get()
+await db.selectFrom('users').orderByRaw(raw`created_at desc`).get()
+
+// Interpolated values are SQL-escaped:
+await db.selectFrom('orders').whereRaw(raw`status = ${userStatus}`).get()
+```
+
+> **Do not pass a Bun `sql\`...\`` query to the `*Raw` methods.** A Bun query
+> object cannot be converted back to SQL text (it stringifies to
+> `"[object Promise]"`), so it would corrupt the generated SQL. The builder
+> now throws a clear error if you do. `raw` returns a `{ raw }` fragment that
+> renders correctly and satisfies the `SqlFragment` type (so it still passes
+> the bare-string injection guard). For user input that must be
+> parameterised, prefer the typed `where(...)` methods over `raw`.
+
 ## Raw with Bun Tagged Templates
 
-Leverage Bun's tagged template literal for safe queries:
+For a fully raw statement (not composed with the builder), use the
+connection's tagged template directly:
 
 ```typescript
 
 const userId = 1
 const status = 'active'
 
-// Tagged template syntax (if supported)
+// Tagged template syntax — executes as its own statement
 const users = await db.sql`
   SELECT * FROM users
   WHERE id = ${userId}

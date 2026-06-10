@@ -20,6 +20,41 @@ function isRawExpression(expr: unknown): expr is RawExpression {
   return typeof expr === 'object' && expr !== null && 'raw' in expr && typeof (expr as RawExpression).raw === 'string'
 }
 
+/**
+ * # `raw`
+ *
+ * Build a raw SQL fragment for the `*Raw` builder methods (`whereRaw`,
+ * `selectRaw`, `orderByRaw`, `groupByRaw`, `havingRaw`) and `select()`.
+ *
+ * Use this INSTEAD of a Bun `sql\`...\`` tag: a Bun query object cannot be
+ * converted back to SQL text (it stringifies to "[object Promise]"), so it
+ * silently corrupts the generated SQL. `raw` returns a `{ raw: string }`
+ * fragment that the builder renders correctly and that satisfies the
+ * `SqlFragment` type (so it passes the bare-string injection guard).
+ *
+ * Interpolated values in the tagged-template form are SQL-escaped (strings
+ * single-quote-doubled, dates → ISO, numbers/booleans/null inlined) — the
+ * same escaping the relation-subquery builders use. For user input that must
+ * be parameterised, prefer the typed `where(...)` methods over `raw`.
+ *
+ * @example
+ * ```ts
+ * import { raw } from 'bun-query-builder'
+ * db.selectFrom('users').selectRaw(raw`count(*) as c`)
+ * db.selectFrom('users').whereRaw(raw('age > 18'))
+ * db.selectFrom('users').orderByRaw(raw`created_at desc`)
+ * db.selectFrom('orders').whereRaw(raw`status = ${userStatus}`) // value escaped
+ * ```
+ */
+export function raw(strings: TemplateStringsArray | string, ...values: unknown[]): RawExpression {
+  if (typeof strings === 'string')
+    return { raw: strings }
+  let out = strings[0]
+  for (let i = 0; i < values.length; i++)
+    out += formatSubqueryValue(values[i]) + strings[i + 1]
+  return { raw: out }
+}
+
 /** Dialect-aware identifier quoting for the explicit INSERT builders (#1052). */
 function quoteInsertIdent(id: string): string {
   return config.dialect === 'mysql'
@@ -184,21 +219,49 @@ function validateQualifiedIdentifier(value: unknown, context: string): void {
 }
 
 /**
- * Runtime soft-guard for the `*Raw` family. The TS signature is
- * `SqlFragment = object` so a bare string `whereRaw('foo')` fails to
- * compile — this guard catches the same case for `as any` casts that
- * bypass the type system, but emits a once-per-process warning rather
- * than throwing to preserve backward compat for callers that
- * legitimately need to interpolate compile-time-known constants
- * (audit log queries, generated migrations, etc.). See stacksjs/stacks#1858 Q-3.
+ * Render a `*Raw` fragment to SQL text.
+ *
+ * The TS signature is `SqlFragment = object` so a bare string `whereRaw('foo')`
+ * fails to compile, but bare strings are still accepted at runtime (with a
+ * once-per-process warning) for `as any` callers and compile-time-known
+ * constants. See stacksjs/stacks#1858 Q-3.
+ *
+ * Critically, this throws a CLEAR error for a fragment that can't be rendered
+ * — notably a Bun `sql\`...\`` query object, which stringifies to
+ * "[object Promise]". Previously every *Raw method did a bare `String(fragment)`,
+ * so following the documented `sql\`...\`` path silently emitted
+ * "[object Promise]" into the SQL and failed at execution. Use the exported
+ * `raw` helper instead (it produces a `{ raw }` fragment).
  */
-function assertSqlFragment(fragment: unknown, context: string): void {
-  if (fragment === null || fragment === undefined) {
-    throw new TypeError(`[query-builder] ${context}: fragment must be a SqlFragment, got ${fragment}`)
-  }
+function renderRawFragment(fragment: unknown, context: string): string {
   if (typeof fragment === 'string') {
     warnOnceBareSqlFragment(context)
+    return fragment
   }
+  if (fragment === null || fragment === undefined)
+    throw new TypeError(`[query-builder] ${context}: fragment must be a SqlFragment, got ${fragment}`)
+  if (isRawExpression(fragment))
+    return fragment.raw
+  if (typeof fragment === 'object') {
+    const f = fragment as { raw?: unknown, sql?: unknown }
+    if (typeof f.raw === 'string')
+      return f.raw
+    if (typeof f.raw === 'function') {
+      const r = (f.raw as () => unknown)()
+      if (typeof r === 'string')
+        return r
+    }
+    if (typeof f.sql === 'string')
+      return f.sql
+    const s = String(fragment)
+    if (s !== '[object Object]' && s !== '[object Promise]')
+      return s
+  }
+  throw new TypeError(
+    `[query-builder] ${context}: cannot render this value as a SQL fragment. `
+    + `A Bun \`sql\`...\`\` query object cannot be converted to SQL text — pass a `
+    + `string, or use the exported \`raw\` helper: raw\`count(*) as c\` / raw('age > 18').`,
+  )
 }
 
 // Module-scoped Set so we warn at most once per call site per process
@@ -3226,14 +3289,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       selectRaw(fragment: any) {
-        assertSqlFragment(fragment, 'selectRaw(fragment)')
+        const frag = renderRawFragment(fragment, 'selectRaw(fragment)')
         // Insert raw fragment into SELECT list before FROM
         const fromIdx = text.indexOf(' FROM ')
         if (fromIdx !== -1) {
-          text = `${text.substring(0, fromIdx)}, ${String(fragment)}${text.substring(fromIdx)}`
+          text = `${text.substring(0, fromIdx)}, ${frag}${text.substring(fromIdx)}`
         }
         else {
-          text += `, ${String(fragment)}`
+          text += `, ${frag}`
         }
         built = null
         return this as any
@@ -3359,14 +3422,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // fragment object doesn't stringify to "[object Object]" through
         // `.join(', ')`. See stacksjs/bun-query-builder#1016.
         const rendered = cols.map(renderSelectColumn)
+        // Preserve a DISTINCT / DISTINCT ON (...) modifier set by a prior
+        // .distinct()/.distinctOn() call — rebuilding the SELECT list from
+        // scratch otherwise silently dropped it, so `.distinct().select([...])`
+        // returned duplicate rows.
+        const distinctMatch = /^SELECT\s+(DISTINCT(?:\s+ON\s+\([^)]*\))?\s+)/i.exec(text)
+        const distinctPrefix = distinctMatch ? distinctMatch[1] : ''
         // Replace SELECT * with SELECT specific columns, preserving FROM and JOINs
         const fromIndex = text.indexOf(' FROM ')
         if (fromIndex !== -1) {
-          text = `SELECT ${rendered.join(', ')}${text.substring(fromIndex)}`
+          text = `SELECT ${distinctPrefix}${rendered.join(', ')}${text.substring(fromIndex)}`
         }
         else {
-          text = `SELECT ${rendered.join(', ')} FROM ${table}`
+          text = `SELECT ${distinctPrefix}${rendered.join(', ')} FROM ${table}`
         }
+        built = null
         return this as any
       },
       addSelect(...columns: Array<string | SqlFragment>) {
@@ -4520,9 +4590,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       whereRaw(fragment: any) {
-        assertSqlFragment(fragment, 'whereRaw(fragment)')
+        const frag = renderRawFragment(fragment, 'whereRaw(fragment)')
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text += ` ${keyword} ${String(fragment)}`
+        text += ` ${keyword} ${frag}`
         built = null
         return this as any
       },
@@ -4969,10 +5039,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       groupByRaw(fragment: any) {
-        assertSqlFragment(fragment, 'groupByRaw(fragment)')
+        const frag = renderRawFragment(fragment, 'groupByRaw(fragment)')
         text = SQL_PATTERNS.GROUP_BY.test(text)
-          ? `${text}, ${String(fragment)}`
-          : `${text} GROUP BY ${String(fragment)}`
+          ? `${text}, ${frag}`
+          : `${text} GROUP BY ${frag}`
         built = null
         return this as any
       },
@@ -5011,17 +5081,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       havingRaw(fragment: any) {
-        assertSqlFragment(fragment, 'havingRaw(fragment)')
+        const frag = renderRawFragment(fragment, 'havingRaw(fragment)')
         const kw = /\bHAVING\b/i.test(text) ? 'AND' : 'HAVING'
-        text += ` ${kw} ${String(fragment)}`
+        text += ` ${kw} ${frag}`
         built = null
         return this as any
       },
       orderByRaw(fragment: any) {
-        assertSqlFragment(fragment, 'orderByRaw(fragment)')
+        const frag = renderRawFragment(fragment, 'orderByRaw(fragment)')
         text = SQL_PATTERNS.ORDER_BY.test(text)
-          ? `${text}, ${String(fragment)}`
-          : `${text} ORDER BY ${String(fragment)}`
+          ? `${text}, ${frag}`
+          : `${text} ORDER BY ${frag}`
         built = null
         return this as any
       },
@@ -6157,6 +6227,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           // Append RETURNING clause to the existing SQL
           const returningSql = `${sqlText} RETURNING ${cols.join(', ')}`
           const q = _sql.unsafe(returningSql, params)
+          // The return type is SelectQueryBuilder, so the row-fetching methods
+          // (get/first/firstOrFail/executeTakeFirst) must exist at runtime —
+          // previously only execute()/toSQL() did, so the typed
+          // `.returning('id').first()` threw "first is not a function".
+          const runFirst = async () => {
+            const rows = await runWithHooks<any[]>(q, 'insert')
+            return Array.isArray(rows) ? rows[0] : rows
+          }
           return {
             where: () => this,
             andWhere: () => this,
@@ -6166,6 +6244,21 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             offset: () => this,
             toSQL: () => makeExecutableQuery(q, returningSql) as any,
             execute: () => runWithHooks<any[]>(q, 'insert'),
+            get: () => runWithHooks<any[]>(q, 'insert'),
+            first: runFirst,
+            executeTakeFirst: runFirst,
+            async firstOrFail() {
+              const row = await runFirst()
+              if (!row)
+                throw new Error('Insert with RETURNING returned no rows')
+              return row
+            },
+            async executeTakeFirstOrThrow() {
+              const row = await runFirst()
+              if (!row)
+                throw new Error('Insert with RETURNING returned no rows')
+              return row
+            },
           }
         },
         toSQL() {
@@ -6201,19 +6294,27 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         returningAll() {
           const returningSql = `${sqlText} RETURNING *`
           const q = _sql.unsafe(returningSql, params)
+          const runFirst = async () => {
+            const result = await runWithHooks<any[]>(q, 'insert')
+            return Array.isArray(result) ? result[0] : result
+          }
           return {
             toSQL: () => makeExecutableQuery(q, returningSql) as any,
             execute: () => runWithHooks<any[]>(q, 'insert'),
-            async executeTakeFirst() {
-              const result = await runWithHooks<any[]>(q, 'insert')
-              return Array.isArray(result) ? result[0] : result
+            get: () => runWithHooks<any[]>(q, 'insert'),
+            first: runFirst,
+            executeTakeFirst: runFirst,
+            async firstOrFail() {
+              const row = await runFirst()
+              if (!row)
+                throw new Error('Insert with RETURNING returned no rows')
+              return row
             },
             async executeTakeFirstOrThrow() {
-              const result = await runWithHooks<any[]>(q, 'insert')
-              const first = Array.isArray(result) ? result[0] : result
-              if (!first)
-                throw new Error('Insert with RETURNING failed')
-              return first
+              const row = await runFirst()
+              if (!row)
+                throw new Error('Insert with RETURNING returned no rows')
+              return row
             },
           } as any
         },
@@ -6292,6 +6393,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const q = params.length > 0
             ? _sql.unsafe(retText, params)
             : _sql.unsafe(retText)
+          const runFirst = async () => {
+            const rows = await runWithHooks<any[]>(q, 'update')
+            return Array.isArray(rows) ? rows[0] : rows
+          }
           const obj: any = {
             where: () => obj,
             andWhere: () => obj,
@@ -6301,6 +6406,23 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             offset: () => obj,
             toSQL: () => makeExecutableQuery(q, retText) as any,
             execute: () => runWithHooks<any[]>(q, 'update'),
+            // returning() is typed as SelectQueryBuilder — expose the
+            // row-fetching methods so `.returning('id').first()` works.
+            get: () => runWithHooks<any[]>(q, 'update'),
+            first: runFirst,
+            executeTakeFirst: runFirst,
+            async firstOrFail() {
+              const row = await runFirst()
+              if (!row)
+                throw new Error('Update with RETURNING returned no rows')
+              return row
+            },
+            async executeTakeFirstOrThrow() {
+              const row = await runFirst()
+              if (!row)
+                throw new Error('Update with RETURNING returned no rows')
+              return row
+            },
           }
           return obj
         },
@@ -6423,6 +6545,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const q = delParams.length > 0
             ? _sql.unsafe(retText, delParams)
             : _sql.unsafe(retText)
+          const runFirst = async () => {
+            const rows = await runWithHooks<any[]>(q, 'delete')
+            return Array.isArray(rows) ? rows[0] : rows
+          }
           const obj: any = {
             where: () => obj,
             andWhere: () => obj,
@@ -6432,6 +6558,22 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             offset: () => obj,
             toSQL: () => makeExecutableQuery(q, retText) as any,
             execute: () => runWithHooks<any[]>(q, 'delete'),
+            // returning() is typed as SelectQueryBuilder — expose row fetchers.
+            get: () => runWithHooks<any[]>(q, 'delete'),
+            first: runFirst,
+            executeTakeFirst: runFirst,
+            async firstOrFail() {
+              const row = await runFirst()
+              if (!row)
+                throw new Error('Delete with RETURNING returned no rows')
+              return row
+            },
+            async executeTakeFirstOrThrow() {
+              const row = await runFirst()
+              if (!row)
+                throw new Error('Delete with RETURNING returned no rows')
+              return row
+            },
           }
           return obj
         },

@@ -33,6 +33,7 @@ import type {
 } from '../type-inference'
 import type { SelectQueryBuilder, TableRelationName, TypedSelectQueryBuilder } from '../client'
 import type { DatabaseSchema } from '../schema'
+import { raw } from '../client'
 import { createModel, type ModelDefinition } from '../orm'
 
 // ---------------------------------------------------------------------------
@@ -984,4 +985,51 @@ async function _clientResultShapes(
   const q3 = typedUsers.where({ email: 'a@b.co' }).orderBy('id', 'desc')
   // eslint-disable-next-line pickier/no-unused-vars
   type CS12 = Expect<Equal<ReturnType<typeof q3.toSQL>, 'SELECT * FROM users WHERE email = ? ORDER BY id desc'>>
+}
+
+// ---------------------------------------------------------------------------
+// 8. raw fragments + returning() result methods
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line pickier/no-unused-vars
+async function _rawAndReturning(
+  users: SelectQueryBuilder<QDB, 'users', QDB['users']['columns']>,
+  db: {
+    insertInto: <T extends keyof QDB & string>(table: T) => import('../client').TypedInsertQueryBuilder<QDB, T>
+    updateTable: <T extends keyof QDB & string>(table: T) => import('../client').UpdateQueryBuilder<QDB, T>
+    deleteFrom: <T extends keyof QDB & string>(table: T) => import('../client').DeleteQueryBuilder<QDB, T>
+  },
+) {
+  // raw() is a SqlFragment, accepted by every *Raw method and select()
+  users.selectRaw(raw`count(*) as c`)
+  users.whereRaw(raw('age > 18'))
+  users.orderByRaw(raw`created_at desc`)
+  users.groupByRaw(raw`team_id`)
+  users.havingRaw(raw`count(*) > 1`)
+  users.select?.([raw`count(*) as c`])
+  // raw tagged-template with an escaped value
+  users.whereRaw(raw`name = ${'Ada'}`)
+
+  // @ts-expect-error — a bare string is rejected by the SqlFragment type
+  users.whereRaw('age > 18')
+
+  // returning() is a SelectQueryBuilder: row-fetching methods exist and are typed
+  const insRow = await db.insertInto('users').values({ name: 'A' }).returning('id', 'email').first()
+  if (insRow) {
+    insRow.id
+    insRow.email
+    // @ts-expect-error — 'name' was not in RETURNING
+    insRow.name
+  }
+  const insRows = await db.insertInto('users').values({ name: 'A' }).returning('id').get()
+  if (insRows.length > 0) insRows[0].id
+
+  const updRow = await db.updateTable('users').set({ active: true }).returning('id').first()
+  if (updRow) updRow.id
+
+  const delRow = await db.deleteFrom('users').returning('id', 'name').first()
+  if (delRow) {
+    delRow.id
+    delRow.name
+  }
 }
