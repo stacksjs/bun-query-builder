@@ -115,6 +115,26 @@ export function getPlaceholders(count: number, startIndex = 1): string {
 // Lazy-loaded config to avoid top-level await (enables bun --compile)
 let _config: QueryBuilderConfig | null = null
 
+/**
+ * Load the query-builder config from a config file (`query-builder.config.ts`,
+ * `.config/query-builder.ts`, etc.) and environment variables via bunfig, then
+ * MERGE it into the live, process-wide `config` singleton so every reader
+ * (dialect dispatch, placeholders, soft-deletes, the model layer, …) sees it.
+ *
+ * Call this once at application boot if you keep configuration in a file:
+ *
+ * ```ts
+ * import { getConfig } from 'bun-query-builder'
+ * await getConfig() // applies query-builder.config.ts + env to the runtime
+ * ```
+ *
+ * It is intentionally explicit/async: the builder otherwise runs purely off the
+ * synchronous `config` singleton (defaults + any `setConfig`), which keeps
+ * `bun --compile` and test behavior deterministic — auto-loading a file in the
+ * background would make early queries race the load. Previously this wrote the
+ * loaded config to a private `_config` variable that nothing else read, so a
+ * config file silently never took effect; it now routes through `setConfig`.
+ */
 export async function getConfig(): Promise<QueryBuilderConfig> {
   if (!_config) {
     _config = await loadConfig({
@@ -122,8 +142,11 @@ export async function getConfig(): Promise<QueryBuilderConfig> {
       alias: 'qb',
       defaultConfig,
     })
+    // Apply the loaded file/env config to the shared singleton so it actually
+    // reaches the query builder. setConfig() handles the nested-object merges.
+    setConfig(_config)
   }
-  return _config
+  return config
 }
 
 /**
