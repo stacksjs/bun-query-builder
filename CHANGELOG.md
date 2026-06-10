@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.33...v0.1.34)
+
+## 🐛 Bug Fixes
+
+- **config**: getConfig() now applies the loaded config file + env to the live singleton ([292fe37](https://github.com/stacksjs/bun-query-builder/commit/292fe37)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.34 ([a9bf77b](https://github.com/stacksjs/bun-query-builder/commit/a9bf77b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.32...v0.1.33)
 
 ## 🐛 Bug Fixes
