@@ -5833,114 +5833,184 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
       }
 
-      // Create a proper query builder that mimics makeSelect but works with subqueries
-      const sql = _sql
-      const q = _sql`SELECT * FROM (${sub.toSQL()}) AS ${_sql(alias)}`
+      // Capture the subquery's SQL TEXT and bound PARAMS up front, then build
+      // the outer query as a text+params statement. The previous version did
+      // `_sql\`SELECT * FROM (${sub.toSQL()}) AS ...\`` and manipulated
+      // `String(q)`: on a real driver `String(builtQuery)` is "[object Promise]"
+      // (Bun query objects can't be stringified), so the SQL was corrupted, and
+      // the subquery's bound params were dropped entirely (`near "?" syntax
+      // error`). Text+params is the only representation that survives both.
+      validateIdentifier(String(alias), 'selectFromSub(alias)')
+      // Prefer the builder's internal __rawState() — it returns the finalized
+      // SQL text AND the ordered bound params reliably (it's what union() uses).
+      // toSQL()/toParams() are unreliable here: toParams() calls `.values()` on
+      // the built query, which is a params ARRAY on the sqlite wrapper but a
+      // METHOD on Bun's native query, so it silently yielded no params and the
+      // subquery's WHERE bindings were dropped.
+      const rawState: { sql: string, params: any[] } | null
+        = typeof (sub as any).__rawState === 'function' ? (sub as any).__rawState() : null
+      const subExec: any = sub.toSQL()
+      const subText: string = rawState?.sql
+        ?? (typeof subExec === 'string' ? subExec : (subExec?.sql ?? String(subExec)))
+      const subParams: any[] = rawState?.params
+        ?? (Array.isArray(subExec?.values) ? subExec.values : [])
+      const baseText = `SELECT * FROM (${subText}) AS ${String(alias)}`
 
-      // Build the base API similar to makeSelect
-      const base: BaseSelectQueryBuilder<DB, any, any, any> = {
+      // Append a WHERE/AND/OR condition, returning the new (text, params).
+      // `hasWhere` is tracked explicitly rather than regex-tested: the SUBQUERY
+      // text contains its own `WHERE` inside the parens, so SQL_PATTERNS.WHERE
+      // would falsely report the OUTER query already has one and emit `AS u AND
+      // …` (syntax error) for the first outer condition.
+      const appendWhere = (
+        text: string,
+        params: any[],
+        hasWhere: boolean,
+        expr: any,
+        op: WhereOperator | undefined,
+        value: any,
+        connector: 'WHERE' | 'AND' | 'OR',
+      ): { text: string, params: any[] } => {
+        const kw = !hasWhere ? 'WHERE' : (connector === 'WHERE' ? 'AND' : connector)
+        const out = [...params]
+        const cmp = (col: string, operator: string, val: any): string => {
+          validateIdentifier(col, 'selectFromSub where(column)')
+          const o = assertSafeWhereOperator(operator, 'selectFromSub where(operator)')
+          if (o === 'in' || o === 'not in') {
+            const vals = Array.isArray(val) ? val : [val]
+            const phs = getPlaceholders(vals.length, out.length + 1)
+            out.push(...vals)
+            return `${col} ${o.toUpperCase()} (${phs})`
+          }
+          const ph = getPlaceholder(out.length + 1)
+          out.push(val)
+          return `${col} ${o} ${ph}`
+        }
+        let clause: string
+        if (typeof expr === 'string' && op !== undefined)
+          clause = cmp(expr, op, value)
+        else if (Array.isArray(expr) && expr.length === 3)
+          clause = cmp(expr[0], expr[1], expr[2])
+        else if (expr && typeof expr === 'object')
+          clause = Object.entries(expr).map(([k, v]) => cmp(k, '=', v)).join(' AND ')
+        else
+          return { text, params }
+        return { text: `${text} ${kw} ${clause}`, params: out }
+      }
+
+      // Build the base API. makeSub() is the single factory; every mutating
+      // method returns a fresh builder over the new (text, params, hasWhere).
+      function makeSub(text: string, params: any[], hasWhere = false): BaseSelectQueryBuilder<DB, any, any, any> {
+        const build = (): any => params.length > 0 ? _sql.unsafe(text, params) : _sql.unsafe(text)
+        const base: BaseSelectQueryBuilder<DB, any, any, any> = {
         distinct() {
-          const rest = String(q).replace(/^SELECT\s+/i, '')
-          const newQ = sql`SELECT DISTINCT ${sql``}${sql(rest)}`
-          return createSubQueryBuilder(newQ) as any
+          return makeSub(text.replace(/^SELECT\s+/i, 'SELECT DISTINCT '), params, hasWhere) as any
         },
         distinctOn(...columns: any[]) {
-          const match = /^SELECT\s+(\S+)\s+FROM/i.exec(String(q))
-          const body = match ? `${match[1]} FROM` : String(q)
-          const newQ = sql`SELECT DISTINCT ON (${sql(columns as any)}) ${sql``}${sql(body)}`
-          return createSubQueryBuilder(newQ) as any
+          const cols = columns.map(String).join(', ')
+          return makeSub(text.replace(/^SELECT\s+/i, `SELECT DISTINCT ON (${cols}) `), params, hasWhere) as any
         },
         selectRaw(fragment: any) {
-          const newQ = sql`${q} , ${fragment}`
-          return createSubQueryBuilder(newQ) as any
+          const frag = renderRawFragment(fragment, 'selectFromSub.selectRaw(fragment)')
+          const fromIdx = text.indexOf(' FROM ')
+          const newText = fromIdx !== -1
+            ? `${text.slice(0, fromIdx)}, ${frag}${text.slice(fromIdx)}`
+            : `${text}, ${frag}`
+          return makeSub(newText, params, hasWhere) as any
         },
         where(expr: any, op?: WhereOperator, value?: any) {
-          // Apply where condition to the subquery
-          const newQ = applyWhereCondition(q, expr, op, value, 'WHERE')
-          return createSubQueryBuilder(newQ) as any
+          const r = appendWhere(text, params, hasWhere, expr, op, value, 'WHERE')
+          return makeSub(r.text, r.params, true) as any
         },
         andWhere(expr: any, op?: WhereOperator, value?: any) {
-          const newQ = applyWhereCondition(q, expr, op, value, 'AND')
-          return createSubQueryBuilder(newQ) as any
+          const r = appendWhere(text, params, hasWhere, expr, op, value, 'AND')
+          return makeSub(r.text, r.params, true) as any
         },
         orWhere(expr: any, op?: WhereOperator, value?: any) {
-          const newQ = applyWhereCondition(q, expr, op, value, 'OR')
-          return createSubQueryBuilder(newQ) as any
+          const r = appendWhere(text, params, hasWhere, expr, op, value, 'OR')
+          return makeSub(r.text, r.params, true) as any
         },
         orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
-          // Compose-aware on subqueries too — chaining orderBy twice should
-          // produce a single comma-separated clause, not two ORDER BYs.
+          validateIdentifier(String(column), 'selectFromSub.orderBy(column)')
           const dir = direction === 'asc' ? 'ASC' : 'DESC'
-          const current = String(q)
-          const newQ = SQL_PATTERNS.ORDER_BY.test(current)
-            ? sql.unsafe(`${current}, ${column} ${dir}`)
-            : sql`${q} ORDER BY ${sql(column)} ${direction === 'asc' ? sql`ASC` : sql`DESC`}`
-          return createSubQueryBuilder(newQ) as any
+          // Compose-aware: a second orderBy appends with a comma.
+          const newText = SQL_PATTERNS.ORDER_BY.test(text)
+            ? `${text}, ${column} ${dir}`
+            : `${text} ORDER BY ${column} ${dir}`
+          return makeSub(newText, params, hasWhere) as any
         },
         limit(n: number) {
-          // Repeat-call replaces, matching the parent builder's semantics.
-          const current = String(q)
-          const newQ = SQL_PATTERNS.LIMIT.test(current)
-            ? sql.unsafe(current.replace(SQL_PATTERNS.LIMIT, ` LIMIT ${n}`))
-            : sql`${q} LIMIT ${n}`
-          return createSubQueryBuilder(newQ) as any
+          if (!Number.isInteger(n) || n < 0)
+            throw new TypeError(`[query-builder] selectFromSub.limit(n): expected non-negative integer, got ${n}`)
+          const newText = SQL_PATTERNS.LIMIT.test(text)
+            ? text.replace(SQL_PATTERNS.LIMIT, ` LIMIT ${n}`)
+            : `${text} LIMIT ${n}`
+          return makeSub(newText, params, hasWhere) as any
         },
         offset(n: number) {
-          const current = String(q)
-          const newQ = SQL_PATTERNS.OFFSET.test(current)
-            ? sql.unsafe(current.replace(SQL_PATTERNS.OFFSET, ` OFFSET ${n}`))
-            : sql`${q} OFFSET ${n}`
-          return createSubQueryBuilder(newQ) as any
+          if (!Number.isInteger(n) || n < 0)
+            throw new TypeError(`[query-builder] selectFromSub.offset(n): expected non-negative integer, got ${n}`)
+          const newText = SQL_PATTERNS.OFFSET.test(text)
+            ? text.replace(SQL_PATTERNS.OFFSET, ` OFFSET ${n}`)
+            : `${text} OFFSET ${n}`
+          return makeSub(newText, params, hasWhere) as any
         },
         toSQL() {
-          return makeExecutableQuery(q) as any
+          return makeExecutableQuery(build(), text) as any
         },
         async execute() {
-          return runWithHooks<any[]>(q, 'select')
+          return runWithHooks<any[]>(build(), 'select')
         },
         async executeTakeFirst() {
-          const rows = await runWithHooks<any[]>(q, 'select')
+          const rows = await runWithHooks<any[]>(build(), 'select')
           return Array.isArray(rows) ? rows[0] : rows
         },
         async executeTakeFirstOrThrow() {
-          const rows = await runWithHooks<any[]>(q, 'select')
+          const rows = await runWithHooks<any[]>(build(), 'select')
           const first = Array.isArray(rows) ? rows[0] : rows
           if (!first)
             throw new Error('Record not found')
           return first
         },
         async get() {
-          return runWithHooks<any[]>(q, 'select')
+          return runWithHooks<any[]>(build(), 'select')
         },
         async first() {
-          const rows = await runWithHooks<any[]>(q, 'select')
+          const rows = await runWithHooks<any[]>(build(), 'select')
           return Array.isArray(rows) ? rows[0] : rows
         },
         async firstOrFail() {
-          const rows = await runWithHooks<any[]>(q, 'select')
+          const rows = await runWithHooks<any[]>(build(), 'select')
           const first = Array.isArray(rows) ? rows[0] : rows
           if (!first)
             throw new Error('No rows found')
           return first
         },
+        async count() {
+          const q = params.length > 0
+            ? _sql.unsafe(`SELECT COUNT(*) as c FROM (${text}) as sub`, params)
+            : _sql.unsafe(`SELECT COUNT(*) as c FROM (${text}) as sub`)
+          const rows = await runWithHooks<any[]>(q, 'select')
+          return Number(rows?.[0]?.c ?? 0)
+        },
         async exists() {
-          const countQ = sql`SELECT EXISTS(${q}) as exists`
-          const result = await runWithHooks<any[]>(countQ, 'select')
-          return result?.[0]?.exists === true
+          const q = params.length > 0
+            ? _sql.unsafe(`SELECT EXISTS(${text}) as e`, params)
+            : _sql.unsafe(`SELECT EXISTS(${text}) as e`)
+          const result = await runWithHooks<any[]>(q, 'select')
+          return Boolean(result?.[0]?.e)
         },
         async doesntExist() {
-          const exists = await this.exists()
-          return !exists
+          return !(await base.exists!())
         },
         values() {
-          return (q as any).values()
+          return (build() as any).values()
         },
         raw() {
-          return (q as any).raw()
+          return (build() as any).raw()
         },
         cancel() {
           try {
-            ;(q as any).cancel()
+            ;(build() as any).cancel()
           }
           catch {}
         },
@@ -6027,7 +6097,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         chunk: subqueryNotSupported('chunk'),
         chunkById: subqueryNotSupported('chunkById'),
         eachById: subqueryNotSupported('eachById'),
-        count: subqueryNotSupported('count'),
         avg: subqueryNotSupported('avg'),
         sum: subqueryNotSupported('sum'),
         max: subqueryNotSupported('max'),
@@ -6039,97 +6108,34 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         oldest: subqueryNotSupported('oldest'),
         lazy: subqueryNotSupported('lazy'),
         lazyById: subqueryNotSupported('lazyById'),
-        pipe: (fn: any) => fn(this),
+        pipe: (fn: any) => fn(base),
         when: subqueryNotSupported('when'),
-        tap: () => this as any,
-        dump: () => this as any,
+        tap: () => base as any,
+        dump: () => base as any,
         dd: () => { throw new Error('Dump and Die') },
         explain: () => Promise.resolve([]),
-        simple: () => (q as any).simple(),
-        toText: () => String(q),
-        toParams: () => (q as any).values?.() ?? [],
-        withTimeout: () => this as any,
-        abort: () => this as any,
-        lockForUpdate: () => this as any,
-        sharedLock: () => this as any,
-        withCTE: () => this as any,
-        withRecursive: () => this as any,
-        cache: () => this as any,
-        clone: () => this as any,
-        withTrashed: () => this as any,
-        onlyTrashed: () => this as any,
-        scope: () => this as any,
+        simple: () => (build() as any).simple(),
+        toText: () => text,
+        toParams: () => [...params],
+        withTimeout: () => base as any,
+        abort: () => base as any,
+        lockForUpdate: () => base as any,
+        sharedLock: () => base as any,
+        withCTE: () => base as any,
+        withRecursive: () => base as any,
+        cache: () => base as any,
+        clone: () => base as any,
+        withTrashed: () => base as any,
+        onlyTrashed: () => base as any,
+        scope: () => base as any,
         // Type-only properties
         get rows() { return [] as any },
         get row() { return undefined as any },
+        }
+        return base
       }
 
-      // Helper function to create a new subquery builder with updated SQL
-      function createSubQueryBuilder(newQ: any) {
-        return {
-          ...base,
-          toSQL: () => makeExecutableQuery(newQ) as any,
-          execute: () => runWithHooks<any[]>(newQ, 'select'),
-          get: () => runWithHooks<any[]>(newQ, 'select'),
-          first: async () => {
-            const rows = await runWithHooks<any[]>(newQ, 'select')
-            return Array.isArray(rows) ? rows[0] : rows
-          },
-          firstOrFail: async () => {
-            const rows = await runWithHooks<any[]>(newQ, 'select')
-            const first = Array.isArray(rows) ? rows[0] : rows
-            if (!first)
-              throw new Error('No rows found')
-            return first
-          },
-          exists: async () => {
-            const countQ = sql`SELECT EXISTS(${newQ}) as exists`
-            const result = await runWithHooks<any[]>(countQ, 'select')
-            return result?.[0]?.exists === true
-          },
-          doesntExist: async () => {
-            const exists = await base.exists()
-            return !exists
-          },
-          values: () => (newQ as any).values(),
-          raw: () => (newQ as any).raw(),
-          cancel: () => {
-            try {
-              ;(newQ as any).cancel()
-            }
-            catch {}
-          },
-          simple: () => (newQ as any).simple(),
-          toText: () => String(newQ),
-          toParams: () => (newQ as any).values?.() ?? [],
-        }
-      }
-
-      // Helper function to apply where conditions
-      function applyWhereCondition(query: any, expr: any, op?: WhereOperator, value?: any, prefix: 'WHERE' | 'AND' | 'OR' = 'WHERE') {
-        if (typeof expr === 'string' && op !== undefined) {
-          const clause = Array.isArray(value) ? `${expr} IN (?)` : `${expr} ${op} ?`
-          return sql`${query} ${sql(prefix)} ${sql(clause)}`
-        }
-        else if (Array.isArray(expr) && expr.length === 3) {
-          const [column, operator, val] = expr
-          const clause = Array.isArray(val) ? `${column} IN (?)` : `${column} ${operator} ?`
-          return sql`${query} ${sql(prefix)} ${sql(clause)}`
-        }
-        else if (typeof expr === 'object' && expr !== null) {
-          const conditions = Object.entries(expr).map(([key, val]) => {
-            const clause = Array.isArray(val) ? `${key} IN (?)` : `${key} = ?`
-            return sql`${sql(clause)}`
-          })
-          const combined = conditions.reduce((acc, cond, i) =>
-            i === 0 ? cond : sql`${acc} AND ${cond}`,
-          )
-          return sql`${query} ${sql(prefix)} ${combined}`
-        }
-        return query
-      }
-
-      return base as any
+      return makeSub(baseText, subParams) as any
     },
     insertInto<TTable extends keyof DB & string>(table: TTable) {
       let built: any
