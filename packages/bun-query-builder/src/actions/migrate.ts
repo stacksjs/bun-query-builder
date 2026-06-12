@@ -7,7 +7,8 @@ import process from 'node:process'
 import { config } from '@/config'
 import { withFreshConnection } from '@/db'
 import { getDialectDriver } from '@/drivers'
-import { buildMigrationPlan, createQueryBuilder, generateDiffSql, generateSql, hashMigrationPlan, loadModels } from '../index'
+import { buildMigrationPlan, createQueryBuilder, generateDiffOperations, generateSql, hashMigrationPlan, loadModels } from '../index'
+import { buildPlanFromDatabase } from './introspect-db'
 
 /**
  * Informational stdout line — printed only when the active config has
@@ -163,6 +164,33 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
         }
       }
 
+      // Self-heal: with no snapshot (fresh checkout, lost/gitignored `.qb`,
+      // or `--from-db`), reconcile against the LIVE database schema instead of
+      // emitting a full create. This keeps `buddy migrate` correct even when
+      // the snapshot is gone — the DB itself becomes the source of truth for
+      // "what already exists". The diff's storage-type canonicalization keeps
+      // the lossy reverse mapping from producing spurious ALTERs.
+      if (!previous || opts.fromDb) {
+        try {
+          const livePlan = await buildPlanFromDatabase(dialect)
+          // Only reconcile against tables the MODELS know about. The models
+          // directory is frequently a subset of the database (framework tables,
+          // other apps sharing the DB), and an introspected table absent from
+          // the models must NOT be read as "drop this table" — it's simply
+          // outside this migration's scope. Filtering to the model set keeps
+          // self-heal from emitting destructive drops for unrelated tables.
+          const modelTables = new Set(plan.tables.map(t => t.table))
+          const scoped = livePlan.tables.filter(t => modelTables.has(t.table))
+          if (scoped.length > 0) {
+            previous = { dialect: livePlan.dialect, tables: scoped }
+            info(`-- No snapshot; reconciling against live database (${scoped.length} matching table${scoped.length === 1 ? '' : 's'})`)
+          }
+        }
+        catch (err) {
+          info(`-- Could not introspect live database, treating as no previous state: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+
       if (!previous) {
         info('-- No previous snapshot found, generating full migration')
       }
@@ -172,7 +200,11 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
     info('-- Full migration requested, ignoring any previous state')
   }
 
-  const sqlStatements = opts.full ? generateSql(plan) : generateDiffSql(previous, plan)
+  const diff = opts.full
+    ? { statements: generateSql(plan, { dryRun: opts.dryRun }), operations: plan.tables.map((t: MigrationPlan['tables'][number]) => ({ kind: 'create_table' as const, table: t.table, destructive: false, sql: '' })) }
+    : generateDiffOperations(previous, plan, { applyRenames: opts.applyRenames, dryRun: opts.dryRun })
+  const sqlStatements = diff.statements
+  const operations = diff.operations
 
   const sql = sqlStatements.join('\n')
 
@@ -199,10 +231,12 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   }
 
   // Always save the current plan as a snapshot after generating migrations
-  // This ensures the next migration will only include new changes
-  savePlanSnapshot(workspaceRoot, dialect, plan)
+  // (except on a dry-run preview, which must not advance state). This ensures
+  // the next migration will only include new changes.
+  if (!opts.dryRun)
+    savePlanSnapshot(workspaceRoot, dialect, plan)
 
-  return { sql, sqlStatements, hasChanges, plan }
+  return { sql, sqlStatements, hasChanges, plan, operations }
 }
 
 export async function executeMigration(dir?: string): Promise<boolean> {
