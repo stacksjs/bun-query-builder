@@ -1,3 +1,24 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.37...v0.1.38)
+
+## 🚀 Features
+
+- **migrations**: self-heal by diffing against the live database schema ([f71da25](https://github.com/stacksjs/bun-query-builder/commit/f71da25)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **migrations**: data-preserving renames, SQLite table rebuild, structured ops ([75495ea](https://github.com/stacksjs/bun-query-builder/commit/75495ea)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧪 Tests
+
+- **migrations**: cover renames, SQLite rebuild, self-heal, and no-churn ([77a0a66](https://github.com/stacksjs/bun-query-builder/commit/77a0a66)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.38 ([43b4b65](https://github.com/stacksjs/bun-query-builder/commit/43b4b65)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: refresh bun.lock to pick up pickier 0.1.35 ([39240f1](https://github.com/stacksjs/bun-query-builder/commit/39240f1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.36...v0.1.37)
 
 ## 🚀 Features
