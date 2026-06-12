@@ -146,6 +146,71 @@ export interface MigrationPlan {
   tables: TablePlan[]
 }
 
+/**
+ * Inputs for a SQLite table rebuild ("12-step recreate"). SQLite can't
+ * `ALTER COLUMN` to change a type, and can't `DROP COLUMN` when the column
+ * is a PK / unique / indexed / FK target. The fix is to create a new table
+ * with the desired schema, copy data across, drop the old table, and rename
+ * the new one into place. See `SQLiteDriver.rebuildTable`.
+ */
+export interface RebuildTableSpec {
+  /** The full desired schema of the table after the change. */
+  target: TablePlan
+  /** Temp table name to build under, e.g. `_qb_tmp_<table>` (collision-checked). */
+  tempName: string
+  /**
+   * Maps a TARGET column name -> the OLD column name it is populated from.
+   * - same key/value => column carried over unchanged
+   * - value differs from key => a rename (old name -> new target name)
+   * - key omitted entirely => a brand-new column (gets its DEFAULT / NULL)
+   * A dropped column simply never appears as a value, so its data is discarded.
+   */
+  columnSource: Record<string, string>
+}
+
+/** The kind of schema change a single migration operation represents. */
+export type MigrationOpKind =
+  | 'create_table'
+  | 'drop_table'
+  | 'rename_table'
+  | 'add_column'
+  | 'drop_column'
+  | 'modify_column'
+  | 'rename_column'
+  | 'create_index'
+  | 'drop_index'
+  | 'add_foreign_key'
+  | 'rebuild_table'
+  | 'create_enum'
+
+/**
+ * A structured description of one change emitted by the diff engine. Callers
+ * (e.g. the Stacks `buddy migrate` command) inspect these to gate destructive
+ * changes behind confirmation and to surface rename candidates, instead of
+ * re-parsing the raw SQL strings.
+ */
+export interface MigrationOperation {
+  kind: MigrationOpKind
+  table: string
+  column?: string
+  /** For renames: the previous identifier. */
+  from?: string
+  /** For renames: the new identifier. */
+  to?: string
+  /** True when the op can lose data (drop column/table, lossy type change/rebuild). */
+  destructive: boolean
+  /** For rename candidates: how confident the heuristic is. */
+  confidence?: 'high' | 'low'
+  /** The SQL this op emits (joined when an op maps to multiple statements). */
+  sql: string
+}
+
+/** Result of {@link generateDiffOperations}: raw statements + structured ops. */
+export interface DiffResult {
+  statements: string[]
+  operations: MigrationOperation[]
+}
+
 function guessTypeFromName(columnName: string): NormalizedColumnType | undefined {
   if (columnName.endsWith('_id'))
     return 'bigint' // Match primary key type
@@ -706,12 +771,17 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
   return { dialect: options.dialect, tables }
 }
 
-export function generateSql(plan: MigrationPlan): string[] {
+export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}): string[] {
   // Reset migration counter for proper ordering
   migrationCounter = 0
   migrationsCreatedCount = 0
   migrationsUpdatedCount = 0
   useDeterministicNames = true // Framework migrations use deterministic sequence names
+
+  // In dry-run mode we compute statements/operations without touching disk —
+  // used by callers that want to PREVIEW a migration (e.g. to gate destructive
+  // changes behind confirmation) before generating for real.
+  const emit = opts.dryRun ? (): boolean => false : createMigrationFile
 
   const statements: string[] = []
   const driver = getDialectDriver(plan.dialect)
@@ -744,7 +814,7 @@ export function generateSql(plan: MigrationPlan): string[] {
 
     // Create a single migration file for this table with all its statements
     const combinedStatement = tableStatements.join('\n\n')
-    createMigrationFile(combinedStatement, `create-${t.table}-table`)
+    emit(combinedStatement, `create-${t.table}-table`)
   }
 
   // Foreign key constraints (ALTER statements — execute last).
@@ -769,7 +839,7 @@ export function generateSql(plan: MigrationPlan): string[] {
         const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
         if (!alterTableStatement) continue
         statements.push(alterTableStatement)
-        createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
+        emit(alterTableStatement, `alter-${t.table}-${c.name}`)
       }
     }
   }
@@ -779,7 +849,7 @@ export function generateSql(plan: MigrationPlan): string[] {
     for (const idx of t.indexes) {
       const createIndexStatement = driver.createIndex(t.table, idx)
       statements.push(createIndexStatement)
-      createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
+      emit(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
     }
   }
 
@@ -848,28 +918,189 @@ function mapColumnsByName(columns: ColumnPlan[]): Record<string, ColumnPlan> {
   return map
 }
 
-function columnsAreDifferent(col1: ColumnPlan, col2: ColumnPlan): boolean {
-  // Compare column properties to detect changes
-  if (col1.type !== col2.type)
+/**
+ * The dialect's *physical* storage type for a column. Two model types that
+ * collapse to the same physical type produce no real schema change, so the
+ * diff should ignore the difference. This is what keeps the live-DB
+ * introspection path (where the exact model type can't be recovered) from
+ * emitting spurious ALTERs on every run.
+ *
+ * SQLite is the lossy one (string/text/date/datetime/json all map to TEXT;
+ * boolean/integer/bigint to INTEGER; float/double/decimal to REAL). For
+ * Postgres/MySQL the normalized type round-trips faithfully enough to compare
+ * directly.
+ */
+export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect): string {
+  if (dialect === 'sqlite') {
+    // Mirror SQLiteDriver.getColumnType: `_id` columns are forced to INTEGER.
+    if (col.name.endsWith('_id'))
+      return 'INTEGER'
+    switch (col.type) {
+      case 'string':
+      case 'text':
+      case 'date':
+      case 'datetime':
+      case 'json':
+      case 'enum':
+        return 'TEXT'
+      case 'boolean':
+      case 'integer':
+      case 'bigint':
+        return 'INTEGER'
+      case 'float':
+      case 'double':
+      case 'decimal':
+        return 'REAL'
+      default:
+        return 'TEXT'
+    }
+  }
+  return col.type
+}
+
+/**
+ * Canonical string form of a column default, so equivalent defaults expressed
+ * differently by a live DB vs a model (quoting, casts, `now()` vs
+ * `CURRENT_TIMESTAMP`, `0` vs `'0'`) compare equal.
+ */
+export function canonicalizeDefault(col: ColumnPlan): string | undefined {
+  if (!col.hasDefault || col.defaultValue === undefined)
+    return undefined
+
+  const dv = col.defaultValue
+  if (dv instanceof Date)
+    return dv.toISOString()
+  if (typeof dv === 'boolean')
+    return dv ? '1' : '0'
+  if (typeof dv === 'bigint' || typeof dv === 'number')
+    return String(dv)
+
+  let s = String(dv).trim()
+  // Strip Postgres `::type` casts (e.g. `'active'::text`).
+  s = s.replace(/::[\w ]+$/i, '').trim()
+  // Strip one layer of surrounding quotes.
+  if ((s.startsWith('\'') && s.endsWith('\'')) || (s.startsWith('"') && s.endsWith('"')))
+    s = s.slice(1, -1)
+
+  const upper = s.toUpperCase()
+  const sqlFns = ['CURRENT_TIMESTAMP', 'NOW()', 'CURRENT_DATE', 'CURRENT_TIME', 'NULL', 'TRUE', 'FALSE']
+  if (sqlFns.includes(upper))
+    return upper === 'NOW()' ? 'CURRENT_TIMESTAMP' : upper
+
+  // For boolean columns the DB may echo 0/1/'t'/'f'; normalize to 1/0.
+  if (col.type === 'boolean') {
+    if (/^(?:1|t|true|yes)$/i.test(s))
+      return '1'
+    if (/^(?:0|f|false|no)$/i.test(s))
+      return '0'
+  }
+
+  // Numeric literal -> canonical number form (`0.00` === `0`).
+  if (/^-?\d+(?:\.\d+)?$/.test(s))
+    return String(Number(s))
+
+  return s
+}
+
+function columnsAreDifferent(col1: ColumnPlan, col2: ColumnPlan, dialect: SupportedDialect): boolean {
+  // Compare physical storage type, not the model type — see canonicalStorageType.
+  if (canonicalStorageType(col1, dialect) !== canonicalStorageType(col2, dialect))
     return true
   if (col1.isNullable !== col2.isNullable)
     return true
   if (col1.hasDefault !== col2.hasDefault)
     return true
-  if (col1.defaultValue !== col2.defaultValue)
+  if (canonicalizeDefault(col1) !== canonicalizeDefault(col2))
     return true
   if (col1.isUnique !== col2.isUnique)
     return true
 
   // Compare enum values for enum types
   if (col1.type === 'enum' && col2.type === 'enum') {
-    const enum1 = (col1.enumValues || []).sort().join(',')
-    const enum2 = (col2.enumValues || []).sort().join(',')
+    const enum1 = (col1.enumValues || []).slice().sort().join(',')
+    const enum2 = (col2.enumValues || []).slice().sort().join(',')
     if (enum1 !== enum2)
       return true
   }
 
   return false
+}
+
+/**
+ * A stable signature of everything about a column *except its name*. Two
+ * columns with the same signature — one removed, one added, on the same table
+ * — are a probable rename. See {@link detectColumnRenames}.
+ */
+function columnSignature(col: ColumnPlan, dialect: SupportedDialect): string {
+  return JSON.stringify([
+    canonicalStorageType(col, dialect),
+    col.isPrimaryKey,
+    col.isUnique,
+    col.isNullable,
+    col.hasDefault,
+    canonicalizeDefault(col) ?? null,
+    (col.enumValues ?? []).slice().sort(),
+    col.references
+      ? [col.references.table, col.references.column, col.references.onDelete ?? null, col.references.onUpdate ?? null]
+      : null,
+  ])
+}
+
+/**
+ * Detect probable column renames between a table's previous and next columns.
+ * A pair (removed `from`, added `to`) is a rename only when their signatures
+ * match AND the signature is unambiguous — exactly one removed and one added
+ * column share it. Anything ambiguous is left as a drop + add so the caller's
+ * destructive-op gate can catch it.
+ */
+function detectColumnRenames(
+  prevCols: Record<string, ColumnPlan>,
+  currCols: Record<string, ColumnPlan>,
+  dialect: SupportedDialect,
+): { renames: Array<{ from: string, to: string }>, removed: string[], added: string[] } {
+  const removed = Object.keys(prevCols).filter(n => !currCols[n])
+  const added = Object.keys(currCols).filter(n => !prevCols[n])
+
+  const sigRemoved = new Map<string, string[]>()
+  const sigAdded = new Map<string, string[]>()
+  for (const n of removed) {
+    const s = columnSignature(prevCols[n], dialect)
+    const list = sigRemoved.get(s) ?? []
+    list.push(n)
+    sigRemoved.set(s, list)
+  }
+  for (const n of added) {
+    const s = columnSignature(currCols[n], dialect)
+    const list = sigAdded.get(s) ?? []
+    list.push(n)
+    sigAdded.set(s, list)
+  }
+
+  const renames: Array<{ from: string, to: string }> = []
+  const usedRemoved = new Set<string>()
+  const usedAdded = new Set<string>()
+  for (const [sig, rem] of sigRemoved) {
+    const add = sigAdded.get(sig)
+    if (rem.length === 1 && add && add.length === 1) {
+      renames.push({ from: rem[0], to: add[0] })
+      usedRemoved.add(rem[0])
+      usedAdded.add(add[0])
+    }
+  }
+
+  return {
+    renames,
+    removed: removed.filter(n => !usedRemoved.has(n)),
+    added: added.filter(n => !usedAdded.has(n)),
+  }
+}
+
+/** Whether a column is constrained such that SQLite can't DROP it in place. */
+function isColumnConstrained(table: TablePlan, columnName: string): boolean {
+  const col = table.columns.find(c => c.name === columnName)
+  if (col && (col.isPrimaryKey || col.isUnique || col.references))
+    return true
+  return table.indexes.some(idx => idx.columns.includes(columnName))
 }
 
 /**
@@ -883,10 +1114,15 @@ function referencesAreDifferent(r1?: ColumnPlan['references'], r2?: ColumnPlan['
     return true
   if (!r1 || !r2)
     return false
+  // Canonicalize the referential action: an omitted action is `NO ACTION` in
+  // SQL, so a model `onDelete: undefined` must compare equal to a live DB that
+  // reports `'no action'` (otherwise the live-DB path would churn — and on
+  // SQLite an FK change forces a full table rebuild).
+  const act = (a?: string): string => (a ?? 'no action').toLowerCase()
   return r1.table !== r2.table
     || r1.column !== r2.column
-    || r1.onDelete !== r2.onDelete
-    || r1.onUpdate !== r2.onUpdate
+    || act(r1.onDelete) !== act(r2.onDelete)
+    || act(r1.onUpdate) !== act(r2.onUpdate)
 }
 
 function mapIndexesByKey(indexes: IndexPlan[]): Record<string, IndexPlan> {
@@ -898,21 +1134,48 @@ function mapIndexesByKey(indexes: IndexPlan[]): Record<string, IndexPlan> {
   return map
 }
 
+export interface DiffOptions {
+  /**
+   * Emit data-preserving `RENAME COLUMN` for unambiguous detected renames
+   * (default). Set false to force the literal `DROP` + `ADD` interpretation
+   * (which loses the old column's data) — e.g. when the rename heuristic
+   * guessed wrong.
+   */
+  applyRenames?: boolean
+  /**
+   * Compute statements/operations without writing any migration files to disk.
+   * Used to PREVIEW a migration (e.g. to gate destructive changes behind
+   * confirmation) before generating for real.
+   */
+  dryRun?: boolean
+}
+
 /**
- * Generate comprehensive SQL to migrate from a previous plan to a new plan.
- * - Creates new tables
- * - Drops removed tables
- * - Adds new columns
- * - Drops removed columns
- * - Adds new indexes
- * - Drops removed indexes
- * - Adds new foreign keys for newly added columns
+ * Generate comprehensive SQL to migrate from a previous plan to a new plan,
+ * plus a structured list of the operations involved (so callers can gate
+ * destructive changes and report renames without re-parsing SQL).
+ *
+ * Handles: created/dropped tables, added/dropped/renamed/modified columns,
+ * added/dropped indexes, foreign-key changes, and — on SQLite — table rebuilds
+ * for changes the dialect can't do in place.
  *
  * If there is no previous plan or the dialect changed, generates full SQL.
  */
-export function generateDiffSql(previous: MigrationPlan | undefined, next: MigrationPlan): string[] {
-  if (!previous || previous.dialect !== next.dialect)
-    return generateSql(next)
+export function generateDiffOperations(previous: MigrationPlan | undefined, next: MigrationPlan, opts: DiffOptions = {}): DiffResult {
+  if (!previous || previous.dialect !== next.dialect) {
+    const statements = generateSql(next, { dryRun: opts.dryRun })
+    const operations: MigrationOperation[] = next.tables.map(t => ({
+      kind: 'create_table' as const,
+      table: t.table,
+      destructive: false,
+      sql: '',
+    }))
+    return { statements, operations }
+  }
+
+  const applyRenames = opts.applyRenames !== false // default true (data-preserving)
+  // In dry-run mode we don't write any migration files (preview only).
+  const emit = opts.dryRun ? (): boolean => false : createMigrationFile
 
   // Reset migration counter for proper ordering
   migrationCounter = 0
@@ -921,7 +1184,9 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
   useDeterministicNames = false // User diff migrations use timestamps
 
   const chunks: string[] = []
+  const operations: MigrationOperation[] = []
   const driver = getDialectDriver(next.dialect)
+  const dialect = next.dialect
 
   const prevTables = mapTablesByName(previous.tables)
   const nextTables = mapTablesByName(next.tables)
@@ -931,7 +1196,8 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     if (!nextTables[tableName]) {
       const dropTableStatement = driver.dropTable(tableName)
       chunks.push(dropTableStatement)
-      createMigrationFile(dropTableStatement, `drop-${tableName}-table`)
+      operations.push({ kind: 'drop_table', table: tableName, destructive: true, sql: dropTableStatement })
+      emit(dropTableStatement, `drop-${tableName}-table`)
       info(`-- Detected dropped table: ${tableName}`)
     }
   }
@@ -963,10 +1229,11 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
 
       // Add all statements to the main chunks array
       chunks.push(...tableStatements)
+      operations.push({ kind: 'create_table', table: t.table, destructive: false, sql: createTableStatement })
 
       // Create a single migration file for this table with all its statements
       const combinedStatement = tableStatements.join('\n\n')
-      createMigrationFile(combinedStatement, `create-${t.table}-table`)
+      emit(combinedStatement, `create-${t.table}-table`)
     }
   }
 
@@ -977,7 +1244,8 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
       for (const idx of t.indexes) {
         const createIndexStatement = driver.createIndex(t.table, idx)
         chunks.push(createIndexStatement)
-        createMigrationFile(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
+        operations.push({ kind: 'create_index', table: t.table, column: idx.name, destructive: false, sql: createIndexStatement })
+        emit(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
       }
     }
   }
@@ -994,7 +1262,8 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
           const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
           if (!alterTableStatement) continue
           chunks.push(alterTableStatement)
-          createMigrationFile(alterTableStatement, `alter-${t.table}-${c.name}`)
+          operations.push({ kind: 'add_foreign_key', table: t.table, column: c.name, destructive: false, sql: alterTableStatement })
+          emit(alterTableStatement, `alter-${t.table}-${c.name}`)
         }
       }
     }
@@ -1021,7 +1290,8 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
             const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
             if (createEnumStatement) {
               chunks.push(createEnumStatement)
-              createMigrationFile(createEnumStatement, `create-${enumTypeName}-enum`)
+              operations.push({ kind: 'create_enum', table: curr.table, column: c.name, destructive: false, sql: createEnumStatement })
+              emit(createEnumStatement, `create-${enumTypeName}-enum`)
             }
             enumTypes.add(enumTypeName)
           }
@@ -1030,7 +1300,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     }
   }
 
-  // 6) Existing tables -> full diffs (drops, adds, and modifications)
+  // 6) Existing tables -> full diffs (drops, adds, renames, and modifications)
   // Group all changes per table into single migration files
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]
@@ -1043,7 +1313,69 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     const prevIdx = mapIndexesByKey(prev.indexes)
     const currIdx = mapIndexesByKey(curr.indexes)
 
-    // Collect all changes for this table
+    // Resolve renames first so a renamed column isn't seen as drop + add.
+    let renames: Array<{ from: string, to: string }> = []
+    let removedCols = Object.keys(prevCols).filter(n => !currCols[n])
+    let addedCols = Object.keys(currCols).filter(n => !prevCols[n])
+    if (applyRenames) {
+      const detected = detectColumnRenames(prevCols, currCols, dialect)
+      renames = detected.renames
+      removedCols = detected.removed
+      addedCols = detected.added
+    }
+
+    // Columns present on both sides whose attributes changed, and FK-only changes.
+    const modifiedCols = Object.keys(currCols).filter(n => prevCols[n] && columnsAreDifferent(prevCols[n], currCols[n], dialect))
+    const fkChangedCols = Object.keys(currCols).filter(n => prevCols[n] && referencesAreDifferent(prevCols[n].references, currCols[n].references))
+
+    // ---- SQLite rebuild path -------------------------------------------------
+    // SQLite can't ALTER a column's type/constraint, can't change a FK, and
+    // can't DROP a constrained column. Any of those requires recreating the
+    // table. Pure adds / index changes / renames stay in-place below.
+    if (dialect === 'sqlite') {
+      const needsRebuild
+        = modifiedCols.length > 0
+          || fkChangedCols.length > 0
+          || removedCols.some(name => isColumnConstrained(prev, name))
+
+      if (needsRebuild) {
+        const columnSource: Record<string, string> = {}
+        const renameTo = new Map(renames.map(r => [r.to, r.from]))
+        for (const c of curr.columns) {
+          if (prevCols[c.name])
+            columnSource[c.name] = c.name // carried over
+          else if (renameTo.has(c.name))
+            columnSource[c.name] = renameTo.get(c.name)! // renamed: pull from old name
+          // else: brand-new column -> omit so it gets its DEFAULT / NULL
+        }
+
+        let tempName = `_qb_tmp_${curr.table}`
+        let guard = 0
+        while ((prevTables[tempName] || nextTables[tempName]) && guard < 100) {
+          guard += 1
+          tempName = `_qb_tmp_${curr.table}_${guard}`
+        }
+
+        const rebuildStatement = driver.rebuildTable({ target: curr, tempName, columnSource })
+        chunks.push(rebuildStatement)
+        const typeChanged = modifiedCols.some(n => prevCols[n].type !== currCols[n].type)
+        operations.push({
+          kind: 'rebuild_table',
+          table: curr.table,
+          destructive: removedCols.length > 0 || typeChanged,
+          sql: rebuildStatement,
+        })
+        for (const r of renames)
+          operations.push({ kind: 'rename_column', table: curr.table, from: r.from, to: r.to, destructive: false, confidence: 'high', sql: rebuildStatement })
+        for (const name of removedCols)
+          operations.push({ kind: 'drop_column', table: curr.table, column: name, destructive: true, sql: rebuildStatement })
+        info(`-- Detected SQLite table rebuild required: ${curr.table}`)
+        emit(rebuildStatement, `alter-${curr.table}-table`)
+        continue
+      }
+    }
+
+    // ---- In-place path (Postgres/MySQL always; simple SQLite changes) -------
     const tableChanges: string[] = []
     let hasChanges = false
 
@@ -1054,62 +1386,82 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         const dropIndexStatement = driver.dropIndex(curr.table, idx.name)
         tableChanges.push(dropIndexStatement)
         chunks.push(dropIndexStatement)
+        operations.push({ kind: 'drop_index', table: curr.table, column: idx.name, destructive: false, sql: dropIndexStatement })
         info(`-- Detected dropped index: ${idx.name} from ${curr.table}`)
         hasChanges = true
       }
     }
 
+    // Rename columns (data-preserving)
+    for (const r of renames) {
+      const renameStatement = driver.renameColumn(curr.table, r.from, r.to)
+      tableChanges.push(renameStatement)
+      chunks.push(renameStatement)
+      operations.push({ kind: 'rename_column', table: curr.table, from: r.from, to: r.to, destructive: false, confidence: 'high', sql: renameStatement })
+      info(`-- Detected renamed column: ${curr.table}.${r.from} -> ${r.to}`)
+      hasChanges = true
+    }
+
     // Drop removed columns
-    for (const colName of Object.keys(prevCols)) {
-      if (!currCols[colName]) {
-        const dropColumnStatement = driver.dropColumn(curr.table, colName)
-        tableChanges.push(dropColumnStatement)
-        chunks.push(dropColumnStatement)
-        info(`-- Detected dropped column: ${curr.table}.${colName}`)
-        hasChanges = true
-      }
+    for (const colName of removedCols) {
+      const dropColumnStatement = driver.dropColumn(curr.table, colName)
+      tableChanges.push(dropColumnStatement)
+      chunks.push(dropColumnStatement)
+      operations.push({ kind: 'drop_column', table: curr.table, column: colName, destructive: true, sql: dropColumnStatement })
+      info(`-- Detected dropped column: ${curr.table}.${colName}`)
+      hasChanges = true
     }
 
     // Modify changed columns
-    for (const colName of Object.keys(currCols)) {
-      if (prevCols[colName] && currCols[colName]) {
-        const prevCol = prevCols[colName]
-        const currCol = currCols[colName]
+    for (const colName of modifiedCols) {
+      const prevCol = prevCols[colName]
+      const currCol = currCols[colName]
+      const modifyColumnStatement = driver.modifyColumn(curr.table, currCol)
+      tableChanges.push(modifyColumnStatement)
+      chunks.push(modifyColumnStatement)
+      operations.push({
+        kind: 'modify_column',
+        table: curr.table,
+        column: colName,
+        destructive: prevCol.type !== currCol.type,
+        sql: modifyColumnStatement,
+      })
+      info(`-- Detected column change: ${curr.table}.${colName} (${prevCol.type} -> ${currCol.type})`)
+      hasChanges = true
+    }
 
-        if (columnsAreDifferent(prevCol, currCol)) {
-          const modifyColumnStatement = driver.modifyColumn(curr.table, currCol)
-          tableChanges.push(modifyColumnStatement)
-          chunks.push(modifyColumnStatement)
-          info(`-- Detected column type change: ${curr.table}.${colName} (${prevCol.type} -> ${currCol.type})`)
-          hasChanges = true
-        }
-
-        // Foreign-key reference changes are independent of column attributes
-        // (an FK-only change leaves type/nullable/etc identical). #1037.
-        if (referencesAreDifferent(prevCol.references, currCol.references) && currCol.references) {
-          const addFkStatement = driver.addForeignKey(curr.table, currCol.name, currCol.references.table, currCol.references.column, currCol.references.onDelete, currCol.references.onUpdate)
-          tableChanges.push(addFkStatement)
-          chunks.push(addFkStatement)
-          info(`-- Detected foreign-key change: ${curr.table}.${colName} -> ${currCol.references.table}(${currCol.references.column})${currCol.references.onDelete ? ` ON DELETE ${currCol.references.onDelete}` : ''}`)
-          hasChanges = true
-        }
-      }
+    // Foreign-key reference changes are independent of column attributes
+    // (an FK-only change leaves type/nullable/etc identical). #1037.
+    for (const colName of fkChangedCols) {
+      const currCol = currCols[colName]
+      if (!currCol.references)
+        continue
+      const addFkStatement = driver.addForeignKey(curr.table, currCol.name, currCol.references.table, currCol.references.column, currCol.references.onDelete, currCol.references.onUpdate)
+      if (!addFkStatement)
+        continue
+      tableChanges.push(addFkStatement)
+      chunks.push(addFkStatement)
+      operations.push({ kind: 'add_foreign_key', table: curr.table, column: colName, destructive: false, sql: addFkStatement })
+      info(`-- Detected foreign-key change: ${curr.table}.${colName} -> ${currCol.references.table}(${currCol.references.column})`)
+      hasChanges = true
     }
 
     // Add new columns
-    for (const colName of Object.keys(currCols)) {
-      if (!prevCols[colName]) {
-        const c = currCols[colName]
-        const addColumnStatement = driver.addColumn(curr.table, c)
-        tableChanges.push(addColumnStatement)
-        chunks.push(addColumnStatement)
-        info(`-- Detected new column: ${curr.table}.${c.name}`)
-        hasChanges = true
+    for (const colName of addedCols) {
+      const c = currCols[colName]
+      const addColumnStatement = driver.addColumn(curr.table, c)
+      tableChanges.push(addColumnStatement)
+      chunks.push(addColumnStatement)
+      operations.push({ kind: 'add_column', table: curr.table, column: c.name, destructive: false, sql: addColumnStatement })
+      info(`-- Detected new column: ${curr.table}.${c.name}`)
+      hasChanges = true
 
-        if (c.references) {
-          const addFkStatement = driver.addForeignKey(curr.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
+      if (c.references) {
+        const addFkStatement = driver.addForeignKey(curr.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
+        if (addFkStatement) {
           tableChanges.push(addFkStatement)
           chunks.push(addFkStatement)
+          operations.push({ kind: 'add_foreign_key', table: curr.table, column: c.name, destructive: false, sql: addFkStatement })
         }
       }
     }
@@ -1121,6 +1473,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
         const createIndexStatement = driver.createIndex(curr.table, idx)
         tableChanges.push(createIndexStatement)
         chunks.push(createIndexStatement)
+        operations.push({ kind: 'create_index', table: curr.table, column: idx.name, destructive: false, sql: createIndexStatement })
         info(`-- Detected new index: ${idx.name} in ${curr.table}`)
         hasChanges = true
       }
@@ -1129,7 +1482,7 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     // Create a single migration file with all changes for this table
     if (hasChanges) {
       const combinedStatement = tableChanges.join('\n\n')
-      createMigrationFile(combinedStatement, `alter-${curr.table}-table`)
+      emit(combinedStatement, `alter-${curr.table}-table`)
     }
   }
 
@@ -1147,8 +1500,15 @@ export function generateDiffSql(previous: MigrationPlan | undefined, next: Migra
     info(`-- Migration files: ${parts.join(', ')}`)
   }
 
-  if (chunks.length === 0)
-    return ['-- No changes detected']
+  const statements = chunks.length === 0 ? ['-- No changes detected'] : chunks
+  return { statements, operations }
+}
 
-  return chunks
+/**
+ * Generate comprehensive SQL to migrate from a previous plan to a new plan.
+ * Thin wrapper over {@link generateDiffOperations} preserved for existing
+ * callers that only need the raw statements.
+ */
+export function generateDiffSql(previous: MigrationPlan | undefined, next: MigrationPlan, opts: DiffOptions = {}): string[] {
+  return generateDiffOperations(previous, next, opts).statements
 }

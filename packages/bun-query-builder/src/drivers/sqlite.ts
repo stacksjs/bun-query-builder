@@ -1,4 +1,4 @@
-import type { ColumnPlan, IndexPlan, TablePlan } from '../migrations'
+import type { ColumnPlan, IndexPlan, RebuildTableSpec, TablePlan } from '../migrations'
 
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
@@ -7,6 +7,16 @@ export interface DialectDriver {
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
   modifyColumn: (tableName: string, column: ColumnPlan) => string
+  /** Rename a column in place (SQLite 3.25+, MySQL 8.0+, Postgres). */
+  renameColumn: (tableName: string, from: string, to: string) => string
+  /** Rename a table. */
+  renameTable: (from: string, to: string) => string
+  /**
+   * Recreate a table with a new schema, preserving data. Only SQLite needs
+   * this (it can't ALTER COLUMN types or DROP constrained columns); the
+   * MySQL/Postgres drivers throw since they do those changes in place.
+   */
+  rebuildTable: (spec: RebuildTableSpec) => string
   dropTable: (tableName: string) => string
   dropColumn: (tableName: string, columnName: string) => string
   dropIndex: (tableName: string, indexName: string) => string
@@ -136,9 +146,69 @@ export class SQLiteDriver implements DialectDriver {
   }
 
   modifyColumn(tableName: string, column: ColumnPlan): string {
-    // SQLite does not support ALTER COLUMN to change type
-    // This requires recreating the table with the new schema
-    return `-- SQLite does not support ALTER COLUMN. Manual table recreation needed to change ${this.quoteIdentifier(tableName)}.${this.quoteIdentifier(column.name)} type`
+    // SQLite can't ALTER COLUMN to change a type/constraint — the diff engine
+    // routes such changes through `rebuildTable` instead. This path only
+    // remains as a defensive fallback (e.g. if a caller invokes it directly).
+    return `-- SQLite does not support ALTER COLUMN; a table rebuild is required to change ${this.quoteIdentifier(tableName)}.${this.quoteIdentifier(column.name)}`
+  }
+
+  renameColumn(tableName: string, from: string, to: string): string {
+    // RENAME COLUMN is supported since SQLite 3.25.0 (Stacks requires >= 3.47.2).
+    return `ALTER TABLE ${this.quoteIdentifier(tableName)} RENAME COLUMN ${this.quoteIdentifier(from)} TO ${this.quoteIdentifier(to)};`
+  }
+
+  renameTable(from: string, to: string): string {
+    return `ALTER TABLE ${this.quoteIdentifier(from)} RENAME TO ${this.quoteIdentifier(to)};`
+  }
+
+  /**
+   * SQLite's recommended table-recreate procedure (sqlite.org/lang_altertable
+   * §"Making Other Kinds Of Table Schema Changes"). Used whenever a column's
+   * type/constraint changes or a constrained column is dropped — operations
+   * SQLite can't do in place. Data is preserved by copying mapped columns into
+   * a freshly-built table and swapping it into place.
+   *
+   * The `PRAGMA foreign_keys` toggles MUST sit OUTSIDE the transaction — SQLite
+   * ignores the pragma inside one. The whole string is executed statement-by-
+   * statement by the migration runner (`db.ts` splits on `;`).
+   */
+  rebuildTable(spec: RebuildTableSpec): string {
+    const { target, tempName, columnSource } = spec
+    const q = (id: string): string => this.quoteIdentifier(id)
+
+    const columnsSql = target.columns.map(c => this.renderColumn(c)).join(',\n  ')
+    const createTmp = `CREATE TABLE ${q(tempName)} (\n  ${columnsSql}\n);`
+
+    // Only carry over target columns that have a known source (carried/renamed).
+    // Brand-new columns are omitted so they pick up their DEFAULT/NULL.
+    const carried = target.columns
+      .map(c => c.name)
+      .filter(name => columnSource[name] !== undefined)
+
+    const statements: string[] = [
+      'PRAGMA foreign_keys=OFF;',
+      'BEGIN;',
+      createTmp,
+    ]
+
+    if (carried.length > 0) {
+      const insertCols = carried.map(q).join(', ')
+      const selectCols = carried.map(name => q(columnSource[name])).join(', ')
+      statements.push(`INSERT INTO ${q(tempName)} (${insertCols}) SELECT ${selectCols} FROM ${q(target.table)};`)
+    }
+
+    statements.push(`DROP TABLE ${q(target.table)};`)
+    statements.push(`ALTER TABLE ${q(tempName)} RENAME TO ${q(target.table)};`)
+
+    // Indexes are dropped with the old table; recreate them from the target plan.
+    for (const idx of target.indexes)
+      statements.push(this.createIndex(target.table, idx))
+
+    statements.push('PRAGMA foreign_key_check;')
+    statements.push('COMMIT;')
+    statements.push('PRAGMA foreign_keys=ON;')
+
+    return statements.join('\n')
   }
 
   dropTable(tableName: string): string {

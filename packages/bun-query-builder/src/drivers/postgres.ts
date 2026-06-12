@@ -1,4 +1,4 @@
-import type { ColumnPlan, IndexPlan, TablePlan } from '../migrations'
+import type { ColumnPlan, IndexPlan, RebuildTableSpec, TablePlan } from '../migrations'
 
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
@@ -7,6 +7,16 @@ export interface DialectDriver {
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
   modifyColumn: (tableName: string, column: ColumnPlan) => string
+  /** Rename a column in place (SQLite 3.25+, MySQL 8.0+, Postgres). */
+  renameColumn: (tableName: string, from: string, to: string) => string
+  /** Rename a table. */
+  renameTable: (from: string, to: string) => string
+  /**
+   * Recreate a table with a new schema, preserving data. Only SQLite needs
+   * this (it can't ALTER COLUMN types or DROP constrained columns); the
+   * MySQL/Postgres drivers throw since they do those changes in place.
+   */
+  rebuildTable: (spec: RebuildTableSpec) => string
   dropTable: (tableName: string) => string
   dropColumn: (tableName: string, columnName: string) => string
   dropIndex: (tableName: string, indexName: string) => string
@@ -134,6 +144,20 @@ export class PostgresDriver implements DialectDriver {
     // PostgreSQL requires separate ALTER statements for type, nullability, and default
     // Add USING clause to handle type conversions that aren't automatic
     return `ALTER TABLE ${this.quoteIdentifier(tableName)} ALTER COLUMN ${this.quoteIdentifier(column.name)} TYPE ${typeSql} USING ${this.quoteIdentifier(column.name)}::${typeSql};`
+  }
+
+  renameColumn(tableName: string, from: string, to: string): string {
+    return `ALTER TABLE ${this.quoteIdentifier(tableName)} RENAME COLUMN ${this.quoteIdentifier(from)} TO ${this.quoteIdentifier(to)};`
+  }
+
+  renameTable(from: string, to: string): string {
+    return `ALTER TABLE ${this.quoteIdentifier(from)} RENAME TO ${this.quoteIdentifier(to)};`
+  }
+
+  rebuildTable(): string {
+    // Postgres changes column types/constraints in place via ALTER COLUMN —
+    // it never needs the SQLite recreate dance.
+    throw new Error('[migrations] rebuildTable is only implemented for SQLite; Postgres uses in-place ALTER.')
   }
 
   dropTable(tableName: string): string {

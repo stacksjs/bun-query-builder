@@ -395,6 +395,23 @@ export interface MigrateOptions {
   state?: string
   apply?: boolean
   full?: boolean
+  /**
+   * Emit data-preserving `RENAME COLUMN` for unambiguous detected renames
+   * (default true). Set false to force literal DROP + ADD.
+   */
+  applyRenames?: boolean
+  /**
+   * Diff against the *live database* schema instead of the `.qb` snapshot.
+   * Self-heals when the snapshot is missing/stale or the DB drifted. When the
+   * snapshot is absent this is used automatically as a fallback.
+   */
+  fromDb?: boolean
+  /**
+   * Preview only: compute statements/operations without writing migration
+   * files or advancing the snapshot. Used to gate destructive changes behind
+   * confirmation before generating for real.
+   */
+  dryRun?: boolean
 }
 
 export interface GenerateMigrationResult {
@@ -402,6 +419,12 @@ export interface GenerateMigrationResult {
   sqlStatements: string[]
   hasChanges: boolean
   plan: any
+  /**
+   * Structured description of each change (drop/rename/modify/rebuild/...), so
+   * callers can gate destructive ops and report renames without parsing SQL.
+   * Optional for backward compatibility with existing consumers.
+   */
+  operations?: import('./migrations').MigrationOperation[]
 }
 
 export interface UnsafeOptions {
