@@ -81,7 +81,7 @@
     "@stacksjs/launchpad": "^0.6.4",
     "@stacksjs/ts-faker": "^0.1.8",
     "better-dx": "^0.2.15",
-    "pickier": "^0.1.32"
+    "pickier": "^0.1.35"
   },
   "workspaces": [
     "packages/*"
