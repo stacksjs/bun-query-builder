@@ -77,13 +77,13 @@
     "typecheck": "bun --bun tsc"
   },
   "dependencies": {
-    "@stacksjs/clapp": "^0.2.0",
+    "@stacksjs/clapp": "^0.2.10",
     "@stacksjs/ts-faker": "^0.1.8",
     "@stacksjs/ts-validation": "^0.5.0",
     "dynamodb-tooling": "^0.3.2"
   },
   "devDependencies": {
-    "bunfig": "^0.15.6"
+    "bunfig": "^0.15.14"
   },
   "git-hooks": {
     "pre-commit": {
