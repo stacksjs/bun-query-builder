@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.39...v0.1.40)
+
+## 🐛 Bug Fixes
+
+- **orm**: stop silently dropping multi-word attributes on create/update ([575cda6](https://github.com/stacksjs/bun-query-builder/commit/575cda6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.40 ([41837f1](https://github.com/stacksjs/bun-query-builder/commit/41837f1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.38...v0.1.39)
 
 ## 🐛 Bug Fixes
