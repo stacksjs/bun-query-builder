@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.38...v0.1.39)
+
+## 🐛 Bug Fixes
+
+- **migrations**: keep committed migration files when resetDatabase has no models to regenerate from ([a9ecc63](https://github.com/stacksjs/bun-query-builder/commit/a9ecc63)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.39 ([50104ac](https://github.com/stacksjs/bun-query-builder/commit/50104ac)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.37...v0.1.38)
 
 ## 🚀 Features
