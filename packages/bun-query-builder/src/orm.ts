@@ -883,7 +883,14 @@ class ModelInstance<
     const attrs = this._definition.attributes
     for (const [key, value] of Object.entries(data)) {
       const attr = findAttributeDef(attrs, key)
-      if (attr?.fillable && !attr?.guarded) {
+      // A `belongsTo`-implied FK column (e.g. `monitor_id`) has no entry in
+      // `attrs` at all — only the migration generator infers it, from
+      // `belongsTo`, not from `attributes`. Mass assignment already lets
+      // `_id`-suffixed keys through its own bypass, so accept them here too
+      // rather than silently dropping the update. See the matching sweep
+      // in save()'s create branch.
+      const isImplicitForeignKey = !attr && toSnakeCase(key).endsWith('_id')
+      if ((attr?.fillable && !attr?.guarded) || isImplicitForeignKey) {
         // Snapshot original on first mutation (copy-on-write) — same as
         // set(). Skipping this left getChanges() empty, so a save() after
         // fill()/update() on a clean instance SILENTLY SKIPPED the UPDATE
@@ -961,6 +968,22 @@ class ModelInstance<
         const col = toSnakeCase(key)
         if (this._attributes[col] !== undefined) {
           data[col] = this._attributes[col]
+        }
+      }
+
+      // FK columns implied by a `belongsTo` relation (e.g. `monitor_id` on
+      // a model that only declares `belongsTo: ['Monitor']`, with no
+      // matching entry in `attributes`) are never in `attrs` above — the
+      // migration generator infers them from `belongsTo` separately, but
+      // that inference doesn't feed back into the runtime attribute map
+      // this loop reads. Sweep any `_id`-suffixed key present on the
+      // instance that the loop above didn't already pick up. Mass
+      // assignment already gated these through its own `_id` bypass (see
+      // applyMassAssignmentRules) before the value ever reached
+      // `_attributes`, so no further guard is needed here.
+      for (const key of Object.keys(this._attributes)) {
+        if (key.endsWith('_id') && key !== pk && !(key in data)) {
+          data[key] = this._attributes[key]
         }
       }
 
