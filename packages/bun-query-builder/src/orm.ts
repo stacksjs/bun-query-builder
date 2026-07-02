@@ -647,6 +647,44 @@ function collectBelongsToManyKeys(definition: ModelDefinition): Set<string> {
 }
 
 /**
+ * Convert every key of `data` to snake_case. Read paths (`find`, `get`, ...)
+ * hydrate `_attributes` straight from raw SQL rows, which are always
+ * snake_case (that's what the migration generator emits as column names —
+ * see migrations.ts). Write paths (`create`, `update`, `.fill()`) previously
+ * stored whatever casing the caller passed verbatim, with no normalization.
+ * For a single-word attribute (`name`, `status`) camelCase and snake_case are
+ * identical, so this went unnoticed; for any multi-word attribute
+ * (`memberCount`/`member_count`, `checkIntervalSeconds`/`check_interval_seconds`)
+ * the two write paths disagreed about which casing to check, and the value
+ * was silently dropped from the INSERT/UPDATE regardless of which casing the
+ * caller used (see the "Create" branch in `save()` and `fill()` below).
+ * Normalizing at every entry point makes `_attributes` internally consistent
+ * with what a read produces, independent of caller casing.
+ */
+function normalizeAttributeKeys(data: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(data)) {
+    result[toSnakeCase(key)] = value
+  }
+  return result
+}
+
+/**
+ * Find a declared attribute's definition regardless of whether `key` (as
+ * passed by the caller) or the attribute's own declaration in the model
+ * matches camelCase or snake_case.
+ */
+function findAttributeDef(attrs: Record<string, any>, key: string): any {
+  if (attrs[key]) return attrs[key]
+  const snake = toSnakeCase(key)
+  if (attrs[snake]) return attrs[snake]
+  for (const k of Object.keys(attrs)) {
+    if (toSnakeCase(k) === snake) return attrs[k]
+  }
+  return undefined
+}
+
+/**
  * Model instance - represents a single database record
  */
 class ModelInstance<
@@ -661,7 +699,7 @@ class ModelInstance<
 
   constructor(definition: TDef, attributes: Partial<ModelAttributes<TDef>> = {}) {
     this._definition = definition
-    this._attributes = { ...attributes }
+    this._attributes = normalizeAttributeKeys({ ...attributes })
     this._original = null // deferred — only copied on first mutation
 
     // Install a callable accessor for each declared `belongsToMany` relation:
@@ -713,7 +751,9 @@ class ModelInstance<
         // fall through to raw attribute
       }
     }
-    return this._attributes[key as string] as any
+    // _attributes is always snake_case (see normalizeAttributeKeys) — accept
+    // either casing from the caller.
+    return this._attributes[toSnakeCase(key as string)] as any
   }
 
   /**
@@ -724,7 +764,7 @@ class ModelInstance<
    * by name) and you need the underlying database value.
    */
   getAttribute<K extends TSelected>(key: K): K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown {
-    return this._attributes[key as string] as any
+    return this._attributes[toSnakeCase(key as string)] as any
   }
 
   /**
@@ -742,7 +782,8 @@ class ModelInstance<
   ): void {
     // Snapshot original on first mutation (copy-on-write)
     if (this._original === null) this._original = { ...this._attributes }
-    this._attributes[key as string] = value
+    // Normalize — _attributes is always snake_case (see normalizeAttributeKeys).
+    this._attributes[toSnakeCase(key as string)] = value
   }
 
   /**
@@ -841,14 +882,17 @@ class ModelInstance<
   fill(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): this {
     const attrs = this._definition.attributes
     for (const [key, value] of Object.entries(data)) {
-      const attr = attrs[key]
+      const attr = findAttributeDef(attrs, key)
       if (attr?.fillable && !attr?.guarded) {
         // Snapshot original on first mutation (copy-on-write) — same as
         // set(). Skipping this left getChanges() empty, so a save() after
         // fill()/update() on a clean instance SILENTLY SKIPPED the UPDATE
         // statement while the in-memory instance showed the new values.
         if (this._original === null) this._original = { ...this._attributes }
-        this._attributes[key] = value
+        // Normalize to snake_case — _attributes is always snake_case (see
+        // normalizeAttributeKeys), independent of which casing `key` came
+        // in as or which casing the attribute was declared with.
+        this._attributes[toSnakeCase(key)] = value
       }
     }
     return this
@@ -856,7 +900,7 @@ class ModelInstance<
 
   forceFill(data: Partial<InferModelAttributes<TDef>>): this {
     if (this._original === null) this._original = { ...this._attributes }
-    Object.assign(this._attributes, data)
+    Object.assign(this._attributes, normalizeAttributeKeys(data as Record<string, unknown>))
     return this
   }
 
@@ -909,8 +953,14 @@ class ModelInstance<
       // Postgres. `guarded` columns stay mass-assignment protected. See #1025.
       for (const [key, attr] of Object.entries(attrs)) {
         if (attr.guarded) continue
-        if (this._attributes[key] !== undefined) {
-          data[key] = this._attributes[key]
+        // `attrs` keys are whatever casing the model declared them with
+        // (commonly camelCase, e.g. `memberCount`) but `_attributes` is
+        // always snake_case (see normalizeAttributeKeys) — same casing a
+        // read produces. Normalize the lookup and write the column under
+        // its real (snake_case) name, since that's what the table has.
+        const col = toSnakeCase(key)
+        if (this._attributes[col] !== undefined) {
+          data[col] = this._attributes[col]
         }
       }
 
