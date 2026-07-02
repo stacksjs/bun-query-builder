@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.40...v0.1.41)
+
+## 🐛 Bug Fixes
+
+- **orm**: persist belongsTo-implied FK columns on create and update ([a42436c](https://github.com/stacksjs/bun-query-builder/commit/a42436c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.41 ([c7263bd](https://github.com/stacksjs/bun-query-builder/commit/c7263bd)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.39...v0.1.40)
 
 ## 🐛 Bug Fixes
