@@ -435,13 +435,24 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
       info('-- No enum types found to drop')
     }
 
-    // Clean up migration files
-    try {
-      await deleteMigrationFiles(dir, workspaceRoot, opts)
+    // Clean up migration files — but only when there is a models
+    // directory to regenerate them from (tableNames is populated above
+    // from that same `loadModels` call). Projects that haven't created
+    // an app/Models override yet run entirely on committed, hand-shipped
+    // migrations; deleting those unconditionally left the project with
+    // zero migration files and no way to get them back, since nothing
+    // would repopulate the directory afterward.
+    if (tableNames.length > 0) {
+      try {
+        await deleteMigrationFiles(dir, workspaceRoot, opts)
+      }
+      catch (err) {
+        console.error(err)
+        info('-- Could not clean up migration files')
+      }
     }
-    catch (err) {
-      console.error(err)
-      info('-- Could not clean up migration files')
+    else {
+      info('-- No models directory found; keeping committed migration files in place')
     }
 
     // Clear generated directory to force fresh migration generation

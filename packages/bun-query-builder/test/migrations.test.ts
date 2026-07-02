@@ -1,3 +1,7 @@
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { resetDatabase } from '../src/actions/migrate'
 import { config } from '../src/config'
@@ -334,6 +338,32 @@ describe('schema validation', () => {
     catch (err) {
       // Expected to potentially fail without DB
       expect(err).toBeDefined()
+    }
+  })
+})
+
+// stacksjs/bun-query-builder — resetDatabase used to unconditionally wipe
+// every committed *.sql migration file, even when there was no models
+// directory to regenerate them from (projects that only run on shipped,
+// hand-written migrations and haven't created a models override yet). That
+// left the project with zero migration files and no way to get them back.
+describe('resetDatabase file cleanup', () => {
+  it('keeps committed migration files when there is no models directory to regenerate from', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'bqb-reset-'))
+    const sqlDir = join(workspaceRoot, 'database', 'migrations')
+    require('node:fs').mkdirSync(sqlDir, { recursive: true })
+    writeFileSync(join(sqlDir, '0001-create-foo-table.sql'), 'CREATE TABLE foo (id INTEGER);')
+
+    const originalCwd = process.cwd()
+    process.chdir(workspaceRoot)
+    try {
+      const ok = await resetDatabase(join(workspaceRoot, 'app', 'Models-does-not-exist'), { dialect: 'sqlite' })
+      expect(ok).toBeTrue()
+      expect(readdirSync(sqlDir)).toContain('0001-create-foo-table.sql')
+    }
+    finally {
+      process.chdir(originalCwd)
+      rmSync(workspaceRoot, { recursive: true, force: true })
     }
   })
 })
