@@ -40,6 +40,8 @@ export interface DriverConnection {
   [key: string]: any
 }
 import { Database } from 'bun:sqlite'
+import { mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import process from 'node:process'
 import { config } from './config'
 
@@ -51,6 +53,18 @@ class SQLiteWrapper {
   private db: Database
 
   constructor(filename: string) {
+    // bun:sqlite throws if the parent directory doesn't exist yet — a real
+    // footgun for fresh deployments/first-boot where `database/` hasn't
+    // been created. `:memory:` and other special names have no real parent
+    // dir, so only mkdir for what looks like an actual file path.
+    if (filename !== ':memory:' && !filename.startsWith(':')) {
+      const dir = dirname(filename)
+
+      if (dir && dir !== '.') {
+        mkdirSync(dir, { recursive: true })
+      }
+    }
+
     this.db = new Database(filename)
     // Enable WAL mode for better concurrency
     this.db.run('PRAGMA journal_mode = WAL')
