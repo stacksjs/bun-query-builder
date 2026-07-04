@@ -44,6 +44,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import process from 'node:process'
 import { config } from './config'
+import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 
 /**
  * SQLite wrapper that provides a SQL-like tagged template literal interface
@@ -66,8 +67,11 @@ class SQLiteWrapper {
     }
 
     this.db = new Database(filename)
-    // Enable WAL mode for better concurrency
-    this.db.run('PRAGMA journal_mode = WAL')
+    // WAL for concurrency, foreign_keys enforcement, busy_timeout — all
+    // per-connection settings, so every connection the library opens must
+    // be bootstrapped (see DEFAULT_SQLITE_PRAGMAS; configurable via
+    // `config.sqlite.pragmas`).
+    applySqliteBootstrapPragmas(this.db)
   }
 
   /**

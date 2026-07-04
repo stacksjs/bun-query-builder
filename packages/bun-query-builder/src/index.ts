@@ -16,6 +16,7 @@ export * from './pivot'
 export * from './orm'
 export * from './schema'
 export * from './seeder'
+export * from './sqlite-pragmas'
 export * from './type-inference'
 export * from './types'
 

@@ -31,6 +31,7 @@ import type { RelationCardinality } from './type-inference'
 import { config } from './config'
 import type { DriverConnection } from './db'
 import { getOrCreateBunSql } from './db'
+import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 
 /**
  * Current timestamp formatted for the active dialect.
@@ -515,10 +516,17 @@ let _executorDatabase: string | null = null
 
 export function configureOrm(options: { database?: string | Database; verbose?: boolean }): void {
   if (options.database instanceof Database) {
+    // Caller-supplied connection: bring-your-own Database means
+    // bring-your-own pragmas — never override their settings.
     globalDb = options.database
   }
   else {
     globalDb = new Database(options.database || ':memory:', { create: true })
+    // This connection is what every Model.create()/save()/delete() writes
+    // through — without the bootstrap it runs with foreign_keys OFF (orphan
+    // rows insert silently) no matter what the query-builder connection was
+    // configured with.
+    applySqliteBootstrapPragmas(globalDb)
   }
   // Force the executor to rebind to the newly-supplied database.
   _executor = null
@@ -555,10 +563,16 @@ function getExecutor(): OrmExecutor {
   _executorDialect = dialect
   _executorDatabase = database
 
-  if (dialect === 'sqlite')
-    _executor = new SqliteExecutor(new Database(database || ':memory:', { create: true }))
-  else
+  if (dialect === 'sqlite') {
+    const db = new Database(database || ':memory:', { create: true })
+    // Same rationale as configureOrm: this lazily-created connection is the
+    // model write path — it must get the per-connection bootstrap pragmas.
+    applySqliteBootstrapPragmas(db)
+    _executor = new SqliteExecutor(db)
+  }
+  else {
     _executor = new DriverExecutor(dialect)
+  }
 
   return _executor
 }

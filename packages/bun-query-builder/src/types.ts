@@ -159,6 +159,27 @@ export interface RelationsConfig {
 }
 
 /**
+ * # `SqliteConfig`
+ *
+ * SQLite-specific connection behavior.
+ *
+ * - `pragmas`: bootstrap pragmas applied to every sqlite connection the
+ *   library itself opens (the query-builder connection and the model-layer
+ *   executor). Pragmas like `foreign_keys` and `busy_timeout` are
+ *   per-connection in SQLite — they cannot be persisted in the database
+ *   file — so they must be re-applied on every new connection. When unset,
+ *   `DEFAULT_SQLITE_PRAGMAS` is used (WAL journal, `foreign_keys = ON`,
+ *   `busy_timeout = 5000`). Setting this REPLACES the default list.
+ *   Caller-supplied `Database` instances (`configureOrm({ database: db })`)
+ *   are never touched — bring-your-own connection means bring-your-own
+ *   pragmas.
+ */
+export interface SqliteConfig {
+  /** Bootstrap pragmas for library-opened sqlite connections. Replaces the defaults when set. */
+  pragmas?: string[]
+}
+
+/**
  * # `SqlConfig`
  *
  * Dialect-specific SQL toggles.
@@ -349,6 +370,8 @@ export interface QueryBuilderConfig {
   transactionDefaults: TransactionDefaultsConfig
   /** Dialect-specific SQL toggles. */
   sql: SqlConfig
+  /** SQLite-specific connection behavior (bootstrap pragmas). */
+  sqlite?: SqliteConfig
   /** Optional feature flags. */
   features: FeatureToggles
   /** Debug options. */
