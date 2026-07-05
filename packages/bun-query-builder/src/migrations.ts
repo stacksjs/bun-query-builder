@@ -121,6 +121,14 @@ export interface ColumnPlan {
   defaultValue?: PrimitiveDefault
   references?: { table: string, column: string, onDelete?: OnForeignKeyAction, onUpdate?: OnForeignKeyAction }
   enumValues?: string[]
+  /**
+   * Fully-qualified enum type name for Postgres named enum types. Stamped by
+   * the migration generator as `<table>_<column>_type` so the same enum
+   * column name in different tables (e.g. `status` on monitors vs incidents,
+   * which carry different value sets) does not collide in Postgres's global
+   * type namespace. SQLite/MySQL render enums inline and ignore this.
+   */
+  enumTypeName?: string
 }
 
 export interface IndexPlan {
@@ -794,7 +802,8 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
     const enumTypes = new Set<string>()
     for (const c of t.columns) {
       if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
-        const enumTypeName = `${c.name}_type`
+        const enumTypeName = `${t.table}_${c.name}_type`
+        c.enumTypeName = enumTypeName
         if (!enumTypes.has(enumTypeName)) {
           const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
           if (createEnumStatement) {
@@ -1212,7 +1221,8 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
       const enumTypes = new Set<string>()
       for (const c of t.columns) {
         if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
-          const enumTypeName = `${c.name}_type`
+          const enumTypeName = `${t.table}_${c.name}_type`
+          c.enumTypeName = enumTypeName
           if (!enumTypes.has(enumTypeName)) {
             const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
             if (createEnumStatement) {
@@ -1285,7 +1295,8 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
       if (!prevCols[colName]) {
         const c = currCols[colName]
         if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
-          const enumTypeName = `${c.name}_type`
+          const enumTypeName = `${curr.table}_${c.name}_type`
+          c.enumTypeName = enumTypeName
           if (!enumTypes.has(enumTypeName)) {
             const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
             if (createEnumStatement) {

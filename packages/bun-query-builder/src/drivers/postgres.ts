@@ -48,7 +48,9 @@ export class PostgresDriver implements DialectDriver {
       case 'json': return 'jsonb'
       case 'enum':
         if (column.enumValues && column.enumValues.length > 0) {
-          return `${column.name}_type`
+          // Prefer the generator-stamped, table-qualified name so enum columns
+          // sharing a name across tables map to distinct Postgres types.
+          return this.quoteIdentifier(column.enumTypeName ?? `${column.name}_type`)
         }
         return 'text'
       default: return 'text'

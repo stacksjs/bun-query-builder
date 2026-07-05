@@ -373,7 +373,9 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
       for (const table of plan.tables) {
         for (const column of table.columns) {
           if (column.type === 'enum' && column.enumValues && column.enumValues.length > 0) {
-            const enumTypeName = `${column.name}_type`
+            // Table-qualified to match the CREATE TYPE names generateMigration
+            // emits (see ColumnPlan.enumTypeName) so the drop path lines up.
+            const enumTypeName = `${table.table}_${column.name}_type`
             enumTypes.add(enumTypeName)
           }
         }
