@@ -1,5 +1,14 @@
 import type { ColumnPlan, IndexPlan, RebuildTableSpec, TablePlan } from '../migrations'
 
+/**
+ * Whether a plan type belongs to the numeric family. Used by the `_id`
+ * safety net (numeric ids must store as INTEGER on SQLite) — non-numeric
+ * declared types must never be coerced by the name heuristic.
+ */
+export function isNumericPlanType(type: string | undefined): boolean {
+  return type === 'integer' || type === 'bigint' || type === 'float' || type === 'double' || type === 'decimal'
+}
+
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
   createTable: (table: TablePlan) => string
@@ -34,9 +43,11 @@ export class SQLiteDriver implements DialectDriver {
   }
 
   private getColumnType(column: ColumnPlan): string {
-    // Safety net: foreign key columns (ending in _id) must always be INTEGER
-    // to prevent data corruption from float storage (e.g., 11.0 instead of 11)
-    if (column.name.endsWith('_id')) {
+    // Safety net: numeric foreign-key columns (ending in _id) are stored as
+    // INTEGER so float storage can't corrupt ids (11.0 instead of 11). Only
+    // numeric plan types are coerced — external ids are frequently strings
+    // (tickers, wallet addresses, hashes) and a declared text type must win.
+    if (column.name.endsWith('_id') && isNumericPlanType(column.type)) {
       return 'INTEGER'
     }
 

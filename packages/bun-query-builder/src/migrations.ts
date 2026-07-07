@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { config } from './config'
 import { getDialectDriver } from './drivers'
+import { isNumericPlanType } from './drivers/sqlite'
 import { buildSchemaMeta } from './meta'
 
 /**
@@ -941,8 +942,10 @@ function mapColumnsByName(columns: ColumnPlan[]): Record<string, ColumnPlan> {
  */
 export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect): string {
   if (dialect === 'sqlite') {
-    // Mirror SQLiteDriver.getColumnType: `_id` columns are forced to INTEGER.
-    if (col.name.endsWith('_id'))
+    // Mirror SQLiteDriver.getColumnType: numeric `_id` columns are forced to
+    // INTEGER (float storage would corrupt ids); declared string/text ids
+    // (tickers, wallet addresses, hashes) keep their TEXT storage.
+    if (col.name.endsWith('_id') && isNumericPlanType(col.type))
       return 'INTEGER'
     switch (col.type) {
       case 'string':
