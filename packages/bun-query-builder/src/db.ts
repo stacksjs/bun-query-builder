@@ -123,7 +123,32 @@ function createRawMarker(value: string): { __raw: true, value: string, toString:
  * - SQL comments (-- single line and block comments)
  * - Empty statements
  */
-function splitSqlStatements(sql: string): string[] {
+/**
+ * Strip leading `-- line` and `/* block *\/` comments from a statement
+ * segment, returning the SQL that follows (or '' if the segment is only
+ * comments). Used so a real statement preceded by doc comments — common in
+ * hand-written migrations — is NOT mistaken for a comment-only segment and
+ * silently discarded. Inline/trailing comments within the SQL are left
+ * untouched; only the leading run is removed.
+ */
+function stripLeadingComments(segment: string): string {
+  let s = segment.trimStart()
+  for (;;) {
+    if (s.startsWith('--')) {
+      const nl = s.indexOf('\n')
+      s = nl === -1 ? '' : s.slice(nl + 1).trimStart()
+    }
+    else if (s.startsWith('/*')) {
+      const end = s.indexOf('*/')
+      s = end === -1 ? '' : s.slice(end + 2).trimStart()
+    }
+    else {
+      return s
+    }
+  }
+}
+
+export function splitSqlStatements(sql: string): string[] {
   const statements: string[] = []
   let current = ''
   let inSingleQuote = false
@@ -192,9 +217,12 @@ function splitSqlStatements(sql: string): string[] {
 
     // Handle statement separator
     if (char === ';' && !inSingleQuote && !inDoubleQuote) {
-      const trimmed = current.trim()
-      if (trimmed && !trimmed.startsWith('--')) {
-        statements.push(trimmed)
+      // Strip leading comments before deciding: a segment that is comments
+      // FOLLOWED by real SQL (e.g. a documented CREATE TABLE) must be kept,
+      // not dropped as if it were comment-only.
+      const sql = stripLeadingComments(current.trim())
+      if (sql) {
+        statements.push(sql)
       }
       current = ''
       continue
@@ -204,9 +232,9 @@ function splitSqlStatements(sql: string): string[] {
   }
 
   // Handle last statement without trailing semicolon
-  const trimmed = current.trim()
-  if (trimmed && !trimmed.startsWith('--')) {
-    statements.push(trimmed)
+  const tail = stripLeadingComments(current.trim())
+  if (tail) {
+    statements.push(tail)
   }
 
   return statements
