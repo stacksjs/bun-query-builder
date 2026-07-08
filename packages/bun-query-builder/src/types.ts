@@ -309,6 +309,12 @@ export interface DatabaseConfig {
   host: string
   url?: string
   port: number
+  /**
+   * Require TLS to the database (appends `?ssl=true` to the connection string).
+   * Needed by managed clusters like SingleStore Helios and most hosted
+   * MySQL/Postgres. Also enabled by the `DB_SSL=true` environment variable.
+   */
+  ssl?: boolean
   /** Connection-pool tuning passed through to the Bun SQL driver. See {@link PoolConfig}. */
   pool?: PoolConfig
 }
