@@ -1,5 +1,5 @@
 import type { SupportedDialect } from '@/types'
-import { config } from '@/config'
+import { config, isMysqlLike } from '@/config'
 import { createQueryBuilder } from '../index'
 
 export interface TableInfo {
@@ -46,7 +46,7 @@ export async function dbInfo(): Promise<DatabaseInfo> {
       `)
       tableNames = result.map((r: any) => r.table_name)
     }
-    else if (dialect === 'mysql') {
+    else if (isMysqlLike(dialect)) {
       const result = await qb.unsafe(`
         SELECT table_name
         FROM information_schema.tables
@@ -93,7 +93,7 @@ export async function dbInfo(): Promise<DatabaseInfo> {
           `, [tableName])
           indexCount = Number(idxResult[0]?.count || 0)
         }
-        else if (dialect === 'mysql') {
+        else if (isMysqlLike(dialect)) {
           const colResult = await qb.unsafe(`
             SELECT COUNT(*) as count
             FROM information_schema.columns

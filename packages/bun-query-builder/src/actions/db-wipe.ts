@@ -1,4 +1,5 @@
 import type { SupportedDialect } from '@/types'
+import { isMysqlLike } from '@/config'
 import process from 'node:process'
 import { bunSql } from '@/db'
 
@@ -30,7 +31,7 @@ export async function dbWipe(options: WipeOptions = {}): Promise<void> {
       `
       tables = result.map((row: any) => row.tablename)
     }
-    else if (dialect === 'mysql') {
+    else if (isMysqlLike(dialect)) {
       const dbName = process.env.DB_NAME || 'test'
       const result = await bunSql`
         SELECT table_name
@@ -68,7 +69,7 @@ export async function dbWipe(options: WipeOptions = {}): Promise<void> {
         await bunSql`DROP TABLE IF EXISTS ${bunSql(table)} CASCADE`
       }
     }
-    else if (dialect === 'mysql') {
+    else if (isMysqlLike(dialect)) {
       // Disable foreign key checks temporarily
       await bunSql`SET FOREIGN_KEY_CHECKS = 0`
       for (const table of tables) {

@@ -1,7 +1,7 @@
 import type { ColumnPlan, IndexPlan, MigrationPlan, NormalizedColumnType, PrimitiveDefault, TablePlan } from '../migrations'
 import type { OnForeignKeyAction } from '../schema'
 import type { SupportedDialect } from '../types'
-import { config } from '../config'
+import { config, isMysqlLike } from '../config'
 import { createQueryBuilder } from '../index'
 
 /**
@@ -75,7 +75,7 @@ async function listTables(qb: any, dialect: SupportedDialect): Promise<string[]>
     const rows = await qb.unsafe(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name`)
     return rows.map((r: any) => r.table_name)
   }
-  if (dialect === 'mysql') {
+  if (isMysqlLike(dialect)) {
     const rows = await qb.unsafe(`SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' ORDER BY table_name`)
     return rows.map((r: any) => r.table_name ?? r.TABLE_NAME)
   }
@@ -189,7 +189,7 @@ export function sqlTypeToNormalized(rawType: string, dialect: SupportedDialect, 
   const t = String(rawType || '').toLowerCase().trim()
   const base = t.replace(/\(.*$/, '').replace(/\s+/g, ' ').trim()
 
-  if (dialect === 'mysql' && /^tinyint\(1\)/.test(t))
+  if (isMysqlLike(dialect) && /^tinyint\(1\)/.test(t))
     return 'boolean'
   if (/^bool/.test(base))
     return 'boolean'

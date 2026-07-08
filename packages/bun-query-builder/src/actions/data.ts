@@ -1,6 +1,6 @@
 import type { SupportedDialect } from '@/types'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { config } from '@/config'
+import { config, isMysqlLike } from '@/config'
 import { createQueryBuilder } from '../client'
 
 export interface ExportOptions {
@@ -255,7 +255,7 @@ export async function dumpDatabase(options: DumpOptions = {}): Promise<void> {
       `)
       tables = result.map((r: any) => r.table_name)
     }
-    else if (dialect === 'mysql') {
+    else if (isMysqlLike(dialect)) {
       const result = await qb.unsafe(`
         SELECT table_name
         FROM information_schema.tables

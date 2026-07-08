@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
-import { config } from '../config'
+import type { SupportedDialect } from '../types'
+import { config, isMysqlLike } from '../config'
 import { createQueryBuilder } from '../index'
 
 /**
@@ -39,8 +40,8 @@ export function splitSqlStatements(sql: string): string[] {
  * [UNIQUE] INDEX — in reverse order. Statements it can't safely invert (data
  * changes, complex alters) are skipped; the caller reports them.
  */
-export function deriveDownStatements(forwardSql: string, dialect: string = config.dialect): { down: string[], skipped: string[] } {
-  const q = (id: string): string => dialect === 'mysql' ? `\`${id}\`` : `"${id}"`
+export function deriveDownStatements(forwardSql: string, dialect: SupportedDialect = config.dialect): { down: string[], skipped: string[] } {
+  const q = (id: string): string => isMysqlLike(dialect) ? `\`${id}\`` : `"${id}"`
   const down: string[] = []
   const skipped: string[] = []
   for (const stmt of splitSqlStatements(forwardSql)) {
@@ -55,7 +56,7 @@ export function deriveDownStatements(forwardSql: string, dialect: string = confi
     }
     // eslint-disable-next-line no-cond-assign
     else if ((m = /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?["`']?(\w+)["`']?(?:\s+ON\s+["`']?(\w+)["`']?)?/i.exec(stmt))) {
-      down.push(dialect === 'mysql' && m[2]
+      down.push(isMysqlLike(dialect) && m[2]
         ? `DROP INDEX ${q(m[1])} ON ${q(m[2])}`
         : `DROP INDEX IF EXISTS ${q(m[1])}`)
     }

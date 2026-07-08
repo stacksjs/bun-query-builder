@@ -2,7 +2,7 @@ import type { SupportedDialect } from '@/types'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
-import { config } from '@/config'
+import { config, isMysqlLike } from '@/config'
 import { createQueryBuilder } from '../client'
 import { buildMigrationPlan, loadModels } from '../index'
 
@@ -82,7 +82,7 @@ export async function validateSchema(dir?: string): Promise<ValidationResult> {
       `)
       actualTables = result.map((r: any) => r.table_name)
     }
-    else if (dialect === 'mysql') {
+    else if (isMysqlLike(dialect)) {
       const result = await qb.unsafe(`
         SELECT table_name
         FROM information_schema.tables
@@ -146,7 +146,7 @@ export async function validateSchema(dir?: string): Promise<ValidationResult> {
           type: r.data_type.toLowerCase(),
         }))
       }
-      else if (dialect === 'mysql') {
+      else if (isMysqlLike(dialect)) {
         const result = await qb.unsafe(`
           SELECT column_name, data_type
           FROM information_schema.columns

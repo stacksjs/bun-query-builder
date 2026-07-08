@@ -1,5 +1,5 @@
 import type { SupportedDialect } from '@/types'
-import { config } from '@/config'
+import { config, isMysqlLike } from '@/config'
 import { createQueryBuilder } from '../index'
 
 export interface ColumnInfo {
@@ -123,7 +123,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
         })
       }
     }
-    else if (dialect === 'mysql') {
+    else if (isMysqlLike(dialect)) {
       const colsResult = await qb.unsafe(`
         SELECT
           COLUMN_NAME as column_name,

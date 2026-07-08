@@ -1,4 +1,5 @@
 import type { SupportedDialect } from '@/types'
+import { isMysqlLike } from '@/config'
 import process from 'node:process'
 import { bunSql } from '@/db'
 
@@ -55,7 +56,7 @@ export async function dbOptimize(options: OptimizeOptions = {}): Promise<void> {
 
       console.log('✓ PostgreSQL optimization complete')
     }
-    else if (dialect === 'mysql') {
+    else if (isMysqlLike(dialect)) {
       if (options.tables && options.tables.length > 0) {
         // Optimize specific tables
         for (const table of options.tables) {
