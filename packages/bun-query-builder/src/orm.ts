@@ -28,7 +28,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { Faker } from '@stacksjs/ts-faker'
 import type { SupportedDialect } from './types'
 import type { RelationCardinality } from './type-inference'
-import { config } from './config'
+import { config, isMysqlLike } from './config'
 import type { DriverConnection } from './db'
 import { getOrCreateBunSql } from './db'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
@@ -45,7 +45,7 @@ import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
  */
 function formatNow(): string {
   const iso = new Date().toISOString()
-  return config.dialect === 'mysql' ? iso.slice(0, 19).replace('T', ' ') : iso
+  return isMysqlLike(config.dialect) ? iso.slice(0, 19).replace('T', ' ') : iso
 }
 
 /**

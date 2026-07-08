@@ -2,6 +2,7 @@ import type { SupportedDialect } from '../types'
 import type { DialectDriver } from './postgres'
 import { MySQLDriver } from './mysql'
 import { PostgresDriver } from './postgres'
+import { SingleStoreDriver } from './singlestore'
 import { SQLiteDriver } from './sqlite'
 
 export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
@@ -10,6 +11,8 @@ export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
       return new PostgresDriver()
     case 'mysql':
       return new MySQLDriver()
+    case 'singlestore':
+      return new SingleStoreDriver()
     case 'sqlite':
       return new SQLiteDriver()
     default:
@@ -20,6 +23,7 @@ export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
 export { MySQLDriver } from './mysql'
 export type { DialectDriver } from './postgres'
 export { PostgresDriver } from './postgres'
+export { SingleStoreDriver } from './singlestore'
 export { SQLiteDriver } from './sqlite'
 
 // DynamoDB driver (NoSQL)

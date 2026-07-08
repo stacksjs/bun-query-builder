@@ -4,10 +4,15 @@
  * The SQL dialect used to tailor generated SQL and certain features.
  * - 'postgres': Uses `RANDOM()`, supports JSON operators (e.g. `@>`), `FOR SHARE`, `FOR UPDATE`, CTEs
  * - 'mysql': Uses `RAND()`, shared locks via `LOCK IN SHARE MODE`
+ * - 'singlestore': MySQL wire-compatible distributed SQL. Shares MySQL's
+ *   placeholder/quoting/upsert/`LAST_INSERT_ID` behavior (see `isMysqlLike`),
+ *   but its DDL adds distributed-table concepts (`SHARD KEY`, `SORT KEY`,
+ *   `ROWSTORE`/columnstore) and drops foreign keys — handled by the dedicated
+ *   `SingleStoreDriver`.
  * - 'sqlite': Lightweight engine; some features are limited or emulated
  * - 'browser': Browser-compatible mode that uses fetch() API calls instead of direct database connections
  */
-export type SupportedDialect = 'postgres' | 'mysql' | 'sqlite' | 'browser'
+export type SupportedDialect = 'postgres' | 'mysql' | 'singlestore' | 'sqlite' | 'browser'
 
 /**
  * # `TransactionBackoffConfig`

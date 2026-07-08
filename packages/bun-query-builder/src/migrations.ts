@@ -148,6 +148,18 @@ export interface TablePlan {
   table: string
   columns: ColumnPlan[]
   indexes: IndexPlan[]
+  /**
+   * SingleStore distributed-table metadata (ignored by every other dialect's
+   * driver). SingleStore hash-partitions rows across leaf nodes by the
+   * `shardKey` columns; `sortKey` sets the columnstore sort order; `tableKind`
+   * chooses the storage engine. Populated from the model's `shardKey` /
+   * `sortKey` / `tableKind` options by `buildMigrationPlan`. When omitted,
+   * SingleStore falls back to sharding on the primary key (or a random key for
+   * columnstore), so plain MySQL-shaped DDL still works.
+   */
+  shardKey?: string[]
+  sortKey?: string[]
+  tableKind?: 'rowstore' | 'columnstore' | 'reference'
 }
 
 export interface MigrationPlan {
@@ -610,7 +622,13 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         indexes.push({ name: `${table}_${c.name}_unique`, columns: [c.name], type: 'unique' })
     }
 
-    tables.push({ table, columns, indexes })
+    // SingleStore distributed-table hints (no-ops on other dialects). Column
+    // names are snake_cased to match the emitted schema.
+    const shardKey = Array.isArray(model.shardKey) ? (model.shardKey as string[]).map(snakeCase) : undefined
+    const sortKey = Array.isArray(model.sortKey) ? (model.sortKey as string[]).map(snakeCase) : undefined
+    const tableKind = model.tableKind as TablePlan['tableKind']
+
+    tables.push({ table, columns, indexes, shardKey, sortKey, tableKind })
   }
 
   // Trait-driven shared/per-model pivot tables. The likeable, taggable, and

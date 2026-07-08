@@ -4,7 +4,7 @@
 import type { SchemaMeta } from './meta'
 import type { ResolvedPivot } from './pivot'
 import type { DatabaseSchema } from './schema'
-import { config, getPlaceholder, getPlaceholders } from './config'
+import { config, getPlaceholder, getPlaceholders, isMysqlLike } from './config'
 import type { DriverConnection } from './db'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
@@ -57,7 +57,7 @@ export function raw(strings: TemplateStringsArray | string, ...values: unknown[]
 
 /** Dialect-aware identifier quoting for the explicit INSERT builders (#1052). */
 function quoteInsertIdent(id: string): string {
-  return config.dialect === 'mysql'
+  return isMysqlLike(config.dialect)
     ? `\`${id.replace(/`/g, '``')}\``
     : `"${id.replace(/"/g, '""')}"`
 }
@@ -4397,7 +4397,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             text += ` ${keyword} ${column} @> ${getPlaceholder(idx)}`
           whereParams.push(JSON.stringify(json))
         }
-        else if (dialect === 'mysql') {
+        else if (isMysqlLike(dialect)) {
           text += ` ${keyword} JSON_CONTAINS(${column}, ${getPlaceholder(idx)})`
           whereParams.push(JSON.stringify(json))
         }
@@ -4443,7 +4443,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (dialect === 'postgres') {
           text += ` ${keyword} ${path} ${op} ${getPlaceholder(idx)}`
         }
-        else if (dialect === 'mysql') {
+        else if (isMysqlLike(dialect)) {
           text += ` ${keyword} JSON_EXTRACT(${path}) ${op} ${getPlaceholder(idx)}`
         }
         else {
@@ -6158,7 +6158,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // (stacksjs/stacks#1858 Q-7).
       const quoteId = isPostgres
         ? (id: string): string => `"${String(id).replace(/"/g, '""')}"`
-        : config.dialect === 'mysql'
+        : isMysqlLike(config.dialect)
           ? (id: string): string => `\`${String(id).replace(/`/g, '``')}\``
           : (id: string): string => `"${String(id).replace(/"/g, '""')}"`
 
@@ -6350,7 +6350,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // (stacksjs/stacks#1858 Q-7 defense-in-depth).
       const quoteId = (identifier: string): string => {
         const s = String(identifier)
-        if (config.dialect === 'mysql')
+        if (isMysqlLike(config.dialect))
           return `\`${s.replace(/`/g, '``')}\``
         return `"${s.replace(/"/g, '""')}"`
       }
@@ -6497,7 +6497,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // (stacksjs/stacks#1858 Q-7).
       const quoteId = (identifier: string): string => {
         const s = String(identifier)
-        if (config.dialect === 'mysql')
+        if (isMysqlLike(config.dialect))
           return `\`${s.replace(/`/g, '``')}\``
         return `"${s.replace(/"/g, '""')}"`
       }
@@ -6688,7 +6688,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         await runWithHooks<any[]>(q, 'raw')
         return
       }
-      if (config.dialect === 'mysql') {
+      if (isMysqlLike(config.dialect)) {
         // MySQL has `GET_LOCK(name, timeout)`. Wait indefinitely
         // (timeout=-1) to match Postgres `pg_advisory_lock` semantics.
         const lockName = `bqb:${String(key)}`
@@ -6712,7 +6712,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const rows = await runWithHooks<any[]>(q, 'raw')
         return Boolean(rows?.[0]?.ok)
       }
-      if (config.dialect === 'mysql') {
+      if (isMysqlLike(config.dialect)) {
         // MySQL `GET_LOCK(name, 0)` returns 1 immediately if free, 0
         // if held by another connection.
         const lockName = `bqb:${String(key)}`
@@ -6824,7 +6824,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             if (config.dialect === 'postgres') {
               await (tx as any).unsafe(`SET TRANSACTION ISOLATION LEVEL ${upper}`)
             }
-            else if (config.dialect === 'mysql') {
+            else if (isMysqlLike(config.dialect)) {
               // MySQL uses `SET SESSION TRANSACTION ISOLATION LEVEL`
               // — applied per-session before the transaction body.
               // For a per-transaction setting MySQL needs the
@@ -6847,7 +6847,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             if (config.dialect === 'postgres') {
               await (tx as any).unsafe('SET TRANSACTION READ ONLY')
             }
-            else if (config.dialect === 'mysql') {
+            else if (isMysqlLike(config.dialect)) {
               await (tx as any).unsafe('SET TRANSACTION READ ONLY')
             }
             else {
@@ -6935,7 +6935,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return undefined as any
       const { colsSql, valuesSql, params } = buildInsertClause(rows)
       const tbl = quoteInsertIdent(String(table))
-      const sqlText = config.dialect === 'mysql'
+      const sqlText = isMysqlLike(config.dialect)
         ? `INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
         : `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} ON CONFLICT DO NOTHING`
       return (bunSql.unsafe(sqlText, params) as any).execute()
@@ -6943,7 +6943,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     async insertGetId(table, values, idColumn = 'id' as any) {
       const { colsSql, valuesSql, params } = buildInsertClause([values as Record<string, any>])
       const tbl = quoteInsertIdent(String(table))
-      if (config.dialect === 'mysql') {
+      if (isMysqlLike(config.dialect)) {
         // MySQL has no RETURNING — insert then read LAST_INSERT_ID().
         await (bunSql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
         const [row] = await (bunSql.unsafe(`SELECT LAST_INSERT_ID() as id`) as any).execute()
@@ -6995,7 +6995,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // MySQL uses ON DUPLICATE KEY UPDATE / INSERT IGNORE; Postgres + SQLite
       // use ON CONFLICT ... DO UPDATE / DO NOTHING. Empty mergeColumns => the
       // "do nothing" form (an empty SET is a syntax error). See #1035, #1052.
-      if (config.dialect === 'mysql') {
+      if (isMysqlLike(config.dialect)) {
         if (setCols.length === 0)
           return (bunSql.unsafe(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
         const updateList = setCols.map(c => `${quoteInsertIdent(c)} = VALUES(${quoteInsertIdent(c)})`).join(', ')
@@ -7143,7 +7143,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
       // Quote table + column identifiers (#1033) — MySQL backticks, else
       // double quotes (Postgres/SQLite).
-      const quoteId = config.dialect === 'mysql'
+      const quoteId = isMysqlLike(config.dialect)
         ? (id: string): string => `\`${String(id).replace(/`/g, '``')}\``
         : (id: string): string => `"${String(id).replace(/"/g, '""')}"`
       let sql = `INSERT INTO ${quoteId(String(table))}(${keys.map(quoteId).join(',')})VALUES`

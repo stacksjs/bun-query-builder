@@ -503,13 +503,14 @@ function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseCon
   // instance's module-scoped config. Honoring DB_* env here makes every
   // instance connect to the real database + credentials regardless of which
   // config object setConfig reached.
-  if ((dialect === 'postgres' || dialect === 'mysql') && process.env.DB_CONNECTION === dialect) {
+  if ((dialect === 'postgres' || dialect === 'mysql' || dialect === 'singlestore') && process.env.DB_CONNECTION === dialect) {
     const e = process.env
     const envDb = (e.DB_DATABASE || dbConfig.database || '').replace(/^['"]|['"]$/g, '')
     const envUser = e.DB_USERNAME || dbConfig.username
     const envPass = e.DB_PASSWORD ?? dbConfig.password ?? ''
     const envHost = e.DB_HOST || dbConfig.host || 'localhost'
     const envPort = e.DB_PORT || dbConfig.port
+    // SingleStore speaks the MySQL wire protocol, so it dials over `mysql://`.
     const scheme = dialect === 'postgres' ? 'postgres' : 'mysql'
     return `${scheme}://${envUser}:${envPass}@${envHost}${envPort ? `:${envPort}` : ''}/${envDb}`
   }
@@ -526,6 +527,8 @@ function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseCon
       return `postgres://${username}:${password}@${host}${port ? `:${port}` : ''}/${database}`
 
     case 'mysql':
+    // SingleStore is MySQL wire-compatible; it connects through Bun's `mysql://` driver.
+    case 'singlestore':
       return `mysql://${username}:${password}@${host}${port ? `:${port}` : ''}/${database}`
 
     case 'sqlite':

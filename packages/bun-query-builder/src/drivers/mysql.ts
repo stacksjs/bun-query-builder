@@ -27,13 +27,13 @@ export interface DialectDriver {
 }
 
 export class MySQLDriver implements DialectDriver {
-  private quoteIdentifier(id: string): string {
+  protected quoteIdentifier(id: string): string {
     // Escape backticks by doubling them, then wrap in backticks
     // This prevents SQL injection through identifier names
     return `\`${id.replace(/`/g, '``')}\``
   }
 
-  private getColumnType(column: ColumnPlan): string {
+  protected getColumnType(column: ColumnPlan): string {
     switch (column.type) {
       case 'string': return 'varchar(255)'
       case 'text': return 'text'
@@ -56,18 +56,18 @@ export class MySQLDriver implements DialectDriver {
     }
   }
 
-  private getPrimaryKeyType(column: ColumnPlan): string {
+  protected getPrimaryKeyType(column: ColumnPlan): string {
     return this.getColumnType(column)
   }
 
-  private getAutoIncrementClause(column: ColumnPlan): string {
+  protected getAutoIncrementClause(column: ColumnPlan): string {
     if (column.isPrimaryKey && (column.type === 'integer' || column.type === 'bigint')) {
       return 'auto_increment'
     }
     return ''
   }
 
-  private getDefaultValue(column: ColumnPlan): string {
+  protected getDefaultValue(column: ColumnPlan): string {
     if (!column.hasDefault || column.defaultValue === undefined) {
       return ''
     }
@@ -210,7 +210,7 @@ export class MySQLDriver implements DialectDriver {
     return 'INSERT INTO migrations (migration) VALUES (?)'
   }
 
-  private renderColumn(column: ColumnPlan): string {
+  protected renderColumn(column: ColumnPlan): string {
     const typeSql = this.getColumnType(column)
     const parts: string[] = [this.quoteIdentifier(column.name), typeSql]
 

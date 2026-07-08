@@ -1,5 +1,17 @@
-import type { QueryBuilderConfig } from './types'
+import type { QueryBuilderConfig, SupportedDialect } from './types'
 import { loadConfig } from 'bunfig'
+
+/**
+ * Whether a dialect belongs to the MySQL wire-protocol family (MySQL itself or
+ * SingleStore). These share `?` placeholders, backtick identifier quoting,
+ * `ON DUPLICATE KEY UPDATE` upserts, `LAST_INSERT_ID()` id recovery, and the
+ * `YYYY-MM-DD HH:MM:SS` datetime literal shape. Runtime DML branches should key
+ * off this helper rather than `dialect === 'mysql'` so SingleStore inherits the
+ * same behavior; only DDL (see `SingleStoreDriver`) diverges.
+ */
+export function isMysqlLike(dialect: SupportedDialect = config.dialect): boolean {
+  return dialect === 'mysql' || dialect === 'singlestore'
+}
 
 export const defaultConfig: QueryBuilderConfig = {
   verbose: true,
