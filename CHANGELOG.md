@@ -1,3 +1,30 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.42...v0.1.43)
+
+## 🚀 Features
+
+- **db**: TLS connection support via ssl flag / DB_SSL ([0a49782](https://github.com/stacksjs/bun-query-builder/commit/0a49782)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **schema**: emit varchar(n) from column .max(n) ([69679fd](https://github.com/stacksjs/bun-query-builder/commit/69679fd)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dialect**: route SingleStore through MySQL paths in DB tooling ([cbfe25f](https://github.com/stacksjs/bun-query-builder/commit/cbfe25f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **dialect**: add SingleStore support ([8096ac7](https://github.com/stacksjs/bun-query-builder/commit/8096ac7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **sqlite**: only coerce numeric _id columns to INTEGER, respect declared string ids ([86d8b0d](https://github.com/stacksjs/bun-query-builder/commit/86d8b0d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **db**: don't discard a SQL statement preceded by leading comments ([9d53d81](https://github.com/stacksjs/bun-query-builder/commit/9d53d81)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **postgres**: table-qualify enum type names to prevent collisions ([c30e49f](https://github.com/stacksjs/bun-query-builder/commit/c30e49f)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sqlite**: bootstrap pragmas on every library-opened connection ([bf42691](https://github.com/stacksjs/bun-query-builder/commit/bf42691)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.43 ([1d260a8](https://github.com/stacksjs/bun-query-builder/commit/1d260a8)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **release**: publish via CI tag push instead of local bun publish ([bb52ab5](https://github.com/stacksjs/bun-query-builder/commit/bb52ab5)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: refresh bun.lock to pick up pickier 0.1.37 ([8568dab](https://github.com/stacksjs/bun-query-builder/commit/8568dab)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.40...v0.1.41)
 
 ## 🐛 Bug Fixes
