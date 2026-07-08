@@ -23,7 +23,7 @@ jobs:
         uses: home-lang/pantry/packages/action@main
 
       - name: Install Dependencies
-        run: bun install
+        run: bun install --ignore-scripts
 
       - name: Publish
         working-directory: packages/bun-query-builder
