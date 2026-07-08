@@ -123,6 +123,16 @@ export interface ColumnPlan {
   references?: { table: string, column: string, onDelete?: OnForeignKeyAction, onUpdate?: OnForeignKeyAction }
   enumValues?: string[]
   /**
+   * Explicit max length for `string` columns, taken from the model's
+   * `.max(n)` / `.maxLength(n)` validation rule. Drivers emit `varchar(n)`
+   * instead of the default `varchar(255)`, so tight columns (2-char country
+   * codes, 32-char hash ids) don't reserve 255 — this shrinks storage and, on
+   * a columnstore, the bytes scanned per row. Ignored for non-string types and
+   * when unset (falls back to 255). Values > 255 are promoted to `text`
+   * upstream, so `maxLength` here is always ≤ 255.
+   */
+  maxLength?: number
+  /**
    * Fully-qualified enum type name for Postgres named enum types. Stamped by
    * the migration generator as `<table>_<column>_type` so the same enum
    * column name in different tables (e.g. `status` on monitors vs incidents,
@@ -466,6 +476,11 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         inferred = isPk ? 'bigint' : 'string'
       }
 
+      // For a bounded string, carry the max length so drivers can emit
+      // varchar(n) instead of varchar(255). Only meaningful when ≤ 255 —
+      // larger maxes were already promoted to `text` above.
+      const maxLen = inferred === 'string' ? extractMaxFromRules(attr.validation?.rule) : undefined
+
       const col: ColumnPlan = {
         name: columnName,
         type: inferred,
@@ -475,6 +490,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         hasDefault: typeof attr.default !== 'undefined',
         defaultValue: normalizeDefaultValue(attr.default),
         enumValues,
+        maxLength: typeof maxLen === 'number' && maxLen > 0 && maxLen <= 255 ? maxLen : undefined,
       }
 
       // Foreign key inference for *_id columns

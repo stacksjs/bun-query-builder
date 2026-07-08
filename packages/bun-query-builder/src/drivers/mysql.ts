@@ -35,7 +35,7 @@ export class MySQLDriver implements DialectDriver {
 
   protected getColumnType(column: ColumnPlan): string {
     switch (column.type) {
-      case 'string': return 'varchar(255)'
+      case 'string': return `varchar(${column.maxLength ?? 255})`
       case 'text': return 'text'
       case 'boolean': return 'tinyint(1)'
       case 'integer': return 'integer'

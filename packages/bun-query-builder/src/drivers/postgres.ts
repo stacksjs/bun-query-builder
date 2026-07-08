@@ -35,7 +35,7 @@ export class PostgresDriver implements DialectDriver {
 
   private getColumnType(column: ColumnPlan): string {
     switch (column.type) {
-      case 'string': return 'varchar(255)'
+      case 'string': return `varchar(${column.maxLength ?? 255})`
       case 'text': return 'text'
       case 'boolean': return 'boolean'
       case 'integer': return 'integer'
