@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.43...v0.1.44)
+
+## 🤖 Continuous Integration
+
+- **release**: install with --ignore-scripts ([858df3e](https://github.com/stacksjs/bun-query-builder/commit/858df3e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.44 ([23ff75f](https://github.com/stacksjs/bun-query-builder/commit/23ff75f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.42...v0.1.43)
 
 ## 🚀 Features
