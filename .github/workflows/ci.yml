@@ -124,7 +124,7 @@ jobs:
         uses: home-lang/pantry/packages/action@main
 
       - name: Install Dependencies
-        run: bun install
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Build
         run: bun run build
