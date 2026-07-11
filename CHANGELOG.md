@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.45...v0.1.46)
+
+## 🐛 Bug Fixes
+
+- **scripts**: use Bun package runner ([44bdd1d](https://github.com/stacksjs/bun-query-builder/commit/44bdd1d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.46 ([930eaf8](https://github.com/stacksjs/bun-query-builder/commit/930eaf8)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: upgrade better-dx ([59eda1d](https://github.com/stacksjs/bun-query-builder/commit/59eda1d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.44...v0.1.45)
 
 ## 🐛 Bug Fixes
