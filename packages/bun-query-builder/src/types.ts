@@ -304,11 +304,11 @@ export interface PoolConfig {
 
 export interface DatabaseConfig {
   database: string
-  username: string
-  password: string
-  host: string
+  username?: string
+  password?: string
+  host?: string
   url?: string
-  port: number
+  port?: number
   /**
    * Require TLS to the database (appends `?ssl=true` to the connection string).
    * Needed by managed clusters like SingleStore Helios and most hosted

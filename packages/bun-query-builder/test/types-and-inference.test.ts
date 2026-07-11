@@ -8,7 +8,7 @@
  * 2. Runtime tests: bun:test assertions for SQL generation, schema inference,
  *    migrations, and query builder behavior.
  */
-import type { ColumnName, InsertQueryBuilder, SelectQueryBuilder, UpdateQueryBuilder, DeleteQueryBuilder, WhereOperator } from '../src'
+import type { ColumnName, DatabaseConfig, InsertQueryBuilder, SelectQueryBuilder, UpdateQueryBuilder, DeleteQueryBuilder, WhereOperator } from '../src'
 import { describe, expect, test } from 'bun:test'
 import { v } from '@stacksjs/ts-validation'
 import {
@@ -25,6 +25,8 @@ import {
   generateDiffSql,
 } from '../src/migrations'
 import { mockQueryBuilderState } from './utils'
+
+const sqliteDatabaseConfig: DatabaseConfig = { database: 'database/stacks.sqlite' }
 
 // ─── Model Definitions ──────────────────────────────────────────────────────
 
