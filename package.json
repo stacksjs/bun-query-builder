@@ -56,19 +56,19 @@
     "zip:windows-x64": "zip -j bin/qbx-windows-x64.zip bin/qbx-windows-x64.exe",
     "zip:darwin-x64": "zip -j bin/qbx-darwin-x64.zip bin/qbx-darwin-x64",
     "zip:darwin-arm64": "zip -j bin/qbx-darwin-arm64.zip bin/qbx-darwin-arm64",
-    "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
+    "fresh": "bun x rimraf node_modules/ bun.lock && bun i",
     "test": "bun test packages/bun-query-builder/test",
-    "lint": "bunx --bun pickier .",
-    "lint:fix": "bunx --bun pickier . --fix",
-    "format": "bunx --bun pickier . --format",
-    "format:fix": "bunx --bun pickier . --format --write",
-    "format:check": "bunx --bun pickier format . --check",
-    "changelog": "bunx logsmith --verbose",
-    "changelog:generate": "bunx logsmith --output CHANGELOG.md",
-    "release": "bunx --bun bumpx prompt --recursive",
-    "release:patch": "bunx --bun bumpx patch --recursive --commit --tag --push --yes",
-    "release:minor": "bunx --bun bumpx minor --recursive --commit --tag --push --yes",
-    "release:major": "bunx --bun bumpx major --recursive --commit --tag --push --yes",
+    "lint": "bun x --bun pickier .",
+    "lint:fix": "bun x --bun pickier . --fix",
+    "format": "bun x --bun pickier . --format",
+    "format:fix": "bun x --bun pickier . --format --write",
+    "format:check": "bun x --bun pickier format . --check",
+    "changelog": "bun x logsmith --verbose",
+    "changelog:generate": "bun x logsmith --output CHANGELOG.md",
+    "release": "bun x --bun bumpx prompt --recursive",
+    "release:patch": "bun x --bun bumpx patch --recursive --commit --tag --push --yes",
+    "release:minor": "bun x --bun bumpx minor --recursive --commit --tag --push --yes",
+    "release:major": "bun x --bun bumpx major --recursive --commit --tag --push --yes",
     "dev:docs": "bun --bun vitepress dev docs",
     "build:docs": "bun --bun vitepress build docs",
     "preview:docs": "bun --bun vitepress preview docs",
@@ -89,10 +89,10 @@
   "git-hooks": {
     "pre-commit": {
       "staged-lint": {
-        "*.{js,ts,json,yaml,yml,md}": "bunx --bun pickier lint --fix"
+        "*.{js,ts,json,yaml,yml,md}": "bun x --bun pickier lint --fix"
       }
     },
-    "commit-msg": "bunx gitlint --edit .git/COMMIT_EDITMSG"
+    "commit-msg": "bun x gitlint --edit .git/COMMIT_EDITMSG"
   },
   "overrides": {
     "typescript": "^7.0.2"
