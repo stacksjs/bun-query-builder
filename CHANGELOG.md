@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.46...v0.1.47)
+
+## 🐛 Bug Fixes
+
+- **types**: allow SQLite-only database config ([9e99f6a](https://github.com/stacksjs/bun-query-builder/commit/9e99f6a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.47 ([1b89218](https://github.com/stacksjs/bun-query-builder/commit/1b89218)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.45...v0.1.46)
 
 ## 🐛 Bug Fixes
