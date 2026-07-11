@@ -123,6 +123,7 @@ type InferType<T> =
   T extends keyof PrimitiveTypeMap ? PrimitiveTypeMap[T] :
   T extends readonly (infer U)[] ? U :
   T extends (infer U)[] ? U :
+  T extends { validate: (value: infer U) => any } ? U :
   unknown
 
 // Attribute definition with explicit type
@@ -201,6 +202,7 @@ export interface ModelDefinition {
     readonly taggable?: boolean
     readonly categorizable?: boolean
     readonly commentables?: boolean
+    readonly commentable?: boolean
     readonly useActivityLog?: boolean | object
     readonly useSocials?: readonly string[]
   }
@@ -218,11 +220,11 @@ export interface ModelDefinition {
   readonly attributes: {
     readonly [key: string]: TypedAttribute<unknown>
   }
-  readonly get?: Record<string, (attributes: Record<string, unknown>) => unknown>
-  readonly set?: Record<string, (attributes: Record<string, unknown>) => unknown>
+  readonly get?: Record<string, (attributes: any) => unknown>
+  readonly set?: Record<string, (attributes: any) => unknown>
   readonly scopes?: Record<string, (value: unknown) => unknown>
   readonly indexes?: readonly object[]
-  readonly dashboard?: { readonly highlight?: boolean | number }
+  readonly dashboard?: { readonly enabled?: boolean; readonly highlight?: boolean | number }
   readonly hooks?: {
     readonly beforeCreate?: (data: Record<string, unknown>) => void | Promise<void>
     readonly afterCreate?: (model: ModelHookInstance) => void | Promise<void>
@@ -239,7 +241,11 @@ type AttributeKeys<TDef extends ModelDefinition> = keyof TDef['attributes'] & st
 // Infer single attribute type
 type InferAttributeType<TAttr> =
   TAttr extends { type: infer T } ? InferType<T> :
-  TAttr extends { factory: (faker: Faker) => infer R } ? R :
+  TAttr extends { factory: (faker: Faker) => infer R }
+    ? [Exclude<R, null | undefined>] extends [never]
+      ? TAttr extends { validation: { rule: infer V } } ? InferType<V> | Extract<R, null | undefined> : R
+      : R
+    : TAttr extends { validation: { rule: infer R } } ? InferType<R> :
   unknown
 
 // Build the full attributes type from definition. Columns declared
@@ -248,6 +254,16 @@ type InferModelAttributes<TDef extends ModelDefinition> = {
   [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { nullable: true }
     ? InferAttributeType<TDef['attributes'][K]> | null
     : InferAttributeType<TDef['attributes'][K]>
+}
+
+type SnakeCase<S extends string> = S extends `${infer C}${infer Rest}`
+  ? C extends Lowercase<C>
+    ? `${C}${SnakeCase<Rest>}`
+    : `_${Lowercase<C>}${SnakeCase<Rest>}`
+  : S
+
+type SnakeCaseAttributes<TDef extends ModelDefinition> = {
+  [K in keyof InferModelAttributes<TDef> & string as SnakeCase<K>]: InferModelAttributes<TDef>[K]
 }
 
 // System fields added by traits. The primary-key column honors the model's
@@ -265,11 +281,12 @@ type SystemFields<TDef extends ModelDefinition> =
 
 // Complete model type
 type ModelAttributes<TDef extends ModelDefinition> =
-  InferModelAttributes<TDef> & SystemFields<TDef>
+  InferModelAttributes<TDef> & SnakeCaseAttributes<TDef> & SystemFields<TDef>
 
 // All valid column names
 type ColumnName<TDef extends ModelDefinition> =
   | AttributeKeys<TDef>
+  | SnakeCase<AttributeKeys<TDef>>
   | (TDef extends { primaryKey: infer PK extends string } ? PK : 'id')
   | (TDef['traits'] extends { useUuid: true } ? 'uuid' : never)
   | (TDef['traits'] extends { useTimestamps: true } ? 'created_at' | 'updated_at' : never)
@@ -288,6 +305,11 @@ type HiddenKeys<TDef extends ModelDefinition> = {
 type FillableKeys<TDef extends ModelDefinition> = {
   [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { fillable: true } ? K : never
 }[AttributeKeys<TDef>]
+
+type FillableAttributes<TDef extends ModelDefinition> = Partial<Pick<
+  ModelAttributes<TDef>,
+  FillableKeys<TDef> | SnakeCase<FillableKeys<TDef>>
+>>
 
 // Numeric attribute columns — constrains aggregate methods (sum, avg, etc.)
 type NumericColumns<TDef extends ModelDefinition> = {
@@ -345,6 +367,14 @@ type LoadedRelationValue<TDef, R extends string> =
     : 'many' extends RelationCardinality<TDef, R>
       ? ModelInstance<any, any>[] | undefined
       : ModelInstance<any, any>[] | ModelInstance<any, any> | null | undefined
+
+/** A hydrated model instance with its selected columns exposed as proxy properties. */
+export type ModelRecord<
+  TDef extends ModelDefinition,
+  TSelected extends ColumnName<TDef> = ColumnName<TDef>,
+> = ModelInstance<TDef, TSelected>
+  & Pick<ModelAttributes<TDef>, Extract<TSelected, keyof ModelAttributes<TDef>>>
+  & { [R in InferRelationNames<TDef>]?: LoadedRelationValue<TDef, R> }
 
 type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' | 'in' | 'not in'
 
@@ -893,7 +923,7 @@ class ModelInstance<
     return changes as any
   }
 
-  fill(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): this {
+  fill(data: FillableAttributes<TDef>): this {
     const attrs = this._definition.attributes
     for (const [key, value] of Object.entries(data)) {
       const attr = findAttributeDef(attrs, key)
@@ -1036,7 +1066,7 @@ class ModelInstance<
     return this
   }
 
-  async update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): Promise<this> {
+  async update(data: FillableAttributes<TDef>): Promise<this> {
     this.fill(data)
     return this.save()
   }
@@ -2481,7 +2511,7 @@ class ModelQueryBuilder<
     }
   }
 
-  async get(): Promise<ModelInstance<TDef, TSelected>[]> {
+  async get(): Promise<ModelRecord<TDef, TSelected>[]> {
     const exec = getExecutor()
     const { sql, params } = this.buildQuery()
     const rows = await exec.all(sql, params)
@@ -2492,21 +2522,21 @@ class ModelQueryBuilder<
       await this.eagerLoadRelations(instances)
     }
 
-    return instances
+    return instances as ModelRecord<TDef, TSelected>[]
   }
 
-  async first(): Promise<ModelInstance<TDef, TSelected> | undefined> {
+  async first(): Promise<ModelRecord<TDef, TSelected> | undefined> {
     this._limit = 1
     return (await this.get())[0]
   }
 
-  async firstOrFail(): Promise<ModelInstance<TDef, TSelected>> {
+  async firstOrFail(): Promise<ModelRecord<TDef, TSelected>> {
     const result = await this.first()
     if (!result) throw new Error(`No ${this._definition.name} found`)
     return result
   }
 
-  async last(): Promise<ModelInstance<TDef, TSelected> | undefined> {
+  async last(): Promise<ModelRecord<TDef, TSelected> | undefined> {
     const pk = this._definition.primaryKey || 'id'
     this._orderBy = [{ column: pk, direction: 'desc' }]
     this._limit = 1
@@ -2543,7 +2573,7 @@ class ModelQueryBuilder<
    * const admin = User.where('role', 'admin').sole()
    * ```
    */
-  async sole(): Promise<ModelInstance<TDef, TSelected>> {
+  async sole(): Promise<ModelRecord<TDef, TSelected>> {
     this._limit = 2 // fetch 2 to detect duplicates
     const results = await this.get()
     if (results.length === 0) throw new Error(`No ${this._definition.name} found`)
@@ -2783,10 +2813,71 @@ interface StaticWhereOverloads<TDef extends ModelDefinition> {
   ): ModelQueryBuilder<TDef>
 }
 
+/** The fully inferred static model API produced from a model definition. */
+export type ModelStatic<TDef extends ModelDefinition> = StaticWhereOverloads<TDef> & {
+  query: () => ModelQueryBuilder<TDef>
+  whereIn: <K extends ColumnName<TDef>>(column: K, values: (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]) => ModelQueryBuilder<TDef>
+  whereNotIn: <K extends ColumnName<TDef>>(column: K, values: (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]) => ModelQueryBuilder<TDef>
+  whereNull: <K extends ColumnName<TDef>>(column: K) => ModelQueryBuilder<TDef>
+  whereNotNull: <K extends ColumnName<TDef>>(column: K) => ModelQueryBuilder<TDef>
+  whereLike: <K extends ColumnName<TDef>>(column: K, pattern: string) => ModelQueryBuilder<TDef>
+  orderBy: <K extends ColumnName<TDef>>(column: K, direction?: 'asc' | 'desc') => ModelQueryBuilder<TDef>
+  orderByDesc: <K extends ColumnName<TDef>>(column: K) => ModelQueryBuilder<TDef>
+  select: <K extends ColumnName<TDef>>(...columns: K[]) => ModelQueryBuilder<TDef, K>
+  with: <R extends InferRelationNames<TDef>>(...relations: R[]) => ModelQueryBuilder<TDef>
+  limit: (count: number) => ModelQueryBuilder<TDef>
+  take: (count: number) => ModelQueryBuilder<TDef>
+  skip: (count: number) => ModelQueryBuilder<TDef>
+  withTrashed: () => ModelQueryBuilder<TDef>
+  onlyTrashed: () => ModelQueryBuilder<TDef>
+  find: (id: number | string) => Promise<ModelRecord<TDef> | undefined>
+  findOrFail: (id: number | string) => Promise<ModelRecord<TDef>>
+  findMany: (ids: (number | string)[]) => Promise<ModelRecord<TDef>[]>
+  all: () => Promise<ModelRecord<TDef>[]>
+  first: () => Promise<ModelRecord<TDef> | undefined>
+  firstOrFail: () => Promise<ModelRecord<TDef>>
+  last: () => Promise<ModelRecord<TDef> | undefined>
+  count: () => Promise<number>
+  exists: () => Promise<boolean>
+  doesntExist: () => Promise<boolean>
+  paginate: (page?: number, perPage?: number) => Promise<{
+    data: ModelRecord<TDef>[]
+    total: number
+    page: number
+    perPage: number
+    lastPage: number
+    hasMorePages: boolean
+    isEmpty: boolean
+    from: number | null
+    to: number | null
+  }>
+  whereBetween: <K extends ColumnName<TDef>>(column: K, range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown]) => ModelQueryBuilder<TDef>
+  whereNotBetween: <K extends ColumnName<TDef>>(column: K, range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown]) => ModelQueryBuilder<TDef>
+  create: (data: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
+  createMany: (items: FillableAttributes<TDef>[]) => Promise<ModelRecord<TDef>[]>
+  updateOrCreate: (search: Partial<ModelAttributes<TDef>>, data: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
+  firstOrCreate: (search: Partial<ModelAttributes<TDef>>, data?: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
+  destroy: (id: number | string) => Promise<boolean>
+  remove: (id: number | string) => Promise<boolean>
+  truncate: () => Promise<void>
+  getDefinition: () => TDef
+  getTable: () => string
+  make: (data?: Partial<ModelAttributes<TDef>>) => ModelInstance<TDef>
+  latest: (column?: ColumnName<TDef>) => ModelQueryBuilder<TDef>
+  oldest: (column?: ColumnName<TDef>) => ModelQueryBuilder<TDef>
+  max: <K extends ColumnName<TDef>>(column: K) => Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) | null>
+  min: <K extends ColumnName<TDef>>(column: K) => Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) | null>
+  avg: <K extends NumericColumns<TDef>>(column: K) => Promise<number>
+  sum: <K extends NumericColumns<TDef>>(column: K) => Promise<number>
+  pluck: <K extends ColumnName<TDef>>(column: K) => Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]>
+} & {
+  [K in AttributeKeys<TDef> as `where${Capitalize<K>}`]: (value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) => ModelQueryBuilder<TDef>
+}
+
 /**
  * Create a model class from a definition with full type inference
  */
-export function createModel<const TDef extends ModelDefinition>(definition: TDef) {
+function createModelInternal<const TDef extends ModelDefinition>(definition: TDef): ModelStatic<TDef> {
   type Attrs = ModelAttributes<TDef>
   type Cols = ColumnName<TDef>
   type AttrKeys = AttributeKeys<TDef>
@@ -2857,27 +2948,27 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
     /** Start a query restricted to soft-deleted rows. See #1024. */
     onlyTrashed: () => new ModelQueryBuilder<TDef>(definition).onlyTrashed(),
 
-    async find(id: number | string): Promise<ModelInstance<TDef> | undefined> {
+    async find(id: number | string): Promise<ModelRecord<TDef> | undefined> {
       const exec = getExecutor()
       const pk = definition.primaryKey || 'id'
       // Exclude soft-deleted rows by default (use withTrashed()/query() to override).
       const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
       const row = await exec.get(`SELECT * FROM ${definition.table} WHERE ${pk} = ?${sd}`, [id])
-      return row ? new ModelInstance<TDef>(definition, row as any) : undefined
+      return row ? new ModelInstance<TDef>(definition, row as any) as ModelRecord<TDef> : undefined
     },
 
-    async findOrFail(id: number | string): Promise<ModelInstance<TDef>> {
+    async findOrFail(id: number | string): Promise<ModelRecord<TDef>> {
       const result = await model.find(id)
       if (!result) throw new Error(`${definition.name} with id ${id} not found`)
       return result
     },
 
-    async findMany(ids: (number | string)[]): Promise<ModelInstance<TDef>[]> {
+    async findMany(ids: (number | string)[]): Promise<ModelRecord<TDef>[]> {
       const exec = getExecutor()
       const pk = definition.primaryKey || 'id'
       const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
       const rows = await exec.all(`SELECT * FROM ${definition.table} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})${sd}`, ids)
-      return rows.map(row => new ModelInstance<TDef>(definition, row as any))
+      return rows.map(row => new ModelInstance<TDef>(definition, row as any) as ModelRecord<TDef>)
     },
 
     all: () => new ModelQueryBuilder<TDef>(definition).get(),
@@ -2897,24 +2988,24 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
       return new ModelQueryBuilder<TDef>(definition).whereNotBetween(column, range as any)
     },
 
-    async create(data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>): Promise<ModelInstance<TDef>> {
+    async create(data: FillableAttributes<TDef>): Promise<ModelRecord<TDef>> {
       const instance = new ModelInstance<TDef>(definition, data as any)
       await instance.save()
-      return instance
+      return instance as ModelRecord<TDef>
     },
 
-    async createMany(items: Partial<Pick<InferModelAttributes<TDef>, Fillable>>[]): Promise<ModelInstance<TDef>[]> {
+    async createMany(items: FillableAttributes<TDef>[]): Promise<ModelRecord<TDef>[]> {
       // Sequential to preserve insertion order and avoid hammering a single
       // connection with concurrent writes.
-      const out: ModelInstance<TDef>[] = []
+      const out: ModelRecord<TDef>[] = []
       for (const data of items) out.push(await this.create(data))
       return out
     },
 
     async updateOrCreate(
       search: Partial<Attrs>,
-      data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
-    ): Promise<ModelInstance<TDef>> {
+      data: FillableAttributes<TDef>
+    ): Promise<ModelRecord<TDef>> {
       let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key as Cols, value as any)
@@ -2929,8 +3020,8 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
 
     async firstOrCreate(
       search: Partial<Attrs>,
-      data: Partial<Pick<InferModelAttributes<TDef>, Fillable>>
-    ): Promise<ModelInstance<TDef>> {
+      data: FillableAttributes<TDef>
+    ): Promise<ModelRecord<TDef>> {
       let query = new ModelQueryBuilder<TDef>(definition)
       for (const [key, value] of Object.entries(search)) {
         query = query.where(key as Cols, value as any)
@@ -2986,9 +3077,12 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
       }
       return Reflect.get(target, prop)
     },
-  }) as Omit<typeof model, 'where' | 'orWhere'> & StaticWhereOverloads<TDef> & {
-    [K in AttributeKeys<TDef> as `where${Capitalize<K>}`]: (value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) => ModelQueryBuilder<TDef>
-  }
+  }) as unknown as ModelStatic<TDef>
+}
+
+/** Create a model class from a definition with full type inference. */
+export function createModel<const TDef extends ModelDefinition>(definition: TDef): ModelStatic<TDef> {
+  return createModelInternal(definition)
 }
 
 export async function createTableFromModel(definition: ModelDefinition): Promise<void> {

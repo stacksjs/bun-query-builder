@@ -23,8 +23,10 @@ export * from './types'
 // Resolve ambiguous re-exports by explicitly choosing which module's version to use
 export type { WhereOperator } from './browser'
 export type { ModelQueryBuilder } from './dynamodb'
-export type { ColumnName } from './client'
+export type { ColumnName, QueryBuilder } from './client'
 export { type ModelDefinition, defineModel } from './model'
+export type { ModelRecord } from './schema'
+export type { ModelDefinition as OrmModelDefinition, ModelStatic as OrmModelStatic } from './orm'
 
 // Explicit re-exports for model registry functions
 export { getModel, getAllModels, getModelRegistry, hasModel, clearModelRegistry, registerModel } from './model'
