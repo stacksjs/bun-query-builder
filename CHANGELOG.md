@@ -1,3 +1,26 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.44...v0.1.45)
+
+## 🐛 Bug Fixes
+
+- improve TypeScript 7 model inference ([04af79b](https://github.com/stacksjs/bun-query-builder/commit/04af79b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📦 Build System
+
+- trust dtsx for inline declarations ([59a7c58](https://github.com/stacksjs/bun-query-builder/commit/59a7c58)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🤖 Continuous Integration
+
+- skip benchmark install scripts when publishing ([8e517fe](https://github.com/stacksjs/bun-query-builder/commit/8e517fe)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.45 ([95ae878](https://github.com/stacksjs/bun-query-builder/commit/95ae878)) _(by Chris <chrisbreuer93@gmail.com>)_
+- upgrade to TypeScript 7 ([d42bc0a](https://github.com/stacksjs/bun-query-builder/commit/d42bc0a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.43...v0.1.44)
 
 ## 🤖 Continuous Integration
