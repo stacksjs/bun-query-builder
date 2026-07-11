@@ -5,7 +5,10 @@ const result = await Bun.build({
   entrypoints: ['src/index.ts', 'src/browser.ts', 'src/dynamodb/index.ts', 'bin/cli.ts'],
   outdir: './dist',
   target: 'bun',
-  plugins: [dts()],
+  plugins: [dts({
+    root: './src',
+    entrypoints: ['index.ts', 'browser.ts', 'dynamodb/index.ts'],
+  })],
 })
 
 if (!result.success) {
