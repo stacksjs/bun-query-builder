@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import type { CliOption, FileOptions, MigrateOptions, SqlOptions, UnsafeOptions } from '../src/types'
 import { CLI } from '@stacksjs/clapp'
 import { version } from '../package.json'

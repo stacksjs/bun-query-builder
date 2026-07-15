@@ -1,6 +1,7 @@
 {
   "name": "bun-query-builder",
   "type": "module",
+  "sideEffects": false,
   "version": "0.1.47",
   "description": "A simple yet performant query builder for TypeScript. Built with Bun.",
   "author": "Chris Breuer <chris@stacksjs.org>",
