@@ -1,3 +1,14 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.47...v0.1.48)
+
+## 🧹 Chores
+
+- release v0.1.48 ([bfd4757](https://github.com/stacksjs/bun-query-builder/commit/bfd4757)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **pkg**: publint clean — sideEffects:false + executable bin shebang ([c7c2d2c](https://github.com/stacksjs/bun-query-builder/commit/c7c2d2c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.46...v0.1.47)
 
 ## 🐛 Bug Fixes
