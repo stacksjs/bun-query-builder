@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.48...v0.1.49)
+
+## 🐛 Bug Fixes
+
+- **sqlite**: return rows for INSERT/UPDATE/DELETE ... RETURNING ([189792c](https://github.com/stacksjs/bun-query-builder/commit/189792c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.49 ([35689d8](https://github.com/stacksjs/bun-query-builder/commit/35689d8)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: declare bun ^1.3.14 in deps.yaml ([c6084b5](https://github.com/stacksjs/bun-query-builder/commit/c6084b5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.47...v0.1.48)
 
 ## 🧹 Chores
