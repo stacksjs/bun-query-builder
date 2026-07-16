@@ -292,9 +292,14 @@ function createSQLiteSQL(filename: string): SQL {
       values: params,
       execute: () => {
         try {
-          // Determine if this is a SELECT or other statement
+          // Rows come back from a SELECT/PRAGMA, and also from any
+          // INSERT/UPDATE/DELETE that carries a RETURNING clause. SQLite
+          // supports RETURNING, but `.run()` only surfaces
+          // { changes, lastInsertRowid } and discards the returned rows, so a
+          // RETURNING statement must go through the row-returning path or the
+          // caller silently loses its data.
           const trimmed = sql.trim().toUpperCase()
-          if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA')) {
+          if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA') || /\bRETURNING\b/.test(trimmed)) {
             const result = wrapper.query(sql, params)
             return Promise.resolve(result)
           }
@@ -341,8 +346,11 @@ function createSQLiteSQL(filename: string): SQL {
   sqlFunction.unsafe = (sql: string, params: any[] = []) => {
     const execute = (): Promise<any> => {
       try {
+        // A RETURNING clause turns an INSERT/UPDATE/DELETE into a row producer;
+        // route it through the row-returning path so its output is not lost to
+        // `.run()`'s { changes, lastInsertRowid }. See the tagged-template path.
         const trimmed = sql.trim().toUpperCase()
-        if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA')) {
+        if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA') || /\bRETURNING\b/.test(trimmed)) {
           const result = wrapper.query(sql, params)
           return Promise.resolve(result)
         }
