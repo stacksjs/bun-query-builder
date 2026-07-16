@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.49...v0.1.50)
+
+## 🐛 Bug Fixes
+
+- **pkg**: drop sideEffects:false, it broke the published dist ([3c90005](https://github.com/stacksjs/bun-query-builder/commit/3c90005)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.50 ([18ba1e0](https://github.com/stacksjs/bun-query-builder/commit/18ba1e0)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.48...v0.1.49)
 
 ## 🐛 Bug Fixes
