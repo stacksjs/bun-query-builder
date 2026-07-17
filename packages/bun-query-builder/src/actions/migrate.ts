@@ -91,6 +91,20 @@ function savePlanSnapshot(workspaceRoot: string, dialect: SupportedDialect, plan
 }
 
 /**
+ * Persist a plan returned by a dry-run migration after an embedding framework
+ * has successfully written the SQL itself. This keeps preview semantics pure
+ * while allowing a custom migration writer to advance the source-of-truth
+ * snapshot only after its own persistence step succeeds.
+ */
+export function saveMigrationSnapshot(
+  plan: MigrationPlan,
+  options: { dialect?: SupportedDialect, workspaceRoot?: string } = {},
+): void {
+  const dialect = options.dialect ?? plan.dialect
+  savePlanSnapshot(options.workspaceRoot ?? getWorkspaceRoot(), dialect, plan)
+}
+
+/**
  * Get workspace root - always use process.cwd() for consistency
  */
 function getWorkspaceRoot(): string {

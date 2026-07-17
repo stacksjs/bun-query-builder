@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { deleteMigrationFiles, generateMigration } from '../src/actions/migrate'
+import { deleteMigrationFiles, generateMigration, saveMigrationSnapshot } from '../src/actions/migrate'
 import { buildMigrationPlan, hashMigrationPlan } from '../src/migrations'
 import { defineModels } from '../src/schema'
 
@@ -64,6 +64,38 @@ describe('migrations - snapshot system', () => {
   }
 
   describe('snapshot file creation', () => {
+    it('lets custom writers commit a dry-run plan after persistence', async () => {
+      createModelFile('User', `
+        export default {
+          name: 'User',
+          table: 'users',
+          primaryKey: 'id',
+          attributes: {
+            id: { validation: { rule: {} } },
+            email: { validation: { rule: {} } },
+          },
+        }
+      `)
+
+      const originalCwd = process.cwd()
+      process.chdir(testWorkspace)
+
+      try {
+        const first = await generateMigration(modelsDir, { dialect: 'postgres', dryRun: true })
+        expect(first.hasChanges).toBe(true)
+        expect(existsSync(getSnapshotPath())).toBe(false)
+
+        saveMigrationSnapshot(first.plan, { workspaceRoot: testWorkspace })
+        expect(existsSync(getSnapshotPath())).toBe(true)
+
+        const second = await generateMigration(modelsDir, { dialect: 'postgres', dryRun: true })
+        expect(second.hasChanges).toBe(false)
+      }
+      finally {
+        process.chdir(originalCwd)
+      }
+    })
+
     it('creates snapshot file after first migration', async () => {
       createModelFile('User', `
         export default {
