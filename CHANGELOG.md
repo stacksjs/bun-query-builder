@@ -1,3 +1,21 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.56...v0.1.57)
+
+## ♻️ Code Refactoring
+
+- **db**: export createConnectionString for direct unit coverage ([b67137e](https://github.com/stacksjs/bun-query-builder/commit/b67137e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧪 Tests
+
+- **db**: pin DB_* env preference in createConnectionString ([098068e](https://github.com/stacksjs/bun-query-builder/commit/098068e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.57 ([dd0abf0](https://github.com/stacksjs/bun-query-builder/commit/dd0abf0)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.55...v0.1.56)
 
 ## 🐛 Bug Fixes
