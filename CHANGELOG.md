@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.52...v0.1.53)
+
+## 🐛 Bug Fixes
+
+- keep unsafe queries inside transactions ([dcbc06e](https://github.com/stacksjs/bun-query-builder/commit/dcbc06e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.53 ([008729e](https://github.com/stacksjs/bun-query-builder/commit/008729e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.51...v0.1.52)
 
 ## 🐛 Bug Fixes
