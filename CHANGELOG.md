@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.55...v0.1.56)
+
+## 🐛 Bug Fixes
+
+- **migrations**: preserve unchanged snapshots ([2e42b45](https://github.com/stacksjs/bun-query-builder/commit/2e42b45)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.56 ([66ff83b](https://github.com/stacksjs/bun-query-builder/commit/66ff83b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.54...v0.1.55)
 
 ## 🐛 Bug Fixes
