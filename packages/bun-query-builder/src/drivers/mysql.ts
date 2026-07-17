@@ -45,6 +45,7 @@ export class MySQLDriver implements DialectDriver {
       case 'decimal': return 'decimal(10,2)'
       case 'date': return 'date'
       case 'datetime': return 'datetime'
+      case 'timestamptz': return 'datetime'
       case 'json': return 'json'
       case 'enum':
         if (column.enumValues && column.enumValues.length > 0) {

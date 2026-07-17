@@ -974,6 +974,29 @@ describe('Migration Plan', () => {
 })
 
 describe('Migration Plan: Column Type Inference', () => {
+  test('explicit attribute types override validator inference', () => {
+    const plan = buildMigrationPlan({
+      Metric: {
+        name: 'Metric',
+        table: 'metrics',
+        attributes: {
+          amount: { type: 'decimal', validation: { rule: { name: 'number' } } },
+          payload: { type: 'text', validation: { rule: { name: 'string' } } },
+          occurred_at: { type: 'timestamptz', validation: { rule: { name: 'timestamp' } } },
+        },
+      },
+    } as any, { dialect: 'postgres' })
+
+    const columns = plan.tables[0]!.columns
+    expect(columns.find(column => column.name === 'amount')?.type).toBe('decimal')
+    expect(columns.find(column => column.name === 'payload')?.type).toBe('text')
+    expect(columns.find(column => column.name === 'occurred_at')?.type).toBe('timestamptz')
+    const sql = generateSql(plan).join('\n')
+    expect(sql).toContain('decimal(10,2)')
+    expect(sql).toContain('"payload" text')
+    expect(sql).toContain('"occurred_at" timestamptz')
+  })
+
   test('integer validator → integer/bigint', () => {
     const plan = buildMigrationPlan(models, { dialect: 'postgres' })
     const usersTable = plan.tables.find((t: any) => t.table === 'users')!

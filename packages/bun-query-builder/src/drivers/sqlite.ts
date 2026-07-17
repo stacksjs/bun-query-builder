@@ -62,6 +62,7 @@ export class SQLiteDriver implements DialectDriver {
       case 'decimal': return 'REAL'
       case 'date': return 'TEXT'
       case 'datetime': return 'TEXT'
+      case 'timestamptz': return 'TEXT'
       case 'json': return 'TEXT'
       case 'enum':
         if (column.enumValues && column.enumValues.length > 0) {

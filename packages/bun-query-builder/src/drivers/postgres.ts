@@ -45,6 +45,7 @@ export class PostgresDriver implements DialectDriver {
       case 'decimal': return 'decimal(10,2)'
       case 'date': return 'date'
       case 'datetime': return 'timestamp'
+      case 'timestamptz': return 'timestamptz'
       case 'json': return 'jsonb'
       case 'enum':
         if (column.enumValues && column.enumValues.length > 0) {

@@ -109,6 +109,7 @@ export type NormalizedColumnType =
   | 'decimal'
   | 'date'
   | 'datetime'
+  | 'timestamptz'
   | 'json'
   | 'enum'
 
@@ -361,6 +362,9 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
       case 'datetime':
       case 'timestamp':
         return 'datetime'
+      case 'timestamptz':
+      case 'timestamp_tz':
+        return 'timestamptz'
       case 'json':
         return 'json'
       case 'enum':
@@ -387,11 +391,44 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
       return 'date'
     if (type === 'datetime')
       return 'datetime'
+    if (type === 'timestamptz' || type === 'timestamp_tz')
+      return 'timestamptz'
     if (type === 'json')
       return 'json'
   }
 
   return undefined
+}
+
+function normalizeAttributeType(value: unknown): NormalizedColumnType | undefined {
+  if (typeof value !== 'string')
+    return undefined
+  const type = value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+  switch (type) {
+    case 'varchar':
+    case 'string': return 'string'
+    case 'text': return 'text'
+    case 'bool':
+    case 'boolean': return 'boolean'
+    case 'int':
+    case 'integer': return 'integer'
+    case 'bigint': return 'bigint'
+    case 'float': return 'float'
+    case 'double': return 'double'
+    case 'number':
+    case 'numeric':
+    case 'decimal': return 'decimal'
+    case 'date': return 'date'
+    case 'datetime':
+    case 'timestamp': return 'datetime'
+    case 'timestamp_tz':
+    case 'timestamptz':
+    case 'timestamp_with_time_zone': return 'timestamptz'
+    case 'json':
+    case 'jsonb': return 'json'
+    case 'enum': return 'enum'
+    default: return undefined
+  }
 }
 
 export interface InferenceOptions {
@@ -445,8 +482,8 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       let enumValues: string[] | undefined
       const isPk = attrName === primaryKey
 
-      // Priority 1: Check validation rule for explicit type
-      inferred = detectTypeFromValidationRule(attr.validation?.rule)
+      // Priority 1: an explicit model column type, then validator inference.
+      inferred = normalizeAttributeType(attr.type) ?? detectTypeFromValidationRule(attr.validation?.rule)
 
       // Priority 2: Check for enum validation rule (or extract enum values if type is enum)
       if (!inferred || inferred === 'enum') {
@@ -1030,6 +1067,7 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
       case 'text':
       case 'date':
       case 'datetime':
+      case 'timestamptz':
       case 'json':
       case 'enum':
         return 'TEXT'

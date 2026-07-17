@@ -53,6 +53,8 @@ export interface Attribute {
   required?: boolean
   /** Explicitly control database nullability. Takes precedence over `required`. */
   nullable?: boolean
+  /** Explicit database column type. Takes precedence over validator inference. */
+  type?: string
   default?: string | number | boolean | Date
   unique?: boolean
   order?: number
