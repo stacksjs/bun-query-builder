@@ -1,3 +1,21 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.50...v0.1.51)
+
+## 🐛 Bug Fixes
+
+- **migrations**: inline model schema constraints ([ceb94ba](https://github.com/stacksjs/bun-query-builder/commit/ceb94ba)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧪 Tests
+
+- **query-builder**: isolate postgres json assertion ([21c0e89](https://github.com/stacksjs/bun-query-builder/commit/21c0e89)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.51 ([2def07a](https://github.com/stacksjs/bun-query-builder/commit/2def07a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.49...v0.1.50)
 
 ## 🐛 Bug Fixes
