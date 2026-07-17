@@ -193,10 +193,16 @@ describe('migrations - snapshot system', () => {
         expect(first.hasChanges).toBe(true)
         expect(first.sql).toContain('CREATE TABLE')
 
+        const snapshot = readSnapshot()
+        snapshot.updatedAt = '2020-01-01T00:00:00.000Z'
+        writeSnapshot(snapshot)
+        const snapshotBeforeNoop = readFileSync(getSnapshotPath(), 'utf8')
+
         // Second migration - no changes
         const second = await generateMigration(modelsDir, { dialect: 'postgres' })
         expect(second.hasChanges).toBe(false)
         expect(second.sql.toLowerCase()).toContain('no changes')
+        expect(readFileSync(getSnapshotPath(), 'utf8')).toBe(snapshotBeforeNoop)
       }
       finally {
         process.chdir(originalCwd)

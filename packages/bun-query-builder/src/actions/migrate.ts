@@ -72,6 +72,22 @@ function loadPlanSnapshot(workspaceRoot: string, dialect: SupportedDialect): Mig
 function savePlanSnapshot(workspaceRoot: string, dialect: SupportedDialect, plan: MigrationPlan): void {
   const snapshotPath = getSnapshotPath(workspaceRoot, dialect)
   const snapshotDir = join(workspaceRoot, '.qb')
+  const hash = hashMigrationPlan(plan)
+
+  // A no-op migration must also be a filesystem no-op. Keeping the existing
+  // snapshot intact avoids timestamp-only diffs in every consuming project.
+  if (existsSync(snapshotPath)) {
+    try {
+      const current = JSON.parse(readFileSync(snapshotPath, 'utf8'))
+      if (current?.hash === hash && current?.dialect === dialect && current?.plan) {
+        info('-- Model snapshot unchanged')
+        return
+      }
+    }
+    catch {
+      // Invalid snapshots are replaced with the canonical format below.
+    }
+  }
 
   // Ensure the .qb directory exists
   if (!existsSync(snapshotDir)) {
@@ -81,7 +97,7 @@ function savePlanSnapshot(workspaceRoot: string, dialect: SupportedDialect, plan
 
   const snapshot = {
     plan,
-    hash: hashMigrationPlan(plan),
+    hash,
     dialect,
     updatedAt: new Date().toISOString(),
   }
