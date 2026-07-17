@@ -502,8 +502,12 @@ function createSQLiteSQL(filename: string): SQL {
 
 /**
  * Creates a database connection string based on the configured dialect and database settings.
+ *
+ * Exported so the `DB_*` env preference (see below) can be pinned by direct
+ * unit tests — the same pattern as `resolvePoolOptions`/`splitSqlStatements`.
+ * It is not re-exported from `src/index.ts`, so it stays internal.
  */
-function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseConfig): string {
+export function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseConfig): string {
   // When the host process declares a matching connection via env, prefer it.
   // Consumers that bundle multiple bun-query-builder instances (e.g. the
   // vendored Stacks framework) can leave a given instance on the built-in
