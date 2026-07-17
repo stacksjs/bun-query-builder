@@ -950,8 +950,8 @@ describe('migrations - snapshot system', () => {
         const result = await generateMigration(modelsDir, { dialect: 'postgres' })
         expect(result.hasChanges).toBe(true)
 
-        // Should detect and create foreign key
-        expect(result.sql).toContain('FOREIGN KEY')
+        // Should detect and inline the foreign key in the create migration.
+        expect(result.sql).not.toContain('ALTER TABLE')
         expect(result.sql).toContain('REFERENCES')
 
         // Verify FK is in the snapshot

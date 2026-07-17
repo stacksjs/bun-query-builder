@@ -431,8 +431,14 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       // Convert attribute name to snake_case for database column
       const columnName = snakeCase(attrName)
 
-      // Base nullability: if no validation rule enforcing required, default nullable
-      const isNullable = true
+      // Models are the schema source of truth, so nullability must follow the
+      // attribute instead of silently making every non-PK column nullable.
+      // `nullable` is the explicit database override; otherwise top-level
+      // `required` wins, then validator metadata such as schema.*.required().
+      const validatorRequired = Boolean((attr.validation?.rule as any)?.isRequired)
+      const isNullable = attrName === primaryKey
+        ? false
+        : (attr.nullable ?? !(attr.required ?? validatorRequired))
 
       // Type inference heuristics
       let inferred: NormalizedColumnType | undefined
@@ -829,8 +835,18 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
   const statements: string[] = []
   const driver = getDialectDriver(plan.dialect)
 
-  // Create tables with their enum types in the same migration file
-  for (const t of plan.tables) {
+  const { tables, deferredForeignKeys } = orderTablesForCreate(plan.tables, plan.dialect)
+
+  // Create tables, indexes, and all acyclic foreign keys in one migration
+  // file per model. Dependency ordering lets MySQL/Postgres render the FKs
+  // inline instead of producing a second wave of alter-* migrations.
+  for (const originalTable of tables) {
+    const t: TablePlan = {
+      ...originalTable,
+      columns: originalTable.columns.map(column => deferredForeignKeys.has(foreignKeyKey(originalTable.table, column.name))
+        ? { ...column, references: undefined }
+        : column),
+    }
     const tableStatements: string[] = []
 
     // First, collect all enum types needed for this table
@@ -853,6 +869,9 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
     const createTableStatement = driver.createTable(t)
     tableStatements.push(createTableStatement)
 
+    for (const idx of t.indexes)
+      tableStatements.push(driver.createIndex(t.table, idx))
+
     // Add all statements to the main statements array
     statements.push(...tableStatements)
 
@@ -861,39 +880,16 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
     emit(combinedStatement, `create-${t.table}-table`)
   }
 
-  // Foreign key constraints (ALTER statements — execute last).
-  //
-  // MySQL/PostgreSQL strictly require the referenced table to exist
-  // before CREATE TABLE if the FK is declared inline, which makes the
-  // alphabetically-ordered `plan.tables` iteration order fragile.
-  // Deferring the FK to a separate ALTER pass means tables can be
-  // created in any order and FKs land after.
-  //
-  // SQLite skips this pass entirely — it doesn't support `ALTER TABLE
-  // ADD CONSTRAINT FOREIGN KEY` at all. Its FKs ride inline on the
-  // CREATE TABLE statement via `renderColumn`, which works because
-  // SQLite is lenient about forward-reference targets (the constraint
-  // is checked at INSERT time, not CREATE). SQLite's `addForeignKey`
-  // returns an empty string so the `if (!alterTableStatement)
-  // continue` line below skips the no-op file. See
-  // stacksjs/bun-query-builder#1019.
-  for (const t of plan.tables) {
+  // Only cyclic model graphs need a deferred ALTER pass. Acyclic foreign
+  // keys are already inline in the dependency-ordered CREATE TABLE above.
+  for (const t of tables) {
     for (const c of t.columns) {
-      if (c.references) {
+      if (c.references && deferredForeignKeys.has(foreignKeyKey(t.table, c.name))) {
         const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
         if (!alterTableStatement) continue
         statements.push(alterTableStatement)
         emit(alterTableStatement, `alter-${t.table}-${c.name}`)
       }
-    }
-  }
-
-  // Then, create all indexes (CREATE statements - will execute in middle)
-  for (const t of plan.tables) {
-    for (const idx of t.indexes) {
-      const createIndexStatement = driver.createIndex(t.table, idx)
-      statements.push(createIndexStatement)
-      emit(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
     }
   }
 
@@ -912,6 +908,51 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
   }
 
   return statements
+}
+
+function foreignKeyKey(table: string, column: string): string {
+  return `${table}\0${column}`
+}
+
+/**
+ * Stable topological ordering for CREATE TABLE. References to tables outside
+ * the current plan are assumed to exist already. SQLite accepts forward
+ * references, including cycles; MySQL/Postgres defer only cycle edges.
+ */
+function orderTablesForCreate(input: TablePlan[], dialect: SupportedDialect): { tables: TablePlan[], deferredForeignKeys: Set<string> } {
+  if (dialect === 'sqlite' || input.length < 2)
+    return { tables: input, deferredForeignKeys: new Set() }
+
+  const byName = new Map(input.map(table => [table.table, table]))
+  const dependencies = new Map<string, Set<string>>()
+  for (const table of input) {
+    dependencies.set(table.table, new Set(table.columns
+      .map(column => column.references?.table)
+      .filter((target): target is string => Boolean(target && target !== table.table && byName.has(target)))))
+  }
+
+  const ordered: TablePlan[] = []
+  const emitted = new Set<string>()
+  while (ordered.length < input.length) {
+    const ready = input.find(table => !emitted.has(table.table)
+      && [...(dependencies.get(table.table) ?? [])].every(target => emitted.has(target)))
+    if (!ready) break
+    ordered.push(ready)
+    emitted.add(ready.table)
+  }
+
+  const cycleTables = new Set(input.filter(table => !emitted.has(table.table)).map(table => table.table))
+  const deferredForeignKeys = new Set<string>()
+  for (const table of input) {
+    if (!cycleTables.has(table.table)) continue
+    for (const column of table.columns) {
+      if (column.references && cycleTables.has(column.references.table) && column.references.table !== table.table)
+        deferredForeignKeys.add(foreignKeyKey(table.table, column.name))
+    }
+  }
+
+  ordered.push(...input.filter(table => cycleTables.has(table.table)))
+  return { tables: ordered, deferredForeignKeys }
 }
 
 /**

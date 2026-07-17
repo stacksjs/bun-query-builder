@@ -1039,8 +1039,7 @@ describe('Migration Plan: Dialect Differences', () => {
   test('postgres generates FK constraints from belongsTo', () => {
     const plan = buildMigrationPlan(models, { dialect: 'postgres' })
     const allSql = generateSql(plan).join('\n')
-    // Should have ALTER TABLE for FK references
-    expect(allSql).toContain('FOREIGN KEY')
+    expect(allSql).not.toContain('ALTER TABLE')
     expect(allSql).toContain('REFERENCES')
   })
 })

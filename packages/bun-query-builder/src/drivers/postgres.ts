@@ -212,15 +212,14 @@ export class PostgresDriver implements DialectDriver {
       parts.push(defaultValue)
     }
 
-    // PostgreSQL FKs are added via a separate `ALTER TABLE … ADD
-    // CONSTRAINT FOREIGN KEY` pass (see migrations.ts), NOT inline.
-    // Postgres strictly requires the referenced table to exist
-    // before CREATE TABLE with an inline FK, so the deferred-ALTER
-    // form sidesteps dependency-ordering questions when
-    // `plan.tables` is iterated in (e.g.) alphabetical order.
-    // SQLite is the only driver where the inline path is forced —
-    // it doesn't support ALTER TABLE ADD CONSTRAINT and is lenient
-    // about forward-reference targets.
+    if (column.references) {
+      let reference = `REFERENCES ${this.quoteIdentifier(column.references.table)}(${this.quoteIdentifier(column.references.column)})`
+      if (column.references.onDelete)
+        reference += ` ON DELETE ${column.references.onDelete.toUpperCase()}`
+      if (column.references.onUpdate)
+        reference += ` ON UPDATE ${column.references.onUpdate.toUpperCase()}`
+      parts.push(reference)
+    }
 
     return parts.join(' ')
   }

@@ -10,7 +10,7 @@
             "type": "bigint",
             "isPrimaryKey": true,
             "isUnique": false,
-            "isNullable": true,
+            "isNullable": false,
             "hasDefault": false
           },
           {
@@ -26,7 +26,7 @@
       }
     ]
   },
-  "hash": "7521cca4736ee938258bc46238d66ef41731b646c01e45082cf87852502a47ad",
+  "hash": "05bb5e61be69dfec2edf46b7e40941fa8813cb6759600e671a5649e3f43faa75",
   "dialect": "sqlite",
-  "updatedAt": "2026-05-27T23:47:41.146Z"
+  "updatedAt": "2026-07-17T04:48:02.991Z"
 }

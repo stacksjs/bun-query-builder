@@ -60,6 +60,31 @@ describe('migrations - complex model attributes', () => {
   // TYPE INFERENCE TESTS
   // ============================================================================
 
+  describe('nullability from model attributes', () => {
+    it('honors required, nullable, and validator required metadata', () => {
+      const models = defineModels({
+        Profile: {
+          name: 'Profile',
+          table: 'profiles',
+          attributes: {
+            required_name: { required: true, validation: { rule: {} } },
+            explicit_nullable: { required: true, nullable: true, validation: { rule: {} } },
+            explicit_not_null: { nullable: false, validation: { rule: {} } },
+            validator_required: { validation: { rule: { isRequired: true } } },
+            optional_note: { validation: { rule: {} } },
+          },
+        },
+      })
+
+      const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
+      expect(getColumn(plan, 'profiles', 'required_name')?.isNullable).toBe(false)
+      expect(getColumn(plan, 'profiles', 'explicit_nullable')?.isNullable).toBe(true)
+      expect(getColumn(plan, 'profiles', 'explicit_not_null')?.isNullable).toBe(false)
+      expect(getColumn(plan, 'profiles', 'validator_required')?.isNullable).toBe(false)
+      expect(getColumn(plan, 'profiles', 'optional_note')?.isNullable).toBe(true)
+    })
+  })
+
   describe('type inference from column names', () => {
     it('infers bigint for columns ending with _id', () => {
       const models = defineModels({
@@ -1782,8 +1807,8 @@ describe('migrations - complex model attributes', () => {
         const bookIdCol = reviewsTable?.columns.find(c => c.name === 'book_id')
         expect(bookIdCol?.references?.table).toBe('books')
 
-        // Check SQL has foreign key constraints
-        expect(result.sql).toContain('FOREIGN KEY')
+        // Acyclic relationships are inline in dependency-ordered CREATE TABLE.
+        expect(result.sql).not.toContain('ALTER TABLE')
         expect(result.sql).toContain('REFERENCES')
       }
       finally {

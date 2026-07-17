@@ -49,6 +49,10 @@ export type ValidationType = unknown
  * ```
  */
 export interface Attribute {
+  /** Require a value and emit a NOT NULL column unless `nullable` overrides it. */
+  required?: boolean
+  /** Explicitly control database nullability. Takes precedence over `required`. */
+  nullable?: boolean
   default?: string | number | boolean | Date
   unique?: boolean
   order?: number

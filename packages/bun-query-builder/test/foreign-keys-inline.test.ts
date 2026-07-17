@@ -19,10 +19,9 @@ import { generateSql } from '../src/migrations'
 //     (the only path SQLite supports). Its `addForeignKey` returns
 //     an empty string so the orchestrator skips the unrunnable
 //     ALTER pass entirely.
-//   - MySQL / PostgreSQL keep the deferred-ALTER strategy — inline
-//     FKs would fail when `plan.tables` is iterated in an order
-//     that references a forward-defined table (e.g. alphabetical:
-//     `comments` before `users`).
+//   - MySQL / PostgreSQL dependency-order tables and emit acyclic FKs inline,
+//     keeping a new model's schema in one create-table migration. Only true
+//     cycles require a deferred ALTER fallback.
 
 function makePlan(dialect: 'sqlite' | 'mysql' | 'postgres'): any {
   return {
@@ -67,34 +66,42 @@ describe('CREATE TABLE foreign-key emission (stacksjs/bun-query-builder#1019)', 
     expect(sql).not.toContain('ADD CONSTRAINT')
   })
 
-  it('mysql defers FKs to ALTER TABLE ADD CONSTRAINT after all CREATE TABLEs', () => {
+  it('mysql dependency-orders tables and emits acyclic FKs inline', () => {
     const sql = generateSql(makePlan('mysql')).join('\n')
 
-    // The CREATE TABLE block for posts must NOT carry inline
-    // REFERENCES — emitting inline would fail when iteration order
-    // lands `posts` before `users`. Match only the create-table
-    // statement body (between `CREATE TABLE … (` and the matching
-    // closing `);`) and assert REFERENCES is absent inside it.
     const createPosts = sql.match(/CREATE TABLE[^;]*posts[^;]*;/)
     expect(createPosts).toBeTruthy()
-    expect(createPosts?.[0]).not.toContain('REFERENCES')
-    // The deferred ALTER pass still emits the FK.
-    expect(sql).toContain('ALTER TABLE')
-    expect(sql).toContain('FOREIGN KEY')
-    expect(sql).toContain('REFERENCES `users`(`id`)')
-    expect(sql).toContain('ON DELETE CASCADE')
+    expect(createPosts?.[0]).toContain('REFERENCES `users`(`id`) ON DELETE CASCADE')
+    expect(sql.indexOf('CREATE TABLE IF NOT EXISTS `users`')).toBeLessThan(sql.indexOf('CREATE TABLE IF NOT EXISTS `posts`'))
+    expect(sql).not.toContain('ALTER TABLE')
   })
 
-  it('postgres defers FKs to ALTER TABLE ADD CONSTRAINT after all CREATE TABLEs', () => {
+  it('postgres dependency-orders tables and emits acyclic FKs inline', () => {
     const sql = generateSql(makePlan('postgres')).join('\n')
 
     const createPosts = sql.match(/CREATE TABLE[^;]*posts[^;]*;/)
     expect(createPosts).toBeTruthy()
-    expect(createPosts?.[0]).not.toContain('REFERENCES')
-    expect(sql).toContain('ALTER TABLE')
-    expect(sql).toContain('FOREIGN KEY')
-    expect(sql).toContain('REFERENCES "users"("id")')
-    expect(sql).toContain('ON DELETE CASCADE')
+    expect(createPosts?.[0]).toContain('REFERENCES "users"("id") ON DELETE CASCADE')
+    expect(sql.indexOf('CREATE TABLE IF NOT EXISTS "users"')).toBeLessThan(sql.indexOf('CREATE TABLE IF NOT EXISTS "posts"'))
+    expect(sql).not.toContain('ALTER TABLE')
+  })
+
+  it('postgres defers only cyclic foreign keys', () => {
+    const columns = (reference: string): TablePlan['columns'] => [
+      { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
+      { name: `${reference}_id`, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: `${reference}s`, column: 'id' } },
+    ]
+    const sql = generateSql({
+      dialect: 'postgres',
+      tables: [
+        { table: 'authors', columns: columns('book'), indexes: [] },
+        { table: 'books', columns: columns('author'), indexes: [] },
+      ],
+    }).join('\n')
+
+    expect(sql.match(/ALTER TABLE/g)?.length).toBe(2)
+    expect(sql).toContain('REFERENCES "books"("id")')
+    expect(sql).toContain('REFERENCES "authors"("id")')
   })
 
   it('sqlite inline FK honours onUpdate when supplied', () => {
