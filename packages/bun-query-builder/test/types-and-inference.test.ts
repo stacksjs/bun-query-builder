@@ -16,6 +16,7 @@ import {
   buildSchemaMeta,
   createQueryBuilder,
 } from '../src'
+import { config, setConfig } from '../src/config'
 import { defineModel, defineModels } from '../src/schema'
 import type { DatabaseSchema, InferAttributes, InferPrimaryKey, InferTableName } from '../src/schema'
 import {
@@ -1650,10 +1651,17 @@ describe('Regression: batch 3 — SELECT modifiers, window functions, delete/upd
   })
 
   test('whereJsonContains includes @> in toSQL()', () => {
-    const s = toSql(db.selectFrom('users').whereJsonContains('name', { key: 'val' }))
-    expect(s).toContain('WHERE')
-    expect(s).toContain('name')
-    expect(s).toContain('@>')
+    const dialect = config.dialect
+    setConfig({ dialect: 'postgres' })
+    try {
+      const s = toSql(db.selectFrom('users').whereJsonContains('name', { key: 'val' }))
+      expect(s).toContain('WHERE')
+      expect(s).toContain('name')
+      expect(s).toContain('@>')
+    }
+    finally {
+      setConfig({ dialect })
+    }
   })
 
   test('whereJsonPath includes path expression in toSQL()', () => {
