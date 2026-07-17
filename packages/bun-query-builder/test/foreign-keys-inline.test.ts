@@ -1,6 +1,6 @@
 import type { TablePlan } from '../src/migrations'
 import { describe, expect, it } from 'bun:test'
-import { generateSql } from '../src/migrations'
+import { generateDiffOperations, generateSql } from '../src/migrations'
 
 // stacksjs/bun-query-builder#1019 — Foreign keys must reach the
 // generated DDL via *some* path on every supported dialect. Prior
@@ -86,7 +86,40 @@ describe('CREATE TABLE foreign-key emission (stacksjs/bun-query-builder#1019)', 
     expect(sql).not.toContain('ALTER TABLE')
   })
 
-  it('postgres defers only cyclic foreign keys', () => {
+  it('postgres incremental generation keeps new model schema in create migrations', () => {
+    const users = makePlan('postgres').tables[0]
+    const sessionPackages: TablePlan = {
+      table: 'session_packages',
+      primaryKey: 'id',
+      columns: [
+        { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
+        { name: 'user_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'users', column: 'id' } },
+      ],
+      indexes: [{ name: 'session_packages_user_id_index', columns: ['user_id'], type: 'index' }],
+    }
+    const appointments: TablePlan = {
+      table: 'appointments',
+      primaryKey: 'id',
+      columns: [
+        { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
+        { name: 'session_package_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'session_packages', column: 'id' } },
+      ],
+      indexes: [{ name: 'appointments_package_index', columns: ['session_package_id'], type: 'index' }],
+    }
+    const previous: any = { dialect: 'postgres', tables: [users] }
+    // Deliberately put the dependent table first to prove the diff path sorts it.
+    const next: any = { dialect: 'postgres', tables: [users, appointments, sessionPackages] }
+    const sql = generateDiffOperations(previous, next, { dryRun: true }).statements.join('\n')
+
+    expect(sql.indexOf('CREATE TABLE IF NOT EXISTS "session_packages"')).toBeLessThan(sql.indexOf('CREATE TABLE IF NOT EXISTS "appointments"'))
+    expect(sql).toContain('REFERENCES "users"("id")')
+    expect(sql).toContain('REFERENCES "session_packages"("id")')
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS "session_packages_session_packages_user_id_index"')
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS "appointments_appointments_package_index"')
+    expect(sql).not.toContain('ALTER TABLE')
+  })
+
+  it('postgres defers only cyclic foreign keys inside the final create migration', () => {
     const columns = (reference: string): TablePlan['columns'] => [
       { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
       { name: `${reference}_id`, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: `${reference}s`, column: 'id' } },

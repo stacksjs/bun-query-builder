@@ -64,8 +64,9 @@ describe('migrations - diffing and hashing', () => {
     const p2 = buildMigrationPlan(models2 as any, { dialect: 'postgres' })
     const sql = generateDiffSql(p1, p2)
 
-    expect(sql.join('\n')).toContain('ALTER TABLE "projects"')
-    expect(sql.join('\n')).toContain('ALTER TABLE "projects" ADD CONSTRAINT')
+    expect(sql.join('\n')).toContain('CREATE TABLE IF NOT EXISTS "projects"')
+    expect(sql.join('\n')).toContain('REFERENCES "users"("id")')
+    expect(sql.join('\n')).not.toContain('ALTER TABLE "projects" ADD CONSTRAINT')
   })
 
   it('sqlite diff emits inline REFERENCES for new tables (FK rides on CREATE)', () => {

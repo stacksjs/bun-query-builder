@@ -840,7 +840,7 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
   // Create tables, indexes, and all acyclic foreign keys in one migration
   // file per model. Dependency ordering lets MySQL/Postgres render the FKs
   // inline instead of producing a second wave of alter-* migrations.
-  for (const originalTable of tables) {
+  for (const [tableIndex, originalTable] of tables.entries()) {
     const t: TablePlan = {
       ...originalTable,
       columns: originalTable.columns.map(column => deferredForeignKeys.has(foreignKeyKey(originalTable.table, column.name))
@@ -872,25 +872,28 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
     for (const idx of t.indexes)
       tableStatements.push(driver.createIndex(t.table, idx))
 
+    // A cyclic graph cannot express every constraint inline because one side
+    // necessarily references a table that does not exist yet. Keep those
+    // model-derived constraints in the final create migration: by then every
+    // table exists, without creating a second wave of alter-* migration files.
+    if (tableIndex === tables.length - 1) {
+      for (const deferredTable of tables) {
+        for (const column of deferredTable.columns) {
+          if (!column.references || !deferredForeignKeys.has(foreignKeyKey(deferredTable.table, column.name)))
+            continue
+          const addForeignKey = driver.addForeignKey(deferredTable.table, column.name, column.references.table, column.references.column, column.references.onDelete, column.references.onUpdate)
+          if (addForeignKey)
+            tableStatements.push(addForeignKey)
+        }
+      }
+    }
+
     // Add all statements to the main statements array
     statements.push(...tableStatements)
 
     // Create a single migration file for this table with all its statements
     const combinedStatement = tableStatements.join('\n\n')
     emit(combinedStatement, `create-${t.table}-table`)
-  }
-
-  // Only cyclic model graphs need a deferred ALTER pass. Acyclic foreign
-  // keys are already inline in the dependency-ordered CREATE TABLE above.
-  for (const t of tables) {
-    for (const c of t.columns) {
-      if (c.references && deferredForeignKeys.has(foreignKeyKey(t.table, c.name))) {
-        const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
-        if (!alterTableStatement) continue
-        statements.push(alterTableStatement)
-        emit(alterTableStatement, `alter-${t.table}-${c.name}`)
-      }
-    }
   }
 
   // Show summary message
@@ -1289,75 +1292,79 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
     }
   }
 
-  // 1) New tables -> create tables with their enum types in the same migration file (MUST come before indexes)
-  for (const tableName of Object.keys(nextTables)) {
-    if (!prevTables[tableName]) {
-      const t = nextTables[tableName]
-      const tableStatements: string[] = []
+  // 1) New tables -> dependency-ordered create migrations containing their
+  // enum types, inline foreign keys, and indexes. Existing referenced tables
+  // are already present; only cycles among this batch require deferred SQL.
+  const newTablePlans = Object.keys(nextTables)
+    .filter(tableName => !prevTables[tableName])
+    .map(tableName => nextTables[tableName])
+  const { tables: orderedNewTables, deferredForeignKeys } = orderTablesForCreate(newTablePlans, dialect)
 
-      // First, collect all enum types needed for this table
-      const enumTypes = new Set<string>()
-      for (const c of t.columns) {
-        if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
-          const enumTypeName = `${t.table}_${c.name}_type`
-          c.enumTypeName = enumTypeName
-          if (!enumTypes.has(enumTypeName)) {
-            const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
-            if (createEnumStatement) {
-              tableStatements.push(createEnumStatement)
-            }
-            enumTypes.add(enumTypeName)
+  for (const [tableIndex, originalTable] of orderedNewTables.entries()) {
+    const t: TablePlan = {
+      ...originalTable,
+      columns: originalTable.columns.map(column => deferredForeignKeys.has(foreignKeyKey(originalTable.table, column.name))
+        ? { ...column, references: undefined }
+        : column),
+    }
+    const tableStatements: string[] = []
+
+    // First, collect all enum types needed for this table
+    const enumTypes = new Set<string>()
+    for (const c of t.columns) {
+      if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
+        const enumTypeName = `${t.table}_${c.name}_type`
+        c.enumTypeName = enumTypeName
+        if (!enumTypes.has(enumTypeName)) {
+          const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
+          if (createEnumStatement) {
+            tableStatements.push(createEnumStatement)
           }
-        }
-      }
-
-      // Then, create the table
-      const createTableStatement = driver.createTable(t)
-      tableStatements.push(createTableStatement)
-
-      // Add all statements to the main chunks array
-      chunks.push(...tableStatements)
-      operations.push({ kind: 'create_table', table: t.table, destructive: false, sql: createTableStatement })
-
-      // Create a single migration file for this table with all its statements
-      const combinedStatement = tableStatements.join('\n\n')
-      emit(combinedStatement, `create-${t.table}-table`)
-    }
-  }
-
-  // 2) Create indexes for new tables (MUST come after tables are created)
-  for (const tableName of Object.keys(nextTables)) {
-    if (!prevTables[tableName]) {
-      const t = nextTables[tableName]
-      for (const idx of t.indexes) {
-        const createIndexStatement = driver.createIndex(t.table, idx)
-        chunks.push(createIndexStatement)
-        operations.push({ kind: 'create_index', table: t.table, column: idx.name, destructive: false, sql: createIndexStatement })
-        emit(createIndexStatement, `create-${idx.name}-index-in-${t.table}`)
-      }
-    }
-  }
-
-  // 3) Add foreign key constraints for new tables (ALTER statements -
-  // execute last). Mirrors the initial-migration FK pass above:
-  // MySQL/Postgres use deferred ALTER, SQLite skips (FKs are already
-  // inline from CREATE TABLE).
-  for (const tableName of Object.keys(nextTables)) {
-    if (!prevTables[tableName]) {
-      const t = nextTables[tableName]
-      for (const c of t.columns) {
-        if (c.references) {
-          const alterTableStatement = driver.addForeignKey(t.table, c.name, c.references.table, c.references.column, c.references.onDelete, c.references.onUpdate)
-          if (!alterTableStatement) continue
-          chunks.push(alterTableStatement)
-          operations.push({ kind: 'add_foreign_key', table: t.table, column: c.name, destructive: false, sql: alterTableStatement })
-          emit(alterTableStatement, `alter-${t.table}-${c.name}`)
+          enumTypes.add(enumTypeName)
         }
       }
     }
+
+    // Then, create the table
+    const createTableStatement = driver.createTable(t)
+    tableStatements.push(createTableStatement)
+
+    for (const idx of t.indexes) {
+      const createIndexStatement = driver.createIndex(t.table, idx)
+      tableStatements.push(createIndexStatement)
+      operations.push({ kind: 'create_index', table: t.table, column: idx.name, destructive: false, sql: createIndexStatement })
+    }
+
+    for (const column of originalTable.columns) {
+      if (column.references && !deferredForeignKeys.has(foreignKeyKey(originalTable.table, column.name)))
+        operations.push({ kind: 'add_foreign_key', table: originalTable.table, column: column.name, destructive: false, sql: createTableStatement })
+    }
+
+    // Put unavoidable cyclic constraints in the final create migration so
+    // incremental generation never produces standalone alter-* migrations.
+    if (tableIndex === orderedNewTables.length - 1) {
+      for (const deferredTable of orderedNewTables) {
+        for (const column of deferredTable.columns) {
+          if (!column.references || !deferredForeignKeys.has(foreignKeyKey(deferredTable.table, column.name)))
+            continue
+          const addForeignKey = driver.addForeignKey(deferredTable.table, column.name, column.references.table, column.references.column, column.references.onDelete, column.references.onUpdate)
+          if (!addForeignKey) continue
+          tableStatements.push(addForeignKey)
+          operations.push({ kind: 'add_foreign_key', table: deferredTable.table, column: column.name, destructive: false, sql: addForeignKey })
+        }
+      }
+    }
+
+    // Add all statements to the main chunks array
+    chunks.push(...tableStatements)
+    operations.push({ kind: 'create_table', table: t.table, destructive: false, sql: createTableStatement })
+
+    // Create a single migration file for this table with all its statements
+    const combinedStatement = tableStatements.join('\n\n')
+    emit(combinedStatement, `create-${t.table}-table`)
   }
 
-  // 4) Create enum types for new columns in existing tables
+  // 2) Create enum types for new columns in existing tables
   const enumTypes = new Set<string>()
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]
