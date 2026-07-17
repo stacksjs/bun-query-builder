@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.53...v0.1.54)
+
+## 🐛 Bug Fixes
+
+- let custom migration writers advance snapshots ([1accfa6](https://github.com/stacksjs/bun-query-builder/commit/1accfa6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.54 ([522bcf6](https://github.com/stacksjs/bun-query-builder/commit/522bcf6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.52...v0.1.53)
 
 ## 🐛 Bug Fixes
