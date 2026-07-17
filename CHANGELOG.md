@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.51...v0.1.52)
+
+## 🐛 Bug Fixes
+
+- **migrations**: keep incremental models in create files ([fb9a3cb](https://github.com/stacksjs/bun-query-builder/commit/fb9a3cb)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.52 ([bc31a34](https://github.com/stacksjs/bun-query-builder/commit/bc31a34)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.50...v0.1.51)
 
 ## 🐛 Bug Fixes
