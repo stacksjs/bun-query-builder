@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.54...v0.1.55)
+
+## 🐛 Bug Fixes
+
+- **migrations**: honor explicit model column types ([f604e07](https://github.com/stacksjs/bun-query-builder/commit/f604e07)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.55 ([24ae916](https://github.com/stacksjs/bun-query-builder/commit/24ae916)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.53...v0.1.54)
 
 ## 🐛 Bug Fixes
