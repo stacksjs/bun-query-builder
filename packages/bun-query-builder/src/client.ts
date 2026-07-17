@@ -6727,7 +6727,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return false
     },
     unsafe(query: string, params?: any[]) {
-      return (bunSql as any).unsafe(query, params)
+      // Use this builder's connection. Transaction callbacks receive a
+      // builder whose `_sql` is the reserved transaction connection; routing
+      // raw SQL through the process-wide pool lets it escape the transaction
+      // (and makes row locks such as `FOR UPDATE` ineffective).
+      return (_sql as any).unsafe(query, params)
     },
     file(path: string, params?: any[]) {
       return (bunSql as any).file(path, params)

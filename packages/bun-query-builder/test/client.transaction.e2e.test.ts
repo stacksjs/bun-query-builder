@@ -85,6 +85,17 @@ describe('transactions (real sqlite)', () => {
     })
   })
 
+  it('keeps unsafe queries on the transaction connection', async () => {
+    await expect(db.transaction!(async (tx: any) => {
+      await tx.unsafe('INSERT INTO tx_users (name, age) VALUES (?, ?)', ['Raw', 9])
+      const rows = await tx.unsafe('SELECT name FROM tx_users WHERE name = ?', ['Raw'])
+      expect(rows).toHaveLength(1)
+      throw new Error('raw rollback')
+    })).rejects.toThrow('raw rollback')
+
+    expect(await db.selectFrom('tx_users').where({ name: 'Raw' }).exists()).toBe(false)
+  })
+
   it('supports nested transactions via savepoints (inner rollback, outer commit)', async () => {
     await db.transaction!(async (tx: any) => {
       await tx.insertInto('tx_users').values({ name: 'Outer', age: 1 }).execute()
