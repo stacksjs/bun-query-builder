@@ -80,8 +80,8 @@
   "devDependencies": {
     "@stacksjs/launchpad": "^0.6.4",
     "@stacksjs/ts-faker": "^0.1.8",
-    "better-dx": "^0.2.16",
-    "pickier": "^0.1.32"
+    "better-dx": "^0.2.20",
+    "pickier": "^0.1.40"
   },
   "workspaces": [
     "packages/*"
