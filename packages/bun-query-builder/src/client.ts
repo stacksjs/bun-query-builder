@@ -6910,11 +6910,22 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       }
     },
     async savepoint(fn) {
+      // The guard is `inTransaction` — the flag `transaction()` sets on the
+      // builder it hands to its callback — NOT the mere presence of a
+      // `.savepoint` method on the connection. Bun's top-level `SQL` object
+      // exposes `savepoint` too, so the old check passed OUTSIDE any
+      // transaction and issued a bare SAVEPOINT against the pool instead of
+      // raising. It only looked correct where the connection was unreachable
+      // and the method lookup failed for the wrong reason.
+      if (state?.inTransaction !== true)
+        throw new Error('savepoint() must be called inside a transaction')
       const s: any = _sql
       if (!s || typeof s.savepoint !== 'function')
-        throw new Error('savepoint() must be called inside a transaction')
+        throw new Error('savepoint() is not supported by the active connection')
       return await s.savepoint(async (sp: any) => {
-        const qb = createQueryBuilder<DB>({ sql: sp, meta, schema })
+        // Carry the flag: a savepoint body is still inside a transaction, so a
+        // nested savepoint()/transaction() from here must nest, not begin.
+        const qb = createQueryBuilder<DB>({ sql: sp, meta, schema, inTransaction: true })
         return await fn(qb)
       })
     },
