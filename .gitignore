@@ -29,3 +29,9 @@ users.json
 packages/benchmark/test_db-shm
 packages/benchmark/test_db-wal
 pantry
+
+# sqlite artifacts produced by the test suite
+test_db
+test_db-shm
+test_db-wal
+sqlite:/

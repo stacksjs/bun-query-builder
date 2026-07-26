@@ -501,6 +501,28 @@ function createSQLiteSQL(filename: string): SQL {
 }
 
 /**
+ * Reduce a SQLite URL to the filesystem path `bun:sqlite` expects.
+ *
+ * Accepts the shapes users actually write:
+ *   `sqlite://./app.db` -> `./app.db`      (authority-less relative form)
+ *   `sqlite:///var/app.db` -> `/var/app.db` (absolute form)
+ *   `sqlite:app.db` / `file:app.db` -> `app.db`
+ *   `sqlite::memory:` -> `:memory:`
+ * A bare path with no scheme is returned untouched.
+ */
+function sqliteFileFromUrl(url: string): string {
+  const stripped = url.replace(/^(?:sqlite|sqlite3|file):/i, '')
+  if (stripped === url)
+    return url
+  // `//` is the URL authority marker, not part of the path. A third slash is
+  // the root of an absolute path and must survive.
+  const path = stripped.startsWith('///')
+    ? stripped.slice(2)
+    : stripped.startsWith('//') ? stripped.slice(2) : stripped
+  return path || ':memory:'
+}
+
+/**
  * Creates a database connection string based on the configured dialect and database settings.
  *
  * Exported so the `DB_*` env preference (see below) can be pinned by direct
@@ -532,7 +554,12 @@ export function createConnectionString(dialect: SupportedDialect, dbConfig: Data
 
   // If a full URL is provided, use it directly
   if (dbConfig.url) {
-    return dbConfig.url
+    // ...except for SQLite, where the "connection string" is handed straight to
+    // `new Database(filename)` — a filesystem path, not a URL. Passing
+    // `sqlite://./app.db` through verbatim made bun:sqlite create a database
+    // at the literal path `sqlite:/app.db`, silently stranding every write in
+    // a stray `sqlite:/` directory instead of the intended file.
+    return dialect === 'sqlite' ? sqliteFileFromUrl(dbConfig.url) : dbConfig.url
   }
 
   const { database, username, password, host = 'localhost', port, ssl } = dbConfig
