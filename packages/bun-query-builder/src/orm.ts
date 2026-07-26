@@ -32,6 +32,7 @@ import { config, isMysqlLike } from './config'
 import type { DriverConnection } from './db'
 import { getOrCreateBunSql } from './db'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
+import { normalizeRelationList } from './relation-utils'
 
 /**
  * Current timestamp formatted for the active dialect.
@@ -387,9 +388,18 @@ type FillableKeys<TDef extends ModelDefinition> = {
   [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { fillable: true } ? K : never
 }[AttributeKeys<TDef>]
 
+/**
+ * `belongsTo` foreign keys are always writable.
+ *
+ * Attaching a record to its parent IS the create: `Mission.create({ …,
+ * field_id: field.id })`. There is no attribute declaration to put
+ * `fillable: true` on, because the column comes from the relation rather than
+ * from `attributes`, so without this every such create was a type error
+ * against the one column the relation exists to set.
+ */
 type FillableAttributes<TDef extends ModelDefinition> = Partial<Pick<
   ModelAttributes<TDef>,
-  FillableKeys<TDef> | SnakeCase<FillableKeys<TDef>>
+  FillableKeys<TDef> | SnakeCase<FillableKeys<TDef>> | BelongsToKeys<TDef>
 >>
 
 // Numeric attribute columns — constrains aggregate methods (sum, avg, etc.)
@@ -920,7 +930,10 @@ class ModelInstance<
   only<K extends TSelected>(keys: ReadonlyArray<K>): Pick<ModelAttributes<TDef>, K & keyof ModelAttributes<TDef>> {
     const out: Record<string, unknown> = {}
     for (const k of keys) {
-      out[k as string] = this._attributes[k as string]
+      // _attributes is always snake_case (see normalizeAttributeKeys) — accept
+      // either casing from the caller, as get()/set() do. Reading the raw key
+      // returned undefined for every camelCase column.
+      out[k as string] = this._attributes[toSnakeCase(k as string)]
     }
     return out as Pick<ModelAttributes<TDef>, K & keyof ModelAttributes<TDef>>
   }
@@ -931,7 +944,8 @@ class ModelInstance<
    * the rest of the schema. The return type omits the dropped keys.
    */
   except<K extends TSelected>(keys: ReadonlyArray<K>): Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, K> {
-    const drop = new Set<string>(keys.map(k => k as string))
+    // Compare in the storage casing — _attributes keys are always snake_case.
+    const drop = new Set<string>(keys.map(k => toSnakeCase(k as string)))
     const out: Record<string, unknown> = {}
     for (const k of Object.keys(this._attributes)) {
       if (!drop.has(k)) out[k] = this._attributes[k]
@@ -979,7 +993,11 @@ class ModelInstance<
     // If _original is null, no mutations have happened — nothing is dirty
     if (this._original === null) return false
     if (column) {
-      return this._attributes[column as string] !== this._original![column as string]
+      // Normalize — _attributes/_original are always snake_case, so a
+      // camelCase column name read as undefined on both sides and every
+      // isDirty('memberCount') answered false.
+      const key = toSnakeCase(column as string)
+      return this._attributes[key] !== this._original![key]
     }
     return Object.keys(this._attributes).some(k => this._attributes[k] !== this._original![k])
   }
@@ -990,7 +1008,7 @@ class ModelInstance<
 
   getOriginal<K extends ColumnName<TDef>>(column: K): K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown {
     const orig = this.getOriginalAttributes()
-    return orig[column as string] as any
+    return orig[toSnakeCase(column as string)] as any
   }
 
   getChanges(): Partial<InferModelAttributes<TDef>> {
@@ -1044,7 +1062,9 @@ class ModelInstance<
     const setters = this._definition.set || {}
     for (const [key, setter] of Object.entries(setters)) {
       if (this.isDirty(key as ColumnName<TDef>)) {
-        this._attributes[key] = setter(this._attributes as Record<string, unknown>)
+        // Write back in the storage casing, or a camelCase mutator would add a
+        // second key alongside the column it was meant to replace.
+        this._attributes[toSnakeCase(key)] = setter(this._attributes as Record<string, unknown>)
       }
     }
 
@@ -1434,6 +1454,41 @@ function resolveRelation(definition: ModelDefinition, relationName: string): Res
     return null
   }
 
+  /**
+   * The raw `belongsTo` entry for this relation name, so the resolver can read
+   * a custom `foreignKey`. `findModelName` flattens the entry down to a model
+   * name, which threw away the FK override the migration generator honors
+   * (see `normalizeRelationEntry`) — eager loading a belongsTo declared as
+   * `{ owner: { model: 'User', foreignKey: 'owner_id' } }` queried a
+   * non-existent `user_id` column.
+   */
+  function findBelongsToEntry(): { model: string, foreignKey?: string } | null {
+    const rel = definition.belongsTo
+    if (!rel) return null
+    const lower = relationName.toLowerCase()
+    const unwrap = (entry: unknown): { model: string, foreignKey?: string } | null => {
+      if (typeof entry === 'string') return { model: entry }
+      if (entry && typeof entry === 'object' && typeof (entry as any).model === 'string')
+        return { model: (entry as any).model, foreignKey: (entry as any).foreignKey }
+      return null
+    }
+    if (Array.isArray(rel)) {
+      // Array form: the relation name IS the (lowercased) model name.
+      for (const item of rel) {
+        const e = unwrap(item)
+        if (e && e.model.toLowerCase() === lower) return e
+      }
+      return null
+    }
+    if (typeof rel === 'object') {
+      // Record form: the relation name is the key.
+      for (const [key, value] of Object.entries(rel)) {
+        if (key === relationName || key.toLowerCase() === lower) return unwrap(value)
+      }
+    }
+    return null
+  }
+
   /** Find the BelongsToManyConfig object (if any) for this relation. */
   function findBelongsToManyEntry():
     | { entry: string | { model: string, through?: string, table?: string, foreignKey?: string, relatedKey?: string, pivot?: { columns?: Record<string, any>, timestamps?: boolean, uniques?: string[][] } } }
@@ -1480,12 +1535,15 @@ function resolveRelation(definition: ModelDefinition, relationName: string): Res
   }
 
   // Check belongsTo
-  const belongsToModel = findModelName(definition.belongsTo)
-  if (belongsToModel) {
+  const belongsToEntry = findBelongsToEntry()
+  if (belongsToEntry) {
+    const belongsToModel = belongsToEntry.model
     const relatedModel = getModelFromRegistry(belongsToModel)
     const relatedTable = relatedModel?.getTable?.() || toTableName(belongsToModel)
     const relatedPk = relatedModel?.getDefinition?.()?.primaryKey || 'id'
-    const foreignKey = toSnakeCase(belongsToModel) + '_id'
+    // An explicit `foreignKey` wins — same precedence the migration generator
+    // uses, so the column the resolver queries is the column that was created.
+    const foreignKey = belongsToEntry.foreignKey || `${toSnakeCase(belongsToModel)}_id`
     return { type: 'belongsTo', relatedModelName: belongsToModel, relatedTable, foreignKey, localKey: relatedPk }
   }
 
@@ -2277,10 +2335,20 @@ class ModelQueryBuilder<
     return this as unknown as ModelQueryBuilder<TDef, K>
   }
 
+  /**
+   * Eager-load the named relations. Accumulates across calls — chaining
+   * `.with('posts').with('team')` loads BOTH, matching Eloquent. Replacing the
+   * list meant an earlier `.with()` (often applied by a scope or a shared base
+   * query) was silently dropped by a later one. Duplicates are collapsed so a
+   * relation named twice is still loaded once.
+   */
   with<R extends InferRelationNames<TDef>>(
     ...relations: R[]
   ): ModelQueryBuilder<TDef, TSelected> {
-    this._withRelations = relations as string[]
+    for (const r of relations as string[]) {
+      if (!this._withRelations.includes(r))
+        this._withRelations.push(r)
+    }
     return this
   }
 
@@ -3168,16 +3236,28 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
 
 export async function createTableFromModel(definition: ModelDefinition): Promise<void> {
   const exec = getExecutor()
-  const pk = definition.primaryKey || 'id'
+  const pk = toSnakeCase(definition.primaryKey || 'id')
   const columns: string[] = []
+  const emitted = new Set<string>([pk])
 
   columns.push(definition.autoIncrement !== false
     ? `${pk} INTEGER PRIMARY KEY AUTOINCREMENT`
     : `${pk} INTEGER PRIMARY KEY`)
 
-  if (definition.traits?.useUuid) columns.push('uuid TEXT UNIQUE')
+  if (definition.traits?.useUuid) {
+    columns.push('uuid TEXT UNIQUE')
+    emitted.add('uuid')
+  }
 
-  for (const [name, attr] of Object.entries(definition.attributes)) {
+  for (const [attrName, attr] of Object.entries(definition.attributes)) {
+    // Column names are snake_case — that is what the migration generator emits
+    // (see snakeCase() in migrations.ts) and what every ORM read/write path
+    // normalizes to (see normalizeAttributeKeys). Emitting the raw declaration
+    // key created a `escalationCount` column that no query ever addressed, so
+    // any insert touching a camelCase attribute failed with "no such column".
+    const name = toSnakeCase(attrName)
+    if (emitted.has(name)) continue
+    emitted.add(name)
     let colType = 'TEXT'
     if (attr.type === 'number') colType = 'INTEGER'
     else if (attr.type === 'boolean') colType = 'INTEGER'
@@ -3197,10 +3277,26 @@ export async function createTableFromModel(definition: ModelDefinition): Promise
     columns.push(colDef)
   }
 
-  if (timestampsEnabled(definition)) {
-    columns.push('created_at TEXT', 'updated_at TEXT')
+  // belongsTo puts an FK on THIS table — the migration generator emits these
+  // (see normalizeRelationList in migrations.ts), so the helper must too or a
+  // model that relies on the implied column can't be created from its own
+  // definition. Explicitly declared FK attributes already won above.
+  for (const rel of normalizeRelationList(definition.belongsTo)) {
+    const name = rel.foreignKey ?? `${toSnakeCase(rel.model)}_id`
+    if (emitted.has(name)) continue
+    emitted.add(name)
+    columns.push(`${name} INTEGER`)
   }
-  if (softDeletesEnabled(definition)) {
+
+  if (timestampsEnabled(definition)) {
+    for (const c of ['created_at', 'updated_at']) {
+      if (emitted.has(c)) continue
+      emitted.add(c)
+      columns.push(`${c} TEXT`)
+    }
+  }
+  if (softDeletesEnabled(definition) && !emitted.has('deleted_at')) {
+    emitted.add('deleted_at')
     columns.push('deleted_at TEXT')
   }
 
@@ -3248,7 +3344,10 @@ catch {
     const data: Record<string, unknown> = {}
 
     for (const [name, attr] of Object.entries(definition.attributes)) {
-      if (attr.factory) data[name] = (attr.factory as (_f: unknown) => unknown)(faker)
+      // Column names are snake_case everywhere else (migration generator,
+      // createTableFromModel, normalizeAttributeKeys) — seeding a camelCase
+      // attribute under its raw name targeted a column that doesn't exist.
+      if (attr.factory) data[toSnakeCase(name)] = (attr.factory as (_f: unknown) => unknown)(faker)
     }
 
     if (timestampsEnabled(definition)) {

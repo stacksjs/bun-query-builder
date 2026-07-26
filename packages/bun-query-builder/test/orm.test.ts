@@ -801,9 +801,9 @@ catch { /* column may exist */ }
         ['Easy Nature Walk', 'easy', 2.0, 100, 'California', 37.7749, -122.4194, 4.2])
 
       // Insert activities with foreign keys
-      db.run(`INSERT INTO activities (activityType, distance, duration, user_id, trail_id)
+      db.run(`INSERT INTO activities (activity_type, distance, duration, user_id, trail_id)
               VALUES (?, ?, ?, ?, ?)`, ['Hike', 8.5, '3:00:00', 1, 1])
-      db.run(`INSERT INTO activities (activityType, distance, duration, user_id, trail_id)
+      db.run(`INSERT INTO activities (activity_type, distance, duration, user_id, trail_id)
               VALUES (?, ?, ?, ?, ?)`, ['Trail Run', 2.0, '0:20:00', 2, 2])
 
       // Insert reviews
