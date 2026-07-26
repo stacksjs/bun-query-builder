@@ -113,6 +113,25 @@ describe('ORM relation resolution + attribute casing (real sqlite)', () => {
     expect(Object.keys(t!.except(['escalationCount']))).not.toContain('escalation_count')
   })
 
+  it('queries a camelCase attribute by either casing', async () => {
+    // `ColumnName` admits both spellings, and the migration generator (and
+    // createTableFromModel) create the snake_case column — so both must reach
+    // the same column instead of failing with "no such column".
+    expect((await Ticket.where('escalationCount', 1).get()).map(t => t.get('subject'))).toEqual(['t1'])
+    expect((await Ticket.where('escalation_count', 1).get()).map(t => t.get('subject'))).toEqual(['t1'])
+    expect(await Ticket.where('escalationCount', 0).count()).toBe(1)
+    expect(await Ticket.sum('escalationCount')).toBe(1)
+    expect(await Ticket.query().orderBy('escalationCount', 'desc').pluck('escalationCount')).toEqual([1, 0])
+  })
+
+  it('updates and increments a camelCase attribute', async () => {
+    const created = await Ticket.create({ subject: 'camel', reported_by: 1, rr_team_id: 1, escalationCount: 2 })
+    await Ticket.where('id', created.id).increment('escalationCount', 3)
+    expect((await Ticket.find(created.id))!.get('escalationCount')).toBe(5)
+    await Ticket.where('id', created.id).update({ escalationCount: 7 })
+    expect((await Ticket.find(created.id))!.get('escalationCount')).toBe(7)
+  })
+
   it('isDirty()/getOriginal() track a camelCase column', async () => {
     const t = await Ticket.where('subject', 't1').first()
     expect(t!.isDirty('escalationCount')).toBe(false)

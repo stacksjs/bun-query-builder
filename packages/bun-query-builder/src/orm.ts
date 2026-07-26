@@ -1344,6 +1344,23 @@ const relationCache = new Map<string, ReturnType<typeof resolveRelation>>()
 const RELATION_CACHE_MAX = 1000
 
 /**
+ * A caller-supplied column name rendered in its real column casing.
+ *
+ * `ColumnName<TDef>` admits an attribute in the casing it was declared in AND
+ * its snake_case form, because the migration generator snake_cases every
+ * column name and `_attributes` is normalized the same way. The SQL builders
+ * interpolated the caller's spelling verbatim, so `.where('activityType', …)`
+ * type-checked and then failed at runtime with "no such column". Applied at
+ * every point a column name reaches SQL.
+ *
+ * `table.column` (accepted by orderBy) survives: `.` is untouched by
+ * `toSnakeCase`, so each side is converted independently.
+ */
+function sqlColumn(name: string): string {
+  return toSnakeCase(name)
+}
+
+/**
  * Convert PascalCase model name to snake_case for foreign key convention.
  * e.g., 'OrderItem' -> 'order_item', 'User' -> 'user'
  */
@@ -2265,7 +2282,7 @@ class ModelQueryBuilder<
     // Using a raw grouped clause keeps the operator inside its own
     // parenthesised scope. See stacksjs/stacks#1862 #10.
     assertValidIdentifier(column, 'whereNotBetween(column)')
-    const col = column as string
+    const col = sqlColumn(column as string)
     this._wheres.push({
       raw: `(${col} < ? OR ${col} > ?)`,
       rawParams: [range[0], range[1]],
@@ -2371,15 +2388,16 @@ class ModelQueryBuilder<
         if (w.rawParams && w.rawParams.length > 0) params.push(...w.rawParams)
       }
       else if (w.value === null) {
-        clause = w.operator === '=' ? `${w.column} IS NULL` : `${w.column} IS NOT NULL`
+        const col = sqlColumn(w.column!)
+        clause = w.operator === '=' ? `${col} IS NULL` : `${col} IS NOT NULL`
       }
       else if (w.operator === 'in' || w.operator === 'not in') {
         const arr = w.value as unknown[]
-        clause = `${w.column} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
+        clause = `${sqlColumn(w.column!)} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
         params.push(...arr)
       }
       else {
-        clause = `${w.column} ${w.operator} ?`
+        clause = `${sqlColumn(w.column!)} ${w.operator} ?`
         params.push(w.value)
       }
 
@@ -2415,7 +2433,8 @@ class ModelQueryBuilder<
 
   private buildQuery(): { sql: string; params: unknown[] } {
     const params: unknown[] = []
-    let sql = `SELECT ${this._select.join(', ')} FROM ${this._definition.table}`
+    const cols = this._select.map(c => (c === '*' ? c : sqlColumn(c)))
+    let sql = `SELECT ${cols.join(', ')} FROM ${this._definition.table}`
 
     const whereBody = this.composeWhere(params)
     if (whereBody) {
@@ -2423,7 +2442,7 @@ class ModelQueryBuilder<
     }
 
     if (this._orderBy.length > 0) {
-      sql += ` ORDER BY ${this._orderBy.map(o => `${o.column} ${o.direction.toUpperCase()}`).join(', ')}`
+      sql += ` ORDER BY ${this._orderBy.map(o => `${sqlColumn(o.column)} ${o.direction.toUpperCase()}`).join(', ')}`
     }
 
     if (this._limit !== undefined) sql += ` LIMIT ${this._limit}`
@@ -2744,7 +2763,8 @@ class ModelQueryBuilder<
     const exec = getExecutor()
     const params: unknown[] = [amount]
 
-    let sql = `UPDATE ${this._definition.table} SET ${column as string} = ${column as string} + ?`
+    const incCol = sqlColumn(column as string)
+    let sql = `UPDATE ${this._definition.table} SET ${incCol} = ${incCol} + ?`
 
     if (timestampsEnabled(this._definition)) {
       sql += `, updated_at = ?`
@@ -2842,20 +2862,21 @@ class ModelQueryBuilder<
     // Raw query — avoid creating ModelInstance objects just to extract one column
     const exec = getExecutor()
     const params: unknown[] = []
-    let sql = `SELECT ${column as string} FROM ${this._definition.table}`
+    const pluckCol = sqlColumn(column as string)
+    let sql = `SELECT ${pluckCol} FROM ${this._definition.table}`
 
     const whereBody = this.composeWhere(params)
     if (whereBody) {
       sql += ` WHERE ${whereBody}`
     }
     if (this._orderBy.length > 0) {
-      sql += ` ORDER BY ${this._orderBy.map(o => `${o.column} ${o.direction.toUpperCase()}`).join(', ')}`
+      sql += ` ORDER BY ${this._orderBy.map(o => `${sqlColumn(o.column)} ${o.direction.toUpperCase()}`).join(', ')}`
     }
     if (this._limit !== undefined) sql += ` LIMIT ${this._limit}`
     if (this._offset !== undefined) sql += ` OFFSET ${this._offset}`
 
     const rows = await exec.all(sql, params)
-    return rows.map(r => r[column as string]) as any
+    return rows.map(r => r[pluckCol]) as any
   }
 
   private async aggregate(fn: string, column: string): Promise<unknown> {
@@ -2865,7 +2886,7 @@ class ModelQueryBuilder<
     assertValidIdentifier(column, `${fn}(column)`)
     const exec = getExecutor()
     const params: unknown[] = []
-    let sql = `SELECT ${fn}(${column}) as v FROM ${this._definition.table}`
+    let sql = `SELECT ${fn}(${sqlColumn(column)}) as v FROM ${this._definition.table}`
 
     const whereBody = this.composeWhere(params)
     if (whereBody) {
@@ -2918,7 +2939,7 @@ class ModelQueryBuilder<
   async update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): Promise<number> {
     const exec = getExecutor()
     const entries = Object.entries(data)
-    const sets = entries.map(([k]) => `${k} = ?`).join(', ')
+    const sets = entries.map(([k]) => `${sqlColumn(k)} = ?`).join(', ')
     const params: unknown[] = entries.map(([, v]) => v)
 
     if (timestampsEnabled(this._definition)) {
