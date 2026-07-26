@@ -279,9 +279,30 @@ type SystemFields<TDef extends ModelDefinition> =
   (TDef['traits'] extends { useAuth: true | object } ? { two_factor_secret: string | null; public_key: string | null } : {}) &
   (TDef['traits'] extends { billable: true | object } ? { stripe_id: string | null } : {})
 
+/**
+ * The foreign-key columns a `belongsTo` puts on THIS model's table.
+ *
+ * `belongsTo: ['Farm', 'Field']` means the migration carries `farm_id` and
+ * `field_id`, so they are as real as any declared attribute and code queries
+ * them constantly (`Mission.where('field_id', field.id)`). They were missing
+ * from both `ModelAttributes` and `ColumnName`, which made every such query a
+ * type error against a column that demonstrably exists.
+ *
+ * The name follows the same snake_case convention the relation resolver uses
+ * at runtime: `Farm` -> `farm_id`, `TreatmentMap` -> `treatment_map_id`.
+ */
+type BelongsToKeys<TDef extends ModelDefinition> =
+  TDef extends { belongsTo: infer R extends readonly string[] }
+    ? `${SnakeCase<Uncapitalize<R[number]>>}_id`
+    : never
+
+type BelongsToColumns<TDef extends ModelDefinition> = {
+  [K in BelongsToKeys<TDef>]: number
+}
+
 // Complete model type
 type ModelAttributes<TDef extends ModelDefinition> =
-  InferModelAttributes<TDef> & SnakeCaseAttributes<TDef> & SystemFields<TDef>
+  InferModelAttributes<TDef> & SnakeCaseAttributes<TDef> & SystemFields<TDef> & BelongsToColumns<TDef>
 
 // All valid column names
 type ColumnName<TDef extends ModelDefinition> =
@@ -295,6 +316,7 @@ type ColumnName<TDef extends ModelDefinition> =
   | (TDef['traits'] extends { softDeletable: true | object } ? 'deleted_at' : never)
   | (TDef['traits'] extends { useAuth: true | object } ? 'two_factor_secret' | 'public_key' : never)
   | (TDef['traits'] extends { billable: true | object } ? 'stripe_id' : never)
+  | BelongsToKeys<TDef>
 
 // Hidden fields
 type HiddenKeys<TDef extends ModelDefinition> = {
