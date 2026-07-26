@@ -8,6 +8,7 @@ import { config, getPlaceholder, getPlaceholders, isMysqlLike } from './config'
 import type { DriverConnection } from './db'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
+import { singularizerFor } from './inflect'
 
 export { resetConnection }
 
@@ -2995,11 +2996,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
      * Lifted here so the pivot resolver and `wherePivot` can use it without
      * being inside the `with()` method body.
      */
-    const singularize = (name: string): string => {
-      if (config.relations.singularizeStrategy === 'none')
-        return name
-      return name.endsWith('s') ? name.slice(0, -1) : name
-    }
+    const singularize = (name: string): string =>
+      singularizerFor(config.relations.singularizeStrategy)(name)
 
     /** Local helper: resolve the pivot for a relation on the current table. */
     const resolvePivotLocal = (relationKey: string): ResolvedPivot | null => {

@@ -9,10 +9,12 @@
 
 import type { BelongsToManyConfig, ModelRecord, PivotColumnAttribute } from './schema'
 import type { SchemaMeta } from './meta'
+import { config } from './config'
+import { singularizerFor } from './inflect'
 
-/** Default trailing-s singularization, matching the legacy convention. */
+/** Singularization honoring `relations.singularizeStrategy`. */
 function defaultSingularize(name: string): string {
-  return name.endsWith('s') ? name.slice(0, -1) : name
+  return singularizerFor(config.relations?.singularizeStrategy)(name)
 }
 
 export interface ResolvedPivot {

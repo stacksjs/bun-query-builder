@@ -141,11 +141,21 @@ export interface RelationsConfig {
    */
   foreignKeyFormat: 'singularParent_id' | 'parentId'
   /**
-   * Strategy used to singularize parent names.
-   * - 'stripTrailingS': Naively remove a trailing 's'
+   * Strategy used to singularize parent names when deriving pivot table names
+   * and foreign-key columns.
+   * - 'stripTrailingS' (default): Naively remove a trailing 's'. Wrong for
+   *   every table pluralized with anything other than a bare 's' —
+   *   `categories` -> `categorie`, `addresses` -> `addresse`,
+   *   `status` -> `statu`.
+   * - 'inflect': Exact inverse of the built-in pluralization rules, so
+   *   `categories` -> `category`, `boxes` -> `box`, and words that were never
+   *   plural (`status`) are left alone.
    * - 'none': Do not singularize
+   *
+   * Left at 'stripTrailingS' by default because changing it renames pivot
+   * tables and FK columns under live schemas.
    */
-  singularizeStrategy?: 'stripTrailingS' | 'none'
+  singularizeStrategy?: 'stripTrailingS' | 'none' | 'inflect'
   /**
    * Maximum depth for nested relationship loading (e.g., 'posts.comments.author')
    * Default: 10

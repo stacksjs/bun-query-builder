@@ -1,5 +1,6 @@
 import type { ForeignKeyConfig, ModelRecord, OnForeignKeyAction } from './schema'
 import { normalizeRelationList } from './relation-utils'
+import { singularizerFor } from './inflect'
 import type { SupportedDialect } from './types'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -37,6 +38,15 @@ function snakeCase(str: string): string {
     // Handle numbers followed by letters
     .replace(/(\d)([A-Z])/gi, '$1_$2')
     .toLowerCase()
+}
+
+/**
+ * Singularize a TABLE name for pivot/FK derivation, honoring
+ * `relations.singularizeStrategy`. Must stay in lockstep with the resolver in
+ * pivot.ts — the migration emits the columns those resolvers query.
+ */
+function singularizeTable(table: string): string {
+  return singularizerFor(config.relations?.singularizeStrategy)(table)
 }
 
 let migrationCounter = 0
@@ -707,7 +717,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     const model = models[modelName] as any
     const traits = (model?.traits ?? {}) as Record<string, any>
     const modelTable = (model.table as string) || `${String(model.name).toLowerCase()}s`
-    const singular = modelTable.replace(/s$/, '')
+    const singular = singularizeTable(modelTable)
 
     // likeable → per-model `<table>_likes` pivot keyed by user_id + <model>_id
     if (traits.likeable) {
@@ -783,7 +793,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     const btm = model?.belongsToMany
     if (!btm || typeof btm !== 'object' || Array.isArray(btm)) continue
     const parentTable = (model.table as string) || `${String(model.name).toLowerCase()}s`
-    const parentSingular = parentTable.replace(/s$/, '')
+    const parentSingular = singularizeTable(parentTable)
 
     for (const [relKey, value] of Object.entries(btm)) {
       const cfg = value as any
@@ -798,7 +808,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       const relatedModelName = cfg.model as string
       const relatedRaw = models[relatedModelName] as any
       const relatedTable = (relatedRaw?.table as string) || `${String(relatedModelName).toLowerCase()}s`
-      const relatedSingular = relatedTable.replace(/s$/, '')
+      const relatedSingular = singularizeTable(relatedTable)
       const pivotTable = (cfg.table as string) || [parentSingular, relatedSingular].sort().join('_')
       const fkParent = (cfg.foreignKey as string) || `${parentSingular}_id`
       const fkRelated = (cfg.relatedKey as string) || `${relatedSingular}_id`

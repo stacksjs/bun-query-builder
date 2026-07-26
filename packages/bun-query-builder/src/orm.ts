@@ -33,6 +33,7 @@ import type { DriverConnection } from './db'
 import { getOrCreateBunSql } from './db'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 import { normalizeRelationList } from './relation-utils'
+import { singularizerFor } from './inflect'
 
 /**
  * Current timestamp formatted for the active dialect.
@@ -1609,13 +1610,13 @@ function resolveRelation(definition: ModelDefinition, relationName: string): Res
       pivotTable = throughModel.getTable?.() || throughModel.getDefinition?.()?.table || toTableName(config.through)
     }
     else {
-      const a = parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable
-      const b = relatedTable.endsWith('s') ? relatedTable.slice(0, -1) : relatedTable
+      const a = singularizeWord(parentTable)
+      const b = singularizeWord(relatedTable)
       pivotTable = [a, b].sort().join('_')
     }
 
-    const pivotFkParent = config?.foreignKey || `${(parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable)}_id`
-    const pivotFkRelated = config?.relatedKey || `${(relatedTable.endsWith('s') ? relatedTable.slice(0, -1) : relatedTable)}_id`
+    const pivotFkParent = config?.foreignKey || `${singularizeWord(parentTable)}_id`
+    const pivotFkRelated = config?.relatedKey || `${singularizeWord(relatedTable)}_id`
 
     // Pivot columns from inline config + (when applicable) the through model.
     const pivotColumns: string[] = []
@@ -1712,9 +1713,9 @@ function distinctParentIds(instances: ReadonlyArray<{ get: (key: any) => unknown
   return [...seen]
 }
 
-/** Singularize a table name for FK derivation (naive trailing-`s` strip). */
+/** Singularize a table name for FK derivation, honoring the configured strategy. */
 function singularizeWord(table: string): string {
-  return table.endsWith('s') ? table.slice(0, -1) : table
+  return singularizerFor(config.relations?.singularizeStrategy)(table)
 }
 
 /**
