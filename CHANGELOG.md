@@ -1,3 +1,19 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.58...v0.1.59)
+
+## 🐛 Bug Fixes
+
+- **orm**: allow belongsTo foreign keys in create/update payloads ([b6ca32a](https://github.com/stacksjs/bun-query-builder/commit/b6ca32a)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **types**: bring inference utilities to parity with the ORM column model ([687351d](https://github.com/stacksjs/bun-query-builder/commit/687351d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **orm**: let declared attributes win over trait and belongsTo system columns ([b2f2006](https://github.com/stacksjs/bun-query-builder/commit/b2f2006)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.59 ([5be907d](https://github.com/stacksjs/bun-query-builder/commit/5be907d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.57...v0.1.58)
 
 ## 🐛 Bug Fixes
