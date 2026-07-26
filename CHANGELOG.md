@@ -1,3 +1,21 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.57...v0.1.58)
+
+## 🐛 Bug Fixes
+
+- **orm**: include belongsTo foreign keys in ModelAttributes and ColumnName ([b5b1581](https://github.com/stacksjs/bun-query-builder/commit/b5b1581)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📚 Documentation
+
+- link the community as stacksjs.com/discord ([57e7bb7](https://github.com/stacksjs/bun-query-builder/commit/57e7bb7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.58 ([f48ec3a](https://github.com/stacksjs/bun-query-builder/commit/f48ec3a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.56...v0.1.57)
 
 ## ♻️ Code Refactoring
