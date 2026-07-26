@@ -161,6 +161,20 @@ export interface ModelHookInstance extends Record<string, unknown> {
   toArray?(): Record<string, unknown>
 }
 
+/**
+ * Object form of a `belongsTo` entry. The migration generator has always
+ * honored `foreignKey`/`onDelete` here (see `normalizeRelationEntry`), but the
+ * declaration type only admitted plain model-name strings — so the supported
+ * form was a type error at the call site.
+ */
+export interface BelongsToEntry {
+  readonly model: string
+  /** FK column on THIS table. Defaults to `${snake(model)}_id`. */
+  readonly foreignKey?: string
+  /** ON DELETE behaviour for the generated constraint. */
+  readonly onDelete?: import('./schema').OnForeignKeyAction
+}
+
 // Base model definition
 export interface ModelDefinition {
   readonly name: string
@@ -206,7 +220,7 @@ export interface ModelDefinition {
     readonly useActivityLog?: boolean | object
     readonly useSocials?: readonly string[]
   }
-  readonly belongsTo?: readonly string[] | Readonly<Record<string, string>>
+  readonly belongsTo?: readonly (string | BelongsToEntry)[] | Readonly<Record<string, string | BelongsToEntry>>
   readonly hasMany?: readonly string[] | Readonly<Record<string, string>>
   readonly hasOne?: readonly string[] | Readonly<Record<string, string>>
   readonly belongsToMany?: readonly (string | object)[] | Readonly<Record<string, string | object>>
@@ -269,7 +283,7 @@ type SnakeCaseAttributes<TDef extends ModelDefinition> = {
 // System fields added by traits. The primary-key column honors the model's
 // declared `primaryKey` (default 'id') — a custom-pk model exposes THAT
 // column, not a phantom 'id'. Mirrors InferAttributes in type-inference.ts.
-type SystemFields<TDef extends ModelDefinition> =
+type TraitSystemFields<TDef extends ModelDefinition> =
   { [K in TDef extends { primaryKey: infer PK extends string } ? PK : 'id']: number } &
   (TDef['traits'] extends { useUuid: true } ? { uuid: string } : {}) &
   (TDef['traits'] extends { useTimestamps: true } ? { created_at: string; updated_at: string | null } : {}) &
@@ -280,6 +294,40 @@ type SystemFields<TDef extends ModelDefinition> =
   (TDef['traits'] extends { billable: true | object } ? { stripe_id: string | null } : {})
 
 /**
+ * Every column name the model declares itself, in both the casing it was
+ * written in and its snake_case column form.
+ */
+type DeclaredColumns<TDef extends ModelDefinition> =
+  AttributeKeys<TDef> | SnakeCase<AttributeKeys<TDef>>
+
+/**
+ * Trait-added system fields, minus anything the model declares explicitly.
+ *
+ * Without the `Omit`, a model that declares a column a trait also contributes
+ * (`created_at: { type: 'date' }` alongside `useTimestamps`, or a `user_id`
+ * string alongside `belongsTo: ['User']`) intersected the two shapes into
+ * `Date & string` — or outright `never`. Every read of that column then had an
+ * uninhabited type and every write was rejected. A column the model spells out
+ * is the authority on its own type; the trait default only fills the gap.
+ */
+type SystemFields<TDef extends ModelDefinition> =
+  Omit<TraitSystemFields<TDef>, DeclaredColumns<TDef>>
+
+/**
+ * A single `belongsTo` entry reduced to the FK column it puts on this table.
+ * Mirrors `normalizeRelationEntry` in relation-utils.ts: an explicit
+ * `foreignKey` wins, otherwise the name is derived from the model name.
+ */
+type BelongsToFkOf<E> =
+  E extends string
+    ? `${SnakeCase<Uncapitalize<E>>}_id`
+    : E extends { foreignKey: infer F extends string }
+      ? F
+      : E extends { model: infer M extends string }
+        ? `${SnakeCase<Uncapitalize<M>>}_id`
+        : never
+
+/**
  * The foreign-key columns a `belongsTo` puts on THIS model's table.
  *
  * `belongsTo: ['Farm', 'Field']` means the migration carries `farm_id` and
@@ -288,16 +336,27 @@ type SystemFields<TDef extends ModelDefinition> =
  * from both `ModelAttributes` and `ColumnName`, which made every such query a
  * type error against a column that demonstrably exists.
  *
- * The name follows the same snake_case convention the relation resolver uses
- * at runtime: `Farm` -> `farm_id`, `TreatmentMap` -> `treatment_map_id`.
+ * All four declaration shapes the migration generator accepts are covered:
+ * `['Farm']`, `[{ model: 'Farm', foreignKey: 'owner_id' }]`, `{ farm: 'Farm' }`
+ * and `{ owner: { model: 'User', foreignKey: 'owner_id' } }`. The array case
+ * MUST be checked first — a tuple also structurally matches `Record`, and the
+ * record branch would otherwise read its numeric indices as entries.
+ *
+ * The default name follows the same snake_case convention the relation resolver
+ * uses at runtime: `Farm` -> `farm_id`, `TreatmentMap` -> `treatment_map_id`.
  */
 type BelongsToKeys<TDef extends ModelDefinition> =
-  TDef extends { belongsTo: infer R extends readonly string[] }
-    ? `${SnakeCase<Uncapitalize<R[number]>>}_id`
+  TDef extends { belongsTo: infer R }
+    ? R extends readonly (infer E)[]
+      ? BelongsToFkOf<E>
+      : R extends Readonly<Record<string, infer W>>
+        ? BelongsToFkOf<W>
+        : never
     : never
 
+// A declared attribute of the same name wins — see SystemFields above.
 type BelongsToColumns<TDef extends ModelDefinition> = {
-  [K in BelongsToKeys<TDef>]: number
+  [K in Exclude<BelongsToKeys<TDef>, DeclaredColumns<TDef>>]: number
 }
 
 // Complete model type

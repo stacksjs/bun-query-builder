@@ -1033,3 +1033,65 @@ async function _rawAndReturning(
     delRow.name
   }
 }
+
+// ---------------------------------------------------------------------------
+// 7. Declaration-shape edge cases (ORM layer)
+// ---------------------------------------------------------------------------
+
+/**
+ * A model that declares columns a trait / `belongsTo` would also contribute.
+ * The declared attribute must WIN — intersecting the two shapes used to yield
+ * `Date & string` (or outright `never`), so every read of the column had an
+ * uninhabited type and every write was rejected.
+ */
+const OverrideModel = createModel({
+  name: 'Override',
+  table: 'overrides',
+  traits: { useTimestamps: true },
+  belongsTo: ['User'],
+  attributes: {
+    // Same name as the belongsTo-implied FK, but a string (e.g. a ULID key)
+    user_id: { type: 'string', fillable: true },
+    // Same name as the useTimestamps-implied column, but a real Date
+    created_at: { type: 'date' },
+  },
+} as const)
+
+/** All four `belongsTo` declaration shapes the migration generator accepts. */
+const FkShapesModel = createModel({
+  name: 'FkShapes',
+  table: 'fk_shapes',
+  belongsTo: {
+    owner: { model: 'User', foreignKey: 'owner_id' },
+    team: 'Team',
+  },
+  attributes: { label: { type: 'string', fillable: true } },
+} as const)
+
+const FkArrayModel = createModel({
+  name: 'FkArray',
+  table: 'fk_arrays',
+  belongsTo: ['TreatmentMap', { model: 'User', foreignKey: 'reviewer_id' }],
+  attributes: { label: { type: 'string', fillable: true } },
+} as const)
+
+async function _ormDeclarationShapes() {
+  const o = await OverrideModel.first()
+  if (o) {
+    // Declared types survive — neither collapses to `never`
+    o.set('user_id', 'usr_01H')
+    o.set('created_at', new Date())
+    // @ts-expect-error — declared as string, the trait's number must not win
+    o.set('user_id', 1)
+  }
+
+  // Record form: explicit foreignKey and derived `${snake(model)}_id`
+  await FkShapesModel.where('owner_id', 1).first()
+  await FkShapesModel.where('team_id', 2).first()
+  // @ts-expect-error — 'user_id' is not the FK; the entry named it 'owner_id'
+  await FkShapesModel.where('user_id', 1).first()
+
+  // Array form: multi-word model names snake_case, object entries honor foreignKey
+  await FkArrayModel.where('treatment_map_id', 1).first()
+  await FkArrayModel.where('reviewer_id', 2).first()
+}
