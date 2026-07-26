@@ -27,7 +27,7 @@ describe('like/json helpers', () => {
 
   afterAll(async () => {
     // Clean up database after like/json helper tests
-    await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: 'postgres' })
+    await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
   })
 
   const models = defineModels({ User })

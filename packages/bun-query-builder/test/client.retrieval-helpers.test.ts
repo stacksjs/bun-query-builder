@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, defineModel, defineModels } from '../src'
+import { buildDatabaseSchema, buildSchemaMeta, config, createQueryBuilder, defineModel, defineModels } from '../src'
 import { resetDatabase } from '../src/actions/migrate'
 import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 
@@ -22,7 +22,7 @@ describe('retrieval helpers', () => {
 
   afterAll(async () => {
     // Clean up database after retrieval helper tests
-    await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: 'postgres' })
+    await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
   })
 
   const models = defineModels({ User })

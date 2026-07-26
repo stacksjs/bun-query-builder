@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
+import { buildDatabaseSchema, buildSchemaMeta, config, createQueryBuilder } from '../src'
 import { resetDatabase } from '../src/actions/migrate'
 import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 
@@ -10,7 +10,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after transaction tests
-  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: 'postgres' })
+  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
 })
 
 const models = {

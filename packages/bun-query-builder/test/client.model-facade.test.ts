@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, resetDatabase } from '../src'
+import { buildDatabaseSchema, buildSchemaMeta, config, createQueryBuilder, resetDatabase } from '../src'
 import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 
 beforeAll(async () => {
@@ -9,7 +9,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after model facade tests
-  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: 'postgres' })
+  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
 })
 
 describe('model-like facade usage examples (typed only)', () => {

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { createQueryBuilder } from '../src'
+import { config, createQueryBuilder } from '../src'
 import { resetDatabase } from '../src/actions/migrate'
 import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 
@@ -10,7 +10,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after table() API tests
-  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: 'postgres' })
+  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
 })
 
 describe('table() API - Laravel-style Interface', () => {

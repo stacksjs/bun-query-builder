@@ -371,7 +371,13 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
     dir = join(process.cwd(), 'app/Models')
   }
 
-  const dialect = opts.dialect || 'postgres'
+  // Fall back to the CONFIGURED dialect before the hardcoded default. A
+  // sqlite-configured app calling resetDatabase() without an explicit dialect
+  // was generating Postgres DDL (`DROP TABLE ... CASCADE`) against a sqlite
+  // connection: every statement raised a syntax error that the surrounding
+  // try/catch swallowed as "table may not exist", so the reset silently did
+  // nothing.
+  const dialect = opts.dialect || config.dialect || 'postgres'
   const driver = getDialectDriver(dialect)
   const workspaceRoot = getWorkspaceRoot()
 
@@ -515,7 +521,7 @@ export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string,
     workspaceRoot = getWorkspaceRoot()
   }
 
-  const dialect = String(opts.dialect || 'postgres') as SupportedDialect
+  const dialect = String(opts.dialect || config.dialect || 'postgres') as SupportedDialect
 
   // Clean up the new snapshot file
   const snapshotPath = getSnapshotPath(workspaceRoot, dialect)

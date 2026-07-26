@@ -27,7 +27,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: 'postgres' })
+  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
 })
 
 describe('schema and meta builders', () => {

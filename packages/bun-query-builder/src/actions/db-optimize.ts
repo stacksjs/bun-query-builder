@@ -1,5 +1,5 @@
 import type { SupportedDialect } from '@/types'
-import { isMysqlLike } from '@/config'
+import { config, isMysqlLike } from '@/config'
 import process from 'node:process'
 import { bunSql } from '@/db'
 
@@ -14,7 +14,8 @@ export interface OptimizeOptions {
  * Optimize database tables (VACUUM, ANALYZE, OPTIMIZE)
  */
 export async function dbOptimize(options: OptimizeOptions = {}): Promise<void> {
-  const dialect = options.dialect || (process.env.DB_DIALECT as SupportedDialect) || 'postgres'
+  // The configured dialect beats the hardcoded default — see db-wipe.ts.
+  const dialect = options.dialect || (process.env.DB_DIALECT as SupportedDialect) || config.dialect || 'postgres'
   const aggressive = options.aggressive || false
 
   if (options.verbose) {

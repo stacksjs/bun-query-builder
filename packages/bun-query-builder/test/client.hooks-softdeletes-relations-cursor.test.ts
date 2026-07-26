@@ -59,7 +59,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up database after hooks/soft deletes/relations tests
-  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: 'postgres' })
+  await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
 })
 
 describe('hooks, soft deletes, relations and cursor pagination', () => {
