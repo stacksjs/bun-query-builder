@@ -374,7 +374,16 @@ class QueryCache {
   }
 
   setMaxSize(size: number): void {
-    this.maxSize = size
+    this.maxSize = Math.max(0, Math.floor(size))
+    // Lowering the cap has to take effect NOW. Previously the cache kept every
+    // entry it already held and only started evicting on the next `set()`, so
+    // shrinking the cache to bound memory left the old entries resident
+    // indefinitely if no further queries were cached.
+    while (this.cache.size > this.maxSize) {
+      const lruKey = this.cache.keys().next().value
+      if (lruKey === undefined) break
+      this.cache.delete(lruKey)
+    }
   }
 }
 
@@ -2616,8 +2625,11 @@ function computeBackoffMs(attempt: number, cfg?: TxBackoff): number {
   const max = Math.max(base, cfg?.maxMs ?? 2000)
   let ms = Math.min(max, base * (factor ** Math.max(0, attempt - 1)))
   if (cfg?.jitter) {
-    const jitter = Math.random() * ms * 0.2
-    ms = ms - jitter / 2
+    // Symmetric ±10% around the computed delay. The previous form only ever
+    // SUBTRACTED (0–10%), so every retrying transaction still clustered at the
+    // top of the same narrow window — which is the thundering herd jitter
+    // exists to break up. Clamped to the cap so jitter can't overshoot maxMs.
+    ms = Math.min(max, ms * (0.9 + Math.random() * 0.2))
   }
   return Math.floor(ms)
 }
