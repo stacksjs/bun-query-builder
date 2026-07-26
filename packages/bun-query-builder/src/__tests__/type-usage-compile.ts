@@ -667,7 +667,9 @@ type T1 = Expect<Equal<InferTableName<typeof MemberDef>, 'members'>>
 // eslint-disable-next-line pickier/no-unused-vars
 type R1 = Expect<Equal<InferRelationNames<typeof MemberDef>, 'team' | 'posts' | 'comments' | 'profile' | 'roles'>>
 // eslint-disable-next-line pickier/no-unused-vars
-type R2 = Expect<Equal<InferRelationNames<typeof PostDef>, 'author' | 'comments' | 'tag'>>
+// 'images' comes from `morphMany` — polymorphic relations are relation names
+// too, and RelationCardinality already resolved it (C7 below).
+type R2 = Expect<Equal<InferRelationNames<typeof PostDef>, 'author' | 'comments' | 'tag' | 'images'>>
 
 // eslint-disable-next-line pickier/no-unused-vars
 type C1 = Expect<Equal<RelationCardinality<typeof MemberDef, 'posts'>, 'many'>>
@@ -1095,3 +1097,60 @@ async function _ormDeclarationShapes() {
   await FkArrayModel.where('treatment_map_id', 1).first()
   await FkArrayModel.where('reviewer_id', 2).first()
 }
+
+// ---------------------------------------------------------------------------
+// 8. Inference-utility parity with the ORM layer
+// ---------------------------------------------------------------------------
+
+const CustomPkDef = {
+  name: 'Ledger',
+  table: 'ledgers',
+  primaryKey: 'ledger_uuid',
+  traits: { useTimestamps: true },
+  belongsTo: ['Account', { model: 'Member', foreignKey: 'reviewer_id' }] as const,
+  morphOne: 'Thumbnail',
+  attributes: {
+    memo: { type: 'string' as const, fillable: true as const },
+    amountCents: { type: 'number' as const, fillable: true as const },
+    note: { type: 'string' as const, fillable: true as const, nullable: true as const },
+    currency: { type: 'string' as const, fillable: true as const, default: 'usd' },
+  },
+} as const satisfies ModelDefinition
+
+type LedgerCols = InferColumnNames<typeof CustomPkDef>
+
+// A custom-pk model exposes THAT column, not a phantom 'id'
+// eslint-disable-next-line pickier/no-unused-vars
+type CN3 = Expect<Equal<Extract<LedgerCols, 'ledger_uuid'>, 'ledger_uuid'>>
+// eslint-disable-next-line pickier/no-unused-vars
+type CN4 = Expect<Equal<Extract<LedgerCols, 'id'>, never>>
+// belongsTo-implied FKs are real columns (the migration generator emits them)
+// eslint-disable-next-line pickier/no-unused-vars
+type CN5 = Expect<Equal<Extract<LedgerCols, 'account_id' | 'reviewer_id'>, 'account_id' | 'reviewer_id'>>
+// declared attributes are valid in their snake_case column form too
+// eslint-disable-next-line pickier/no-unused-vars
+type CN6 = Expect<Equal<Extract<LedgerCols, 'amount_cents'>, 'amount_cents'>>
+
+// A bare-string morphOne is a relation name
+// eslint-disable-next-line pickier/no-unused-vars
+type R3 = Expect<Equal<InferRelationNames<typeof CustomPkDef>, 'account' | 'member' | 'thumbnail'>>
+// eslint-disable-next-line pickier/no-unused-vars
+type C8 = Expect<Equal<RelationCardinality<typeof CustomPkDef, 'thumbnail'>, 'one'>>
+
+type LedgerAttrs = InferAttributes<typeof CustomPkDef>
+// eslint-disable-next-line pickier/no-unused-vars
+type A7 = Expect<Equal<LedgerAttrs['ledger_uuid'], number>>
+// eslint-disable-next-line pickier/no-unused-vars
+type A8 = Expect<Equal<LedgerAttrs['account_id'], number>>
+
+type LedgerFill = InferFillableAttributes<typeof CustomPkDef>
+// nullable columns admit null, and are optional (the DB supplies NULL)
+// eslint-disable-next-line pickier/no-unused-vars
+type F2 = Expect<Equal<LedgerFill['note'], string | null | undefined>>
+// defaulted columns are optional (the DB supplies the default)
+// eslint-disable-next-line pickier/no-unused-vars
+type F3 = Expect<Equal<LedgerFill['currency'], string | undefined>>
+// everything else stays required
+// eslint-disable-next-line pickier/no-unused-vars
+type F4 = Expect<Equal<LedgerFill['memo'], string>>
+const _ledgerInsert: LedgerFill = { memo: 'x', amountCents: 100 }

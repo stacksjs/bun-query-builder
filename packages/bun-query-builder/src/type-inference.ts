@@ -95,7 +95,7 @@ interface InferableModelDefinition {
     readonly useAuth?: boolean | object
     readonly billable?: boolean | object
   }
-  readonly belongsTo?: readonly string[] | Readonly<Record<string, string>>
+  readonly belongsTo?: readonly (string | object)[] | Readonly<Record<string, string | object>>
   readonly hasMany?: readonly string[] | Readonly<Record<string, string>>
   readonly hasOne?: readonly string[] | Readonly<Record<string, string>>
   readonly belongsToMany?: readonly (string | object)[] | Readonly<Record<string, string | object>>
@@ -133,6 +133,47 @@ type ResolveDefinition<TModel> =
 /** Extract user-defined attribute keys from a model definition */
 type DefinitionAttributeKeys<TDef extends InferableModelDefinition> = keyof TDef['attributes'] & string
 
+/** The model's primary-key column name, defaulting to `id`. */
+type PrimaryKeyOf<TDef> = TDef extends { primaryKey: infer PK extends string } ? PK : 'id'
+
+/**
+ * A single `belongsTo` entry reduced to the FK column it puts on this table.
+ * Mirrors `normalizeRelationEntry` in relation-utils.ts and `BelongsToFkOf` in
+ * orm.ts: an explicit `foreignKey` wins, otherwise the name is derived from
+ * the model name.
+ */
+type BelongsToFkOf<E> =
+  E extends string
+    ? `${SnakeCase<Uncapitalize<E>>}_id`
+    : E extends { foreignKey: infer F extends string }
+      ? F
+      : E extends { model: infer M extends string }
+        ? `${SnakeCase<Uncapitalize<M>>}_id`
+        : never
+
+/**
+ * The foreign-key columns a `belongsTo` puts on THIS model's table — they are
+ * emitted by the migration generator, so they are as real as any declared
+ * attribute. The array case MUST be checked first: a tuple also structurally
+ * matches `Record`, and the record branch would otherwise read its numeric
+ * indices as entries.
+ */
+type BelongsToKeys<TDef> =
+  TDef extends { belongsTo: infer R }
+    ? R extends readonly (infer E)[]
+      ? BelongsToFkOf<E>
+      : R extends Readonly<Record<string, infer W>>
+        ? BelongsToFkOf<W>
+        : never
+    : never
+
+/** camelCase -> snake_case, matching the column names migrations emit. */
+type SnakeCase<S extends string> = S extends `${infer C}${infer Rest}`
+  ? C extends Lowercase<C>
+    ? `${C}${SnakeCase<Rest>}`
+    : `_${Lowercase<C>}${SnakeCase<Rest>}`
+  : S
+
 // ============================================================================
 // Single attribute type inference
 // ============================================================================
@@ -162,14 +203,23 @@ export type InferAttributes<TModel> =
         [K in DefinitionAttributeKeys<TDef>]: TDef['attributes'][K] extends { nullable: true }
           ? InferSingleAttributeType<TDef['attributes'][K]> | null
           : InferSingleAttributeType<TDef['attributes'][K]>
-      } & { [K in TDef extends { primaryKey: infer PK extends string } ? PK : 'id']: number }
-      & (TDef['traits'] extends { useUuid: true } ? { uuid: string } : {})
-      & (TDef['traits'] extends { useTimestamps: true } ? { created_at: string; updated_at: string | null } : {})
-      & (TDef['traits'] extends { timestampable: true | object } ? { created_at: string; updated_at: string | null } : {})
-      & (TDef['traits'] extends { useSoftDeletes: true } ? { deleted_at: string | null } : {})
-      & (TDef['traits'] extends { softDeletable: true | object } ? { deleted_at: string | null } : {})
-      & (TDef['traits'] extends { useAuth: true | object } ? { two_factor_secret: string | null; public_key: string | null } : {})
-      & (TDef['traits'] extends { billable: true | object } ? { stripe_id: string | null } : {})
+      }
+      // A column the model spells out is the authority on its own type; the
+      // trait / FK default only fills the gap. Without the Omit, a model that
+      // declares `created_at: { type: 'date' }` alongside `useTimestamps`
+      // intersected the two into `Date & string` — an uninhabited type.
+      & Omit<
+        { [K in PrimaryKeyOf<TDef>]: number }
+        & (TDef['traits'] extends { useUuid: true } ? { uuid: string } : {})
+        & (TDef['traits'] extends { useTimestamps: true } ? { created_at: string; updated_at: string | null } : {})
+        & (TDef['traits'] extends { timestampable: true | object } ? { created_at: string; updated_at: string | null } : {})
+        & (TDef['traits'] extends { useSoftDeletes: true } ? { deleted_at: string | null } : {})
+        & (TDef['traits'] extends { softDeletable: true | object } ? { deleted_at: string | null } : {})
+        & (TDef['traits'] extends { useAuth: true | object } ? { two_factor_secret: string | null; public_key: string | null } : {})
+        & (TDef['traits'] extends { billable: true | object } ? { stripe_id: string | null } : {})
+        & { [K in BelongsToKeys<TDef>]: number },
+        DefinitionAttributeKeys<TDef>
+      >
     : never
 
 /**
@@ -218,6 +268,11 @@ export type ModelCreateDataLoose<TModel> = InferFillableAttributes<TModel> & { [
  * Infer only the fillable fields from a model definition or wrapped model.
  * This is the type accepted by `create()`, `update()`, and `fill()`.
  *
+ * Mirrors `InferAttributes`: a column declared `nullable: true` admits `null`.
+ * Columns that are `nullable` or carry a `default` are also OPTIONAL — the
+ * database supplies a value when the caller omits one, so requiring them at
+ * the call site rejected perfectly valid inserts.
+ *
  * @example
  * ```ts
  * type UserFillable = InferFillableAttributes<typeof UserModel>
@@ -226,11 +281,28 @@ export type ModelCreateDataLoose<TModel> = InferFillableAttributes<TModel> & { [
  */
 export type InferFillableAttributes<TModel> =
   ResolveDefinition<TModel> extends infer TDef extends InferableModelDefinition
-    ? {
-        [K in DefinitionAttributeKeys<TDef> as TDef['attributes'][K] extends { fillable: true } ? K : never]:
-        InferSingleAttributeType<TDef['attributes'][K]>
-      }
+    ? FillableRequired<TDef> & FillableOptional<TDef>
     : never
+
+/** Fillable keys the caller MUST supply — no `nullable`, no `default`. */
+type FillableRequired<TDef extends InferableModelDefinition> = {
+  [K in DefinitionAttributeKeys<TDef> as TDef['attributes'][K] extends { fillable: true }
+    ? TDef['attributes'][K] extends { nullable: true } | { default: unknown } ? never : K
+    : never]:
+  InferFillableType<TDef['attributes'][K]>
+}
+
+/** Fillable keys the database can fill in — `nullable` or `default`. */
+type FillableOptional<TDef extends InferableModelDefinition> = {
+  [K in DefinitionAttributeKeys<TDef> as TDef['attributes'][K] extends { fillable: true }
+    ? TDef['attributes'][K] extends { nullable: true } | { default: unknown } ? K : never
+    : never]?:
+  InferFillableType<TDef['attributes'][K]>
+}
+
+type InferFillableType<TAttr> = TAttr extends { nullable: true }
+  ? InferSingleAttributeType<TAttr> | null
+  : InferSingleAttributeType<TAttr>
 
 /**
  * Infer the primary key type from a model definition or wrapped model.
@@ -263,7 +335,9 @@ export type InferTableName<TModel> =
 
 /**
  * Infer all valid relation names from a model definition or wrapped model.
- * Combines belongsTo, hasMany, hasOne, belongsToMany, hasOneThrough, and hasManyThrough.
+ * Covers every relation kind `RelationCardinality` knows about: belongsTo,
+ * hasMany, hasOne, belongsToMany, hasOneThrough, hasManyThrough, and the
+ * polymorphic morphOne / morphMany / morphToMany / morphedByMany.
  *
  * @example
  * ```ts
@@ -279,6 +353,10 @@ export type InferRelationNames<TModel> =
     | InferBelongsToManyNames<TDef>
     | InferHasOneThroughNames<TDef>
     | InferHasManyThroughNames<TDef>
+    | InferMorphOneNames<TDef>
+    | InferMorphManyNames<TDef>
+    | InferMorphToManyNames<TDef>
+    | InferMorphedByManyNames<TDef>
     : never
 
 /**
@@ -307,11 +385,19 @@ export type InferNumericColumns<TModel> =
  * type UserCols = InferColumnNames<typeof UserModel>
  * // 'name' | 'email' | 'age' | 'role' | 'id' | 'uuid' | 'created_at' | 'updated_at'
  * ```
+ *
+ * Kept in parity with the ORM layer's `ColumnName`: the primary key honors a
+ * custom `primaryKey` (a custom-pk model exposes THAT column, not a phantom
+ * `id`), belongsTo-implied foreign keys are included because the migration
+ * generator emits them, and every declared attribute is also valid in its
+ * snake_case column form.
  */
 export type InferColumnNames<TModel> =
   ResolveDefinition<TModel> extends infer TDef extends InferableModelDefinition
     ? DefinitionAttributeKeys<TDef>
-    | 'id'
+    | SnakeCase<DefinitionAttributeKeys<TDef>>
+    | PrimaryKeyOf<TDef>
+    | BelongsToKeys<TDef>
     | (TDef['traits'] extends { useUuid: true } ? 'uuid' : never)
     | (TDef['traits'] extends { useTimestamps: true } ? 'created_at' | 'updated_at' : never)
     | (TDef['traits'] extends { timestampable: true | object } ? 'created_at' | 'updated_at' : never)
@@ -403,20 +489,26 @@ export type InferPivotColumns<TModel, R extends string> =
 // ============================================================================
 
 /**
- * Relation names of one relation declaration. Array form lowercases the
- * (unwrapped) model name; record form uses the keys. The array case MUST be
- * checked first: a tuple also structurally matches `Readonly<Record<...>>`
+ * Relation names of one relation declaration. A bare string (`morphOne:
+ * 'Image'`) lowercases the model name; array form lowercases the (unwrapped)
+ * model name; record form uses the keys.
+ *
+ * Order matters. The bare-string case must precede the record case (a string
+ * would otherwise fall through to `never`), and the array case MUST precede
+ * the record case: a tuple also structurally matches `Readonly<Record<...>>`
  * and would otherwise leak its own keys ('length', indices, ...) into the
  * relation-name union.
  */
 type RelationKeyOf<V> =
-  V extends readonly (infer E)[]
-    ? E extends string ? Lowercase<E>
-      : E extends { model: infer M extends string } ? Lowercase<M>
+  V extends string
+    ? Lowercase<V>
+    : V extends readonly (infer E)[]
+      ? E extends string ? Lowercase<E>
+        : E extends { model: infer M extends string } ? Lowercase<M>
+          : never
+      : V extends Readonly<Record<infer K, unknown>>
+        ? K & string
         : never
-    : V extends Readonly<Record<infer K, unknown>>
-      ? K & string
-      : never
 
 type InferBelongsToNames<TDef> = TDef extends { belongsTo: infer V } ? RelationKeyOf<V> : never
 
@@ -429,6 +521,14 @@ type InferBelongsToManyNames<TDef> = TDef extends { belongsToMany: infer V } ? R
 type InferHasOneThroughNames<TDef> = TDef extends { hasOneThrough: infer V } ? RelationKeyOf<V> : never
 
 type InferHasManyThroughNames<TDef> = TDef extends { hasManyThrough: infer V } ? RelationKeyOf<V> : never
+
+type InferMorphOneNames<TDef> = TDef extends { morphOne: infer V } ? RelationKeyOf<V> : never
+
+type InferMorphManyNames<TDef> = TDef extends { morphMany: infer V } ? RelationKeyOf<V> : never
+
+type InferMorphToManyNames<TDef> = TDef extends { morphToMany: infer V } ? RelationKeyOf<V> : never
+
+type InferMorphedByManyNames<TDef> = TDef extends { morphedByMany: infer V } ? RelationKeyOf<V> : never
 
 // ============================================================================
 // Relation cardinality inference
