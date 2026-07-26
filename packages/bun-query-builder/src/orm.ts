@@ -805,6 +805,25 @@ function normalizeAttributeKeys(data: Record<string, unknown>): Record<string, u
 }
 
 /**
+ * Hydration variant of `normalizeAttributeKeys` for rows the caller no longer
+ * owns (a fresh SQL row, or an object we already copied).
+ *
+ * Read paths hydrate straight from SQL rows, which are ALREADY snake_case —
+ * that's what the migration generator emits. Rebuilding an identical object
+ * for every row was a wasted allocation and a wasted `toSnakeCase` per column
+ * on the hottest path in the library: a 10k-row result did 10k object
+ * allocations that changed nothing. Scan first, and only rebuild when a key
+ * actually differs.
+ */
+function normalizeAttributeKeysInPlace(data: Record<string, unknown>): Record<string, unknown> {
+  for (const key in data) {
+    if (toSnakeCase(key) !== key)
+      return normalizeAttributeKeys(data)
+  }
+  return data
+}
+
+/**
  * Find a declared attribute's definition regardless of whether `key` (as
  * passed by the caller) or the attribute's own declaration in the model
  * matches camelCase or snake_case.
@@ -834,7 +853,9 @@ class ModelInstance<
 
   constructor(definition: TDef, attributes: Partial<ModelAttributes<TDef>> = {}) {
     this._definition = definition
-    this._attributes = normalizeAttributeKeys({ ...attributes })
+    // The spread already gives us a private copy, so the normalizer may reuse
+    // it instead of building a second object per hydrated row.
+    this._attributes = normalizeAttributeKeysInPlace({ ...attributes })
     this._original = null // deferred — only copied on first mutation
 
     // Install a callable accessor for each declared `belongsToMany` relation:
@@ -1673,6 +1694,24 @@ function resolveRelation(definition: ModelDefinition, relationName: string): Res
   return null
 }
 
+/**
+ * The distinct, non-null primary keys of a hydrated result set.
+ *
+ * These become the `IN (...)` list of an eager-load batch query, so duplicates
+ * are pure waste: a page whose parent ids repeat sent one placeholder and one
+ * bound parameter per ROW rather than per distinct value, and made the database
+ * dedupe them again. Single pass, no intermediate arrays — the belongsTo branch
+ * already worked this way.
+ */
+function distinctParentIds(instances: ReadonlyArray<{ get: (key: any) => unknown }>, pk: string): unknown[] {
+  const seen = new Set<unknown>()
+  for (const i of instances) {
+    const v = i.get(pk)
+    if (v != null) seen.add(v)
+  }
+  return [...seen]
+}
+
 /** Singularize a table name for FK derivation (naive trailing-`s` strip). */
 function singularizeWord(table: string): string {
   return table.endsWith('s') ? table.slice(0, -1) : table
@@ -2467,214 +2506,224 @@ class ModelQueryBuilder<
   /**
    * Eager load relations onto a set of already-fetched instances.
    * Uses separate queries per relation (N+1 prevention via batch loading).
+   *
+   * Relations are loaded CONCURRENTLY. Each one reads the same parent set and
+   * writes to its own relation slot, so there is no ordering dependency
+   * between them — awaiting them in sequence made `.with('a', 'b', 'c')` cost
+   * the SUM of three round trips instead of the slowest one.
    */
   private async eagerLoadRelations(instances: ModelInstance<TDef, TSelected>[]): Promise<void> {
     if (instances.length === 0 || this._withRelations.length === 0) return
+    await Promise.all(this._withRelations.map(r => this.eagerLoadRelation(r, instances)))
+  }
 
+  private async eagerLoadRelation(relationName: string, instances: ModelInstance<TDef, TSelected>[]): Promise<void> {
     const exec = getExecutor()
     const pk = this._definition.primaryKey || 'id'
 
-    for (const relationName of this._withRelations) {
-      // Cache relation resolution per model+relation pair
-      const cacheKey = `${this._definition.name}:${relationName}`
-      let rel = relationCache.get(cacheKey)
-      if (rel === undefined) {
-        rel = resolveRelation(this._definition as ModelDefinition, relationName)
-        if (relationCache.size >= RELATION_CACHE_MAX)
-          relationCache.clear()
-        relationCache.set(cacheKey, rel)
-      }
-      if (!rel) continue
+    // Cache relation resolution per model+relation pair
+    const cacheKey = `${this._definition.name}:${relationName}`
+    let rel = relationCache.get(cacheKey)
+    if (rel === undefined) {
+      rel = resolveRelation(this._definition as ModelDefinition, relationName)
+      if (relationCache.size >= RELATION_CACHE_MAX)
+        relationCache.clear()
+      relationCache.set(cacheKey, rel)
+    }
+    if (!rel) return
 
-      if (rel.type === 'hasMany' || rel.type === 'hasOne') {
-        // Get parent IDs
-        const parentIds = instances.map(i => i.get(pk as any)).filter(id => id != null)
-        if (parentIds.length === 0) continue
+    if (rel.type === 'hasMany' || rel.type === 'hasOne') {
+      // Get parent IDs
+      const parentIds = distinctParentIds(instances, pk)
+      if (parentIds.length === 0) return
 
-        const placeholders = parentIds.map(() => '?').join(', ')
-        const rows = await exec.all(
-          `SELECT * FROM ${rel.relatedTable} WHERE ${rel.foreignKey} IN (${placeholders})`,
-          parentIds,
-        )
+      const placeholders = parentIds.map(() => '?').join(', ')
+      const rows = await exec.all(
+        `SELECT * FROM ${rel.relatedTable} WHERE ${rel.foreignKey} IN (${placeholders})`,
+        parentIds,
+      )
 
-        // Try to get the related model's definition for proper instances
-        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
-        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+      // Try to get the related model's definition for proper instances
+      const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+      const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
 
-        if (rel.type === 'hasMany') {
-          // Group by foreign key
-          const grouped = new Map<unknown, Record<string, unknown>[]>()
-          for (const row of rows) {
-            const fkVal = row[rel.foreignKey]
-            if (!grouped.has(fkVal)) grouped.set(fkVal, [])
-            grouped.get(fkVal)!.push(row)
-          }
-          for (const instance of instances) {
-            const related = grouped.get(instance.get(pk as any)) || []
-            instance.setRelation(relationName, related.map(r => new ModelInstance(relDef as any, r as any)))
-          }
-        }
-        else {
-          // hasOne - single record per parent
-          const byFk = new Map<unknown, Record<string, unknown>>()
-          for (const row of rows) {
-            byFk.set(row[rel.foreignKey], row)
-          }
-          for (const instance of instances) {
-            const row = byFk.get(instance.get(pk as any))
-            instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any) : null)
-          }
-        }
-      }
-
-      if (rel.type === 'belongsTo') {
-        // Get distinct foreign key values in one pass (no intermediate arrays)
-        const fkSet = new Set<unknown>()
-        for (const i of instances) {
-          const v = (i as any)._attributes[rel.foreignKey]
-          if (v != null) fkSet.add(v)
-        }
-        const uniqueFkValues = [...fkSet]
-        if (uniqueFkValues.length === 0) continue
-
-        const placeholders = uniqueFkValues.map(() => '?').join(', ')
-        const rows = await exec.all(
-          `SELECT * FROM ${rel.relatedTable} WHERE ${rel.localKey} IN (${placeholders})`,
-          uniqueFkValues,
-        )
-
-        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
-        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
-
-        const byPk = new Map<unknown, Record<string, unknown>>()
+      if (rel.type === 'hasMany') {
+        // Group by foreign key
+        const grouped = new Map<unknown, Record<string, unknown>[]>()
         for (const row of rows) {
-          byPk.set(row[rel.localKey], row)
+          const fkVal = row[rel.foreignKey]
+          if (!grouped.has(fkVal)) grouped.set(fkVal, [])
+          grouped.get(fkVal)!.push(row)
         }
-
         for (const instance of instances) {
-          const fkVal = (instance as any)._attributes[rel.foreignKey]
-          const row = byPk.get(fkVal)
+          const related = grouped.get(instance.get(pk as any)) || []
+          instance.setRelation(relationName, related.map(r => new ModelInstance(relDef as any, r as any)))
+        }
+      }
+      else {
+        // hasOne - single record per parent. First row wins: the rows arrive
+        // in the database's order, and overwriting on each hit handed back the
+        // LAST match, which is the opposite of what `hasOne` means when a
+        // parent has stray duplicates.
+        const byFk = new Map<unknown, Record<string, unknown>>()
+        for (const row of rows) {
+          const k = row[rel.foreignKey]
+          if (!byFk.has(k)) byFk.set(k, row)
+        }
+        for (const instance of instances) {
+          const row = byFk.get(instance.get(pk as any))
           instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any) : null)
         }
       }
+    }
 
-      if (rel.type === 'belongsToMany') {
-        const parentIds = instances.map(i => i.get(pk as any)).filter(id => id != null)
-        if (parentIds.length === 0) continue
-        if (!rel.pivotTable || !rel.pivotFkParent || !rel.pivotFkRelated) continue
+    if (rel.type === 'belongsTo') {
+      // Get distinct foreign key values in one pass (no intermediate arrays)
+      const fkSet = new Set<unknown>()
+      for (const i of instances) {
+        const v = (i as any)._attributes[rel.foreignKey]
+        if (v != null) fkSet.add(v)
+      }
+      const uniqueFkValues = [...fkSet]
+      if (uniqueFkValues.length === 0) return
 
-        // 1) Fetch pivot rows for these parents.
-        const pivotPlaceholders = parentIds.map(() => '?').join(', ')
-        const pivotRows = await exec.all(
-          `SELECT * FROM ${rel.pivotTable} WHERE ${rel.pivotFkParent} IN (${pivotPlaceholders})`,
-          parentIds,
-        )
+      const placeholders = uniqueFkValues.map(() => '?').join(', ')
+      const rows = await exec.all(
+        `SELECT * FROM ${rel.relatedTable} WHERE ${rel.localKey} IN (${placeholders})`,
+        uniqueFkValues,
+      )
 
-        if (pivotRows.length === 0) {
-          for (const instance of instances) instance.setRelation(relationName, [])
-          continue
-        }
+      const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+      const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
 
-        // 2) Fetch related rows in one batch (distinct ids in one pass).
-        const relatedIdSet = new Set<unknown>()
-        for (const p of pivotRows) {
-          const v = p[rel.pivotFkRelated!]
-          if (v != null) relatedIdSet.add(v)
-        }
-        const relatedIds = [...relatedIdSet]
-        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
-        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
-        const relatedPk = relDef?.primaryKey || 'id'
-
-        let relatedRows: Record<string, unknown>[] = []
-        if (relatedIds.length > 0) {
-          const relPlaceholders = relatedIds.map(() => '?').join(', ')
-          relatedRows = await exec.all(
-            `SELECT * FROM ${rel.relatedTable} WHERE ${relatedPk} IN (${relPlaceholders})`,
-            relatedIds,
-          )
-        }
-        const relatedByPk = new Map<unknown, Record<string, unknown>>()
-        for (const r of relatedRows) relatedByPk.set(r[relatedPk], r)
-
-        // 3) Group pivot rows by parent id and assemble related instances per parent.
-        const pivotByParent = new Map<unknown, Record<string, unknown>[]>()
-        for (const p of pivotRows) {
-          const key = p[rel.pivotFkParent!]
-          if (!pivotByParent.has(key)) pivotByParent.set(key, [])
-          pivotByParent.get(key)!.push(p)
-        }
-
-        // Pivot extras = pivot row minus the two FKs and the pivot pk.
-        const pivotKnownKeys = new Set([rel.pivotFkParent, rel.pivotFkRelated])
-
-        for (const instance of instances) {
-          const parentVal = instance.get(pk as any)
-          const myPivots = pivotByParent.get(parentVal) || []
-          const relatedInstances = myPivots
-            .map((p) => {
-              const relRow = relatedByPk.get(p[rel.pivotFkRelated!])
-              if (!relRow) return null
-              const inst = new ModelInstance(relDef as any, relRow as any)
-              // Attach pivot extras under instance.pivot
-              const extras: Record<string, unknown> = {}
-              for (const [k, v] of Object.entries(p)) {
-                if (!pivotKnownKeys.has(k)) extras[k] = v
-              }
-              ;(inst as any).pivot = extras
-              return inst
-            })
-            .filter((x): x is ModelInstance<any, any> => x !== null)
-          instance.setRelation(relationName, relatedInstances)
-        }
+      const byPk = new Map<unknown, Record<string, unknown>>()
+      for (const row of rows) {
+        byPk.set(row[rel.localKey], row)
       }
 
-      if (rel.type === 'hasManyThrough' || rel.type === 'hasOneThrough') {
-        // parent.pk → through.<throughForeignKey>, through.pk →
-        // target.<targetForeignKey>. Two batched IN queries, no N+1.
-        const parentIds = instances.map(i => i.get(pk as any)).filter(id => id != null)
-        if (parentIds.length === 0) continue
+      for (const instance of instances) {
+        const fkVal = (instance as any)._attributes[rel.foreignKey]
+        const row = byPk.get(fkVal)
+        instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any) : null)
+      }
+    }
 
-        // 1) through rows linking parents to the intermediate table.
-        const throughPk = rel.throughLocalKey || 'id'
-        const throughPh = parentIds.map(() => '?').join(', ')
-        const throughRows = await exec.all(
-          `SELECT ${throughPk}, ${rel.throughForeignKey} FROM ${rel.throughTable} WHERE ${rel.throughForeignKey} IN (${throughPh})`,
-          parentIds,
+    if (rel.type === 'belongsToMany') {
+      const parentIds = distinctParentIds(instances, pk)
+      if (parentIds.length === 0) return
+      if (!rel.pivotTable || !rel.pivotFkParent || !rel.pivotFkRelated) return
+
+      // 1) Fetch pivot rows for these parents.
+      const pivotPlaceholders = parentIds.map(() => '?').join(', ')
+      const pivotRows = await exec.all(
+        `SELECT * FROM ${rel.pivotTable} WHERE ${rel.pivotFkParent} IN (${pivotPlaceholders})`,
+        parentIds,
+      )
+
+      if (pivotRows.length === 0) {
+        for (const instance of instances) instance.setRelation(relationName, [])
+        return
+      }
+
+      // 2) Fetch related rows in one batch (distinct ids in one pass).
+      const relatedIdSet = new Set<unknown>()
+      for (const p of pivotRows) {
+        const v = p[rel.pivotFkRelated!]
+        if (v != null) relatedIdSet.add(v)
+      }
+      const relatedIds = [...relatedIdSet]
+      const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+      const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+      const relatedPk = relDef?.primaryKey || 'id'
+
+      let relatedRows: Record<string, unknown>[] = []
+      if (relatedIds.length > 0) {
+        const relPlaceholders = relatedIds.map(() => '?').join(', ')
+        relatedRows = await exec.all(
+          `SELECT * FROM ${rel.relatedTable} WHERE ${relatedPk} IN (${relPlaceholders})`,
+          relatedIds,
         )
-        if (throughRows.length === 0) {
-          for (const instance of instances)
-            instance.setRelation(relationName, rel.type === 'hasManyThrough' ? [] : null)
-          continue
-        }
-        // throughId → parentId
-        const throughToParent = new Map<unknown, unknown>()
-        for (const t of throughRows) throughToParent.set(t[throughPk], t[rel.throughForeignKey!])
+      }
+      const relatedByPk = new Map<unknown, Record<string, unknown>>()
+      for (const r of relatedRows) relatedByPk.set(r[relatedPk], r)
 
-        // 2) target rows in one batch.
-        const throughIds = [...new Set(throughRows.map(t => t[throughPk]))]
-        const targetPh = throughIds.map(() => '?').join(', ')
-        const targetRows = await exec.all(
-          `SELECT * FROM ${rel.relatedTable} WHERE ${rel.targetForeignKey} IN (${targetPh})`,
-          throughIds,
-        )
+      // 3) Group pivot rows by parent id and assemble related instances per parent.
+      const pivotByParent = new Map<unknown, Record<string, unknown>[]>()
+      for (const p of pivotRows) {
+        const key = p[rel.pivotFkParent!]
+        if (!pivotByParent.has(key)) pivotByParent.set(key, [])
+        pivotByParent.get(key)!.push(p)
+      }
 
-        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
-        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+      // Pivot extras = pivot row minus the two FKs and the pivot pk.
+      const pivotKnownKeys = new Set([rel.pivotFkParent, rel.pivotFkRelated])
 
-        // Group target rows by parent (target.targetFk → throughId → parentId).
-        const byParent = new Map<unknown, ModelInstance<any, any>[]>()
-        for (const row of targetRows) {
-          const parentVal = throughToParent.get(row[rel.targetForeignKey!])
-          if (parentVal == null) continue
-          if (!byParent.has(parentVal)) byParent.set(parentVal, [])
-          byParent.get(parentVal)!.push(new ModelInstance(relDef as any, row as any))
-        }
+      for (const instance of instances) {
+        const parentVal = instance.get(pk as any)
+        const myPivots = pivotByParent.get(parentVal) || []
+        const relatedInstances = myPivots
+          .map((p) => {
+            const relRow = relatedByPk.get(p[rel.pivotFkRelated!])
+            if (!relRow) return null
+            const inst = new ModelInstance(relDef as any, relRow as any)
+            // Attach pivot extras under instance.pivot
+            const extras: Record<string, unknown> = {}
+            for (const [k, v] of Object.entries(p)) {
+              if (!pivotKnownKeys.has(k)) extras[k] = v
+            }
+            ;(inst as any).pivot = extras
+            return inst
+          })
+          .filter((x): x is ModelInstance<any, any> => x !== null)
+        instance.setRelation(relationName, relatedInstances)
+      }
+    }
 
-        for (const instance of instances) {
-          const group = byParent.get(instance.get(pk as any)) || []
-          instance.setRelation(relationName, rel.type === 'hasManyThrough' ? group : (group[0] ?? null))
-        }
+    if (rel.type === 'hasManyThrough' || rel.type === 'hasOneThrough') {
+      // parent.pk → through.<throughForeignKey>, through.pk →
+      // target.<targetForeignKey>. Two batched IN queries, no N+1.
+      const parentIds = distinctParentIds(instances, pk)
+      if (parentIds.length === 0) return
+
+      // 1) through rows linking parents to the intermediate table.
+      const throughPk = rel.throughLocalKey || 'id'
+      const throughPh = parentIds.map(() => '?').join(', ')
+      const throughRows = await exec.all(
+        `SELECT ${throughPk}, ${rel.throughForeignKey} FROM ${rel.throughTable} WHERE ${rel.throughForeignKey} IN (${throughPh})`,
+        parentIds,
+      )
+      if (throughRows.length === 0) {
+        for (const instance of instances)
+          instance.setRelation(relationName, rel.type === 'hasManyThrough' ? [] : null)
+        return
+      }
+      // throughId → parentId
+      const throughToParent = new Map<unknown, unknown>()
+      for (const t of throughRows) throughToParent.set(t[throughPk], t[rel.throughForeignKey!])
+
+      // 2) target rows in one batch.
+      const throughIds = [...new Set(throughRows.map(t => t[throughPk]))]
+      const targetPh = throughIds.map(() => '?').join(', ')
+      const targetRows = await exec.all(
+        `SELECT * FROM ${rel.relatedTable} WHERE ${rel.targetForeignKey} IN (${targetPh})`,
+        throughIds,
+      )
+
+      const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+      const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+
+      // Group target rows by parent (target.targetFk → throughId → parentId).
+      const byParent = new Map<unknown, ModelInstance<any, any>[]>()
+      for (const row of targetRows) {
+        const parentVal = throughToParent.get(row[rel.targetForeignKey!])
+        if (parentVal == null) continue
+        if (!byParent.has(parentVal)) byParent.set(parentVal, [])
+        byParent.get(parentVal)!.push(new ModelInstance(relDef as any, row as any))
+      }
+
+      for (const instance of instances) {
+        const group = byParent.get(instance.get(pk as any)) || []
+        instance.setRelation(relationName, rel.type === 'hasManyThrough' ? group : (group[0] ?? null))
       }
     }
   }
