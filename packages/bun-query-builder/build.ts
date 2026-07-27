@@ -1,4 +1,7 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import process from 'node:process'
 import { dts } from 'bun-plugin-dtsx'
 
 const result = await Bun.build({
@@ -19,62 +22,52 @@ if (!result.success) {
   process.exit(1)
 }
 
-async function patchGeneratedEntry(filePath: string): Promise<void> {
-  let original: string
-  try {
-    original = await readFile(filePath, 'utf8')
-  }
-  catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
-      return
+/**
+ * Refuse to ship an entry that cannot be compiled into a binary.
+ *
+ * This build used to *add* a top-level await: it rewrote the generated
+ * `init_src` wrapper to `async` and awaited it at module scope so that
+ * `init_config()` had run before anything read the config binding. That was
+ * necessary when `src/config.ts` loaded its file config at module scope. The
+ * config has since been lazy (`getConfig()`), so the wrapper is already
+ * synchronous and the rewrite only added the await.
+ *
+ * The await is not a local problem. Every module that imports this package
+ * inherits it, and `bun build --compile` refuses to bundle a `require()` of
+ * anything that transitively contains one — which is how this surfaced as a
+ * different repository's release job failing to build its CLI binaries, four
+ * dependency hops away, with nothing here failing at all.
+ *
+ * So the check asks Bun, because Bun is the thing that will refuse it.
+ */
+async function assertCompilable(entry: string): Promise<void> {
+  const probe = join(tmpdir(), `bun-query-builder-compile-probe-${process.pid}.ts`)
+  const output = join(tmpdir(), `bun-query-builder-compile-probe-${process.pid}.bin`)
 
-    throw error
-  }
+  // `require`, not `import`: that is the call bun --compile rejects, and it is
+  // how a consumer's CLI entry reaches this package.
+  await writeFile(probe, `require(${JSON.stringify(resolve(entry))})\n`)
 
-  let content = original
-  const asyncInitializers = new Set<string>()
+  const built = Bun.spawnSync([
+    'bun',
+    'build',
+    probe,
+    '--compile',
+    '--target=bun',
+    '--outfile',
+    output,
+  ], { stderr: 'pipe', stdout: 'pipe' })
 
-  // Bun 1.3.13 can emit the root entry wrapper as `__esm(() => { ... })`
-  // even when an earlier patch introduces `await init_config()` inside it.
-  // Patch every generated init_src* wrapper that touches config so the output
-  // remains parseable across Bun patch releases.
-  content = content.replace(
-    /var (init_src\d*) = __esm\((?:async )?\(\) => \{[\s\S]*?\n\}\);/g,
-    (wrapper: string, name: string) => {
-      if (!wrapper.includes('init_config();') && !wrapper.includes('await init_config();'))
-        return wrapper
+  await rm(probe, { force: true })
+  await rm(output, { force: true })
 
-      asyncInitializers.add(name)
+  if (built.exitCode === 0)
+    return
 
-      return wrapper
-        .replace(`var ${name} = __esm(() => {`, `var ${name} = __esm(async () => {`)
-        .replace(/(?<!await )init_config\(\);/g, 'await init_config();')
-    },
-  )
-
-  for (const name of asyncInitializers) {
-    content = content.replace(
-      new RegExp(`\\n${name}\\(\\);\\n\\nexport \\{`),
-      `\nawait ${name}();\n\nexport {`,
-    )
-  }
-
-  // (Removed) Earlier this script overwrote the built `setConfig` body
-  // with a hand-written version that wrote to a hard-coded `config3`
-  // identifier. Bun's bundler now emits a different name for the module-
-  // level `config` binding (`config5` in current builds), so the patch
-  // became a write to a dead/implicit-global variable — every
-  // `setConfig({dialect:'sqlite'})` looked like a no-op because consumers
-  // kept reading the `postgres` default from `config5`. With Step 1's
-  // `await init_config()` guaranteeing the binding is populated before
-  // any reader runs, the source-level `setConfig` (which mutates `config`
-  // in place rather than reassigning it) is enough.
-
-  if (content !== original) {
-    await writeFile(filePath, content)
-    console.log(`Fixed async init_config() call in ${filePath}`)
-  }
+  console.error(`\n${entry} cannot be compiled into a binary, so neither can anything that imports it:\n`)
+  console.error(built.stderr.toString().trim())
+  console.error('\nA top-level await is the usual cause. Move it inside a function — a config or optional-dependency load can happen on first use.\n')
+  process.exit(1)
 }
 
-await patchGeneratedEntry('./dist/src/index.js')
-await patchGeneratedEntry('./dist/index.js')
+await assertCompilable('./dist/src/index.js')
