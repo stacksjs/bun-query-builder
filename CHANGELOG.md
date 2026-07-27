@@ -1,3 +1,30 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.59...v0.1.60)
+
+## 🚀 Features
+
+- **relations**: add an 'inflect' singularization strategy ([832e644](https://github.com/stacksjs/bun-query-builder/commit/832e644)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **build**: stop injecting a top-level await into the published entry ([074ac24](https://github.com/stacksjs/bun-query-builder/commit/074ac24)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **client**: guard savepoint() on inTransaction, not on the connection shape ([791f632](https://github.com/stacksjs/bun-query-builder/commit/791f632)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **client**: shrink the query cache on setMaxSize and center backoff jitter ([5909f1d](https://github.com/stacksjs/bun-query-builder/commit/5909f1d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **cli**: fall back to the configured dialect before defaulting to postgres ([81e6b40](https://github.com/stacksjs/bun-query-builder/commit/81e6b40)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **db**: resolve sqlite:// URLs to a filesystem path ([656b095](https://github.com/stacksjs/bun-query-builder/commit/656b095)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **orm**: use snake_case column names on every path that reaches SQL ([a1b04d6](https://github.com/stacksjs/bun-query-builder/commit/a1b04d6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ⚡ Performance Improvements
+
+- **orm**: load eager relations concurrently and dedupe their IN lists ([cbb7160](https://github.com/stacksjs/bun-query-builder/commit/cbb7160)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.60 ([a96ba4c](https://github.com/stacksjs/bun-query-builder/commit/a96ba4c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.58...v0.1.59)
 
 ## 🐛 Bug Fixes

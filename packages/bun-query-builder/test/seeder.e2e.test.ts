@@ -6,31 +6,25 @@ import { resetDatabase } from '../src/actions/migrate'
 import { makeSeeder, runSeeders } from '../src/actions/seed'
 import { config } from '../src/config'
 import { createQueryBuilder } from '../src/index'
-import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
-
-// Check if Postgres is available with correct credentials before running E2E tests
-let pgAvailable = false
-try {
-  const { getOrCreateBunSql } = await import('../src/db')
-  const sql = getOrCreateBunSql()
-  const result = await sql`SELECT 1 as ok`
-  pgAvailable = Array.isArray(result) && result.length > 0
-}
-catch {
-  pgAvailable = false
-}
+import { EXAMPLES_MODELS_PATH, setupDatabase, teardownPostgres } from './setup'
 
 let testWorkspace: string
+let pgAvailable = false
 
 beforeAll(async () => {
   if (config.debug)
     config.debug.captureText = true
 
-  // Set up database only if Postgres is available
-  if (pgAvailable)
+  // Set up database — starts Postgres via pantry if needed
+  try {
     await setupDatabase()
+    pgAvailable = true
+  }
+  catch {
+    console.log('⚠️  Postgres unavailable — seeder E2E tests will be skipped')
+  }
 
-  // Create test workspace (always — needed by error handling tests too)
+  // Create test workspace
   testWorkspace = join(tmpdir(), `qb-e2e-${Date.now()}`)
   mkdirSync(testWorkspace, { recursive: true })
 
@@ -71,15 +65,21 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  // Clean up database only if Postgres was available
-  if (pgAvailable) {
+  // Clean up database
+  try {
     await resetDatabase(EXAMPLES_MODELS_PATH, { dialect: config.dialect })
   }
+  catch {
+    // Ignore cleanup errors
+  }
 
-  // Always clean up workspace
+  // Clean up workspace
   if (testWorkspace && existsSync(testWorkspace)) {
     rmSync(testWorkspace, { recursive: true, force: true })
   }
+
+  // Stop embedded PGlite if it was started
+  await teardownPostgres()
 })
 
 describe.skipIf(!pgAvailable)('End-to-End Seeding Workflow', () => {

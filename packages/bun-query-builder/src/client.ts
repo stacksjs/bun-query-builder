@@ -6194,6 +6194,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const totalParams = rowCount * colCount
           params.length = totalParams
 
+          // Build column list for both single and multi-row paths
+          const columnList = isPostgres
+            ? keys.map(k => quoteId(k)).join(',')
+            : keys.join(',')
+
           if (rowCount === 1) {
             // Ultra-fast path for single row - build SQL in one shot
             if (!isPostgres) {
@@ -6213,7 +6218,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             }
             else {
               // PostgreSQL: quoted identifiers + $N placeholders
-              const columnList = keys.map(k => quoteId(k)).join(',')
               sqlText = `INSERT INTO ${quoteId(table)}(${columnList})VALUES(`
               for (let c = 0; c < colCount; c++) {
                 if (c > 0)

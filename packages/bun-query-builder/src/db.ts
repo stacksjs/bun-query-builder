@@ -717,6 +717,15 @@ export function resetConnection(): void {
   _currentSignature = null
 }
 
+/**
+ * Inject a custom SQL instance. Useful for tests or custom connection setups.
+ */
+export function setSqlInstance(sql: SQL): void {
+  _bunSqlInstance = sql
+  _currentDialect = config.dialect
+  _currentDatabase = config.database.database
+}
+
 // Wrapper that catches "Connection closed" errors and retries with a fresh connection
 export async function withFreshConnection<T>(fn: (sql: SQL) => Promise<T>): Promise<T> {
   try {
