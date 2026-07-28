@@ -125,8 +125,10 @@ export function getPlaceholders(count: number, startIndex = 1): string {
   return count === 1 ? '?' : `?${', ?'.repeat(count - 1)}`
 }
 
-// Lazy-loaded config to avoid top-level await (enables bun --compile)
-let _config: QueryBuilderConfig | null = null
+// Whether the config file has been loaded. A boolean rather than a cached
+// object, because the loaded values are merged straight into the `config`
+// singleton above — that singleton IS the cache.
+let _fileConfigLoaded = false
 
 /**
  * Load the query-builder config from a config file (`query-builder.config.ts`,
@@ -144,21 +146,47 @@ let _config: QueryBuilderConfig | null = null
  * It is intentionally explicit/async: the builder otherwise runs purely off the
  * synchronous `config` singleton (defaults + any `setConfig`), which keeps
  * `bun --compile` and test behavior deterministic — auto-loading a file in the
- * background would make early queries race the load. Previously this wrote the
- * loaded config to a private `_config` variable that nothing else read, so a
- * config file silently never took effect; it now routes through `setConfig`.
+ * background would make early queries race the load.
+ *
+ * Precedence is `defaults < config file < setConfig()`, and BOTH halves of that
+ * matter here:
+ *
+ *  - The file is loaded with EMPTY defaults, so the returned object holds only
+ *    the keys the file/env actually specified. Passing `defaultConfig` instead
+ *    made bunfig return a fully-populated object, every key of which then
+ *    overwrote the singleton — so merely calling `getConfig()` reset settings
+ *    the file never mentioned back to library defaults.
+ *  - Keys an embedder set explicitly via `setConfig()` are skipped, because an
+ *    explicit API call is a stronger signal than a file that may not even know
+ *    the embedder exists.
+ *
+ * Together those are what let a host framework configure the builder in its own
+ * process and have it stick: `setConfig({ snapshotDir })` followed by a
+ * `generateMigration()` (which calls this) used to silently revert the snapshot
+ * to `.qb` and write generated state into the project root.
  */
 export async function getConfig(): Promise<QueryBuilderConfig> {
-  if (!_config) {
-    _config = await loadConfig({
+  if (!_fileConfigLoaded) {
+    _fileConfigLoaded = true
+
+    const fileConfig = await loadConfig({
       name: 'query-builder',
       alias: 'qb',
-      defaultConfig,
+      // Empty, NOT `defaultConfig` — see the precedence note above. The
+      // defaults already seeded the singleton; re-applying them here would
+      // clobber whatever has been configured since.
+      defaultConfig: {} as Partial<QueryBuilderConfig>,
     })
-    // Apply the loaded file/env config to the shared singleton so it actually
-    // reaches the query builder. setConfig() handles the nested-object merges.
-    setConfig(_config)
+
+    const fromFile: Partial<QueryBuilderConfig> = {}
+    for (const [key, value] of Object.entries(fileConfig ?? {})) {
+      if (!_explicitlySet.has(key))
+        (fromFile as Record<string, unknown>)[key] = value
+    }
+
+    applyConfig(fromFile)
   }
+
   return config
 }
 
@@ -197,7 +225,21 @@ export async function getConfig(): Promise<QueryBuilderConfig> {
 let _lastConfiguredDialect: string | null = null
 const _warnedDialectConflicts = new Set<string>()
 
-export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
+/**
+ * Top-level keys an embedder has passed to `setConfig()`. `getConfig()` will
+ * not overwrite these from a config file — an explicit API call outranks a file
+ * that may not know the embedder exists. See the precedence note on
+ * `getConfig()`.
+ */
+const _explicitlySet = new Set<string>()
+
+/**
+ * Merge a partial config into the process-wide singleton.
+ *
+ * Shared by `setConfig()` (explicit, marks keys) and `getConfig()` (from a
+ * file, does not) so the two paths can never drift on how nested objects merge.
+ */
+function applyConfig(userConfig: Partial<QueryBuilderConfig>): void {
   // NEVER reassign `config` here (i.e. `config = { ...defaultConfig }`).
   // Reassigning an `export let` triggers Bun's bundler to split the
   // binding: the write goes to one identifier and every reader (e.g.
@@ -206,9 +248,26 @@ export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
   // looked like a no-op because consumers still saw the `postgres`
   // default. If `config` is somehow undefined at call time, that's a
   // bundler-init failure we can't paper over here without recreating the
-  // split, so let it surface instead. The module-top `let config = {
-  // ...defaultConfig }` is the single source of truth.
+  // split, so let it surface instead. The module-top `config` singleton
+  // is the single source of truth.
+  Object.assign(config, userConfig)
 
+  // Handle nested objects like database, timestamps, etc.
+  if (userConfig.database) {
+    config.database = { ...config.database, ...userConfig.database }
+  }
+  if (userConfig.timestamps) {
+    config.timestamps = { ...config.timestamps, ...userConfig.timestamps }
+  }
+  if (userConfig.pagination) {
+    config.pagination = { ...config.pagination, ...userConfig.pagination }
+  }
+  if (userConfig.softDeletes) {
+    config.softDeletes = { ...config.softDeletes, ...userConfig.softDeletes }
+  }
+}
+
+export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
   // Detect cross-instance dialect conflicts and warn once. The proper
   // fix is per-instance config (stacksjs/stacks#1862 #18); this guard
   // surfaces the symptom so callers can see the shared-state problem
@@ -228,24 +287,10 @@ export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
   }
   if (userConfig.dialect) _lastConfiguredDialect = userConfig.dialect
 
-  Object.assign(config, userConfig)
+  // Record the caller's intent BEFORE merging, so a later getConfig() knows not
+  // to overwrite these from a config file.
+  for (const key of Object.keys(userConfig))
+    _explicitlySet.add(key)
 
-  // Handle nested objects like database, timestamps, etc.
-  if (userConfig.database) {
-    config.database = { ...config.database, ...userConfig.database }
-  }
-  if (userConfig.timestamps) {
-    config.timestamps = { ...config.timestamps, ...userConfig.timestamps }
-  }
-  if (userConfig.pagination) {
-    config.pagination = { ...config.pagination, ...userConfig.pagination }
-  }
-  if (userConfig.softDeletes) {
-    config.softDeletes = { ...config.softDeletes, ...userConfig.softDeletes }
-  }
-
-  // Also update the cached config if it exists
-  if (_config) {
-    Object.assign(_config, config)
-  }
+  applyConfig(userConfig)
 }
