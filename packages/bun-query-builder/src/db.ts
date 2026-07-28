@@ -719,11 +719,16 @@ export function resetConnection(): void {
 
 /**
  * Inject a custom SQL instance. Useful for tests or custom connection setups.
+ *
+ * The signature is stamped alongside it so `getOrCreateBunSql()` treats the
+ * injected instance as current: leaving it null would read as "config changed"
+ * on the very next call and the injection would be discarded before it was ever
+ * used. It also means a later `setConfig()` that changes the connection still
+ * invalidates the injected instance, which is the point of the signature.
  */
 export function setSqlInstance(sql: SQL): void {
   _bunSqlInstance = sql
-  _currentDialect = config.dialect
-  _currentDatabase = config.database.database
+  _currentSignature = connectionSignature()
 }
 
 // Wrapper that catches "Connection closed" errors and retries with a fresh connection
