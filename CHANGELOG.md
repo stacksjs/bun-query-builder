@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.60...v0.1.61)
+
+## 🚀 Features
+
+- **migrate**: make the model snapshot directory configurable ([98d2d82](https://github.com/stacksjs/bun-query-builder/commit/98d2d82)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.61 ([7c47a39](https://github.com/stacksjs/bun-query-builder/commit/7c47a39)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.59...v0.1.60)
 
 ## 🚀 Features
