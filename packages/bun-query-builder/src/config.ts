@@ -93,6 +93,24 @@ export const config: QueryBuilderConfig
   = ((globalThis as any)[CONFIG_SINGLETON_KEY] ??= { ...defaultConfig })
 
 /**
+ * Config-precedence bookkeeping, on `globalThis` for the same reason `config`
+ * is: an embedding framework's build often INLINES this module, so a process
+ * can hold several copies that all mutate the one shared `config`. Module-local
+ * state would then be per-copy — copy A's `setConfig()` would be invisible to
+ * copy B's `getConfig()`, and copy B would overwrite A's values from the config
+ * file. That is exactly the bug this bookkeeping exists to prevent, so it has
+ * to be as shared as the object it guards.
+ *
+ *  - `explicit`: top-level keys passed to `setConfig()`.
+ *  - `fileLoaded`: whether the config file has been read, so it is applied
+ *    once per process rather than once per inlined copy.
+ */
+const CONFIG_STATE_KEY = Symbol.for('bun-query-builder.config-state')
+interface ConfigState { explicit: Set<string>, fileLoaded: boolean }
+const configState: ConfigState
+  = ((globalThis as any)[CONFIG_STATE_KEY] ??= { explicit: new Set<string>(), fileLoaded: false })
+
+/**
  * Get the placeholder format for the current dialect.
  * PostgreSQL uses $1, $2, $3... while MySQL and SQLite use ?
  */
@@ -124,11 +142,6 @@ export function getPlaceholders(count: number, startIndex = 1): string {
   // MySQL and SQLite use `?` placeholders — a fixed repeat, no array.
   return count === 1 ? '?' : `?${', ?'.repeat(count - 1)}`
 }
-
-// Whether the config file has been loaded. A boolean rather than a cached
-// object, because the loaded values are merged straight into the `config`
-// singleton above — that singleton IS the cache.
-let _fileConfigLoaded = false
 
 /**
  * Load the query-builder config from a config file (`query-builder.config.ts`,
@@ -166,8 +179,8 @@ let _fileConfigLoaded = false
  * to `.qb` and write generated state into the project root.
  */
 export async function getConfig(): Promise<QueryBuilderConfig> {
-  if (!_fileConfigLoaded) {
-    _fileConfigLoaded = true
+  if (!configState.fileLoaded) {
+    configState.fileLoaded = true
 
     const fileConfig = await loadConfig({
       name: 'query-builder',
@@ -180,7 +193,7 @@ export async function getConfig(): Promise<QueryBuilderConfig> {
 
     const fromFile: Partial<QueryBuilderConfig> = {}
     for (const [key, value] of Object.entries(fileConfig ?? {})) {
-      if (!_explicitlySet.has(key))
+      if (!configState.explicit.has(key))
         (fromFile as Record<string, unknown>)[key] = value
     }
 
@@ -224,14 +237,6 @@ export async function getConfig(): Promise<QueryBuilderConfig> {
  */
 let _lastConfiguredDialect: string | null = null
 const _warnedDialectConflicts = new Set<string>()
-
-/**
- * Top-level keys an embedder has passed to `setConfig()`. `getConfig()` will
- * not overwrite these from a config file — an explicit API call outranks a file
- * that may not know the embedder exists. See the precedence note on
- * `getConfig()`.
- */
-const _explicitlySet = new Set<string>()
 
 /**
  * Merge a partial config into the process-wide singleton.
@@ -290,7 +295,7 @@ export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
   // Record the caller's intent BEFORE merging, so a later getConfig() knows not
   // to overwrite these from a config file.
   for (const key of Object.keys(userConfig))
-    _explicitlySet.add(key)
+    configState.explicit.add(key)
 
   applyConfig(userConfig)
 }
