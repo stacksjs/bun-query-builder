@@ -161,43 +161,39 @@ export function getPlaceholders(count: number, startIndex = 1): string {
  * `bun --compile` and test behavior deterministic — auto-loading a file in the
  * background would make early queries race the load.
  *
- * Precedence is `defaults < config file < setConfig()`, and BOTH halves of that
- * matter here:
+ * Precedence is `defaults < config file < setConfig()`. bunfig returns a fully
+ * populated object (defaults merged with the file and env), which is fine for
+ * every key the caller has not spoken for — re-applying a default on top of the
+ * singleton that already holds that default is a no-op. It is NOT fine for keys
+ * an embedder set through `setConfig()`: those came back as library defaults and
+ * silently overwrote the embedder's choice. `setConfig({ snapshotDir })`
+ * followed by a `generateMigration()` (which calls this) reverted the snapshot
+ * to `.qb` and wrote generated state into the project root.
  *
- *  - The file is loaded with EMPTY defaults, so the returned object holds only
- *    the keys the file/env actually specified. Passing `defaultConfig` instead
- *    made bunfig return a fully-populated object, every key of which then
- *    overwrote the singleton — so merely calling `getConfig()` reset settings
- *    the file never mentioned back to library defaults.
- *  - Keys an embedder set explicitly via `setConfig()` are skipped, because an
- *    explicit API call is a stronger signal than a file that may not even know
- *    the embedder exists.
+ * So the loaded object is applied with those keys filtered out — an explicit API
+ * call is a stronger signal than a file that may not know the embedder exists.
  *
- * Together those are what let a host framework configure the builder in its own
- * process and have it stick: `setConfig({ snapshotDir })` followed by a
- * `generateMigration()` (which calls this) used to silently revert the snapshot
- * to `.qb` and write generated state into the project root.
+ * Note the load MUST pass `defaultConfig`: bunfig derives the environment
+ * variable names it recognises (`QUERY_BUILDER_*`) from the shape of the
+ * defaults, so passing an empty object silently drops env-var support.
  */
 export async function getConfig(): Promise<QueryBuilderConfig> {
   if (!configState.fileLoaded) {
     configState.fileLoaded = true
 
-    const fileConfig = await loadConfig({
+    const loaded = await loadConfig({
       name: 'query-builder',
       alias: 'qb',
-      // Empty, NOT `defaultConfig` — see the precedence note above. The
-      // defaults already seeded the singleton; re-applying them here would
-      // clobber whatever has been configured since.
-      defaultConfig: {} as Partial<QueryBuilderConfig>,
+      defaultConfig,
     })
 
-    const fromFile: Partial<QueryBuilderConfig> = {}
-    for (const [key, value] of Object.entries(fileConfig ?? {})) {
+    const applicable: Partial<QueryBuilderConfig> = {}
+    for (const [key, value] of Object.entries(loaded ?? {})) {
       if (!configState.explicit.has(key))
-        (fromFile as Record<string, unknown>)[key] = value
+        (applicable as Record<string, unknown>)[key] = value
     }
 
-    applyConfig(fromFile)
+    applyConfig(applicable)
   }
 
   return config
