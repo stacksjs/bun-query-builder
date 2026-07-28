@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
-import { config } from '@/config'
+import { config, getConfig } from '@/config'
 import { withFreshConnection } from '@/db'
 import { getDialectDriver } from '@/drivers'
 import { buildMigrationPlan, createQueryBuilder, generateDiffOperations, generateSql, hashMigrationPlan, loadModels } from '../index'
@@ -158,6 +158,17 @@ function ensureSqlDirectory(workspaceRoot?: string): string {
  * Simply update your models and run migrations - the system automatically figures out what changed.
  */
 export async function generateMigration(dir?: string, opts: MigrateOptions = {}): Promise<GenerateMigrationResult> {
+  // Load the config file before anything reads `snapshotDir`.
+  //
+  // `config` is a synchronous singleton of defaults plus whatever `setConfig`
+  // supplied, and the file is only read by the async `getConfig()` - which is
+  // deliberate, so a background load cannot race an early query. Migrations are
+  // a CLI operation with no such race, and they DO need the file: a caller that
+  // set `snapshotDir` in query-builder.config.ts otherwise had it ignored and
+  // the snapshot written to `.qb`, no matter what the host framework
+  // configured in its own process.
+  await getConfig()
+
   if (!dir) {
     dir = join(process.cwd(), 'app/Models')
   }
@@ -275,6 +286,17 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
 }
 
 export async function executeMigration(dir?: string): Promise<boolean> {
+  // Load the config file before anything reads `snapshotDir`.
+  //
+  // `config` is a synchronous singleton of defaults plus whatever `setConfig`
+  // supplied, and the file is only read by the async `getConfig()` - which is
+  // deliberate, so a background load cannot race an early query. Migrations are
+  // a CLI operation with no such race, and they DO need the file: a caller that
+  // set `snapshotDir` in query-builder.config.ts otherwise had it ignored and
+  // the snapshot written to `.qb`, no matter what the host framework
+  // configured in its own process.
+  await getConfig()
+
   if (!dir) {
     dir = join(process.cwd(), 'app/Models')
   }
@@ -372,6 +394,17 @@ export async function executeMigration(dir?: string): Promise<boolean> {
 }
 
 export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Promise<boolean> {
+  // Load the config file before anything reads `snapshotDir`.
+  //
+  // `config` is a synchronous singleton of defaults plus whatever `setConfig`
+  // supplied, and the file is only read by the async `getConfig()` - which is
+  // deliberate, so a background load cannot race an early query. Migrations are
+  // a CLI operation with no such race, and they DO need the file: a caller that
+  // set `snapshotDir` in query-builder.config.ts otherwise had it ignored and
+  // the snapshot written to `.qb`, no matter what the host framework
+  // configured in its own process.
+  await getConfig()
+
   if (!dir) {
     dir = join(process.cwd(), 'app/Models')
   }
