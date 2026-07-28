@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.61...v0.1.62)
+
+## 🐛 Bug Fixes
+
+- **migrate**: read the config file before resolving the snapshot path ([a5e9df0](https://github.com/stacksjs/bun-query-builder/commit/a5e9df0)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.62 ([d944ff6](https://github.com/stacksjs/bun-query-builder/commit/d944ff6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.60...v0.1.61)
 
 ## 🚀 Features
