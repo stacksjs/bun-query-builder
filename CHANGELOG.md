@@ -5,6 +5,7 @@
 - **config**: stop getConfig() overwriting programmatic config with defaults ([c131f10](https://github.com/stacksjs/bun-query-builder/commit/c131f10)) _(by Chris <chrisbreuer93@gmail.com>)_
 - **config**: share precedence state across inlined copies of the module ([e5c464d](https://github.com/stacksjs/bun-query-builder/commit/e5c464d)) _(by Chris <chrisbreuer93@gmail.com>)_
 - **db**: repair setSqlInstance() against the connection-signature cache ([c257ba1](https://github.com/stacksjs/bun-query-builder/commit/c257ba1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **config**: keep env-var support while filtering explicit keys ([5145005](https://github.com/stacksjs/bun-query-builder/commit/5145005)) _(by Chris <chrisbreuer93@gmail.com>)_
 
 ## Contributors
 
