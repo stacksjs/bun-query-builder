@@ -15,6 +15,7 @@ export function isMysqlLike(dialect: SupportedDialect = config.dialect): boolean
 
 export const defaultConfig: QueryBuilderConfig = {
   verbose: true,
+  snapshotDir: '.qb',
   dialect: 'postgres',
   database: {
     database: 'test_db',

@@ -371,6 +371,23 @@ export interface BrowserConfig {
 export interface QueryBuilderConfig {
   /** Enables extra logging/diagnostics from the builder. */
   verbose: boolean
+
+  /**
+   * Where the model snapshot lives, relative to the workspace root.
+   *
+   * The snapshot records the last migration plan so the next `migrate` can
+   * diff against it. It defaults to `.qb` at the workspace root, which is
+   * fine for a standalone project but litters the root of an application that
+   * already has a home for generated framework state. Point this at that home
+   * instead - for example `storage/framework/database`.
+   *
+   * Changing it does not migrate an existing snapshot: the next run finds no
+   * snapshot at the new path and falls back to diffing the live database,
+   * which is the same self-healing path used for a fresh checkout.
+   *
+   * @default '.qb'
+   */
+  snapshotDir: string
   /** Target SQL dialect. */
   dialect: SupportedDialect
 

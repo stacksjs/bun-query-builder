@@ -26,9 +26,14 @@ function info(message: string): void {
  * Get the path to the model snapshot file for a given dialect.
  * This file stores the serialized migration plan from the last successful migration.
  */
+function getSnapshotDir(workspaceRoot: string): string {
+  // Configurable so an application can keep this with the rest of its
+  // generated state rather than in a dot-directory at the project root.
+  return join(workspaceRoot, config.snapshotDir || '.qb')
+}
+
 function getSnapshotPath(workspaceRoot: string, dialect: SupportedDialect): string {
-  const snapshotDir = join(workspaceRoot, '.qb')
-  return join(snapshotDir, `model-snapshot.${dialect}.json`)
+  return join(getSnapshotDir(workspaceRoot), `model-snapshot.${dialect}.json`)
 }
 
 /**
@@ -71,7 +76,7 @@ function loadPlanSnapshot(workspaceRoot: string, dialect: SupportedDialect): Mig
  */
 function savePlanSnapshot(workspaceRoot: string, dialect: SupportedDialect, plan: MigrationPlan): void {
   const snapshotPath = getSnapshotPath(workspaceRoot, dialect)
-  const snapshotDir = join(workspaceRoot, '.qb')
+  const snapshotDir = getSnapshotDir(workspaceRoot)
   const hash = hashMigrationPlan(plan)
 
   // A no-op migration must also be a filesystem no-op. Keeping the existing
