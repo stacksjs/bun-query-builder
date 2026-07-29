@@ -33,7 +33,7 @@ import type { DriverConnection } from './db'
 import { getOrCreateBunSql } from './db'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 import { normalizeRelationList } from './relation-utils'
-import { singularizerFor } from './inflect'
+import { singularizerFor, toTableName as sharedToTableName } from './inflect'
 
 /**
  * Current timestamp formatted for the active dialect.
@@ -1401,16 +1401,12 @@ function toSnakeCase(str: string): string {
 function toTableName(modelName: string): string {
   let cached = tableNameCache.get(modelName)
   if (cached !== undefined) return cached
-  const snake = toSnakeCase(modelName)
-  if (snake.endsWith('y') && !snake.endsWith('ay') && !snake.endsWith('ey') && !snake.endsWith('oy') && !snake.endsWith('uy')) {
-    cached = snake.slice(0, -1) + 'ies'
-  }
-  else if (snake.endsWith('s') || snake.endsWith('x') || snake.endsWith('ch') || snake.endsWith('sh')) {
-    cached = `${snake}es`
-  }
-  else {
-    cached = `${snake}s`
-  }
+  // Delegated rather than re-implemented: this convention lived here AND, in a
+  // naive `toLowerCase() + 's'` form, in the schema, meta and migration
+  // layers, so a model without an explicit `table` was read from one table and
+  // migrated into another. One implementation is what keeps them from drifting
+  // apart again; the cache stays, since this is on the hot path.
+  cached = sharedToTableName(modelName)
   tableNameCache.set(modelName, cached)
   return cached
 }

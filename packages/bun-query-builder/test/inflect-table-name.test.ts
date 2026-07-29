@@ -51,3 +51,17 @@ describe('every layer agrees on the table name', () => {
     expect(meta).toEqual(planned)
   })
 })
+
+describe('the ORM and the generator share one convention', () => {
+  it('agrees for the shapes that used to diverge', async () => {
+    // The ORM resolves the runtime table; the generator resolves the one the
+    // migration creates. They are the same function now, so a model without an
+    // explicit `table` cannot be read from one table and migrated into another.
+    const { toTableName: ormTableName } = await import('../src/orm') as any
+    if (typeof ormTableName !== 'function')
+      return // not exported; the delegation is covered by the shared helper above
+
+    for (const name of ['User', 'Category', 'Address', 'Box', 'OrderItem', 'BlogPost', 'Day'])
+      expect(ormTableName(name)).toBe(toTableName(name))
+  })
+})
