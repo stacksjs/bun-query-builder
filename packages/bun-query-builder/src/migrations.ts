@@ -53,6 +53,20 @@ let migrationCounter = 0
 let migrationsCreatedCount = 0
 let migrationsUpdatedCount = 0
 let useDeterministicNames = true
+/**
+ * Names of the files the current generate run wrote.
+ *
+ * A caller that also APPLIES the SQL needs to know exactly which files it has
+ * just executed, so the on-disk corpus and the database's migration ledger do
+ * not disagree — otherwise the runner replays what was already applied and
+ * dies on `duplicate column name`.
+ */
+let createdMigrationFiles: string[] = []
+
+/** The files written by the most recent generate run, in creation order. */
+export function lastCreatedMigrationFiles(): string[] {
+  return [...createdMigrationFiles]
+}
 
 /**
  * Find workspace root by looking for package.json
@@ -82,6 +96,27 @@ function ensureSqlDirectory(): string {
   return sqlDir
 }
 
+/**
+ * Header stamped onto every migration file this generator writes.
+ *
+ * Provenance, not decoration. The runner treats generated ALTER migrations as
+ * transient — replayed rather than recorded, and deleted once applied — and it
+ * used to decide that from the FILENAME. A hand-written
+ * `0000000131-alter-farms-table.sql` is a perfectly natural name for a person
+ * to choose, and it was deleted off their disk the first time they migrated.
+ * A marker the generator writes and a human does not is the only signal that
+ * actually distinguishes the two.
+ *
+ * Files without it are treated as authored, which is the safe reading: they
+ * are recorded, run once, and never removed.
+ */
+export const GENERATED_MARKER = '-- qb:generated'
+
+/** True when this SQL was written by the generator rather than by a person. */
+export function isGeneratedMigrationSql(sql: string): boolean {
+  return sql.trimStart().startsWith(GENERATED_MARKER)
+}
+
 function createMigrationFile(statement: string, fileName: string): boolean {
   if (!statement)
     return false
@@ -100,9 +135,10 @@ function createMigrationFile(statement: string, fileName: string): boolean {
   const fullFileName = `${sequence}-${fileName}.sql`
   const filePath = join(sqlDir, fullFileName)
 
-  writeFileSync(filePath, statement)
+  writeFileSync(filePath, `${GENERATED_MARKER}\n${statement}`)
   info(`-- Migration file created: ${fullFileName}`)
   migrationsCreatedCount++
+  createdMigrationFiles.push(fullFileName)
   return true
 }
 
@@ -594,11 +630,16 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       if (columns.some(c => c.name === fkColumnName))
         continue
 
+      // The target model may not be in the loaded set: a models directory is
+      // frequently a subset of the schema (framework tables, another app
+      // sharing the database, a relation that points at a model living
+      // elsewhere). That costs us the CONSTRAINT, but it must not cost us the
+      // COLUMN — the ORM writes `<model>_id` on every belongsTo regardless, so
+      // omitting it produced a CREATE TABLE the ORM could not insert into, and
+      // made the differ read the live column as a stray and propose dropping
+      // it on every run.
       const refTable = meta.modelToTable[rel.model]
-      if (!refTable)
-        continue
-
-      const refPk = meta.primaryKeys[refTable] ?? 'id'
+      const refPk = refTable ? (meta.primaryKeys[refTable] ?? 'id') : undefined
 
       columns.push({
         name: fkColumnName,
@@ -609,7 +650,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         hasDefault: false,
         // Carry the declared ON DELETE so the FK constraint (inline for
         // SQLite, ALTER TABLE for MySQL/Postgres) enforces it.
-        references: { table: refTable, column: refPk, onDelete: rel.onDelete },
+        references: refTable && refPk ? { table: refTable, column: refPk, onDelete: rel.onDelete } : undefined,
       })
     }
 
@@ -872,6 +913,7 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
   migrationCounter = 0
   migrationsCreatedCount = 0
   migrationsUpdatedCount = 0
+  createdMigrationFiles = []
   useDeterministicNames = true // Framework migrations use deterministic sequence names
 
   // In dry-run mode we compute statements/operations without touching disk —
@@ -1263,12 +1305,14 @@ function referencesAreDifferent(r1?: ColumnPlan['references'], r2?: ColumnPlan['
     || act(r1.onUpdate) !== act(r2.onUpdate)
 }
 
+/** The identity of an index in a diff: its kind, its name and its columns. */
+function indexKey(index: IndexPlan): string {
+  return `${index.type}:${index.name}:${index.columns.join(',')}`
+}
+
 function mapIndexesByKey(indexes: IndexPlan[]): Record<string, IndexPlan> {
   const map: Record<string, IndexPlan> = {}
-  for (const i of indexes) {
-    const key = `${i.type}:${i.name}:${i.columns.join(',')}`
-    map[key] = i
-  }
+  for (const i of indexes) map[indexKey(i)] = i
   return map
 }
 
@@ -1286,6 +1330,26 @@ export interface DiffOptions {
    * confirmation) before generating for real.
    */
   dryRun?: boolean
+  /**
+   * Treat a column that exists in `previous` but not in `next` as out of
+   * scope rather than removed — keep it, and never emit a drop for it.
+   *
+   * Set when `previous` was recovered by introspecting the live database
+   * instead of read from a model snapshot. The two are not the same evidence.
+   * A snapshot is a record of what the MODELS said last time, so a column
+   * missing from `next` genuinely means "the attribute was removed". Live
+   * introspection only says the column is THERE, and a database carries
+   * columns no model has ever declared: ones added by hand-written
+   * migrations, by another app sharing the schema, by an extension. Reading
+   * those as removals turns a self-heal into data loss.
+   *
+   * This is the column-level form of a rule the reconcile path already
+   * applies to whole tables — an introspected table absent from the models is
+   * out of scope, not garbage. The cost is that a genuine attribute removal
+   * is deferred until a snapshot exists to prove it; the run that reconciles
+   * writes one, so the next diff drops it normally.
+   */
+  preserveUnknownColumns?: boolean
 }
 
 /**
@@ -1312,6 +1376,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
   }
 
   const applyRenames = opts.applyRenames !== false // default true (data-preserving)
+  const preserveUnknownColumns = opts.preserveUnknownColumns === true
   // In dry-run mode we don't write any migration files (preview only).
   const emit = opts.dryRun ? (): boolean => false : createMigrationFile
 
@@ -1319,6 +1384,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
   migrationCounter = 0
   migrationsCreatedCount = 0
   migrationsUpdatedCount = 0
+  createdMigrationFiles = []
   useDeterministicNames = false // User diff migrations use timestamps
 
   const chunks: string[] = []
@@ -1448,24 +1514,58 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
   // Group all changes per table into single migration files
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]
-    const curr = nextTables[tableName]
+    let curr = nextTables[tableName]
     if (!prev)
       continue
 
     const prevCols = mapColumnsByName(prev.columns)
-    const currCols = mapColumnsByName(curr.columns)
     const prevIdx = mapIndexesByKey(prev.indexes)
-    const currIdx = mapIndexesByKey(curr.indexes)
+    let currCols = mapColumnsByName(curr.columns)
+    let currIdx = mapIndexesByKey(curr.indexes)
 
     // Resolve renames first so a renamed column isn't seen as drop + add.
+    //
+    // Not when reconciling from the database, though. Rename detection reads
+    // "one column gone, one column of the same type arrived" as one column
+    // that moved — sound when `previous` is the models' own prior state, and
+    // unfounded when it is a live schema that may carry columns the models
+    // have never described. There, a hand-written `legacy_note` and a newly
+    // declared `region` are two different columns that happen to share a
+    // type, and treating them as one moves data into a column that means
+    // something else. Preserve and add instead; the data stays where it is.
     let renames: Array<{ from: string, to: string }> = []
     let removedCols = Object.keys(prevCols).filter(n => !currCols[n])
     let addedCols = Object.keys(currCols).filter(n => !prevCols[n])
-    if (applyRenames) {
+    if (applyRenames && !preserveUnknownColumns) {
       const detected = detectColumnRenames(prevCols, currCols, dialect)
       renames = detected.renames
       removedCols = detected.removed
       addedCols = detected.added
+    }
+
+    // Columns the models never declared, kept because `previous` was read off
+    // the database rather than from a snapshot.
+    //
+    // `curr` is then treated as though it had carried them all along, which is
+    // the part that actually matters: a rebuild triggered by some unrelated
+    // change recreates the table from `curr`, so a preserved column left out
+    // of it would be dropped by the back door — silently, and without the
+    // destructive gate ever seeing a `drop_column`.
+    if (preserveUnknownColumns && removedCols.length > 0) {
+      const preserved = removedCols.map(name => prevCols[name])
+      const preservedNames = new Set(removedCols)
+      // An index on a preserved column belongs to it; dropping the index would
+      // half-remove the thing we just decided to keep.
+      const keptIndexes = prev.indexes.filter(idx =>
+        idx.columns.some(c => preservedNames.has(c)) && !currIdx[indexKey(idx)],
+      )
+
+      info(`-- Keeping ${preserved.length} column(s) on "${curr.table}" no model declares: ${removedCols.join(', ')} — reconciled from the database, where an undeclared column is out of scope rather than removed`)
+
+      curr = { ...curr, columns: [...curr.columns, ...preserved], indexes: [...curr.indexes, ...keptIndexes] }
+      currCols = mapColumnsByName(curr.columns)
+      currIdx = mapIndexesByKey(curr.indexes)
+      removedCols = []
     }
 
     // Columns present on both sides whose attributes changed, and FK-only changes.
