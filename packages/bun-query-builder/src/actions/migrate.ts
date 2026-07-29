@@ -7,8 +7,66 @@ import process from 'node:process'
 import { config, getConfig } from '@/config'
 import { withFreshConnection } from '@/db'
 import { getDialectDriver } from '@/drivers'
-import { buildMigrationPlan, createQueryBuilder, generateDiffOperations, generateSql, hashMigrationPlan, loadModels } from '../index'
+import { buildMigrationPlan, createQueryBuilder, generateDiffOperations, generateSql, hashMigrationPlan, isGeneratedMigrationSql, lastCreatedMigrationFiles, loadModels } from '../index'
 import { buildPlanFromDatabase } from './introspect-db'
+
+/**
+ * Bring the corpus and the ledger in line with SQL that was just applied.
+ *
+ * `generateMigration({ apply: true })` writes migration files AND runs their
+ * SQL, which leaves both waiting to be run a second time by the runner —
+ * guaranteed `duplicate column name` on the very next `executeMigration`. So
+ * the files it just executed are settled here, exactly as the runner settles
+ * the ones it runs itself: transient generated ALTERs are removed, permanent
+ * files are recorded.
+ *
+ * Best-effort by design: the schema change has already landed, and failing the
+ * whole call over bookkeeping would report a migration that did happen as one
+ * that did not.
+ */
+async function settleAppliedFiles(qb: any, dialect: SupportedDialect, files: string[]): Promise<void> {
+  if (files.length === 0)
+    return
+
+  const sqlDir = ensureSqlDirectory(getWorkspaceRoot())
+
+  try {
+    await createMigrationsTable(qb, dialect)
+    for (const file of files) {
+      if (isTransientMigration(sqlDir, file)) {
+        unlinkSync(join(sqlDir, file))
+        info(`-- 🗑️  Deleted transient migration: ${file}`)
+      }
+      else {
+        await recordMigration(qb, file, dialect)
+        info(`-- ✓ Recorded applied migration: ${file}`)
+      }
+    }
+  }
+  catch (err) {
+    info(`-- Could not record applied migrations (the schema change itself succeeded): ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+/**
+ * Whether a migration file is one the generator owns and will rewrite.
+ *
+ * Generated ALTERs are transient (replayed, then deleted); everything else —
+ * a create-table, an index, anything a person wrote — is permanent. The
+ * marker is the evidence. An unreadable file is treated as authored, because
+ * the cost of guessing wrong is deleting somebody's migration.
+ */
+function isTransientMigration(sqlDir: string, file: string): boolean {
+  if (!(file.includes('alter-') && file.includes('-table')))
+    return false
+
+  try {
+    return isGeneratedMigrationSql(readFileSync(join(sqlDir, file), 'utf8'))
+  }
+  catch {
+    return false
+  }
+}
 
 /**
  * Informational stdout line — printed only when the active config has
@@ -183,6 +241,8 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   const plan = buildMigrationPlan(models, { dialect })
 
   let previous: MigrationPlan | undefined
+  // True when `previous` is the live schema rather than a model snapshot.
+  let reconciledFromDatabase = false
 
   if (!opts.full) {
     // Load previous state from the snapshot file (primary source)
@@ -229,6 +289,11 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
           const scoped = livePlan.tables.filter(t => modelTables.has(t.table))
           if (scoped.length > 0) {
             previous = { dialect: livePlan.dialect, tables: scoped }
+            // Everything in `previous` is now introspected rather than
+            // declared. The diff has to know: a column the models don't
+            // mention is evidence of nothing and must not be read as a
+            // removal (see `preserveUnknownColumns`).
+            reconciledFromDatabase = true
             info(`-- No snapshot; reconciling against live database (${scoped.length} matching table${scoped.length === 1 ? '' : 's'})`)
           }
         }
@@ -248,7 +313,11 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
 
   const diff = opts.full
     ? { statements: generateSql(plan, { dryRun: opts.dryRun }), operations: plan.tables.map((t: MigrationPlan['tables'][number]) => ({ kind: 'create_table' as const, table: t.table, destructive: false, sql: '' })) }
-    : generateDiffOperations(previous, plan, { applyRenames: opts.applyRenames, dryRun: opts.dryRun })
+    : generateDiffOperations(previous, plan, {
+        applyRenames: opts.applyRenames,
+        dryRun: opts.dryRun,
+        preserveUnknownColumns: reconciledFromDatabase,
+      })
   const sqlStatements = diff.statements
   const operations = diff.operations
 
@@ -257,14 +326,25 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   const hasChanges = sqlStatements.some(stmt => /\b(?:CREATE|ALTER|DROP)\b/i.test(stmt))
 
   if (opts.apply) {
-    // Use a temp file to execute multiple statements safely via file()
+    // Execute the generated SQL against the configured database.
+    //
+    // This used to write the statements to a temp file, log "Migration
+    // applied" and return — the execution step was never there. Callers got a
+    // success line, an untouched database, and a snapshot advanced as though
+    // the schema had moved, which is the worst of the three: the next diff
+    // compared against a state that had never been reached.
     const dirPath = mkdtempSync(join(tmpdir(), 'qb-migrate-'))
     const filePath = join(dirPath, 'migration.sql')
 
     try {
       if (hasChanges) {
+        // Via a file, so a multi-statement migration runs as one script the
+        // way the migration corpus does, rather than as N parsed queries.
         writeFileSync(filePath, sql)
+        const qb = createQueryBuilder()
+        await qb.file(filePath)
         info('-- Migration applied')
+        await settleAppliedFiles(qb, dialect, lastCreatedMigrationFiles())
       }
       else {
         info('-- No changes; nothing to apply')
@@ -273,6 +353,9 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
     catch (err) {
       console.error('-- Migration failed:', err)
       throw err
+    }
+    finally {
+      rmSync(dirPath, { recursive: true, force: true })
     }
   }
 
@@ -329,11 +412,21 @@ export async function executeMigration(dir?: string): Promise<boolean> {
     const transientMigrations: string[] = []
 
     for (const file of scriptFiles) {
-      // ALTER TABLE migrations are transient (not tracked)
-      if (file.includes('alter-') && file.includes('-table')) {
+      // Generated ALTER migrations are transient: replayed rather than
+      // recorded, and removed once applied, because the generator rewrites
+      // them from the model diff on every run.
+      //
+      // Which files those are is decided by the marker the generator stamps
+      // into them, NOT by their name. `alter-...-table.sql` is an obvious
+      // name for a person to give a hand-written migration, and reading the
+      // name alone meant the runner deleted their file off disk the first
+      // time it ran. An authored migration is somebody's schema decision: it
+      // is recorded, it runs once, and it stays.
+      if (isTransientMigration(sqlDir, file)) {
         transientMigrations.push(file)
       }
-      // Everything else is permanent (CREATE TABLE, CREATE INDEX, etc.)
+      // Everything else is permanent (CREATE TABLE, CREATE INDEX, authored
+      // migrations of any shape).
       else if (!executedMigrations.includes(file)) {
         permanentMigrations.push(file)
       }
