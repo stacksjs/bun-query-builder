@@ -14,6 +14,34 @@ describe('splitSqlStatements (#1048)', () => {
       `INSERT INTO t VALUES ('a;b')`,
     ])
   })
+
+  it('drops a comment that trails a statement instead of keeping it as one', () => {
+    // Whole-line comments were filtered up front, so a trailing one survived
+    // as its own "statement" and got reported as un-reversible DDL.
+    expect(splitSqlStatements('ALTER TABLE a ADD COLUMN b TEXT; -- note about b'))
+      .toEqual(['ALTER TABLE a ADD COLUMN b TEXT'])
+    expect(splitSqlStatements('SELECT 1; /* block\ncomment; here */ SELECT 2;'))
+      .toEqual(['SELECT 1', 'SELECT 2'])
+  })
+
+  it('keeps a statement whole when a quote contains the semicolon', () => {
+    // Only single quotes were tracked, so a `;` inside a double-quoted
+    // identifier or a backtick-quoted default split one statement into two.
+    expect(splitSqlStatements('INSERT INTO a VALUES ("x;y")'))
+      .toEqual(['INSERT INTO a VALUES ("x;y")'])
+    expect(splitSqlStatements('ALTER TABLE `t` ADD COLUMN `c` TEXT DEFAULT `a;b`'))
+      .toEqual(['ALTER TABLE `t` ADD COLUMN `c` TEXT DEFAULT `a;b`'])
+  })
+
+  it('reads a doubled quote as an escape, not as the end of the string', () => {
+    expect(splitSqlStatements(`INSERT INTO a VALUES ('it''s; fine'); SELECT 1;`))
+      .toEqual([`INSERT INTO a VALUES ('it''s; fine')`, 'SELECT 1'])
+  })
+
+  it('does not mistake a hyphen inside a string for a comment', () => {
+    expect(splitSqlStatements(`INSERT INTO a VALUES ('a--b'); SELECT 1;`))
+      .toEqual([`INSERT INTO a VALUES ('a--b')`, 'SELECT 1'])
+  })
 })
 
 describe('deriveDownStatements (#1048)', () => {

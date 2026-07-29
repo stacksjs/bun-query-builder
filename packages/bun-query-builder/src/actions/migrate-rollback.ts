@@ -7,28 +7,68 @@ import { createQueryBuilder } from '../index'
 import { getSqlDirectory } from '@/workspace'
 
 /**
- * Split a SQL script into individual statements, ignoring `;` inside single
- * quotes or `--` line comments. Good enough for our generated DDL.
+ * Split a SQL script into individual statements.
+ *
+ * Quoting is tracked for all three quote characters, and comments are removed
+ * as they are scanned rather than by dropping whole lines up front. The line
+ * filter missed a comment that trailed a statement — `ALTER TABLE …; -- note`
+ * left `-- note` behind as its own "statement", which the rollback then
+ * reported as un-reversible DDL — and only single quotes were tracked, so a
+ * `;` inside a double-quoted identifier or a backtick-quoted MySQL default
+ * split one statement into two broken halves.
  */
 export function splitSqlStatements(sql: string): string[] {
   const out: string[] = []
   let buf = ''
-  let inString = false
-  const lines = sql.split('\n').filter(l => !/^\s*--/.test(l))
-  const text = lines.join('\n')
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]
-    if (ch === '\'')
-      inString = !inString
-    if (ch === ';' && !inString) {
+  /** The quote character we are inside of, or null. */
+  let quote: string | null = null
+
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i]
+
+    if (quote) {
+      buf += ch
+      if (ch === quote) {
+        // `''` / `""` / ``` `` ``` is an escaped quote, not the end of one.
+        if (sql[i + 1] === quote) {
+          buf += sql[i + 1]
+          i++
+        }
+        else {
+          quote = null
+        }
+      }
+      continue
+    }
+
+    if (ch === '\'' || ch === '"' || ch === '`') {
+      quote = ch
+      buf += ch
+      continue
+    }
+
+    // `-- …` to end of line, and `/* … */`, wherever they start.
+    if (ch === '-' && sql[i + 1] === '-') {
+      const newline = sql.indexOf('\n', i)
+      i = newline === -1 ? sql.length : newline
+      continue
+    }
+    if (ch === '/' && sql[i + 1] === '*') {
+      const close = sql.indexOf('*/', i + 2)
+      i = close === -1 ? sql.length : close + 1
+      continue
+    }
+
+    if (ch === ';') {
       if (buf.trim())
         out.push(buf.trim())
       buf = ''
+      continue
     }
-    else {
-      buf += ch
-    }
+
+    buf += ch
   }
+
   if (buf.trim())
     out.push(buf.trim())
   return out
