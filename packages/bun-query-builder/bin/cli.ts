@@ -93,7 +93,7 @@ cli
 
 cli
   .command('migrate <dir>', 'Generate SQL migrations from models')
-  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite) — defaults to the configured dialect')
   .option('--state <path>', 'Path to migration state file (defaults to <dir>/.qb-migrations.<dialect>.json)')
   .option('--apply', 'Execute the generated SQL against the database')
   .option('--full', 'Force full migration SQL instead of incremental diff')
@@ -170,7 +170,7 @@ cli
 
 cli
   .command('migrate:fresh <dir>', 'Reset database and run all migrations')
-  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite) — defaults to the configured dialect')
   .option('--state <path>', 'Path to migration state file (defaults to <dir>/.qb-migrations.<dialect>.json)')
   .option('--full', 'Force full migration SQL instead of incremental diff')
   .example('query-builder migrate:fresh ./app/Models --dialect postgres')
@@ -201,7 +201,7 @@ cli
 
 cli
   .command('reset <dir>', 'Drop all tables and reset database')
-  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite) — defaults to the configured dialect')
   .option('--state <path>', 'Path to migration state file (defaults to <dir>/.qb-migrations.<dialect>.json)')
   .example('query-builder reset ./app/Models --dialect postgres')
   .action(async (dir: string, opts: MigrateOptions) => {
@@ -395,7 +395,7 @@ cli
 
 cli
   .command('migrate:generate [dir]', 'Generate migration from model changes')
-  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite) — defaults to the configured dialect')
   .option('--state <path>', 'Path to migration state file')
   .option('--apply', 'Execute the generated SQL')
   .option('--full', 'Force full migration SQL')
@@ -448,7 +448,7 @@ cli
 
 cli
   .command('db:wipe', 'Drop all tables from the database')
-  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite) — defaults to the configured dialect')
   .option('--force', 'Skip confirmation prompt')
   .option('--verbose', 'Enable verbose output')
   .example('query-builder db:wipe')
@@ -470,7 +470,7 @@ cli
 
 cli
   .command('db:optimize', 'Optimize database tables (VACUUM, ANALYZE, OPTIMIZE)')
-  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite)', { default: 'postgres' })
+  .option('--dialect <d>', 'Dialect (postgres|mysql|sqlite) — defaults to the configured dialect')
   .option('--aggressive', 'Use aggressive optimization (VACUUM FULL for postgres)')
   .option('--tables <tables>', 'Comma-separated list of tables to optimize')
   .option('--verbose', 'Enable verbose output')

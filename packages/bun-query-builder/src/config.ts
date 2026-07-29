@@ -1,4 +1,5 @@
 import type { QueryBuilderConfig, SupportedDialect } from './types'
+import process from 'node:process'
 import { loadConfig } from 'bunfig'
 
 /**
@@ -109,6 +110,27 @@ const CONFIG_STATE_KEY = Symbol.for('bun-query-builder.config-state')
 interface ConfigState { explicit: Set<string>, fileLoaded: boolean }
 const configState: ConfigState
   = ((globalThis as any)[CONFIG_STATE_KEY] ??= { explicit: new Set<string>(), fileLoaded: false })
+
+/**
+ * The dialect a command should operate on.
+ *
+ * `explicit` is what the user asked for on the command line — only honoured
+ * when they actually said something. Every CLI command used to declare
+ * `--dialect` with `{ default: 'postgres' }` and pass the result straight
+ * through, so the "default" arrived as an explicit choice and beat the
+ * project's own configuration: a SQLite app running `qb migrate` generated
+ * Postgres DDL, and `db:wipe` looked for `pg_tables`, unless every single
+ * invocation repeated `--dialect sqlite`. The fallbacks the actions already
+ * carried were unreachable.
+ */
+export function resolveDialect(explicit?: string | null): SupportedDialect {
+  if (explicit)
+    return explicit as SupportedDialect
+  const fromEnv = process.env.DB_DIALECT || process.env.DB_CONNECTION
+  if (fromEnv)
+    return fromEnv as SupportedDialect
+  return (config.dialect || 'postgres') as SupportedDialect
+}
 
 /**
  * Get the placeholder format for the current dialect.

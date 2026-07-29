@@ -1,5 +1,5 @@
 import type { SupportedDialect } from '@/types'
-import { config, isMysqlLike } from '@/config'
+import { isMysqlLike, resolveDialect } from '@/config'
 import process from 'node:process'
 import { bunSql, resolveDatabaseName } from '@/db'
 
@@ -15,7 +15,7 @@ export interface WipeOptions {
 export async function dbWipe(options: WipeOptions = {}): Promise<void> {
   // The configured dialect beats the hardcoded default — otherwise a
   // sqlite/mysql app wipes with Postgres DDL and every statement fails.
-  const dialect = options.dialect || (process.env.DB_DIALECT as SupportedDialect) || config.dialect || 'postgres'
+  const dialect = resolveDialect(options.dialect)
 
   if (options.verbose) {
     console.log(`Wiping all tables from ${dialect} database...`)
