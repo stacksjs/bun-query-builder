@@ -380,11 +380,20 @@ cli
 cli
   .command('migrate:rollback', 'Rollback migrations')
   .option('--steps <n>', 'Number of migrations to rollback', { default: 1 })
+  .option('--no-reverse-schema', 'Only remove the migration records; leave the schema alone')
+  .option('--delete-files', 'Also delete the rolled-back migration files from disk')
   .example('query-builder migrate:rollback')
   .example('query-builder migrate:rollback --steps 2')
+  .example('query-builder migrate:rollback --no-reverse-schema')
   .action(async (opts: any) => {
     try {
-      await migrateRollback({ steps: Number(opts.steps) })
+      // `reverseSchema` had no flag at all, so the record-only mode the option
+      // documents was unreachable from the CLI.
+      await migrateRollback({
+        steps: Number(opts.steps),
+        reverseSchema: opts.reverseSchema,
+        deleteFiles: Boolean(opts.deleteFiles),
+      })
     }
     catch (err) {
       console.error('-- Rollback failed:', err)
