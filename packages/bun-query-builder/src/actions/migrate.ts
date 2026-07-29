@@ -662,19 +662,39 @@ export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string,
     info(`-- Removed legacy migration state file: ${statePath}`)
   }
 
-  // Clean up all files in the sql directory
-  const sqlDir = getSqlDirectory(workspaceRoot)
-  if (existsSync(sqlDir)) {
-    const sqlFiles = readdirSync(sqlDir)
-    const migrationFiles = sqlFiles.filter(file => file.endsWith('.sql'))
+  removeGeneratedMigrationFiles(getSqlDirectory(workspaceRoot))
+}
 
-    for (const file of migrationFiles) {
-      const filePath = join(sqlDir, file)
-      unlinkSync(filePath)
-      info(`-- Removed migration file: ${file}`)
+/**
+ * Clear the generator's own output from a migrations directory — and only that.
+ *
+ * `migrate:fresh` used to delete every `.sql` file here. The generated ones
+ * are about to be rewritten from the models, so those are fair game; a
+ * hand-written migration is not. It is schema nothing else knows how to
+ * produce, and removing it left the project with a corpus that could no longer
+ * rebuild its own database. The marker the generator stamps into its files is
+ * what tells the two apart, and an unreadable file counts as authored.
+ */
+function removeGeneratedMigrationFiles(sqlDir: string): void {
+  if (!existsSync(sqlDir))
+    return
+
+  let removed = 0
+  const kept: string[] = []
+
+  for (const file of readdirSync(sqlDir).filter(f => f.endsWith('.sql'))) {
+    if (!isGeneratedMigration(sqlDir, file)) {
+      kept.push(file)
+      continue
     }
-    info(`-- Cleaned up ${migrationFiles.length} migration files from migrations directory`)
+    unlinkSync(join(sqlDir, file))
+    info(`-- Removed generated migration file: ${file}`)
+    removed += 1
   }
+
+  info(`-- Cleaned up ${removed} generated migration file${removed === 1 ? '' : 's'} from migrations directory`)
+  if (kept.length > 0)
+    info(`-- Kept ${kept.length} hand-written migration${kept.length === 1 ? '' : 's'}: ${kept.slice(0, 5).join(', ')}${kept.length > 5 ? `, +${kept.length - 5} more` : ''}`)
 }
 
 /**
