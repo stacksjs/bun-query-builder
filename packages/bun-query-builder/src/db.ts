@@ -529,6 +529,22 @@ function sqliteFileFromUrl(url: string): string {
  * unit tests — the same pattern as `resolvePoolOptions`/`splitSqlStatements`.
  * It is not re-exported from `src/index.ts`, so it stays internal.
  */
+/**
+ * The database the library is actually connected to.
+ *
+ * Resolved the same way `createConnectionString` resolves it: the configured
+ * name, with `DB_DATABASE` taking precedence, quotes stripped. The
+ * information_schema lookups in `db:wipe` and `db:optimize` used to read
+ * `process.env.DB_NAME` — a variable this library neither documents nor reads
+ * anywhere else — and fall back to the literal `'test'`, so on MySQL they
+ * listed the tables of whatever database happened to be called `test` and
+ * silently did nothing to the real one.
+ */
+export function resolveDatabaseName(dbConfig: DatabaseConfig = config.database as DatabaseConfig): string {
+  const raw = process.env.DB_DATABASE || dbConfig?.database || ''
+  return String(raw).replace(/^['"]|['"]$/g, '')
+}
+
 export function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseConfig): string {
   // When the host process declares a matching connection via env, prefer it.
   // Consumers that bundle multiple bun-query-builder instances (e.g. the

@@ -1,7 +1,7 @@
 import type { SupportedDialect } from '@/types'
 import { config, isMysqlLike } from '@/config'
 import process from 'node:process'
-import { bunSql } from '@/db'
+import { bunSql, resolveDatabaseName } from '@/db'
 
 export interface WipeOptions {
   dialect?: SupportedDialect
@@ -34,7 +34,7 @@ export async function dbWipe(options: WipeOptions = {}): Promise<void> {
       tables = result.map((row: any) => row.tablename)
     }
     else if (isMysqlLike(dialect)) {
-      const dbName = process.env.DB_NAME || 'test'
+      const dbName = resolveDatabaseName()
       const result = await bunSql`
         SELECT table_name
         FROM information_schema.tables

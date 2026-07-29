@@ -1,7 +1,7 @@
 import type { SupportedDialect } from '@/types'
 import { config, isMysqlLike } from '@/config'
 import process from 'node:process'
-import { bunSql } from '@/db'
+import { bunSql, resolveDatabaseName } from '@/db'
 
 export interface OptimizeOptions {
   dialect?: SupportedDialect
@@ -70,7 +70,7 @@ export async function dbOptimize(options: OptimizeOptions = {}): Promise<void> {
       }
       else {
         // Get all tables
-        const dbName = process.env.DB_NAME || 'test'
+        const dbName = resolveDatabaseName()
         const tables = await bunSql`
           SELECT table_name
           FROM information_schema.tables
