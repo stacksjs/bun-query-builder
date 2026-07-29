@@ -1,4 +1,5 @@
 import type { DatabaseSchema, ModelRecord } from './schema'
+import { tableNameFor } from './inflect'
 
 export type BuildDatabaseSchema<MRecord extends ModelRecord> = DatabaseSchema<MRecord>
 
@@ -8,7 +9,7 @@ export function buildDatabaseSchema<MRecord extends ModelRecord>(models: MRecord
     // Support both direct model definitions and wrapped models from defineModel()
     const rawModel = models[modelName]
     const m = (rawModel as any).definition ?? (rawModel as any).getDefinition?.() ?? rawModel
-    const table: string = (m.table as string) || `${String(m.name).toLowerCase()}s`
+    const table: string = tableNameFor(m)
     const attrs = m.attributes ?? {}
     const columns: Record<string, unknown> = {}
     for (const key of Object.keys(attrs)) columns[key] = undefined

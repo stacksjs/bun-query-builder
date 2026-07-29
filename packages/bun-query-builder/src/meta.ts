@@ -1,4 +1,5 @@
 import type { BelongsToManyConfig, ModelRecord } from './schema'
+import { tableNameFor } from './inflect'
 import { normalizeRelationEntry } from './relation-utils'
 
 export interface SchemaMeta {
@@ -45,7 +46,7 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
     // defineModel() from model.ts wraps the definition in { definition, getDefinition, ... }
     const rawModel = models[name]
     const m = (rawModel as any).definition ?? (rawModel as any).getDefinition?.() ?? rawModel
-    const table = (m.table as string) || `${String(m.name).toLowerCase()}s`
+    const table = tableNameFor(m)
     modelToTable[name] = table
     tableToModel[table] = name
     primaryKeys[table] = m.primaryKey ?? 'id'

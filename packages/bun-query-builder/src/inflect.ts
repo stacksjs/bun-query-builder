@@ -17,6 +17,36 @@
  * behavior is opt-in via `relations.singularizeStrategy: 'inflect'`.
  */
 
+/**
+ * The conventional table name for a model that does not declare one.
+ *
+ * The ORM has always resolved this properly — snake_case, then the same
+ * pluralization rules `inflectSingular` inverts — while the schema, meta and
+ * migration layers each fell back to `name.toLowerCase() + 's'`. For any model
+ * whose name is not a bare-`s` plural that is a silent split: the generator
+ * created `categorys` and `blogposts` while the ORM read and wrote
+ * `categories` and `blog_posts`, so the migration built a table the runtime
+ * never touched.
+ *
+ * `OrderItem` -> `order_items`, `Category` -> `categories`,
+ * `Address` -> `addresses`, `Box` -> `boxes`.
+ */
+export function toTableName(modelName: string): string {
+  const snake = String(modelName).replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+  if (snake.endsWith('y') && !/[aeou]y$/.test(snake))
+    return `${snake.slice(0, -1)}ies`
+  if (snake.endsWith('s') || snake.endsWith('x') || snake.endsWith('ch') || snake.endsWith('sh'))
+    return `${snake}es`
+  return `${snake}s`
+}
+
+/** The table a model definition resolves to: its own `table`, or the convention. */
+export function tableNameFor(model: { table?: unknown, name?: unknown }): string {
+  return typeof model?.table === 'string' && model.table.length > 0
+    ? model.table
+    : toTableName(String(model?.name ?? ''))
+}
+
 /** Naive trailing-`s` strip — the historical default. */
 export function stripTrailingS(name: string): string {
   return name.endsWith('s') ? name.slice(0, -1) : name

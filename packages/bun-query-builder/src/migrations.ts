@@ -1,6 +1,6 @@
 import type { ForeignKeyConfig, ModelRecord, OnForeignKeyAction } from './schema'
 import { normalizeRelationList } from './relation-utils'
-import { singularizerFor } from './inflect'
+import { singularizerFor, tableNameFor } from './inflect'
 import type { SupportedDialect } from './types'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -587,7 +587,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
 
   for (const modelName of Object.keys(models)) {
     const model = models[modelName]
-    const table = (model.table as string) || `${String(model.name).toLowerCase()}s`
+    const table = tableNameFor(model)
     const primaryKey = model.primaryKey ?? 'id'
     const _autoIncrement = model.autoIncrement !== false // default to true
     const attrs = model.attributes ?? {}
@@ -857,7 +857,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
   for (const modelName of Object.keys(models)) {
     const model = models[modelName] as any
     const traits = (model?.traits ?? {}) as Record<string, any>
-    const modelTable = (model.table as string) || `${String(model.name).toLowerCase()}s`
+    const modelTable = tableNameFor(model)
     const singular = singularizeTable(modelTable)
 
     // likeable → per-model `<table>_likes` pivot keyed by user_id + <model>_id
@@ -933,7 +933,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     const model = models[modelName] as any
     const btm = model?.belongsToMany
     if (!btm || typeof btm !== 'object' || Array.isArray(btm)) continue
-    const parentTable = (model.table as string) || `${String(model.name).toLowerCase()}s`
+    const parentTable = tableNameFor(model)
     const parentSingular = singularizeTable(parentTable)
 
     for (const [relKey, value] of Object.entries(btm)) {
