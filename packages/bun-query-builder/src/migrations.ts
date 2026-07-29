@@ -2,7 +2,7 @@ import type { ForeignKeyConfig, ModelRecord, OnForeignKeyAction } from './schema
 import { normalizeRelationList } from './relation-utils'
 import { singularizerFor } from './inflect'
 import type { SupportedDialect } from './types'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { config } from './config'
@@ -62,6 +62,12 @@ let useDeterministicNames = true
  * dies on `duplicate column name`.
  */
 let createdMigrationFiles: string[] = []
+/**
+ * Bodies of the migrations already on disk, resolved lazily once per generate
+ * run and added to as that run writes more. Null between runs so a corpus
+ * changed by anything else is re-read rather than remembered.
+ */
+let existingCorpusBodies: Set<string> | null = null
 
 /** The files written by the most recent generate run, in creation order. */
 export function lastCreatedMigrationFiles(): string[] {
@@ -117,28 +123,122 @@ export function isGeneratedMigrationSql(sql: string): boolean {
   return sql.trimStart().startsWith(GENERATED_MARKER)
 }
 
+/**
+ * The comparable body of a migration: its statements, with the provenance
+ * header, comments and whitespace taken out. Two files with the same body do
+ * the same thing to the schema, whatever they are called.
+ */
+export function migrationBody(sql: string): string {
+  return sql
+    .split('\n')
+    .filter(line => !line.trimStart().startsWith('--'))
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/;+$/, '')
+}
+
+/**
+ * Statements already present in the migration corpus, by body.
+ *
+ * Rebuilt per generate run rather than cached across runs: a corpus is a
+ * directory on disk that another process — or the same one, earlier in this
+ * command — may have just written to.
+ */
+function existingMigrationBodies(sqlDir: string): Set<string> {
+  const bodies = new Set<string>()
+  let files: string[]
+  try {
+    files = readdirSync(sqlDir).filter(f => f.endsWith('.sql'))
+  }
+  catch {
+    return bodies
+  }
+
+  for (const file of files) {
+    try {
+      bodies.add(migrationBody(readFileSync(join(sqlDir, file), 'utf8')))
+    }
+    catch {
+      // Unreadable file: it cannot be compared against, so it cannot suppress
+      // a write. Better a duplicate the operator can see than a change lost.
+    }
+  }
+
+  return bodies
+}
+
 function createMigrationFile(statement: string, fileName: string): boolean {
   if (!statement)
     return false
 
   const sqlDir = ensureSqlDirectory()
 
+  /*
+   * Never write a statement the corpus already carries.
+   *
+   * Migrations are permanent now, so a duplicate is not noise — it is the
+   * same schema change queued to run twice, which on the next machine is an
+   * `ADD COLUMN` that fails as a duplicate and takes the run down with it.
+   * The diff recomputes changes it has already emitted whenever the snapshot
+   * is missing (fresh checkout, cleared cache, `--from-db`), and that is
+   * precisely when this matters.
+   *
+   * Compared by body rather than by filename, because the generator stamps
+   * ALTER files with a timestamp: the same change emitted twice gets two
+   * different names and only the SQL gives it away.
+   */
+  if (existingCorpusBodies === null)
+    existingCorpusBodies = existingMigrationBodies(sqlDir)
+
+  const body = migrationBody(statement)
+  if (body.length > 0 && existingCorpusBodies.has(body)) {
+    info(`-- Migration already in the corpus, not writing it again: ${fileName}`)
+    return false
+  }
+
   migrationCounter++
 
   // For framework/fresh migrations: use deterministic zero-padded sequence numbers
   // so the same models always produce the same filenames (clean git diffs).
   // For user diff migrations: use timestamps since they're additive/incremental.
-  const sequence = useDeterministicNames
+  let sequence = useDeterministicNames
     ? String(migrationCounter).padStart(10, '0')
     : String(Math.floor(Date.now() / 1000) + migrationCounter)
 
-  const fullFileName = `${sequence}-${fileName}.sql`
+  let fullFileName = `${sequence}-${fileName}.sql`
+
+  /*
+   * A timestamped name has to be free before we take it.
+   *
+   * The sequence is `unix seconds + counter`, and the counter resets every
+   * run — so two changes migrated within the same second produced the SAME
+   * filename, and the second silently overwrote the first. Both changes were
+   * lost at once: the overwritten migration was gone from the corpus, and the
+   * survivor inherited a name the migrations table had already recorded as
+   * executed, so it never ran either. Walk forward to the first free name,
+   * which also keeps the corpus in ascending order.
+   *
+   * Deterministic names are exempt on purpose: that path regenerates a whole
+   * framework corpus and overwriting the previous copy is the point.
+   */
+  if (!useDeterministicNames) {
+    let next = Number(sequence)
+    while (existsSync(join(sqlDir, fullFileName))) {
+      next += 1
+      sequence = String(next)
+      fullFileName = `${sequence}-${fileName}.sql`
+    }
+  }
+
   const filePath = join(sqlDir, fullFileName)
 
   writeFileSync(filePath, `${GENERATED_MARKER}\n${statement}`)
   info(`-- Migration file created: ${fullFileName}`)
   migrationsCreatedCount++
   createdMigrationFiles.push(fullFileName)
+  // Two identical statements inside ONE run must not both be written either.
+  existingCorpusBodies?.add(body)
   return true
 }
 
@@ -914,6 +1014,7 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
   migrationsCreatedCount = 0
   migrationsUpdatedCount = 0
   createdMigrationFiles = []
+  existingCorpusBodies = null
   useDeterministicNames = true // Framework migrations use deterministic sequence names
 
   // In dry-run mode we compute statements/operations without touching disk —
@@ -1385,6 +1486,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
   migrationsCreatedCount = 0
   migrationsUpdatedCount = 0
   createdMigrationFiles = []
+  existingCorpusBodies = null
   useDeterministicNames = false // User diff migrations use timestamps
 
   const chunks: string[] = []
