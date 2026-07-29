@@ -1,3 +1,41 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.63...v0.2.0)
+
+## 🚀 Features
+
+- **cli**: expose the rollback options that had no flags ([6df5037](https://github.com/stacksjs/bun-query-builder/commit/6df5037)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **fresh**: keep hand-written migrations when clearing generated ones ([cc81c44](https://github.com/stacksjs/bun-query-builder/commit/cc81c44)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **seed**: run a seeder by its class name, and order seeders deterministically ([a2272b5](https://github.com/stacksjs/bun-query-builder/commit/a2272b5)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **schema**: name a table the same way in every layer ([ac0292d](https://github.com/stacksjs/bun-query-builder/commit/ac0292d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **loader**: read nested models, skip barrels, and read in a stable order ([602ebf1](https://github.com/stacksjs/bun-query-builder/commit/602ebf1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **cli**: stop overriding the configured dialect with a hardcoded default ([bc7ee46](https://github.com/stacksjs/bun-query-builder/commit/bc7ee46)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **introspect**: keep timestamptz distinct from datetime ([87c3d91](https://github.com/stacksjs/bun-query-builder/commit/87c3d91)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sql**: split statements without breaking on quotes or trailing comments ([8fe6b07](https://github.com/stacksjs/bun-query-builder/commit/8fe6b07)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **migrate**: resolve the workspace the same way every other command does ([a4ddb2c](https://github.com/stacksjs/bun-query-builder/commit/a4ddb2c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **cli**: look up the configured database, not DB_NAME  ([a590408](https://github.com/stacksjs/bun-query-builder/commit/a590408)) _(by  < 'test'>)_
+- **status**: report what the ledger says, on every dialect ([b4062d4](https://github.com/stacksjs/bun-query-builder/commit/b4062d4)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rollback**: stop deleting the migration file, and fix the delete placeholder ([a1ec572](https://github.com/stacksjs/bun-query-builder/commit/a1ec572)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rollback**: invert ADD CONSTRAINT as a constraint, not as a column ([a9cf7a1](https://github.com/stacksjs/bun-query-builder/commit/a9cf7a1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **migrate**: keep generated migrations instead of deleting them after running ([2f9d0fb](https://github.com/stacksjs/bun-query-builder/commit/2f9d0fb)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **migrations**: give every model change its own durable migration file ([c35a7a1](https://github.com/stacksjs/bun-query-builder/commit/c35a7a1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **migrate**: never delete a migration a person wrote, and make --apply apply ([e5cb114](https://github.com/stacksjs/bun-query-builder/commit/e5cb114)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **migrations**: stop the diff proposing schema it never created ([094696f](https://github.com/stacksjs/bun-query-builder/commit/094696f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ♻️ Code Refactoring
+
+- **orm**: delegate the table-name convention instead of repeating it ([553e430](https://github.com/stacksjs/bun-query-builder/commit/553e430)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.0 ([664c557](https://github.com/stacksjs/bun-query-builder/commit/664c557)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _ < 'test'>_
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.62...v0.1.63)
 
 ## 🐛 Bug Fixes
