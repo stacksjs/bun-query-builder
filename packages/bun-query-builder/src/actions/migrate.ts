@@ -14,11 +14,11 @@ import { buildPlanFromDatabase } from './introspect-db'
  * Bring the corpus and the ledger in line with SQL that was just applied.
  *
  * `generateMigration({ apply: true })` writes migration files AND runs their
- * SQL, which leaves both waiting to be run a second time by the runner —
+ * SQL, which leaves them waiting to be run a second time by the runner —
  * guaranteed `duplicate column name` on the very next `executeMigration`. So
- * the files it just executed are settled here, exactly as the runner settles
- * the ones it runs itself: transient generated ALTERs are removed, permanent
- * files are recorded.
+ * the files it just executed are recorded here, exactly as the runner records
+ * the ones it runs itself. They stay on disk: they are the schema, and the
+ * next machine replays them from empty.
  *
  * Best-effort by design: the schema change has already landed, and failing the
  * whole call over bookkeeping would report a migration that did happen as one
@@ -33,14 +33,8 @@ async function settleAppliedFiles(qb: any, dialect: SupportedDialect, files: str
   try {
     await createMigrationsTable(qb, dialect)
     for (const file of files) {
-      if (isTransientMigration(sqlDir, file)) {
-        unlinkSync(join(sqlDir, file))
-        info(`-- 🗑️  Deleted transient migration: ${file}`)
-      }
-      else {
-        await recordMigration(qb, file, dialect)
-        info(`-- ✓ Recorded applied migration: ${file}`)
-      }
+      await recordMigration(qb, file, dialect)
+      info(`-- ✓ Recorded applied migration: ${file}`)
     }
   }
   catch (err) {
@@ -49,23 +43,36 @@ async function settleAppliedFiles(qb: any, dialect: SupportedDialect, files: str
 }
 
 /**
- * Whether a migration file is one the generator owns and will rewrite.
+ * Whether a migration file was written by the generator rather than a person.
  *
- * Generated ALTERs are transient (replayed, then deleted); everything else —
- * a create-table, an index, anything a person wrote — is permanent. The
- * marker is the evidence. An unreadable file is treated as authored, because
- * the cost of guessing wrong is deleting somebody's migration.
+ * Read from the marker in the file, never from its name: `alter-x-table.sql`
+ * is an obvious name for somebody to give a hand-written migration, and
+ * guessing from the name is how the runner used to delete their file. An
+ * unreadable file counts as authored, which is the cautious reading.
  */
-function isTransientMigration(sqlDir: string, file: string): boolean {
-  if (!(file.includes('alter-') && file.includes('-table')))
-    return false
-
+function isGeneratedMigration(sqlDir: string, file: string): boolean {
   try {
     return isGeneratedMigrationSql(readFileSync(join(sqlDir, file), 'utf8'))
   }
   catch {
     return false
   }
+}
+
+/**
+ * Whether an error says the change this migration makes is already in place.
+ *
+ * Every supported dialect has its own wording for it — SQLite's `duplicate
+ * column name`, MySQL's `Duplicate column name` / `Duplicate key name`,
+ * Postgres's `already exists` (42701 / 42P07 / 42710). Deliberately narrow:
+ * anything that is not an unambiguous "this already exists" is a real failure
+ * and has to surface.
+ */
+function isAlreadyAppliedError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return /duplicate column name/i.test(message)
+    || /duplicate key name/i.test(message)
+    || /\balready exists\b/i.test(message)
 }
 
 /**
@@ -368,6 +375,10 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   return { sql, sqlStatements, hasChanges, plan, operations }
 }
 
+// `dir` is the models directory. This function runs the SQL corpus, which it
+// finds from the workspace root, so it has no use for it — the parameter stays
+// because it is public API and every caller passes it.
+// eslint-disable-next-line pickier/no-unused-vars
 export async function executeMigration(dir?: string): Promise<boolean> {
   // Load the config file before anything reads `snapshotDir`.
   //
@@ -379,10 +390,6 @@ export async function executeMigration(dir?: string): Promise<boolean> {
   // the snapshot written to `.qb`, no matter what the host framework
   // configured in its own process.
   await getConfig()
-
-  if (!dir) {
-    dir = join(process.cwd(), 'app/Models')
-  }
 
   const workspaceRoot = getWorkspaceRoot()
   const sqlDir = ensureSqlDirectory(workspaceRoot)
@@ -407,42 +414,29 @@ export async function executeMigration(dir?: string): Promise<boolean> {
     // Get already executed migrations
     const executedMigrations = await getExecutedMigrations(qb, dialect)
 
-    // Separate migrations into permanent (CREATE) and transient (ALTER)
-    const permanentMigrations: string[] = []
-    const transientMigrations: string[] = []
+    /*
+     * Every migration file is permanent, and every one that runs is recorded.
+     *
+     * Generated ALTERs used to be "transient": replayed on every migrate
+     * rather than recorded, then deleted from disk once applied. That made
+     * the corpus a log of one machine's session instead of the schema. Change
+     * an attribute, migrate, and the ALTER that carried the change was gone —
+     * so a teammate who cloned the repo and migrated got the table as it was
+     * BEFORE the change, with no error and no clue. The generator writes each
+     * change once (`createMigrationFile` refuses to write a statement the
+     * corpus already contains), so there is nothing left for replay to fix,
+     * and everything to lose by deleting the evidence.
+     */
+    const pending = scriptFiles.filter(file => !executedMigrations.includes(file))
 
-    for (const file of scriptFiles) {
-      // Generated ALTER migrations are transient: replayed rather than
-      // recorded, and removed once applied, because the generator rewrites
-      // them from the model diff on every run.
-      //
-      // Which files those are is decided by the marker the generator stamps
-      // into them, NOT by their name. `alter-...-table.sql` is an obvious
-      // name for a person to give a hand-written migration, and reading the
-      // name alone meant the runner deleted their file off disk the first
-      // time it ran. An authored migration is somebody's schema decision: it
-      // is recorded, it runs once, and it stays.
-      if (isTransientMigration(sqlDir, file)) {
-        transientMigrations.push(file)
-      }
-      // Everything else is permanent (CREATE TABLE, CREATE INDEX, authored
-      // migrations of any shape).
-      else if (!executedMigrations.includes(file)) {
-        permanentMigrations.push(file)
-      }
-    }
-
-    const totalPending = permanentMigrations.length + transientMigrations.length
-
-    if (totalPending === 0) {
+    if (pending.length === 0) {
       info('-- No pending migrations to execute')
       return true
     }
 
-    info(`-- Executing ${totalPending} migrations (${permanentMigrations.length} permanent, ${transientMigrations.length} transient)`)
+    info(`-- Executing ${pending.length} migration${pending.length === 1 ? '' : 's'}`)
 
-    // Execute permanent migrations first (CREATE TABLE, etc.)
-    for (const file of permanentMigrations) {
+    for (const file of pending) {
       const filePath = join(sqlDir, file)
       info(`-- Executing: ${file}`)
 
@@ -452,25 +446,17 @@ export async function executeMigration(dir?: string): Promise<boolean> {
         info(`-- ✓ Migration ${file} executed and recorded`)
       }
       catch (err) {
-        console.error(`-- ✗ Migration ${file} failed:`, err)
-        throw err
-      }
-    }
-
-    // Execute transient migrations (ALTER TABLE) but don't record them
-    for (const file of transientMigrations) {
-      const filePath = join(sqlDir, file)
-      info(`-- Executing: ${file} (transient)`)
-
-      try {
-        await qb.file(filePath)
-        info(`-- ✓ Migration ${file} executed (not recorded)`)
-
-        // Delete the transient migration file after successful execution
-        unlinkSync(filePath)
-        info(`-- 🗑️  Deleted transient migration: ${file}`)
-      }
-      catch (err) {
+        // A generated migration whose change is already in place is not a
+        // failure, it is a bookkeeping gap: the file was applied on a run that
+        // died before recording it, or under the old transient behaviour that
+        // never recorded it at all. Record it and carry on — the schema is
+        // where the file says it should be. Anything else, including every
+        // authored migration, fails loudly.
+        if (isGeneratedMigration(sqlDir, file) && isAlreadyAppliedError(err)) {
+          await recordMigration(qb, file, dialect)
+          info(`-- ✓ Migration ${file} was already applied; recorded it (${err instanceof Error ? err.message : String(err)})`)
+          continue
+        }
         console.error(`-- ✗ Migration ${file} failed:`, err)
         throw err
       }

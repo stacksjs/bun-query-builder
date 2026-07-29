@@ -227,14 +227,17 @@ describe('the runner tells authored migrations from generated ones', () => {
     expect(columnsOf('farms')).toContain('steward')
   })
 
-  it('still treats a generated ALTER as transient, applying then removing it', async () => {
+  it('keeps and records a generated ALTER too — it is the record of a schema change', async () => {
+    // Generated ALTERs used to be transient: replayed rather than recorded,
+    // then deleted once applied. That made the corpus a log of one machine's
+    // session, so a change made here never reached anybody else's database.
     const generated = join(migrationsDir(), '9000000002-alter-farms-table.sql')
-    writeFileSync(generated, `${GENERATED_MARKER}\nALTER TABLE farms ADD COLUMN transient_col TEXT;\n`)
+    writeFileSync(generated, `${GENERATED_MARKER}\nALTER TABLE farms ADD COLUMN drainage TEXT;\n`)
 
     await executeMigration(modelsDir)
 
-    expect(existsSync(generated)).toBe(false)
-    expect(columnsOf('farms')).toContain('transient_col')
-    expect(rows(`SELECT migration FROM migrations WHERE migration = '9000000002-alter-farms-table.sql'`)).toHaveLength(0)
+    expect(existsSync(generated)).toBe(true)
+    expect(columnsOf('farms')).toContain('drainage')
+    expect(rows(`SELECT migration FROM migrations WHERE migration = '9000000002-alter-farms-table.sql'`)).toHaveLength(1)
   })
 })
