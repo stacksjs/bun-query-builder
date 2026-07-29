@@ -50,9 +50,34 @@ export function deriveDownStatements(forwardSql: string, dialect: SupportedDiale
     if ((m = /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`']?(\w+)["`']?/i.exec(stmt))) {
       down.push(`DROP TABLE IF EXISTS ${q(m[1])}`)
     }
+    // `ADD CONSTRAINT <name>` is not a column, and inverting it as one produced
+    // `DROP COLUMN "CONSTRAINT"` — reported as a successful reversal.
     // eslint-disable-next-line no-cond-assign
-    else if ((m = /^ALTER\s+TABLE\s+["`']?(\w+)["`']?\s+ADD\s+(?:COLUMN\s+)?["`']?(\w+)["`']?/i.exec(stmt))) {
-      down.push(`ALTER TABLE ${q(m[1])} DROP COLUMN ${q(m[2])}`)
+    else if ((m = /^ALTER\s+TABLE\s+["`']?(\w+)["`']?\s+ADD\s+CONSTRAINT\s+["`']?(\w+)["`']?([\s\S]*)$/i.exec(stmt))) {
+      // SQLite has no `ALTER TABLE ... DROP CONSTRAINT` in any form.
+      if (dialect === 'sqlite') {
+        skipped.push(stmt)
+      }
+      else if (isMysqlLike(dialect) && /\bFOREIGN\s+KEY\b/i.test(m[3] ?? '')) {
+        // MySQL drops a foreign key by its own verb; DROP CONSTRAINT only
+        // reaches CHECK and (8.0.19+) the rest.
+        down.push(`ALTER TABLE ${q(m[1])} DROP FOREIGN KEY ${q(m[2])}`)
+      }
+      else {
+        down.push(`ALTER TABLE ${q(m[1])} DROP CONSTRAINT ${q(m[2])}`)
+      }
+    }
+    // eslint-disable-next-line no-cond-assign
+    else if ((m = /^ALTER\s+TABLE\s+["`']?(\w+)["`']?\s+ADD\s+(?:COLUMN\s+["`']?(\w+)["`']?|["`'](\w+)["`']|(\w+))/i.exec(stmt))) {
+      // The unquoted, no-COLUMN form is where a keyword can masquerade as a
+      // column name: `ADD PRIMARY KEY (...)`, `ADD UNIQUE ...`, `ADD INDEX ...`.
+      // Those add no column, so there is nothing to invert and pretending
+      // otherwise emitted `DROP COLUMN "PRIMARY"`.
+      const column = m[2] ?? m[3] ?? m[4]
+      if (m[4] && /^(?:PRIMARY|UNIQUE|INDEX|KEY|FOREIGN|CHECK|FULLTEXT|SPATIAL)$/i.test(m[4]))
+        skipped.push(stmt)
+      else
+        down.push(`ALTER TABLE ${q(m[1])} DROP COLUMN ${q(column)}`)
     }
     // eslint-disable-next-line no-cond-assign
     else if ((m = /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?["`']?(\w+)["`']?(?:\s+ON\s+["`']?(\w+)["`']?)?/i.exec(stmt))) {
