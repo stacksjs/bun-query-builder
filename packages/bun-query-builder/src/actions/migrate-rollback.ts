@@ -2,7 +2,7 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import type { SupportedDialect } from '../types'
-import { config, isMysqlLike } from '../config'
+import { config, getPlaceholder, isMysqlLike } from '../config'
 import { createQueryBuilder } from '../index'
 
 /**
@@ -123,6 +123,16 @@ export interface RollbackOptions {
    * record-only behaviour.
    */
   reverseSchema?: boolean
+  /**
+   * Also delete the migration FILE, not just its record. Off by default.
+   *
+   * Rolling back used to delete it unconditionally. That is committed history
+   * — the file is what every other machine replays — so one developer undoing
+   * a change locally silently removed it for everybody, and getting it back
+   * meant finding it in git. Undoing a migration and discarding it are two
+   * different intentions; this is the second one.
+   */
+  deleteFiles?: boolean
 }
 
 /**
@@ -197,12 +207,12 @@ export async function migrateRollback(options: RollbackOptions = {}): Promise<vo
             console.log(`-- ⚠️  ${skipped.length} statement(s) in ${migration.migration} could not be auto-reversed (data/complex DDL) — reverse manually.`)
         }
 
-        const deleteSql = `DELETE FROM migrations WHERE migration = $1`
+        // `$1` is Postgres-only syntax; MySQL and SQLite take `?`.
+        const deleteSql = `DELETE FROM migrations WHERE migration = ${getPlaceholder(1)}`
         await qb.unsafe(deleteSql, [migration.migration])
         console.log(`-- ✓ Removed migration record: ${migration.migration}`)
 
-        // Optionally delete the migration file
-        if (existsSync(filePath)) {
+        if (options.deleteFiles && existsSync(filePath)) {
           unlinkSync(filePath)
           console.log(`-- 🗑️  Deleted migration file: ${migration.migration}`)
         }
