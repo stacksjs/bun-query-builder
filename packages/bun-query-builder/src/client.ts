@@ -2880,6 +2880,42 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       })
   }
 
+  /**
+   * Normalize mutation metadata returned by Bun SQL drivers.
+   *
+   * SQLite returns `{ changes, lastInsertRowid }`, MySQL commonly returns
+   * `{ affectedRows }`, and PostgreSQL adapters may expose `rowCount`.
+   * Builder mutation methods promise numeric counts, so leaking the raw
+   * driver object produces nested results such as
+   * `{ numDeletedRows: { changes: 1 } }`.
+   */
+  function mutationCount(result: unknown): number {
+    if (typeof result === 'number')
+      return Number.isFinite(result) ? result : 0
+    if (typeof result === 'bigint')
+      return Number(result)
+    if (!result || typeof result !== 'object')
+      return 0
+
+    const record = result as Record<string, unknown>
+    for (const key of [
+      'changes',
+      'affectedRows',
+      'count',
+      'rowCount',
+      'numAffectedRows',
+      'numUpdatedRows',
+      'numDeletedRows',
+      'numInsertedOrUpdatedRows',
+    ]) {
+      if (record[key] !== undefined && record[key] !== null)
+        return mutationCount(record[key])
+    }
+    if (Array.isArray(result))
+      return result.reduce((total, item) => total + mutationCount(item), 0)
+    return 0
+  }
+
   function makeExecutableQuery(q: any, text?: string) {
     const sqlText = text ?? computeSqlText(q)
     return {
@@ -6469,15 +6505,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
           return makeExecutableQuery(built, sqlText) as any
         },
-        execute() {
-          return runWithHooks<number>(built, 'update')
+        async execute() {
+          const result = await runWithHooks(built, 'update')
+          return mutationCount(result)
         },
         async executeTakeFirst() {
-          const result = await runWithHooks<number>(built, 'update')
+          const result = mutationCount(await runWithHooks(built, 'update'))
           return { numUpdatedRows: result }
         },
         async executeTakeFirstOrThrow() {
-          const result = await runWithHooks<number>(built, 'update')
+          const result = mutationCount(await runWithHooks(built, 'update'))
           if (result === 0)
             throw new Error('No rows updated')
           return { numUpdatedRows: result }
@@ -6623,7 +6660,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             throw err
           }
 
-          const result = await runWithHooks<number>(ensureDelBuilt(), 'delete')
+          const result = mutationCount(await runWithHooks(ensureDelBuilt(), 'delete'))
 
           try {
             await config.hooks?.afterDelete?.({ table: String(table), where: whereCondition, result })
@@ -6633,11 +6670,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return result
         },
         async executeTakeFirst() {
-          const result = await runWithHooks<number>(ensureDelBuilt(), 'delete')
+          const result = mutationCount(await runWithHooks(ensureDelBuilt(), 'delete'))
           return { numDeletedRows: result }
         },
         async executeTakeFirstOrThrow() {
-          const result = await runWithHooks<number>(ensureDelBuilt(), 'delete')
+          const result = mutationCount(await runWithHooks(ensureDelBuilt(), 'delete'))
           if (result === 0)
             throw new Error('No rows deleted')
           return { numDeletedRows: result }

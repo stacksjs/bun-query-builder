@@ -125,6 +125,25 @@ describe('client builder (real sqlite)', () => {
     })
   })
 
+  describe('mutation counts', () => {
+    it('normalizes SQLite mutation metadata to numeric builder results', async () => {
+      await db.insertInto('b_users').values({ name: 'Mutation Count', age: 10, team_id: 1 }).execute()
+
+      const updated = await db.updateTable('b_users').set({ age: 11 }).where({ name: 'Mutation Count' }).execute()
+      expect(updated).toBe(1)
+
+      const updateResult = await db.updateTable('b_users').set({ age: 12 }).where({ name: 'Mutation Count' }).executeTakeFirst()
+      expect(updateResult.numUpdatedRows).toBe(1)
+
+      const deleteResult = await db.deleteFrom('b_users').where({ name: 'Mutation Count' }).executeTakeFirst()
+      expect(deleteResult.numDeletedRows).toBe(1)
+
+      await db.insertInto('b_users').values({ name: 'Delete Count', age: 10, team_id: 1 }).execute()
+      const deleted = await db.deleteFrom('b_users').where({ name: 'Delete Count' }).execute()
+      expect(deleted).toBe(1)
+    })
+  })
+
   describe('distinct + select', () => {
     it('preserves DISTINCT when select() is chained after distinct()', async () => {
       const text = String(db.selectFrom('b_users').distinct().select(['team_id']).toSQL())
