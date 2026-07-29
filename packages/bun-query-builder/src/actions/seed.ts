@@ -23,20 +23,27 @@ function findWorkspaceRoot(startPath: string): string {
 }
 
 /**
- * Load all seeder files from a directory
+ * Load all seeder files from a directory.
+ *
+ * Exported so a caller can inspect what would run — and so this is testable
+ * without a live database.
  */
-async function loadSeeders(seedersDir: string): Promise<Array<{ name: string, instance: Seeder }>> {
+export async function loadSeeders(seedersDir: string): Promise<Array<{ name: string, className: string, instance: Seeder }>> {
   if (!existsSync(seedersDir)) {
     console.log(`-- Seeders directory not found: ${seedersDir}`)
     return []
   }
 
-  const files = readdirSync(seedersDir)
+  // Sorted: `readdirSync` returns filesystem order, so two seeders sharing an
+  // `order` ran in whichever sequence the filesystem happened to report —
+  // different on another machine, and seeding order is exactly the kind of
+  // thing that only breaks on somebody else's checkout.
+  const files = readdirSync(seedersDir).sort((a, b) => a.localeCompare(b))
   const seederFiles = files.filter(file =>
     (file.endsWith('.ts') || file.endsWith('.js')) && file !== 'index.ts' && file !== 'index.js',
   )
 
-  const seeders: Array<{ name: string, instance: Seeder }> = []
+  const seeders: Array<{ name: string, className: string, instance: Seeder }> = []
 
   for (const file of seederFiles) {
     const filePath = join(seedersDir, file)
@@ -50,6 +57,9 @@ async function loadSeeders(seedersDir: string): Promise<Array<{ name: string, in
         if (instance && typeof instance.run === 'function') {
           seeders.push({
             name: file.replace(/\.(ts|js)$/, ''),
+            // The constructor's own name, which is what `runSeeder` is
+            // documented to take and what the file may well not be called.
+            className: String(SeederClass.name || ''),
             instance,
           })
         }
@@ -128,11 +138,16 @@ export async function runSeeder(className: string, options: RunSeederOptions = {
   }
 
   const seeders = await loadSeeders(seedersDir)
-  const seeder = seeders.find(s => s.name === className)
+  // By class name OR by file name. This matched the FILE name only, so a
+  // seeder that lived in `users.ts` could not be run by the class name this
+  // function documents — it threw "Seeder not found" and listed nothing.
+  const seeder = seeders.find(s => s.className === className)
+    ?? seeders.find(s => s.name === className)
 
   if (!seeder) {
-    console.error(`-- Seeder not found: ${className}`)
-    throw new Error(`Seeder not found: ${className}`)
+    const known = seeders.map(s => s.className || s.name).join(', ') || 'none'
+    console.error(`-- Seeder not found: ${className}. Available: ${known}`)
+    throw new Error(`Seeder not found: ${className}. Available: ${known}`)
   }
 
   const qb = createQueryBuilder()
