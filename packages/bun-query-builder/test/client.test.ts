@@ -214,6 +214,23 @@ describe('query builder - DML builders', () => {
     expect(typeof q2.execute).toBe('function')
   })
 
+  it('numbers bound update-expression placeholders for Postgres', () => {
+    const previousDialect = config.dialect
+    config.dialect = 'postgres'
+    try {
+      const expression = { sql: 'upper(?)', parameters: ['alice'] }
+      const sql = String(qb()
+        .updateTable('users')
+        .set({ active: true, name: expression })
+        .where('email', '=', 'chris@test.com')
+        .toSQL())
+      expect(sql).toBe('UPDATE "users" SET "active" = $1, "name" = upper($2) WHERE "email" = $3')
+    }
+    finally {
+      config.dialect = previousDialect
+    }
+  })
+
   it('deleteFrom where and returning chain', () => {
     const del = qb().deleteFrom('users').where({ email: 'chris@test.com' })
     const q1 = del.toSQL() as any

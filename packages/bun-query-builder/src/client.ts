@@ -21,6 +21,47 @@ function isRawExpression(expr: unknown): expr is RawExpression {
   return typeof expr === 'object' && expr !== null && 'raw' in expr && typeof (expr as RawExpression).raw === 'string'
 }
 
+interface BoundSqlExpression {
+  sql: string
+  parameters?: readonly unknown[]
+}
+
+function isBoundSqlExpression(expr: unknown): expr is BoundSqlExpression {
+  return typeof expr === 'object'
+    && expr !== null
+    && 'sql' in expr
+    && typeof (expr as BoundSqlExpression).sql === 'string'
+    && (!('parameters' in expr) || Array.isArray((expr as BoundSqlExpression).parameters))
+}
+
+/**
+ * Render a parameterized SQL expression at its current position in a query.
+ *
+ * SQLite and MySQL use `?` placeholders as emitted. PostgreSQL placeholders
+ * are positional, so rewrite only as many markers as the fragment has bound
+ * parameters and start after the query parameters already collected.
+ */
+function renderBoundSqlExpression(expression: BoundSqlExpression, startIndex: number): { text: string, parameters: readonly unknown[] } {
+  const parameters = expression.parameters ?? []
+  if (config.dialect !== 'postgres' || parameters.length === 0)
+    return { text: expression.sql, parameters }
+
+  let parameterIndex = 0
+  const text = expression.sql.replace(/\?/g, (placeholder) => {
+    if (parameterIndex >= parameters.length)
+      return placeholder
+    return getPlaceholder(startIndex + parameterIndex++)
+  })
+
+  if (parameterIndex !== parameters.length) {
+    throw new TypeError(
+      `[query-builder] SQL expression declares ${parameters.length} parameters but contains only ${parameterIndex} placeholders`,
+    )
+  }
+
+  return { text, parameters }
+}
+
 /**
  * # `raw`
  *
@@ -1804,7 +1845,7 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * const sql = db.updateTable('users').set({ name: 'Alice' }).where({ id: 1 }).toSQL()
    * ```
    */
-  set: (values: Partial<DB[TTable]['columns']>) => UpdateQueryBuilder<DB, TTable>
+  set: (values: Partial<{ [K in keyof DB[TTable]['columns']]: DB[TTable]['columns'][K] | SqlFragment }>) => UpdateQueryBuilder<DB, TTable>
   /**
    * # `where`
    *
@@ -1816,7 +1857,7 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * const cnt2 = await db.updateTable('users').set({ active: true }).where('id', '=', 1).execute()
    * ```
    */
-  where: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => UpdateQueryBuilder<DB, TTable>
+  where: (expr: WhereExpression<DB[TTable]['columns']> | string | SqlFragment, op?: WhereOperator, value?: any) => UpdateQueryBuilder<DB, TTable>
   /**
    * # `returning`
    *
@@ -6414,8 +6455,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const setClauses: string[] = Array.from({ length: len })
           for (let i = 0; i < len; i++) {
             const key = keys[i]
-            setClauses[i] = `${quoteId(key)} = ${getPlaceholder(i + 1)}`
-            params.push((values as any)[key])
+            const value = (values as any)[key]
+            if (isRawExpression(value)) {
+              setClauses[i] = `${quoteId(key)} = ${value.raw}`
+            }
+            else if (isBoundSqlExpression(value)) {
+              const expression = renderBoundSqlExpression(value, params.length + 1)
+              setClauses[i] = `${quoteId(key)} = ${expression.text}`
+              params.push(...expression.parameters)
+            }
+            else {
+              setClauses[i] = `${quoteId(key)} = ${getPlaceholder(params.length + 1)}`
+              params.push(value)
+            }
           }
           sqlText = `${sqlText} SET ${setClauses.join(', ')}`
           built = _sql.unsafe(sqlText, params)
@@ -6426,9 +6478,22 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const getWhereKeyword = () => SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
 
           // Handle 3-arg format: where('column', '=', value)
-          if (typeof expr === 'string' && op !== undefined) {
+          if (op !== undefined && (typeof expr === 'string' || isRawExpression(expr) || isBoundSqlExpression(expr))) {
+            const safeOperator = assertSafeWhereOperator(op, 'updateTable.where')
+            let left: string
+            if (typeof expr === 'string') {
+              left = quoteId(expr)
+            }
+            else if (isRawExpression(expr)) {
+              left = expr.raw
+            }
+            else {
+              const expression = renderBoundSqlExpression(expr, params.length + 1)
+              left = expression.text
+              params.push(...expression.parameters)
+            }
             const paramIndex = params.length + 1
-            sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(expr)} ${op} ${getPlaceholder(paramIndex)}`
+            sqlText = `${sqlText} ${getWhereKeyword()} ${left} ${safeOperator} ${getPlaceholder(paramIndex)}`
             params.push(value)
             built = _sql.unsafe(sqlText, params)
             return this
@@ -6437,8 +6502,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           // Handle array format: where(['column', 'op', value])
           if (Array.isArray(expr)) {
             const [col, op, val] = expr
+            const safeOperator = assertSafeWhereOperator(op, 'updateTable.where')
             const paramIndex = params.length + 1
-            sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(String(col))} ${String(op)} ${getPlaceholder(paramIndex)}`
+            sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`
             params.push(val)
             built = _sql.unsafe(sqlText, params)
             return this

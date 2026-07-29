@@ -144,6 +144,33 @@ describe('client builder (real sqlite)', () => {
     })
   })
 
+  describe('update SQL expressions', () => {
+    it('binds expressions in SET and conditional WHERE clauses', async () => {
+      const decrement = { sql: 'age + ?', parameters: [-1] }
+      const updated = await db
+        .updateTable('b_users')
+        .set({ age: decrement })
+        .where({ name: 'Ada' })
+        .where(decrement, '>=', 0)
+        .execute()
+
+      expect(updated).toBe(1)
+      expect((await db.selectFrom('b_users').where({ name: 'Ada' }).first() as any).age).toBe(35)
+
+      await db.insertInto('b_users').values({ name: 'No Negative Age', age: 0, team_id: 1 }).execute()
+      const rejected = await db
+        .updateTable('b_users')
+        .set({ age: decrement })
+        .where({ name: 'No Negative Age' })
+        .where(decrement, '>=', 0)
+        .execute()
+
+      expect(rejected).toBe(0)
+      expect((await db.selectFrom('b_users').where({ name: 'No Negative Age' }).first() as any).age).toBe(0)
+      await db.deleteFrom('b_users').where({ name: 'No Negative Age' }).execute()
+    })
+  })
+
   describe('distinct + select', () => {
     it('preserves DISTINCT when select() is chained after distinct()', async () => {
       const text = String(db.selectFrom('b_users').distinct().select(['team_id']).toSQL())
