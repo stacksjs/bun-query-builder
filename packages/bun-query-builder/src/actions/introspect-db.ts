@@ -212,6 +212,16 @@ export function sqlTypeToNormalized(rawType: string, dialect: SupportedDialect, 
     return 'decimal'
   if (base === 'date')
     return 'date'
+  // A timezone-aware timestamp is its own plan type, and collapsing it into
+  // `datetime` made the model and the live schema disagree forever: on
+  // Postgres, where `canonicalStorageType` compares plan types directly, every
+  // reconcile-from-database saw `timestamptz` (model) against `datetime`
+  // (introspected) and proposed a destructive type change for every such
+  // column, on every run.
+  // Tested against the full type, not `base`: `base` is cut at the first `(`,
+  // so `timestamp(6) with time zone` loses the very words that distinguish it.
+  if (base === 'timestamptz' || /\bwith time zone\b/.test(t))
+    return 'timestamptz'
   if (/^(?:timestamp|datetime)/.test(base))
     return 'datetime'
   if (/^time/.test(base))

@@ -178,6 +178,29 @@ describe('sqlTypeToNormalized', () => {
     expect(sqlTypeToNormalized('double precision', 'postgres')).toBe('double')
     expect(sqlTypeToNormalized('anything', 'sqlite', { enumValues: ['a', 'b'] })).toBe('enum')
   })
+
+  it('keeps a timezone-aware timestamp distinct from a plain one', () => {
+    // Collapsing `timestamptz` into `datetime` made the model and the live
+    // schema disagree forever: on Postgres the plan types are compared
+    // directly, so every reconcile proposed a destructive type change for
+    // every timestamptz column.
+    expect(sqlTypeToNormalized('timestamp with time zone', 'postgres')).toBe('timestamptz')
+    expect(sqlTypeToNormalized('timestamptz', 'postgres')).toBe('timestamptz')
+    expect(sqlTypeToNormalized('timestamp(6) with time zone', 'postgres')).toBe('timestamptz')
+    // ...while a plain timestamp stays a plain datetime.
+    expect(sqlTypeToNormalized('timestamp without time zone', 'postgres')).toBe('datetime')
+    expect(sqlTypeToNormalized('timestamp', 'postgres')).toBe('datetime')
+    expect(sqlTypeToNormalized('datetime', 'mysql')).toBe('datetime')
+  })
+
+  it('round-trips a timestamptz column through the diff without churn', () => {
+    const tz = col('published_at', 'timestamptz')
+    const live = { dialect: 'postgres' as const, tables: [{ table: 'posts', columns: [idCol, tz], indexes: [] }] }
+    const fromModels = { dialect: 'postgres' as const, tables: [{ table: 'posts', columns: [idCol, col('published_at', sqlTypeToNormalized('timestamp with time zone', 'postgres'))], indexes: [] }] }
+
+    const { operations } = generateDiffOperations(live, fromModels)
+    expect(operations.filter(o => o.kind === 'modify_column')).toHaveLength(0)
+  })
 })
 
 describe('live-DB introspection round-trip', () => {
