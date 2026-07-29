@@ -9,6 +9,7 @@ import { withFreshConnection } from '@/db'
 import { getDialectDriver } from '@/drivers'
 import { buildMigrationPlan, createQueryBuilder, generateDiffOperations, generateSql, hashMigrationPlan, isGeneratedMigrationSql, lastCreatedMigrationFiles, loadModels } from '../index'
 import { buildPlanFromDatabase } from './introspect-db'
+import { findWorkspaceRoot, getSqlDirectory } from '@/workspace'
 
 /**
  * Bring the corpus and the ledger in line with SQL that was just applied.
@@ -191,10 +192,15 @@ export function saveMigrationSnapshot(
 }
 
 /**
- * Get workspace root - always use process.cwd() for consistency
+ * Get workspace root.
+ *
+ * This used to be `process.cwd()` verbatim while every other command walked up
+ * to the nearest package.json, so running `qb migrate` from a subdirectory
+ * created an empty `<subdir>/database/migrations` and reported nothing to do,
+ * while `migrate:status` in the same shell listed the real corpus.
  */
 function getWorkspaceRoot(): string {
-  return process.cwd()
+  return findWorkspaceRoot()
 }
 
 function ensureSqlDirectory(workspaceRoot?: string): string {
@@ -700,14 +706,6 @@ export async function clearGeneratedDirectory(workspaceRoot?: string): Promise<v
       console.error('-- Failed to clear generated directory:', err)
     }
   }
-}
-
-function getSqlDirectory(workspaceRoot?: string): string {
-  if (!workspaceRoot) {
-    workspaceRoot = getWorkspaceRoot()
-  }
-
-  return join(workspaceRoot, 'database', 'migrations')
 }
 
 async function createMigrationsTable(qb: any, dialect: SupportedDialect): Promise<void> {

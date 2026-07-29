@@ -4,6 +4,7 @@ import process from 'node:process'
 import type { SupportedDialect } from '../types'
 import { config, getPlaceholder, isMysqlLike } from '../config'
 import { createQueryBuilder } from '../index'
+import { getSqlDirectory } from '@/workspace'
 
 /**
  * Split a SQL script into individual statements, ignoring `;` inside single
@@ -90,29 +91,6 @@ export function deriveDownStatements(forwardSql: string, dialect: SupportedDiale
     }
   }
   return { down: down.reverse(), skipped }
-}
-
-/**
- * Find workspace root by looking for package.json
- */
-function findWorkspaceRoot(startPath: string): string {
-  let currentPath = startPath
-
-  while (currentPath !== dirname(currentPath)) {
-    if (existsSync(join(currentPath, 'package.json'))) {
-      return currentPath
-    }
-    currentPath = dirname(currentPath)
-  }
-
-  return process.cwd()
-}
-
-function getSqlDirectory(workspaceRoot?: string): string {
-  if (!workspaceRoot) {
-    workspaceRoot = findWorkspaceRoot(process.cwd())
-  }
-  return join(workspaceRoot, 'database', 'migrations')
 }
 
 export interface RollbackOptions {

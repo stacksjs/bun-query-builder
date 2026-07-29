@@ -5,29 +5,7 @@ import process from 'node:process'
 import { config } from '@/config'
 import { getDialectDriver } from '@/drivers'
 import { createQueryBuilder } from '../index'
-
-/**
- * Find workspace root by looking for package.json
- */
-function findWorkspaceRoot(startPath: string): string {
-  let currentPath = startPath
-
-  while (currentPath !== dirname(currentPath)) {
-    if (existsSync(join(currentPath, 'package.json'))) {
-      return currentPath
-    }
-    currentPath = dirname(currentPath)
-  }
-
-  return process.cwd()
-}
-
-function getSqlDirectory(workspaceRoot?: string): string {
-  if (!workspaceRoot) {
-    workspaceRoot = findWorkspaceRoot(process.cwd())
-  }
-  return join(workspaceRoot, 'database', 'migrations')
-}
+import { getSqlDirectory } from '@/workspace'
 
 export interface MigrationStatus {
   file: string
