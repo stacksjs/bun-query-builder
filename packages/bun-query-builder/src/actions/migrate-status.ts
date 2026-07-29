@@ -31,7 +31,7 @@ function getSqlDirectory(workspaceRoot?: string): string {
 
 export interface MigrationStatus {
   file: string
-  status: 'executed' | 'pending' | 'transient'
+  status: 'executed' | 'pending'
   executedAt?: string
 }
 
@@ -79,32 +79,31 @@ export async function migrateStatus(): Promise<MigrationStatus[]> {
       executedMigrations.map(m => [m.migration, m.executed_at]),
     )
 
-    const statuses: MigrationStatus[] = migrationFiles.map((file) => {
-      // Transient migrations (ALTER TABLE migrations)
-      if (file.includes('alter-') && file.includes('-table')) {
-        return {
-          file,
-          status: 'transient' as const,
-        }
-      }
-
-      const executedAt = executedMap.get(file)
-      return {
-        file,
-        status: executedAt ? 'executed' as const : 'pending' as const,
-        executedAt,
-      }
-    })
+    /*
+     * Status comes from the ledger, for every file.
+     *
+     * Anything matching `alter-*-table` used to be reported as "transient —
+     * not tracked" on the strength of its NAME, from the days when generated
+     * ALTERs were replayed rather than recorded. They are recorded now, so
+     * that branch reported executed migrations as untracked and hand-written
+     * ones — which were never transient at any point — along with them.
+     */
+    const statuses: MigrationStatus[] = migrationFiles.map(file => ({
+      file,
+      // Presence in the ledger, not truthiness of the timestamp: a row whose
+      // `executed_at` is null — or a driver that does not select the column —
+      // still means the migration ran.
+      status: executedMap.has(file) ? 'executed' as const : 'pending' as const,
+      executedAt: executedMap.get(file),
+    }))
 
     // Display results
     const executed = statuses.filter(s => s.status === 'executed')
     const pending = statuses.filter(s => s.status === 'pending')
-    const transient = statuses.filter(s => s.status === 'transient')
 
     console.log(`-- Total migrations: ${migrationFiles.length}`)
     console.log(`-- Executed: ${executed.length}`)
     console.log(`-- Pending: ${pending.length}`)
-    console.log(`-- Transient: ${transient.length}`)
     console.log()
 
     if (executed.length > 0) {
@@ -118,14 +117,6 @@ export async function migrateStatus(): Promise<MigrationStatus[]> {
     if (pending.length > 0) {
       console.log('○ Pending Migrations:')
       for (const migration of pending) {
-        console.log(`  - ${migration.file}`)
-      }
-      console.log()
-    }
-
-    if (transient.length > 0) {
-      console.log('⚡ Transient Migrations (ALTER TABLE - not tracked):')
-      for (const migration of transient) {
         console.log(`  - ${migration.file}`)
       }
       console.log()

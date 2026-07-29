@@ -189,7 +189,7 @@ export class PostgresDriver implements DialectDriver {
   }
 
   getExecutedMigrationsQuery(): string {
-    return 'SELECT migration FROM migrations ORDER BY executed_at'
+    return 'SELECT migration, executed_at FROM migrations ORDER BY executed_at'
   }
 
   recordMigrationQuery(): string {
