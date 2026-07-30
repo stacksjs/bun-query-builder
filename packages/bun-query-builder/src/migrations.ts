@@ -1618,23 +1618,31 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
     const prevCols = mapColumnsByName(prev.columns)
     const currCols = mapColumnsByName(curr.columns)
 
-    // Check for new enum columns
+    // Stamp the table-qualified type name on EVERY enum column, not just the
+    // new ones. A column that already exists can still be re-emitted later as
+    // an `ALTER COLUMN ... TYPE`, and an unstamped column falls back to the
+    // bare `<column>_type` in the driver — a type nothing ever creates, so the
+    // migration dies partway through with `type "status_type" does not exist`.
+    // Only new columns get a CREATE TYPE; the rest already have theirs.
     for (const colName of Object.keys(currCols)) {
-      if (!prevCols[colName]) {
-        const c = currCols[colName]
-        if (c.type === 'enum' && c.enumValues && c.enumValues.length > 0) {
-          const enumTypeName = `${curr.table}_${c.name}_type`
-          c.enumTypeName = enumTypeName
-          if (!enumTypes.has(enumTypeName)) {
-            const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
-            if (createEnumStatement) {
-              chunks.push(createEnumStatement)
-              operations.push({ kind: 'create_enum', table: curr.table, column: c.name, destructive: false, sql: createEnumStatement })
-              emit(createEnumStatement, `create-${enumTypeName}-enum`)
-            }
-            enumTypes.add(enumTypeName)
-          }
+      const c = currCols[colName]
+      if (c.type !== 'enum' || !c.enumValues || c.enumValues.length === 0)
+        continue
+
+      const enumTypeName = `${curr.table}_${c.name}_type`
+      c.enumTypeName = enumTypeName
+
+      if (prevCols[colName])
+        continue
+
+      if (!enumTypes.has(enumTypeName)) {
+        const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
+        if (createEnumStatement) {
+          chunks.push(createEnumStatement)
+          operations.push({ kind: 'create_enum', table: curr.table, column: c.name, destructive: false, sql: createEnumStatement })
+          emit(createEnumStatement, `create-${enumTypeName}-enum`)
         }
+        enumTypes.add(enumTypeName)
       }
     }
   }
