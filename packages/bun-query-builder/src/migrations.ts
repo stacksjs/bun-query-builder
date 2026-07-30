@@ -878,10 +878,13 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       })
     }
 
-    // taggable → shared polymorphic `taggable` table
+    // taggable → canonical `taggables` records plus the polymorphic pivot.
+    // The runtime ORM and CMS packages both read the plural record table, and
+    // CMS post sync stores links in `taggable_models`. Keeping both plans here
+    // makes a generated schema match the relation APIs it is meant to serve.
     if (traits.taggable) {
       ensureTable({
-        table: 'taggable',
+        table: 'taggables',
         columns: [
           { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'name', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
@@ -889,39 +892,63 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           { name: 'description', type: 'text', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
           { name: 'order', type: 'integer', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 0 as any },
           { name: 'is_active', type: 'boolean', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: true as any },
+          { name: 'taggable_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
+          { name: 'taggable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
+        ],
+        indexes: [
+          { name: 'taggables_target_index', columns: ['taggable_id', 'taggable_type'], type: 'index' },
+          { name: 'taggables_type_slug_unique', columns: ['taggable_type', 'slug'], type: 'unique' },
+        ],
+      })
+      ensureTable({
+        table: 'taggable_models',
+        columns: [
+          { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
+          { name: 'tag_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'taggables', column: 'id' } },
           { name: 'taggable_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'taggable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
           { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
         ],
-        indexes: [{ name: 'taggable_target_index', columns: ['taggable_id', 'taggable_type'], type: 'index' }],
+        indexes: [
+          { name: 'taggable_models_owner_unique', columns: ['tag_id', 'taggable_id', 'taggable_type'], type: 'unique' },
+          { name: 'taggable_models_target_index', columns: ['taggable_id', 'taggable_type'], type: 'index' },
+        ],
       })
     }
 
-    // categorizable → `categorizable` (categories list) + `categorizable_models` (pivot)
+    // categorizable → canonical `categorizables` records plus the polymorphic pivot.
     if (traits.categorizable) {
       ensureTable({
-        table: 'categorizable',
+        table: 'categorizables',
         columns: [
           { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'name', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'slug', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'description', type: 'text', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
+          { name: 'is_active', type: 'boolean', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: true as any },
+          { name: 'categorizable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
           { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
         ],
-        indexes: [{ name: 'categorizable_slug_unique', columns: ['slug'], type: 'unique' }],
+        indexes: [{ name: 'categorizables_type_slug_unique', columns: ['categorizable_type', 'slug'], type: 'unique' }],
       })
       ensureTable({
         table: 'categorizable_models',
         columns: [
           { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
-          { name: 'category_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'categorizable', column: 'id' } },
+          { name: 'category_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'categorizables', column: 'id' } },
           { name: 'categorizable_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'categorizable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
         ],
-        indexes: [{ name: 'categorizable_models_target_index', columns: ['categorizable_id', 'categorizable_type'], type: 'index' }],
+        indexes: [
+          { name: 'categorizable_models_owner_unique', columns: ['category_id', 'categorizable_id', 'categorizable_type'], type: 'unique' },
+          { name: 'categorizable_models_target_index', columns: ['categorizable_id', 'categorizable_type'], type: 'index' },
+        ],
       })
     }
   }
