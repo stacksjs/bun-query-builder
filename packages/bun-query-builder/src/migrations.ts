@@ -608,6 +608,20 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       })
     }
 
+    // Foreign keys a `belongsTo` pins to a column name, so a declared attribute
+    // is resolved against what the model SAYS it points at rather than what its
+    // column name looks like. `author_id` reads as the `Author` model under the
+    // name heuristic below; a model that declares
+    // `belongsTo: [{ model: 'User', foreignKey: 'author_id' }]` means users,
+    // and the constraint has to agree or every insert is rejected.
+    const declaredFkTargets = new Map<string, string>()
+    for (const rel of normalizeRelationList(model.belongsTo)) {
+      const column = rel.foreignKey ?? `${snakeCase(rel.model)}_id`
+      const table = meta.modelToTable[rel.model]
+      if (table)
+        declaredFkTargets.set(column, table)
+    }
+
     for (const attrName of Object.keys(attrs)) {
       const attr = attrs[attrName]
 
@@ -703,10 +717,12 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
             col.isNullable = fkConfig.nullable
         }
         else {
+          const declared = declaredFkTargets.get(columnName)
           const base = columnName.replace(/_id$/, '')
           // Try PascalCase first (user_id -> User), then try camelCase variants
           const maybeModel = base.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase())
-          const refTable = meta.modelToTable[maybeModel]
+          // What the model declares wins over what the column name suggests.
+          const refTable = declared ?? meta.modelToTable[maybeModel]
           if (refTable) {
             // When the referenced model exists in the schema, auto-infer FK
             const refPk = meta.primaryKeys[refTable] ?? 'id'
