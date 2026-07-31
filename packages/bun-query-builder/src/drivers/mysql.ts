@@ -1,4 +1,5 @@
 import type { ColumnPlan, IndexPlan, RebuildTableSpec, TablePlan } from '../migrations'
+import { qualifiedIndexName } from './index-name'
 
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
@@ -112,7 +113,7 @@ export class MySQLDriver implements DialectDriver {
       )
     }
     const kind = index.type === 'unique' ? 'UNIQUE ' : ''
-    const idxName = `${tableName}_${index.name}`
+    const idxName = qualifiedIndexName(tableName, index.name)
     const columns = index.columns.map(c => this.quoteIdentifier(c)).join(', ')
     // MySQL doesn't support IF NOT EXISTS for CREATE INDEX, so we use a different approach
     return `CREATE ${kind}INDEX ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns});`
@@ -186,7 +187,7 @@ export class MySQLDriver implements DialectDriver {
   }
 
   dropIndex(tableName: string, indexName: string): string {
-    const fullIndexName = `${tableName}_${indexName}`
+    const fullIndexName = qualifiedIndexName(tableName, indexName)
     return `DROP INDEX ${this.quoteIdentifier(fullIndexName)} ON ${this.quoteIdentifier(tableName)};`
   }
 

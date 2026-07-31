@@ -1,4 +1,5 @@
 import type { ColumnPlan, IndexPlan, RebuildTableSpec, TablePlan } from '../migrations'
+import { qualifiedIndexName } from './index-name'
 
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
@@ -113,7 +114,7 @@ export class PostgresDriver implements DialectDriver {
 
   createIndex(tableName: string, index: IndexPlan): string {
     const kind = index.type === 'unique' ? 'UNIQUE ' : ''
-    const idxName = `${tableName}_${index.name}`
+    const idxName = qualifiedIndexName(tableName, index.name)
     const columns = index.columns.map(c => this.quoteIdentifier(c)).join(', ')
     const where = index.where ? ` WHERE ${index.where}` : ''
     return `CREATE ${kind}INDEX IF NOT EXISTS ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns})${where};`
@@ -175,7 +176,7 @@ export class PostgresDriver implements DialectDriver {
   }
 
   dropIndex(tableName: string, indexName: string): string {
-    const fullIndexName = `${tableName}_${indexName}`
+    const fullIndexName = qualifiedIndexName(tableName, indexName)
     return `DROP INDEX IF EXISTS ${this.quoteIdentifier(fullIndexName)};`
   }
 
