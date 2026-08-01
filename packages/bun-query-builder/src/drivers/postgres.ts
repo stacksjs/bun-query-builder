@@ -146,11 +146,42 @@ export class PostgresDriver implements DialectDriver {
     return `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD COLUMN ${parts.join(' ')};`
   }
 
+  /**
+   * Bring a column to the state the model declares.
+   *
+   * Postgres needs a separate ALTER per facet, and only the type one was ever
+   * emitted - so making a column nullable, or changing its default, generated a
+   * migration that ran cleanly and changed nothing. The schema silently
+   * disagreed with the models from then on, and the next diff proposed the same
+   * no-op again. MySQL never had this because `MODIFY COLUMN` restates the
+   * whole definition at once.
+   *
+   * All three are emitted unconditionally rather than diffed, because each is
+   * declarative: setting a column to the nullability it already has is a no-op.
+   * `SET NOT NULL` against existing nulls does fail, and should - that is the
+   * model asking for something the data does not support, and silence would
+   * leave the two disagreeing again.
+   */
   modifyColumn(tableName: string, column: ColumnPlan): string {
     const typeSql = this.getColumnType(column)
-    // PostgreSQL requires separate ALTER statements for type, nullability, and default
-    // Add USING clause to handle type conversions that aren't automatic
-    return `ALTER TABLE ${this.quoteIdentifier(tableName)} ALTER COLUMN ${this.quoteIdentifier(column.name)} TYPE ${typeSql} USING ${this.quoteIdentifier(column.name)}::${typeSql};`
+    const table = this.quoteIdentifier(tableName)
+    const name = this.quoteIdentifier(column.name)
+
+    const statements = [
+      `ALTER TABLE ${table} ALTER COLUMN ${name} TYPE ${typeSql} USING ${name}::${typeSql};`,
+    ]
+
+    // A primary key carries NOT NULL through the constraint itself, and saying
+    // it again here would fight with it.
+    if (!column.isPrimaryKey)
+      statements.push(`ALTER TABLE ${table} ALTER COLUMN ${name} ${column.isNullable ? 'DROP NOT NULL' : 'SET NOT NULL'};`)
+
+    const defaultValue = this.getDefaultValue(column)
+    statements.push(defaultValue
+      ? `ALTER TABLE ${table} ALTER COLUMN ${name} SET ${defaultValue};`
+      : `ALTER TABLE ${table} ALTER COLUMN ${name} DROP DEFAULT;`)
+
+    return statements.join('\n')
   }
 
   renameColumn(tableName: string, from: string, to: string): string {
