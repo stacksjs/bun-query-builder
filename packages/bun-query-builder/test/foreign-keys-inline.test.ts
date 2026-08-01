@@ -114,8 +114,8 @@ describe('CREATE TABLE foreign-key emission (stacksjs/bun-query-builder#1019)', 
     expect(sql.indexOf('CREATE TABLE IF NOT EXISTS "session_packages"')).toBeLessThan(sql.indexOf('CREATE TABLE IF NOT EXISTS "appointments"'))
     expect(sql).toContain('REFERENCES "users"("id")')
     expect(sql).toContain('REFERENCES "session_packages"("id")')
-    expect(sql).toContain('CREATE INDEX IF NOT EXISTS "session_packages_session_packages_user_id_index"')
-    expect(sql).toContain('CREATE INDEX IF NOT EXISTS "appointments_appointments_package_index"')
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS "session_packages_user_id_index"')
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS "appointments_package_index"')
     expect(sql).not.toContain('ALTER TABLE')
   })
 

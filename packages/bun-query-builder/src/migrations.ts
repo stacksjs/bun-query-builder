@@ -1,4 +1,5 @@
 import type { ForeignKeyConfig, ModelRecord, OnForeignKeyAction } from './schema'
+import { qualifiedIndexName } from './drivers/index-name'
 import { normalizeRelationList } from './relation-utils'
 import { singularizerFor, tableNameFor } from './inflect'
 import type { SupportedDialect } from './types'
@@ -618,6 +619,23 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     // Whether this model documents its relationships at all. A model that does
     // is taken at its word; one that does not falls back to convention.
     const declaresBelongsTo = normalizeRelationList(model.belongsTo).length > 0
+
+    // Columns that are one half of a polymorphic pair.
+    //
+    // `commentable_id` alongside `commentable_type` means the row points at one
+    // of several tables, chosen per row. No foreign key can express that: the
+    // constraint would name a single table and reject every row pointing at any
+    // other one. So a `_id` column with a matching `_type` beside it never gets
+    // a foreign key, whether it was declared or merely inferred - there is no
+    // spelling of the relationship that would make the constraint correct.
+    const columnNames = new Set(Object.keys(attrs).map(name => snakeCase(name)))
+    const polymorphicColumns = new Set<string>()
+    for (const column of columnNames) {
+      if (!column.endsWith('_type')) continue
+      const idColumn = `${column.slice(0, -'_type'.length)}_id`
+      if (columnNames.has(idColumn))
+        polymorphicColumns.add(idColumn)
+    }
     for (const rel of normalizeRelationList(model.belongsTo)) {
       const column = rel.foreignKey ?? `${snakeCase(rel.model)}_id`
       const table = meta.modelToTable[rel.model]
@@ -706,7 +724,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       //   3. The model declares a belongsTo relationship matching the inferred model name, OR
       //   4. A model with the inferred name exists in the models record (convention-based)
       // Skip when foreignKey is explicitly false
-      if (columnName.endsWith('_id') && attr.foreignKey !== false) {
+      if (columnName.endsWith('_id') && attr.foreignKey !== false && !polymorphicColumns.has(columnName)) {
         if (typeof attr.foreignKey === 'object' && attr.foreignKey !== null) {
           // Explicit FK config — use it directly
           const fkConfig = attr.foreignKey as ForeignKeyConfig
@@ -781,7 +799,9 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         hasDefault: false,
         // Carry the declared ON DELETE so the FK constraint (inline for
         // SQLite, ALTER TABLE for MySQL/Postgres) enforces it.
-        references: refTable && refPk ? { table: refTable, column: refPk, onDelete: rel.onDelete } : undefined,
+        references: refTable && refPk && !polymorphicColumns.has(fkColumnName)
+          ? { table: refTable, column: refPk, onDelete: rel.onDelete }
+          : undefined,
       })
     }
 
@@ -1465,13 +1485,25 @@ function referencesAreDifferent(r1?: ColumnPlan['references'], r2?: ColumnPlan['
 }
 
 /** The identity of an index in a diff: its kind, its name and its columns. */
-function indexKey(index: IndexPlan): string {
-  return `${index.type}:${index.name}:${index.columns.join(',')}`
+/**
+ * Identify an index by the name it actually has in the database.
+ *
+ * A model may declare `books_isbn_unique` or `isbn_unique` for the same index -
+ * the driver prefixes the table name only when it is not already there, so both
+ * spellings create `books_isbn_unique`. Keying on the declared name made those
+ * two look like different indexes, and a schema introspected straight back out
+ * of the database diffed against its own models as a drop and a re-create.
+ *
+ * Qualifying is the direction that works. Stripping the prefix instead cannot:
+ * it maps both spellings onto one, so it cannot say which the model wrote.
+ */
+function indexKey(index: IndexPlan, table: string): string {
+  return `${index.type}:${qualifiedIndexName(table, index.name)}:${index.columns.join(',')}`
 }
 
-function mapIndexesByKey(indexes: IndexPlan[]): Record<string, IndexPlan> {
+function mapIndexesByKey(indexes: IndexPlan[], table: string): Record<string, IndexPlan> {
   const map: Record<string, IndexPlan> = {}
-  for (const i of indexes) map[indexKey(i)] = i
+  for (const i of indexes) map[indexKey(i, table)] = i
   return map
 }
 
@@ -1687,9 +1719,9 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
       continue
 
     const prevCols = mapColumnsByName(prev.columns)
-    const prevIdx = mapIndexesByKey(prev.indexes)
+    const prevIdx = mapIndexesByKey(prev.indexes, prev.table)
     let currCols = mapColumnsByName(curr.columns)
-    let currIdx = mapIndexesByKey(curr.indexes)
+    let currIdx = mapIndexesByKey(curr.indexes, curr.table)
 
     // Resolve renames first so a renamed column isn't seen as drop + add.
     //
@@ -1732,7 +1764,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
 
       curr = { ...curr, columns: [...curr.columns, ...preserved], indexes: [...curr.indexes, ...keptIndexes] }
       currCols = mapColumnsByName(curr.columns)
-      currIdx = mapIndexesByKey(curr.indexes)
+      currIdx = mapIndexesByKey(curr.indexes, curr.table)
       removedCols = []
     }
 

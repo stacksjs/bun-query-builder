@@ -233,12 +233,6 @@ export function sqlTypeToNormalized(rawType: string, dialect: SupportedDialect, 
   return 'string'
 }
 
-/** Strip the `<table>_` prefix the drivers add to physical index names. */
-function stripIndexPrefix(physicalName: string, table: string): string {
-  const prefix = `${table}_`
-  return physicalName.startsWith(prefix) ? physicalName.slice(prefix.length) : physicalName
-}
-
 function asAction(raw: unknown): OnForeignKeyAction | undefined {
   const v = String(raw ?? '').toLowerCase().trim()
   if (v === 'cascade' || v === 'restrict' || v === 'set null')
@@ -280,7 +274,7 @@ async function buildSqliteTable(qb: any, table: string): Promise<TablePlan> {
     const isUnique = Number(idx.unique) === 1
     if (isUnique && columns.length === 1)
       uniqueColumns.add(columns[0])
-    indexes.push({ name: stripIndexPrefix(physName, table), columns, type: isUnique ? 'unique' : 'index' })
+    indexes.push({ name: physName, columns, type: isUnique ? 'unique' : 'index' })
   }
 
   const columns: ColumnPlan[] = colRows.map((r: any) => {
@@ -495,6 +489,11 @@ function groupPhysicalIndexes(
     byName.set(r.indexName, entry)
   }
 
+  // Index names are reported exactly as the database holds them. The diff
+  // qualifies a model's declared name the same way the driver does before
+  // comparing, so no un-prefixing is needed here - and un-prefixing would be
+  // wrong anyway, since a model may legitimately declare the fully qualified
+  // name itself and stripping maps both spellings onto one.
   const indexes: IndexPlan[] = []
   const uniqueColumns = new Set<string>()
   for (const [physName, entry] of byName) {
@@ -503,7 +502,7 @@ function groupPhysicalIndexes(
     if (entry.isUnique && entry.columns.length === 1)
       uniqueColumns.add(entry.columns[0])
     indexes.push({
-      name: stripIndexPrefix(physName, table),
+      name: physName,
       columns: entry.columns,
       type: entry.isUnique ? 'unique' : 'index',
       where: entry.where,
