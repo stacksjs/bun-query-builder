@@ -615,6 +615,9 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     // `belongsTo: [{ model: 'User', foreignKey: 'author_id' }]` means users,
     // and the constraint has to agree or every insert is rejected.
     const declaredFkTargets = new Map<string, string>()
+    // Whether this model documents its relationships at all. A model that does
+    // is taken at its word; one that does not falls back to convention.
+    const declaresBelongsTo = normalizeRelationList(model.belongsTo).length > 0
     for (const rel of normalizeRelationList(model.belongsTo)) {
       const column = rel.foreignKey ?? `${snakeCase(rel.model)}_id`
       const table = meta.modelToTable[rel.model]
@@ -721,8 +724,20 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           const base = columnName.replace(/_id$/, '')
           // Try PascalCase first (user_id -> User), then try camelCase variants
           const maybeModel = base.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase())
+
           // What the model declares wins over what the column name suggests.
-          const refTable = declared ?? meta.modelToTable[maybeModel]
+          //
+          // And when a model documents its belongsTo relationships at all, that
+          // list is the answer: a `_id` column missing from it is not a foreign
+          // key, it is a column that happens to end in `_id`. Guessing anyway
+          // reaches across domains - an `author_id` meaning a forge user
+          // resolves to a CMS `authors` table simply because some other model
+          // in the app is called Author, and the result is a constraint against
+          // the wrong table, or against one that does not exist.
+          //
+          // Convention still applies to models that declare nothing, which is
+          // the case the inference was written for.
+          const refTable = declared ?? (declaresBelongsTo ? undefined : meta.modelToTable[maybeModel])
           if (refTable) {
             // When the referenced model exists in the schema, auto-infer FK
             const refPk = meta.primaryKeys[refTable] ?? 'id'
