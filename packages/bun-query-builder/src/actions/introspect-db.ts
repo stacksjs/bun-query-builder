@@ -321,7 +321,63 @@ function normalizeRawDefault(raw: unknown): string | number | boolean {
   return String(raw)
 }
 
-async function buildPgTable(qb: any, table: string): Promise<TablePlan> {
+/**
+ * The labels of every enum type in the schema, keyed by type name.
+ *
+ * Postgres reports an enum column as `data_type = 'USER-DEFINED'` with the type
+ * name in `udt_name`, and nothing in `information_schema` says what the type's
+ * values are. Without this lookup an enum column normalizes to `string`, the
+ * model says `enum`, and the diff proposes a type change for every enum column
+ * on every run - which is how a schema that is already correct came back as
+ * seventy-five "possible data loss" operations and refused to migrate.
+ *
+ * Read once per introspection rather than per column: a schema has a handful of
+ * enum types and hundreds of columns.
+ */
+async function pgEnumLabels(qb: any): Promise<Map<string, string[]>> {
+  const rows = await qb.unsafe(
+    `SELECT t.typname AS type_name, e.enumlabel AS label
+    FROM pg_type t
+      JOIN pg_enum e ON e.enumtypid = t.oid
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE n.nspname = 'public'
+    ORDER BY t.typname, e.enumsortorder`,
+  )
+
+  const labels = new Map<string, string[]>()
+  for (const row of rows) {
+    const name = String(row.type_name)
+    const existing = labels.get(name)
+    if (existing)
+      existing.push(String(row.label))
+    else
+      labels.set(name, [String(row.label)])
+  }
+
+  return labels
+}
+
+/**
+ * The plan type for one Postgres column, given what the catalogue knows.
+ *
+ * Separated from the query so the enum case can be tested without a live
+ * database: `USER-DEFINED` is the whole of what `information_schema` says about
+ * an enum column, and getting this wrong is invisible until a diff proposes a
+ * type change for a column nobody touched.
+ */
+export function pgColumnType(
+  dataType: string,
+  udtName: string,
+  enums: Map<string, string[]>,
+): { type: NormalizedColumnType, enumValues?: string[], enumTypeName?: string } {
+  const enumValues = enums.get(udtName)
+  const type = sqlTypeToNormalized(String(dataType || udtName || ''), 'postgres', { enumValues })
+
+  return enumValues ? { type, enumValues, enumTypeName: udtName } : { type }
+}
+
+async function buildPgTable(qb: any, table: string, enumLabels?: Map<string, string[]>): Promise<TablePlan> {
+  const enums = enumLabels ?? await pgEnumLabels(qb)
   const colRows = await qb.unsafe(
     `SELECT c.column_name, c.data_type, c.udt_name, c.is_nullable, c.column_default, c.character_maximum_length,
       (SELECT COUNT(*) FROM information_schema.table_constraints tc
@@ -384,9 +440,11 @@ async function buildPgTable(qb: any, table: string): Promise<TablePlan> {
     // nextval(...) is a serial sequence, not a user default.
     const isSerial = rawDefault != null && /nextval\(/i.test(rawDefault)
     const hasDefault = rawDefault != null && !isSerial
+    // `data_type` is `USER-DEFINED` for an enum and the type name is in
+    // `udt_name`, so the values have to come from the catalogue.
     return {
       name,
-      type: sqlTypeToNormalized(String(r.data_type ?? r.udt_name ?? ''), 'postgres'),
+      ...pgColumnType(String(r.data_type ?? ''), r.udt_name == null ? '' : String(r.udt_name), enums),
       isPrimaryKey,
       isUnique: uniqueColumns.has(name),
       isNullable: isPrimaryKey ? false : String(r.is_nullable).toUpperCase() === 'YES',
@@ -522,13 +580,17 @@ export async function buildPlanFromDatabase(dialect?: SupportedDialect, opts: { 
   const allTables = opts.tables?.length ? opts.tables : await listTables(qb, d)
   const tables = allTables.filter((t: string) => t !== 'migrations')
 
+  // Enum labels are a property of the schema, not of a table, so they are read
+  // once rather than once per table.
+  const enumLabels = d === 'postgres' ? await pgEnumLabels(qb) : undefined
+
   const out: TablePlan[] = []
   for (const table of tables) {
     let plan: TablePlan
     if (d === 'sqlite')
       plan = await buildSqliteTable(qb, table)
     else if (d === 'postgres')
-      plan = await buildPgTable(qb, table)
+      plan = await buildPgTable(qb, table, enumLabels)
     else
       plan = await buildMysqlTable(qb, table)
     if (plan.columns.length > 0)
