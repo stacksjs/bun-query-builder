@@ -4435,7 +4435,37 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this
         }
 
-        return this
+        // Anything else used to fall through to `return this`, which is the
+        // worst thing a filter can do: the builder came back unchanged, the
+        // query ran, and it matched every row the filter was meant to exclude.
+        // A `where` that fails open is a data leak in any application where the
+        // filter is the access check, and nothing anywhere says it happened.
+        //
+        // The callback form is the one people actually write, because that is
+        // how Kysely and Knex express an `OR` group. It is not supported here -
+        // `whereNested`, `whereAny` and the `orWhere*` helpers are - so it says
+        // so instead of ignoring it.
+        if (typeof expr === 'function') {
+          throw new TypeError(
+            'where(callback) is not supported. This builder has no expression callback, and '
+            + 'ignoring one silently would leave the query matching every row the filter was '
+            + 'meant to exclude. Use whereNested(subquery), whereAny(...), or the orWhere* '
+            + 'helpers to build a grouped condition.',
+          )
+        }
+
+        if (expr === undefined || expr === null) {
+          throw new TypeError('where() was called with no condition.')
+        }
+
+        if (typeof expr === 'string') {
+          throw new TypeError(
+            `where(${JSON.stringify(expr)}) is missing an operator and a value. Pass `
+            + 'where(column, operator, value), or whereRaw() for a raw fragment.',
+          )
+        }
+
+        throw new TypeError(`where() does not understand a condition of type ${typeof expr}.`)
       },
       // where helpers
       whereNull(column: string) {
