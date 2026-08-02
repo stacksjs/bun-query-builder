@@ -167,7 +167,22 @@ export class PostgresDriver implements DialectDriver {
     const table = this.quoteIdentifier(tableName)
     const name = this.quoteIdentifier(column.name)
 
+    // The old default comes off before the type changes, and the new one goes
+    // on after.
+    //
+    // Postgres checks the existing default against the new type, and refuses
+    // the whole statement when it cannot cast it: turning a `varchar` column
+    // that defaults to `'pending'` into an enum fails with "default for column
+    // cannot be cast automatically", naming the type rather than the default,
+    // which is the part that actually has to move. The column is left as it
+    // was and the same migration is proposed again on the next run.
+    //
+    // Unconditional because it costs nothing when there is no default, and
+    // because the case it protects is exactly the one where the generator
+    // cannot tell what the old default was: it only knows what the model says
+    // the new one should be.
     const statements = [
+      `ALTER TABLE ${table} ALTER COLUMN ${name} DROP DEFAULT;`,
       `ALTER TABLE ${table} ALTER COLUMN ${name} TYPE ${typeSql} USING ${name}::${typeSql};`,
     ]
 
@@ -177,9 +192,8 @@ export class PostgresDriver implements DialectDriver {
       statements.push(`ALTER TABLE ${table} ALTER COLUMN ${name} ${column.isNullable ? 'DROP NOT NULL' : 'SET NOT NULL'};`)
 
     const defaultValue = this.getDefaultValue(column)
-    statements.push(defaultValue
-      ? `ALTER TABLE ${table} ALTER COLUMN ${name} SET ${defaultValue};`
-      : `ALTER TABLE ${table} ALTER COLUMN ${name} DROP DEFAULT;`)
+    if (defaultValue)
+      statements.push(`ALTER TABLE ${table} ALTER COLUMN ${name} SET ${defaultValue};`)
 
     return statements.join('\n')
   }
