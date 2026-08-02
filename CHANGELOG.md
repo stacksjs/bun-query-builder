@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.2...v0.2.3)
+
+## 🐛 Bug Fixes
+
+- **migrations**: never constrain a polymorphic column in a declared pivot ([fb780e8](https://github.com/stacksjs/bun-query-builder/commit/fb780e8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.3 ([8ca8738](https://github.com/stacksjs/bun-query-builder/commit/8ca8738)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.1.63...v0.2.0)
 
 ## 🚀 Features
