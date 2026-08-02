@@ -1032,10 +1032,29 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       const fkParent = (cfg.foreignKey as string) || `${parentSingular}_id`
       const fkRelated = (cfg.relatedKey as string) || `${relatedSingular}_id`
 
+      // A pivot column with a `_type` sibling is polymorphic, exactly as in the
+      // main loop: `taggable_id` beside `taggable_type` points at whichever
+      // table that row's type names, so no single-table constraint can be
+      // right. The pivot builder used to reference the related model's table
+      // regardless, which produced a foreign key against whatever the `_type`
+      // column happened to default to - and then rejected every row tagging
+      // anything else.
+      const pivotColumnNames = new Set<string>([fkParent, fkRelated, ...Object.keys(pivotCfg.columns ?? {})])
+      const pivotPolymorphic = new Set<string>()
+      for (const column of pivotColumnNames) {
+        if (!column.endsWith('_type')) continue
+        const idColumn = `${column.slice(0, -'_type'.length)}_id`
+        if (pivotColumnNames.has(idColumn))
+          pivotPolymorphic.add(idColumn)
+      }
+
+      const referenceTo = (column: string, table: string) =>
+        pivotPolymorphic.has(column) ? undefined : { table, column: 'id' }
+
       const cols: ColumnPlan[] = [
         { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
-        { name: fkParent, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: parentTable, column: 'id' } },
-        { name: fkRelated, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: relatedTable, column: 'id' } },
+        { name: fkParent, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: referenceTo(fkParent, parentTable) },
+        { name: fkRelated, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: referenceTo(fkRelated, relatedTable) },
       ]
       if (pivotCfg.columns) {
         for (const [name, attr] of Object.entries(pivotCfg.columns)) {
