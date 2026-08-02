@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.3...v0.2.4)
+
+## 🐛 Bug Fixes
+
+- **postgres**: drop a column's default before changing its type ([aac6a87](https://github.com/stacksjs/bun-query-builder/commit/aac6a87)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.4 ([200ce30](https://github.com/stacksjs/bun-query-builder/commit/200ce30)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.2...v0.2.3)
 
 ## 🐛 Bug Fixes
