@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.4...v0.2.5)
+
+## 🐛 Bug Fixes
+
+- **migrations**: keep index names inside the identifier limit ([ea6df0b](https://github.com/stacksjs/bun-query-builder/commit/ea6df0b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.5 ([92ae68e](https://github.com/stacksjs/bun-query-builder/commit/92ae68e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.3...v0.2.4)
 
 ## 🐛 Bug Fixes
