@@ -553,14 +553,16 @@ export function createConnectionString(dialect: SupportedDialect, dbConfig: Data
   // instance's module-scoped config. Honoring DB_* env here makes every
   // instance connect to the real database + credentials regardless of which
   // config object setConfig reached.
-  if ((dialect === 'postgres' || dialect === 'mysql' || dialect === 'singlestore') && process.env.DB_CONNECTION === dialect) {
+  if ((dialect === 'postgres' || dialect === 'mysql' || dialect === 'singlestore' || dialect === 'vitess') && process.env.DB_CONNECTION === dialect) {
     const e = process.env
     const envDb = (e.DB_DATABASE || dbConfig.database || '').replace(/^['"]|['"]$/g, '')
     const envUser = e.DB_USERNAME || dbConfig.username
     const envPass = e.DB_PASSWORD ?? dbConfig.password ?? ''
     const envHost = e.DB_HOST || dbConfig.host || 'localhost'
     const envPort = e.DB_PORT || dbConfig.port
-    // SingleStore speaks the MySQL wire protocol, so it dials over `mysql://`.
+    // SingleStore and Vitess both speak the MySQL wire protocol, so they dial
+    // over `mysql://`. For Vitess the host is vtgate and the database slot
+    // carries a keyspace name.
     const scheme = dialect === 'postgres' ? 'postgres' : 'mysql'
     // Managed SingleStore (Helios) and many hosted MySQL/Postgres require TLS —
     // append `?ssl=true` when DB_SSL is set (or the config asks for it).
@@ -587,8 +589,11 @@ export function createConnectionString(dialect: SupportedDialect, dbConfig: Data
       return `postgres://${username}:${password}@${host}${port ? `:${port}` : ''}/${database}${sslQ}`
 
     case 'mysql':
-    // SingleStore is MySQL wire-compatible; it connects through Bun's `mysql://` driver.
+    // SingleStore and Vitess are MySQL wire-compatible; both connect through
+    // Bun's `mysql://` driver. Vitess dials vtgate (default port 15306) and
+    // its `database` is a keyspace.
     case 'singlestore':
+    case 'vitess':
       return `mysql://${username}:${password}@${host}${port ? `:${port}` : ''}/${database}${sslQ}`
 
     case 'sqlite':

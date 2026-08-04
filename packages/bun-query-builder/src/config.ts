@@ -3,15 +3,16 @@ import process from 'node:process'
 import { loadConfig } from 'bunfig'
 
 /**
- * Whether a dialect belongs to the MySQL wire-protocol family (MySQL itself or
- * SingleStore). These share `?` placeholders, backtick identifier quoting,
- * `ON DUPLICATE KEY UPDATE` upserts, `LAST_INSERT_ID()` id recovery, and the
- * `YYYY-MM-DD HH:MM:SS` datetime literal shape. Runtime DML branches should key
- * off this helper rather than `dialect === 'mysql'` so SingleStore inherits the
- * same behavior; only DDL (see `SingleStoreDriver`) diverges.
+ * Whether a dialect belongs to the MySQL wire-protocol family (MySQL itself,
+ * SingleStore, or Vitess). These share `?` placeholders, backtick identifier
+ * quoting, `ON DUPLICATE KEY UPDATE` upserts, `LAST_INSERT_ID()` id recovery,
+ * and the `YYYY-MM-DD HH:MM:SS` datetime literal shape. Runtime DML branches
+ * should key off this helper rather than `dialect === 'mysql'` so the
+ * distributed dialects inherit the same behavior; only DDL (see
+ * `SingleStoreDriver` / `VitessDriver`) diverges.
  */
 export function isMysqlLike(dialect: SupportedDialect = config.dialect): boolean {
-  return dialect === 'mysql' || dialect === 'singlestore'
+  return dialect === 'mysql' || dialect === 'singlestore' || dialect === 'vitess'
 }
 
 export const defaultConfig: QueryBuilderConfig = {

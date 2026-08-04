@@ -3,6 +3,7 @@ import type { DialectDriver } from './postgres'
 import { MySQLDriver } from './mysql'
 import { PostgresDriver } from './postgres'
 import { SingleStoreDriver } from './singlestore'
+import { VitessDriver } from './vitess'
 import { SQLiteDriver } from './sqlite'
 
 export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
@@ -13,6 +14,8 @@ export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
       return new MySQLDriver()
     case 'singlestore':
       return new SingleStoreDriver()
+    case 'vitess':
+      return new VitessDriver()
     case 'sqlite':
       return new SQLiteDriver()
     default:
@@ -25,6 +28,7 @@ export type { DialectDriver } from './postgres'
 export { PostgresDriver } from './postgres'
 export { SingleStoreDriver } from './singlestore'
 export { SQLiteDriver } from './sqlite'
+export { VitessDriver } from './vitess'
 
 // DynamoDB driver (NoSQL)
 export {

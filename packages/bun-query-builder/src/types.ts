@@ -9,10 +9,14 @@
  *   but its DDL adds distributed-table concepts (`SHARD KEY`, `SORT KEY`,
  *   `ROWSTORE`/columnstore) and drops foreign keys — handled by the dedicated
  *   `SingleStoreDriver`.
+ * - 'vitess': Sharded MySQL behind vtgate. Shares MySQL's wire protocol and
+ *   DML (see `isMysqlLike`), but a sharded keyspace rejects foreign keys and
+ *   AUTO_INCREMENT, and its sharding topology lives in a separate VSchema
+ *   document rather than in DDL — handled by the dedicated `VitessDriver`.
  * - 'sqlite': Lightweight engine; some features are limited or emulated
  * - 'browser': Browser-compatible mode that uses fetch() API calls instead of direct database connections
  */
-export type SupportedDialect = 'postgres' | 'mysql' | 'singlestore' | 'sqlite' | 'browser'
+export type SupportedDialect = 'postgres' | 'mysql' | 'singlestore' | 'vitess' | 'sqlite' | 'browser'
 
 /**
  * # `TransactionBackoffConfig`
