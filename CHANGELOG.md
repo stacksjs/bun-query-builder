@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.5...v0.2.6)
+
+## 🚀 Features
+
+- **dialect**: add vitess as a MySQL-family dialect ([9f67210](https://github.com/stacksjs/bun-query-builder/commit/9f67210)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.6 ([d1e94f7](https://github.com/stacksjs/bun-query-builder/commit/d1e94f7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.4...v0.2.5)
 
 ## 🐛 Bug Fixes
