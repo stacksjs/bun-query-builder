@@ -1,6 +1,7 @@
 import type { TablePlan } from '../src/migrations'
 import { describe, expect, it } from 'bun:test'
 import { isMysqlLike } from '../src/config'
+import { config, setConfig } from '../src/config'
 import { getDialectDriver, MySQLDriver, VitessDriver } from '../src/drivers'
 
 describe('vitess dialect', () => {
@@ -21,6 +22,18 @@ describe('vitess dialect', () => {
     // It is a MySQL-family driver — it inherits the wire behavior and
     // overrides only the DDL a sharded keyspace rejects.
     expect(driver).toBeInstanceOf(MySQLDriver)
+  })
+
+  it('selects the unsharded DDL profile from config', () => {
+    const previous = config.vitess?.sharded ?? true
+    try {
+      setConfig({ vitess: { sharded: false } })
+      const sql = getDialectDriver('vitess').createTable(plan([pk]))
+      expect(sql.toLowerCase()).toContain('auto_increment')
+    }
+    finally {
+      setConfig({ vitess: { sharded: previous } })
+    }
   })
 
   function plan(columns: TablePlan['columns']): TablePlan {
@@ -112,6 +125,28 @@ describe('vitess dialect', () => {
       const sql = new VitessDriver().createTable(plan([pk, plainCol]))
       expect(sql).toContain('`title`')
       expect(sql).toContain('not null')
+    })
+  })
+
+  describe('unsharded keyspace', () => {
+    it('keeps MySQL AUTO_INCREMENT and inline foreign keys', () => {
+      const withRef: any = {
+        name: 'user_id',
+        type: 'bigint',
+        isPrimaryKey: false,
+        isUnique: false,
+        isNullable: false,
+        hasDefault: false,
+        references: { table: 'users', column: 'id' },
+      }
+      const sql = new VitessDriver(false).createTable(plan([pk, withRef]))
+      expect(sql.toLowerCase()).toContain('auto_increment')
+      expect(sql).toContain('REFERENCES')
+    })
+
+    it('uses the ordinary MySQL migrations ledger', () => {
+      const sql = new VitessDriver(false).createMigrationsTable()
+      expect(sql.toLowerCase()).toContain('auto_increment')
     })
   })
 

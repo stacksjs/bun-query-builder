@@ -1,4 +1,5 @@
 import type { SupportedDialect } from '../types'
+import { config } from '../config'
 import type { DialectDriver } from './postgres'
 import { MySQLDriver } from './mysql'
 import { PostgresDriver } from './postgres'
@@ -15,7 +16,7 @@ export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
     case 'singlestore':
       return new SingleStoreDriver()
     case 'vitess':
-      return new VitessDriver()
+      return new VitessDriver(config.vitess?.sharded ?? true)
     case 'sqlite':
       return new SQLiteDriver()
     default:

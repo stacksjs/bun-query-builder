@@ -9,10 +9,10 @@
  *   but its DDL adds distributed-table concepts (`SHARD KEY`, `SORT KEY`,
  *   `ROWSTORE`/columnstore) and drops foreign keys — handled by the dedicated
  *   `SingleStoreDriver`.
- * - 'vitess': Sharded MySQL behind vtgate. Shares MySQL's wire protocol and
- *   DML (see `isMysqlLike`), but a sharded keyspace rejects foreign keys and
- *   AUTO_INCREMENT, and its sharding topology lives in a separate VSchema
- *   document rather than in DDL — handled by the dedicated `VitessDriver`.
+ * - 'vitess': MySQL behind vtgate. Shares MySQL's wire protocol and DML (see
+ *   `isMysqlLike`). Unsharded keyspaces retain normal MySQL DDL, while a
+ *   sharded keyspace rejects foreign keys and AUTO_INCREMENT; select that
+ *   stricter profile with `vitess.sharded`.
  * - 'sqlite': Lightweight engine; some features are limited or emulated
  * - 'browser': Browser-compatible mode that uses fetch() API calls instead of direct database connections
  */
@@ -333,6 +333,17 @@ export interface DatabaseConfig {
   pool?: PoolConfig
 }
 
+/** Vitess topology controls that affect generated DDL. */
+export interface VitessConfig {
+  /**
+   * Whether the target keyspace is sharded. Unsharded keyspaces support
+   * ordinary MySQL AUTO_INCREMENT columns and shard-local foreign keys.
+   * Defaults to true for backwards compatibility with the original Vitess
+   * dialect behavior.
+   */
+  sharded: boolean
+}
+
 /**
  * # `BrowserConfig`
  *
@@ -414,6 +425,8 @@ export interface QueryBuilderConfig {
   sql: SqlConfig
   /** SQLite-specific connection behavior (bootstrap pragmas). */
   sqlite?: SqliteConfig
+  /** Vitess keyspace topology. */
+  vitess?: VitessConfig
   /** Optional feature flags. */
   features: FeatureToggles
   /** Debug options. */

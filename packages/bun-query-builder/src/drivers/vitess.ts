@@ -7,8 +7,10 @@ import { MySQLDriver } from './mysql'
  * Vitess shards MySQL behind vtgate, which speaks the MySQL wire protocol, so
  * runtime DML (placeholders, backtick quoting, `ON DUPLICATE KEY UPDATE`,
  * `LAST_INSERT_ID`) is identical — see `isMysqlLike` in `config.ts`. Only DDL
- * diverges, and every divergence below follows from one fact: a keyspace is
- * split across shards that share nothing.
+ * diverges only when the keyspace is sharded. An unsharded keyspace retains
+ * normal MySQL AUTO_INCREMENT and foreign-key support, so this driver takes
+ * the topology explicitly instead of conflating "behind vtgate" with
+ * "distributed across shards".
  *
  *  - **No foreign keys.** Enforcing one would need a cross-shard read on every
  *    write, so vtgate rejects them in a sharded keyspace. Both forms are
@@ -31,13 +33,17 @@ import { MySQLDriver } from './mysql'
  * driver needs to know how a table is sharded.
  */
 export class VitessDriver extends MySQLDriver {
+  constructor(private readonly sharded = true) {
+    super()
+  }
+
   /**
    * Vitess rejects AUTO_INCREMENT in a sharded keyspace, so no column ever
    * gets the clause. Overriding here (rather than in `renderColumn`) also
    * covers `addColumn`, which asks the same helper.
    */
-  protected override getAutoIncrementClause(_column: ColumnPlan): string {
-    return ''
+  protected override getAutoIncrementClause(column: ColumnPlan): string {
+    return this.sharded ? '' : super.getAutoIncrementClause(column)
   }
 
   /**
@@ -50,7 +56,7 @@ export class VitessDriver extends MySQLDriver {
    * logic and drifting from it.
    */
   protected override renderColumn(column: ColumnPlan): string {
-    if (!column.references)
+    if (!this.sharded || !column.references)
       return super.renderColumn(column)
 
     // Render as if the reference were not declared. The column itself still
@@ -67,12 +73,12 @@ export class VitessDriver extends MySQLDriver {
     return super.createTable(table)
   }
 
-  override addForeignKey(): string {
+  override addForeignKey(...args: Parameters<MySQLDriver['addForeignKey']>): string {
     // A sharded keyspace cannot enforce referential integrity across shards,
     // so this is a no-op and integrity becomes an application concern. The
     // migration runner tolerates empty statements — same contract as the
     // SingleStore driver and MySQL's no-op enum helpers.
-    return ''
+    return this.sharded ? '' : super.addForeignKey(...args)
   }
 
   /**
@@ -85,6 +91,9 @@ export class VitessDriver extends MySQLDriver {
    * sharded keyspace if the operator has not set an unsharded one aside.
    */
   override createMigrationsTable(): string {
+    if (!this.sharded)
+      return super.createMigrationsTable()
+
     return `CREATE TABLE IF NOT EXISTS migrations (
       migration VARCHAR(255) NOT NULL PRIMARY KEY,
       executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

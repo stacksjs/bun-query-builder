@@ -26,6 +26,9 @@ export const defaultConfig: QueryBuilderConfig = {
     host: 'localhost',
     port: 5432,
   },
+  vitess: {
+    sharded: true,
+  },
   timestamps: {
     createdAt: 'created_at',
     updatedAt: 'updated_at',
@@ -288,6 +291,9 @@ function applyConfig(userConfig: Partial<QueryBuilderConfig>): void {
   }
   if (userConfig.softDeletes) {
     config.softDeletes = { ...config.softDeletes, ...userConfig.softDeletes }
+  }
+  if (userConfig.vitess) {
+    config.vitess = { ...config.vitess, ...userConfig.vitess }
   }
 }
 
