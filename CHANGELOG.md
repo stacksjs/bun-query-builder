@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.8...v0.2.9)
+
+## 🐛 Bug Fixes
+
+- **migrations**: preserve validated text widths ([22b4b40](https://github.com/stacksjs/bun-query-builder/commit/22b4b40)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.9 ([e839836](https://github.com/stacksjs/bun-query-builder/commit/e839836)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.7...v0.2.8)
 
 ## 🚀 Features
