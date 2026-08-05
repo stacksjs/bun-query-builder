@@ -403,6 +403,11 @@ export interface QueryBuilderConfig {
    * @default '.qb'
    */
   snapshotDir: string
+  /**
+   * Directory containing the SQL migration corpus, relative to the workspace
+   * root unless absolute. Defaults to `database/migrations`.
+   */
+  migrationDir: string
   /** Target SQL dialect. */
   dialect: SupportedDialect
 

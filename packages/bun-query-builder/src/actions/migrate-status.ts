@@ -19,7 +19,7 @@ export interface MigrationStatus {
 export async function migrateStatus(): Promise<MigrationStatus[]> {
   const dialect = config.dialect as SupportedDialect || 'postgres'
   const driver = getDialectDriver(dialect)
-  const sqlDir = getSqlDirectory()
+  const sqlDir = getSqlDirectory(undefined, config.migrationDir)
 
   console.log('-- Migration Status')
   console.log(`-- Dialect: ${dialect}`)

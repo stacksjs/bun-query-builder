@@ -204,7 +204,7 @@ function getWorkspaceRoot(): string {
 }
 
 function ensureSqlDirectory(workspaceRoot?: string): string {
-  const sqlDir = getSqlDirectory(workspaceRoot)
+  const sqlDir = getSqlDirectory(workspaceRoot, config.migrationDir)
   if (!existsSync(sqlDir)) {
     mkdirSync(sqlDir, { recursive: true })
     info(`-- Created SQL directory: ${sqlDir}`)
@@ -662,7 +662,7 @@ export async function deleteMigrationFiles(dir?: string, workspaceRoot?: string,
     info(`-- Removed legacy migration state file: ${statePath}`)
   }
 
-  removeGeneratedMigrationFiles(getSqlDirectory(workspaceRoot))
+  removeGeneratedMigrationFiles(getSqlDirectory(workspaceRoot, config.migrationDir))
 }
 
 /**

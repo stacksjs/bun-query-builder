@@ -14,7 +14,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import process from 'node:process'
 
 /**
@@ -34,7 +34,10 @@ export function findWorkspaceRoot(startPath: string = process.cwd()): string {
   return process.cwd()
 }
 
-/** The project's migration corpus: `<workspace>/database/migrations`. */
-export function getSqlDirectory(workspaceRoot?: string): string {
-  return join(workspaceRoot ?? findWorkspaceRoot(), 'database', 'migrations')
+/** The configured migration corpus, resolved from the workspace root. */
+export function getSqlDirectory(workspaceRoot?: string, migrationDir = 'database/migrations'): string {
+  const configured = migrationDir || 'database/migrations'
+  return isAbsolute(configured)
+    ? configured
+    : join(workspaceRoot ?? findWorkspaceRoot(), configured)
 }

@@ -77,4 +77,12 @@ describe('workspace resolution', () => {
     process.chdir(subdir)
     expect(getSqlDirectory('/somewhere/else')).toBe(join('/somewhere/else', 'database', 'migrations'))
   })
+
+  it('resolves a configured dialect corpus from the workspace root', () => {
+    expect(getSqlDirectory('/workspace', 'database/migrations/vitess')).toBe(join('/workspace', 'database', 'migrations', 'vitess'))
+  })
+
+  it('keeps an absolute configured corpus path intact', () => {
+    expect(getSqlDirectory('/workspace', '/var/lib/example/migrations')).toBe('/var/lib/example/migrations')
+  })
 })

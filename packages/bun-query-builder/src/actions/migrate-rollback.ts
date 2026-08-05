@@ -204,7 +204,7 @@ export async function migrateRollback(options: RollbackOptions = {}): Promise<vo
     }
     console.log()
 
-    const sqlDir = getSqlDirectory()
+    const sqlDir = getSqlDirectory(undefined, config.migrationDir)
     let reversedAny = false
     for (const migration of migrationsToRollback) {
       try {

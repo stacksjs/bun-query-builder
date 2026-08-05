@@ -10,6 +10,7 @@ import { config } from './config'
 import { getDialectDriver } from './drivers'
 import { isNumericPlanType } from './drivers/sqlite'
 import { buildSchemaMeta } from './meta'
+import { getSqlDirectory } from './workspace'
 
 /**
  * Informational stdout line — printed only when the active config has
@@ -95,7 +96,7 @@ function findWorkspaceRoot(startPath: string): string {
 
 function ensureSqlDirectory(): string {
   const workspaceRoot = findWorkspaceRoot(process.cwd())
-  const sqlDir = join(workspaceRoot, 'database', 'migrations')
+  const sqlDir = getSqlDirectory(workspaceRoot, config.migrationDir)
   if (!existsSync(sqlDir)) {
     mkdirSync(sqlDir, { recursive: true })
     info(`-- Created SQL directory: ${sqlDir}`)
