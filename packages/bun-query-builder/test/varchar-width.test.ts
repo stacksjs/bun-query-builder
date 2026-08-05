@@ -9,6 +9,11 @@ const mkStr = (max?: number) => ({
   validation: { rule: { name: 'string', rules: max ? [{ name: 'max', params: { max } }] : [] } },
 })
 
+const mkTypedStr = (max: number) => ({
+  type: 'string',
+  validation: { rule: { name: 'string', rules: [{ name: 'max', params: { max } }] } },
+})
+
 const models = {
   T: {
     name: 'T',
@@ -18,6 +23,7 @@ const models = {
       country: mkStr(2),
       path: mkStr(), // unbounded → varchar(255)
       bio: mkStr(5000), // > 255 → text
+      payload: mkTypedStr(16_000), // explicit type must not hide validator width
     },
   },
 }
@@ -34,6 +40,8 @@ describe('varchar width from .max()', () => {
     expect(cols.path.maxLength).toBeUndefined() // unbounded
     expect(cols.bio.type).toBe('text') // promoted, so no varchar width
     expect(cols.bio.maxLength).toBeUndefined()
+    expect(cols.payload.type).toBe('text')
+    expect(cols.payload.maxLength).toBeUndefined()
   })
 
   it('emits varchar(n) in MySQL/SingleStore DDL', () => {
@@ -42,6 +50,7 @@ describe('varchar width from .max()', () => {
     expect(ddl).toContain('`country` varchar(2)')
     expect(ddl).toContain('`path` varchar(255)')
     expect(ddl).toContain('`bio` text')
+    expect(ddl).toContain('`payload` text')
   })
 
   it('emits varchar(n) in Postgres DDL', () => {

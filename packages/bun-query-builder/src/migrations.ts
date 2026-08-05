@@ -665,7 +665,15 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       const isPk = attrName === primaryKey
 
       // Priority 1: an explicit model column type, then validator inference.
+      // A generic `type: 'string'` still needs its validator width: otherwise
+      // `.max(16_000)` silently becomes varchar(255) and valid model data is
+      // truncated by MySQL/Vitess. Explicit `text` remains authoritative.
       inferred = normalizeAttributeType(attr.type) ?? detectTypeFromValidationRule(attr.validation?.rule)
+      if (inferred === 'string') {
+        const maxLength = extractMaxFromRules(attr.validation?.rule)
+        if (maxLength && maxLength > 255)
+          inferred = 'text'
+      }
 
       // Priority 2: Check for enum validation rule (or extract enum values if type is enum)
       if (!inferred || inferred === 'enum') {
