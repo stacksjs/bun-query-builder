@@ -1,3 +1,21 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.6...v0.2.7)
+
+## 🚀 Features
+
+- **vitess**: support unsharded keyspaces ([a6f1018](https://github.com/stacksjs/bun-query-builder/commit/a6f1018)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- restore query builder typecheck ([8c2c3fb](https://github.com/stacksjs/bun-query-builder/commit/8c2c3fb)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.7 ([54ca195](https://github.com/stacksjs/bun-query-builder/commit/54ca195)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.5...v0.2.6)
 
 ## 🚀 Features
