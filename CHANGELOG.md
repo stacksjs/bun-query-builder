@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.9...v0.2.10)
+
+## 🐛 Bug Fixes
+
+- **vitess**: pin topology in migration plans ([24d0e8c](https://github.com/stacksjs/bun-query-builder/commit/24d0e8c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.10 ([98c9b6d](https://github.com/stacksjs/bun-query-builder/commit/98c9b6d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.8...v0.2.9)
 
 ## 🐛 Bug Fixes
