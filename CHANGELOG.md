@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.7...v0.2.8)
+
+## 🚀 Features
+
+- **migrations**: support configured corpus directories ([bd46bf5](https://github.com/stacksjs/bun-query-builder/commit/bd46bf5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.8 ([93ffaaa](https://github.com/stacksjs/bun-query-builder/commit/93ffaaa)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.6...v0.2.7)
 
 ## 🚀 Features
