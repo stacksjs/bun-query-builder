@@ -535,7 +535,7 @@ function parseMysqlEnum(columnType: string): string[] | undefined {
 
 /** Collapse per-(index,column) rows into IndexPlans; track single-col unique columns. */
 function groupPhysicalIndexes(
-  table: string,
+  _table: string,
   rows: Array<{ indexName: string, isUnique: boolean, isPrimary: boolean, column: string, where?: string }>,
 ): { indexes: IndexPlan[], uniqueColumns: Set<string> } {
   const byName = new Map<string, { isUnique: boolean, isPrimary: boolean, columns: string[], where?: string }>()

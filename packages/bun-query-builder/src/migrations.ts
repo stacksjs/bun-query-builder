@@ -1776,7 +1776,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
       // An index on a preserved column belongs to it; dropping the index would
       // half-remove the thing we just decided to keep.
       const keptIndexes = prev.indexes.filter(idx =>
-        idx.columns.some(c => preservedNames.has(c)) && !currIdx[indexKey(idx)],
+        idx.columns.some(c => preservedNames.has(c)) && !currIdx[indexKey(idx, prev.table)],
       )
 
       info(`-- Keeping ${preserved.length} column(s) on "${curr.table}" no model declares: ${removedCols.join(', ')} — reconciled from the database, where an undeclared column is out of scope rather than removed`)
