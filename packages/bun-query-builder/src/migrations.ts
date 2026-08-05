@@ -323,6 +323,8 @@ export interface TablePlan {
 
 export interface MigrationPlan {
   dialect: SupportedDialect
+  /** Captured in the plan so Vitess DDL does not depend on mutable global config. */
+  vitessSharded?: boolean
   tables: TablePlan[]
 }
 
@@ -581,6 +583,7 @@ function normalizeAttributeType(value: unknown): NormalizedColumnType | undefine
 
 export interface InferenceOptions {
   dialect: SupportedDialect
+  vitessSharded?: boolean
 }
 
 export function buildMigrationPlan(models: ModelRecord, options: InferenceOptions): MigrationPlan {
@@ -1111,7 +1114,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     }
   }
 
-  return { dialect: options.dialect, tables }
+  return { dialect: options.dialect, vitessSharded: options.vitessSharded, tables }
 }
 
 export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}): string[] {
@@ -1129,7 +1132,7 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
   const emit = opts.dryRun ? (): boolean => false : createMigrationFile
 
   const statements: string[] = []
-  const driver = getDialectDriver(plan.dialect)
+  const driver = getDialectDriver(plan.dialect, { vitessSharded: plan.vitessSharded })
 
   const { tables, deferredForeignKeys } = orderTablesForCreate(plan.tables, plan.dialect)
 
@@ -1609,7 +1612,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
 
   const chunks: string[] = []
   const operations: MigrationOperation[] = []
-  const driver = getDialectDriver(next.dialect)
+  const driver = getDialectDriver(next.dialect, { vitessSharded: next.vitessSharded })
   const dialect = next.dialect
 
   const prevTables = mapTablesByName(previous.tables)

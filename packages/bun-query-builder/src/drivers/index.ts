@@ -7,7 +7,7 @@ import { SingleStoreDriver } from './singlestore'
 import { VitessDriver } from './vitess'
 import { SQLiteDriver } from './sqlite'
 
-export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
+export function getDialectDriver(dialect: SupportedDialect, options: { vitessSharded?: boolean } = {}): DialectDriver {
   switch (dialect) {
     case 'postgres':
       return new PostgresDriver()
@@ -16,7 +16,7 @@ export function getDialectDriver(dialect: SupportedDialect): DialectDriver {
     case 'singlestore':
       return new SingleStoreDriver()
     case 'vitess':
-      return new VitessDriver(config.vitess?.sharded ?? true)
+      return new VitessDriver(options.vitessSharded ?? config.vitess?.sharded ?? true)
     case 'sqlite':
       return new SQLiteDriver()
     default:

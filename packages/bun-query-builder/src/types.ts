@@ -475,6 +475,8 @@ export interface IntrospectOptions {
 
 export interface MigrateOptions {
   dialect?: SupportedDialect
+  /** Explicit Vitess topology for reproducible DDL generation. */
+  vitessSharded?: boolean
   state?: string
   apply?: boolean
   full?: boolean

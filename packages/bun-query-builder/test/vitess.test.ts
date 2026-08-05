@@ -36,6 +36,18 @@ describe('vitess dialect', () => {
     }
   })
 
+  it('lets a migration plan override mutable process-wide topology', () => {
+    const previous = config.vitess?.sharded ?? true
+    try {
+      setConfig({ vitess: { sharded: true } })
+      const sql = getDialectDriver('vitess', { vitessSharded: false }).createTable(plan([pk]))
+      expect(sql.toLowerCase()).toContain('auto_increment')
+    }
+    finally {
+      setConfig({ vitess: { sharded: previous } })
+    }
+  })
+
   function plan(columns: TablePlan['columns']): TablePlan {
     return { table: 'posts', columns, indexes: [] }
   }

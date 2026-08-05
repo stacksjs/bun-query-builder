@@ -251,7 +251,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
 
   // Load current models from source directory and build migration plan
   const models = await loadModels({ modelsDir: dir })
-  const plan = buildMigrationPlan(models, { dialect })
+  const plan = buildMigrationPlan(models, { dialect, vitessSharded: opts.vitessSharded })
 
   let previous: MigrationPlan | undefined
   // True when `previous` is the live schema rather than a model snapshot.
