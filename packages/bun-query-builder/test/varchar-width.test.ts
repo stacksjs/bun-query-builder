@@ -3,8 +3,8 @@ import { getDialectDriver } from '../src/drivers'
 import { buildMigrationPlan } from '../src/migrations'
 
 // A bounded string column (`.max(n)`) should become `varchar(n)` instead of the
-// default `varchar(255)`, so tight columns don't over-reserve. Values > 255 are
-// promoted to `text` (existing behavior).
+// default `varchar(255)`, so tight columns don't over-reserve. Indexable
+// bounded identifiers may exceed 255; content-sized values become `text`.
 const mkStr = (max?: number) => ({
   validation: { rule: { name: 'string', rules: max ? [{ name: 'max', params: { max } }] : [] } },
 })
@@ -21,6 +21,7 @@ const models = {
     attributes: {
       id: mkStr(32),
       country: mkStr(2),
+      mailbox: mkStr(320),
       path: mkStr(), // unbounded → varchar(255)
       bio: mkStr(5000), // > 255 → text
       payload: mkTypedStr(16_000), // explicit type must not hide validator width
@@ -33,10 +34,11 @@ function plan(dialect: string) {
 }
 
 describe('varchar width from .max()', () => {
-  it('carries maxLength (≤255) onto the ColumnPlan for string columns', () => {
+  it('carries indexable maxLength values onto string columns', () => {
     const cols = Object.fromEntries(plan('singlestore').columns.map(c => [c.name, c]))
     expect(cols.id.maxLength).toBe(32)
     expect(cols.country.maxLength).toBe(2)
+    expect(cols.mailbox.maxLength).toBe(320)
     expect(cols.path.maxLength).toBeUndefined() // unbounded
     expect(cols.bio.type).toBe('text') // promoted, so no varchar width
     expect(cols.bio.maxLength).toBeUndefined()
@@ -48,6 +50,7 @@ describe('varchar width from .max()', () => {
     const ddl = getDialectDriver('singlestore' as any).createTable(plan('singlestore'))
     expect(ddl).toContain('`id` varchar(32)')
     expect(ddl).toContain('`country` varchar(2)')
+    expect(ddl).toContain('`mailbox` varchar(320)')
     expect(ddl).toContain('`path` varchar(255)')
     expect(ddl).toContain('`bio` text')
     expect(ddl).toContain('`payload` text')
@@ -57,6 +60,7 @@ describe('varchar width from .max()', () => {
     const ddl = getDialectDriver('postgres' as any).createTable(plan('postgres'))
     expect(ddl).toContain('"id" varchar(32)')
     expect(ddl).toContain('"country" varchar(2)')
+    expect(ddl).toContain('"mailbox" varchar(320)')
     expect(ddl).toContain('"path" varchar(255)')
   })
 })

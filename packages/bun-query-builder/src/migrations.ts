@@ -277,8 +277,10 @@ export interface ColumnPlan {
    * instead of the default `varchar(255)`, so tight columns (2-char country
    * codes, 32-char hash ids) don't reserve 255 — this shrinks storage and, on
    * a columnstore, the bytes scanned per row. Ignored for non-string types and
-   * when unset (falls back to 255). Values > 255 are promoted to `text`
-   * upstream, so `maxLength` here is always ≤ 255.
+   * when unset (falls back to 255). Bounded values through 767 characters are
+   * preserved as `varchar(n)`: that covers indexable UTF-8 identifiers such as
+   * the RFC mailbox maximum of 320 characters while staying within MySQL 8's
+   * 3072-byte single-key limit under utf8mb4. Larger values become `text`.
    */
   maxLength?: number
   /**
@@ -485,6 +487,8 @@ function extractMaxFromRules(ruleObj: any): number | undefined {
   return undefined
 }
 
+const MAX_BOUNDED_VARCHAR_LENGTH = 767
+
 function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | undefined {
   if (!rule || typeof rule !== 'object')
     return undefined
@@ -498,9 +502,10 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
     switch (name) {
       case 'string':
       case 'text': {
-        // Check if the validation has a max > 255 — if so, use text type instead of varchar(255)
+        // Keep indexable bounded identifiers as varchar(n). Larger content
+        // belongs in TEXT so it does not consume the MySQL row-size budget.
         const maxValue = extractMaxFromRules(ruleObj)
-        return maxValue && maxValue > 255 ? 'text' : 'string'
+        return maxValue && maxValue > MAX_BOUNDED_VARCHAR_LENGTH ? 'text' : 'string'
       }
       case 'integer':
       case 'int':
@@ -685,7 +690,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       inferred = normalizeAttributeType(attr.type) ?? detectTypeFromValidationRule(attr.validation?.rule)
       if (inferred === 'string') {
         const maxLength = extractMaxFromRules(attr.validation?.rule)
-        if (maxLength && maxLength > 255)
+        if (maxLength && maxLength > MAX_BOUNDED_VARCHAR_LENGTH)
           inferred = 'text'
       }
 
@@ -724,7 +729,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       }
 
       // For a bounded string, carry the max length so drivers can emit
-      // varchar(n) instead of varchar(255). Only meaningful when ≤ 255 —
+      // varchar(n) instead of varchar(255). Only meaningful when ≤ 767 —
       // larger maxes were already promoted to `text` above.
       const maxLen = inferred === 'string' ? extractMaxFromRules(attr.validation?.rule) : undefined
 
@@ -737,7 +742,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         hasDefault: typeof attr.default !== 'undefined',
         defaultValue: normalizeDefaultValue(attr.default),
         enumValues,
-        maxLength: typeof maxLen === 'number' && maxLen > 0 && maxLen <= 255 ? maxLen : undefined,
+        maxLength: typeof maxLen === 'number' && maxLen > 0 && maxLen <= MAX_BOUNDED_VARCHAR_LENGTH ? maxLen : undefined,
       }
 
       // Foreign key inference for *_id columns
