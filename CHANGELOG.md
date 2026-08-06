@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.17...v0.2.18)
+
+## 🐛 Bug Fixes
+
+- **migrations**: replace a foreign key rather than adding a second one ([d24021e](https://github.com/stacksjs/bun-query-builder/commit/d24021e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.18 ([2c6bcd7](https://github.com/stacksjs/bun-query-builder/commit/2c6bcd7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.16...v0.2.17)
 
 ## 🐛 Bug Fixes
