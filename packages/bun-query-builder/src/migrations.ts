@@ -1798,20 +1798,28 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
     // change recreates the table from `curr`, so a preserved column left out
     // of it would be dropped by the back door — silently, and without the
     // destructive gate ever seeing a `drop_column`.
-    if (preserveUnknownColumns && removedCols.length > 0) {
+    if (preserveUnknownColumns) {
       const preserved = removedCols.map(name => prevCols[name])
-      const preservedNames = new Set(removedCols)
-      // An index on a preserved column belongs to it; dropping the index would
-      // half-remove the thing we just decided to keep.
-      const keptIndexes = prev.indexes.filter(idx =>
-        idx.columns.some(c => preservedNames.has(c)) && !currIdx[indexKey(idx, prev.table)],
-      )
+      // Live introspection cannot prove ownership of an index any more than it
+      // can prove ownership of a column. Framework helpers, hand-written
+      // migrations, and another app sharing the schema may all add indexes to
+      // model-owned columns. Treat every live-only index as out of scope on a
+      // reconcile run; a model snapshot remains the evidence required to drop
+      // one intentionally.
+      const keptIndexes = prev.indexes.filter(idx => !currIdx[indexKey(idx, prev.table)])
 
-      info(`-- Keeping ${preserved.length} column(s) on "${curr.table}" no model declares: ${removedCols.join(', ')} — reconciled from the database, where an undeclared column is out of scope rather than removed`)
+      if (preserved.length > 0 || keptIndexes.length > 0) {
+        if (preserved.length > 0) {
+          info(`-- Keeping ${preserved.length} column(s) on "${curr.table}" no model declares: ${removedCols.join(', ')} — reconciled from the database, where an undeclared column is out of scope rather than removed`)
+        }
+        if (keptIndexes.length > 0) {
+          info(`-- Keeping ${keptIndexes.length} index(es) on "${curr.table}" no model declares: ${keptIndexes.map(index => index.name).join(', ')} — reconciled from the database, where an undeclared index is out of scope rather than removed`)
+        }
 
-      curr = { ...curr, columns: [...curr.columns, ...preserved], indexes: [...curr.indexes, ...keptIndexes] }
-      currCols = mapColumnsByName(curr.columns)
-      currIdx = mapIndexesByKey(curr.indexes, curr.table)
+        curr = { ...curr, columns: [...curr.columns, ...preserved], indexes: [...curr.indexes, ...keptIndexes] }
+        currCols = mapColumnsByName(curr.columns)
+        currIdx = mapIndexesByKey(curr.indexes, curr.table)
+      }
       removedCols = []
     }
 

@@ -181,6 +181,20 @@ describe('columns no model declares, reconciled from the database', () => {
     expect(statements.join('\n')).toContain('farms_legacy_note_idx')
   })
 
+  it('keeps a live-only index on a model-owned column', () => {
+    const before = plan(
+      'farms',
+      [idCol, col('name', 'string')],
+      [{ name: 'idx_farms_name_helper', type: 'index', columns: ['name'] }],
+    )
+    const after = plan('farms', [idCol, col('name', 'string')])
+
+    const { statements, operations } = generateDiffOperations(before, after, { preserveUnknownColumns: true })
+
+    expect(operations.filter(o => o.kind === 'drop_index')).toHaveLength(0)
+    expect(statements.join('\n')).not.toContain('DROP INDEX')
+  })
+
   it('does not guess a rename from introspected state', () => {
     // A hand-written `legacy_note` and a newly declared `region` are two
     // different columns that happen to share a type. Against a snapshot the
