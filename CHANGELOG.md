@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.19...v0.2.20)
+
+## 🐛 Bug Fixes
+
+- **migrations**: replace foreign keys with static DDL ([02b383d](https://github.com/stacksjs/bun-query-builder/commit/02b383d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.20 ([6d59291](https://github.com/stacksjs/bun-query-builder/commit/6d59291)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.17...v0.2.18)
 
 ## 🐛 Bug Fixes
