@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.16...v0.2.17)
+
+## 🐛 Bug Fixes
+
+- **mysql**: preserve physical types during introspection ([c49f3d8](https://github.com/stacksjs/bun-query-builder/commit/c49f3d8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.17 ([3df9954](https://github.com/stacksjs/bun-query-builder/commit/3df9954)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.15...v0.2.16)
 
 ## 🐛 Bug Fixes
