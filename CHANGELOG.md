@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.15...v0.2.16)
+
+## 🐛 Bug Fixes
+
+- **migrations**: align foreign key storage types ([e4b6d89](https://github.com/stacksjs/bun-query-builder/commit/e4b6d89)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.16 ([882273f](https://github.com/stacksjs/bun-query-builder/commit/882273f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.14...v0.2.15)
 
 ## 🐛 Bug Fixes
