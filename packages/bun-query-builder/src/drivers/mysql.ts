@@ -82,7 +82,14 @@ export class MySQLDriver implements DialectDriver {
       if (rawSqlExpressions.includes(upperDv)) {
         return `default ${upperDv}`
       }
-      return `default '${dv.replace(/'/g, '\'\'')}'`
+      const literal = `'${dv.replace(/'/g, '\'\'')}'`
+      // MySQL 8 accepts defaults on TEXT/JSON columns only when the value is
+      // written as an expression. Vitess enforces the same rule at vtgate.
+      // The model still owns the default; the parentheses merely select the
+      // portable MySQL 8 syntax instead of emitting DDL the server rejects.
+      if (column.type === 'text' || column.type === 'json' || (column.type === 'enum' && !column.enumValues?.length))
+        return `default (${literal})`
+      return `default ${literal}`
     }
     else if (typeof dv === 'number' || typeof dv === 'bigint') {
       return `default ${dv}`

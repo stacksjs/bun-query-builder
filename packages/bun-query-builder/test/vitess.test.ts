@@ -203,5 +203,19 @@ describe('vitess dialect', () => {
         } as any),
       ).toThrow(/Partial indexes/)
     })
+
+    it('renders TEXT and JSON defaults as MySQL 8 expressions', () => {
+      const columns: TablePlan['columns'] = [
+        pk,
+        { name: 'last_error', type: 'text', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: true, defaultValue: '' },
+        { name: 'payload', type: 'json', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: true, defaultValue: '{}' },
+        { name: 'status', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: true, defaultValue: 'pending' },
+      ]
+      const sql = new VitessDriver(false).createTable(plan(columns))
+
+      expect(sql).toContain("`last_error` text default ('')")
+      expect(sql).toContain("`payload` json default ('{}')")
+      expect(sql).toContain("`status` varchar(255) default 'pending'")
+    })
   })
 })
