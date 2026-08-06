@@ -433,10 +433,7 @@ async function buildPgTable(qb: any, table: string, enumLabels?: Map<string, str
   // Foreign keys.
   const fkRows = await qb.unsafe(
     `SELECT kcu.column_name, ccu.table_name AS ref_table, ccu.column_name AS ref_column,
-            tc.constraint_name, rc.delete_rule, rc.update_rule,
-            (SELECT COUNT(*) FROM information_schema.key_column_usage count_kcu
-              WHERE count_kcu.constraint_name = tc.constraint_name
-                AND count_kcu.constraint_schema = tc.constraint_schema) AS constraint_column_count
+            tc.constraint_name, rc.delete_rule, rc.update_rule
     FROM information_schema.table_constraints tc
       JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name
       JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name
@@ -446,11 +443,17 @@ async function buildPgTable(qb: any, table: string, enumLabels?: Map<string, str
   )
 
   const fkByColumn = new Map<string, ColumnPlan['references']>()
+  const fkColumnCounts = new Map<string, number>()
+  for (const fk of fkRows) {
+    const constraintName = String(fk.constraint_name)
+    fkColumnCounts.set(constraintName, (fkColumnCounts.get(constraintName) ?? 0) + 1)
+  }
   for (const fk of fkRows) {
     const name = String(fk.column_name)
     const existing = fkByColumn.get(name)
-    const constraintNames = Number(fk.constraint_column_count) === 1
-      ? [...new Set([...(existing?.constraintNames ?? []), String(fk.constraint_name)])]
+    const constraintName = String(fk.constraint_name)
+    const constraintNames = fkColumnCounts.get(constraintName) === 1
+      ? [...new Set([...(existing?.constraintNames ?? []), constraintName])]
       : existing?.constraintNames
     fkByColumn.set(name, existing
       ? { ...existing, constraintNames }
@@ -512,10 +515,7 @@ async function buildMysqlTable(qb: any, table: string): Promise<TablePlan> {
   )
   const fkRows = await qb.unsafe(
     `SELECT kcu.column_name, kcu.referenced_table_name AS ref_table, kcu.referenced_column_name AS ref_column,
-            kcu.constraint_name, rc.delete_rule, rc.update_rule,
-            (SELECT COUNT(*) FROM information_schema.key_column_usage count_kcu
-              WHERE count_kcu.constraint_name = kcu.constraint_name
-                AND count_kcu.constraint_schema = kcu.constraint_schema) AS constraint_column_count
+            kcu.constraint_name, rc.delete_rule, rc.update_rule
     FROM information_schema.key_column_usage kcu
       JOIN information_schema.referential_constraints rc
         ON rc.constraint_name = kcu.constraint_name AND rc.constraint_schema = kcu.table_schema
@@ -524,12 +524,16 @@ async function buildMysqlTable(qb: any, table: string): Promise<TablePlan> {
   )
 
   const fkByColumn = new Map<string, ColumnPlan['references']>()
+  const fkColumnCounts = new Map<string, number>()
+  for (const fk of fkRows) {
+    const constraintName = String(fk.constraint_name ?? fk.CONSTRAINT_NAME)
+    fkColumnCounts.set(constraintName, (fkColumnCounts.get(constraintName) ?? 0) + 1)
+  }
   for (const fk of fkRows) {
     const name = String(fk.column_name ?? fk.COLUMN_NAME)
     const existing = fkByColumn.get(name)
-    const columnCount = Number(fk.constraint_column_count ?? fk.CONSTRAINT_COLUMN_COUNT)
     const constraintName = String(fk.constraint_name ?? fk.CONSTRAINT_NAME)
-    const constraintNames = columnCount === 1
+    const constraintNames = fkColumnCounts.get(constraintName) === 1
       ? [...new Set([...(existing?.constraintNames ?? []), constraintName])]
       : existing?.constraintNames
     fkByColumn.set(name, existing
