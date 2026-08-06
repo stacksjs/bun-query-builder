@@ -642,7 +642,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     // name heuristic below; a model that declares
     // `belongsTo: [{ model: 'User', foreignKey: 'author_id' }]` means users,
     // and the constraint has to agree or every insert is rejected.
-    const declaredFkTargets = new Map<string, string>()
+    const declaredFkTargets = new Map<string, { table: string, onDelete?: OnForeignKeyAction }>()
     // Whether this model documents its relationships at all. A model that does
     // is taken at its word; one that does not falls back to convention.
     const declaresBelongsTo = normalizeRelationList(model.belongsTo).length > 0
@@ -667,7 +667,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
       const column = rel.foreignKey ?? `${snakeCase(rel.model)}_id`
       const table = meta.modelToTable[rel.model]
       if (table)
-        declaredFkTargets.set(column, table)
+        declaredFkTargets.set(column, { table, onDelete: rel.onDelete })
     }
 
     for (const attrName of Object.keys(attrs)) {
@@ -790,11 +790,19 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           //
           // Convention still applies to models that declare nothing, which is
           // the case the inference was written for.
-          const refTable = declared ?? (declaresBelongsTo ? undefined : meta.modelToTable[maybeModel])
+          const refTable = declared?.table ?? (declaresBelongsTo ? undefined : meta.modelToTable[maybeModel])
           if (refTable) {
-            // When the referenced model exists in the schema, auto-infer FK
+            // When the referenced model exists in the schema, auto-infer FK.
+            //
+            // `onDelete` comes from the relation, and it has to: declaring the
+            // column in `attributes` is the normal way to give it a validation
+            // rule or a name, and it used to cost the relation its ON DELETE
+            // silently. The same model declaring the same `belongsTo` got a
+            // cascade or did not depending on whether its foreign key column
+            // was also written down as an attribute, which is not a
+            // distinction anybody would expect to matter.
             const refPk = meta.primaryKeys[refTable] ?? 'id'
-            col.references = { table: refTable, column: refPk }
+            col.references = { table: refTable, column: refPk, onDelete: declared?.onDelete }
           }
         }
       }

@@ -1,6 +1,6 @@
 import type { TablePlan } from '../src/migrations'
 import { describe, expect, it } from 'bun:test'
-import { generateDiffOperations, generateSql } from '../src/migrations'
+import { buildMigrationPlan, generateDiffOperations, generateSql } from '../src/migrations'
 import { MySQLDriver } from '../src/drivers/mysql'
 import { PostgresDriver } from '../src/drivers/postgres'
 import { SQLiteDriver } from '../src/drivers/sqlite'
@@ -272,5 +272,69 @@ describe('replacing a foreign key rather than adding a second one', () => {
   /** SQLite emits inline and skips the ALTER pass entirely, so there is nothing to replace. */
   it('does not touch the dialects that never ALTER', () => {
     expect(new SQLiteDriver().addForeignKey('posts', 'user_id', 'users', 'id')).toBe('')
+  })
+})
+
+/**
+ * A `belongsTo` keeps its `onDelete` whether or not the column is also an
+ * attribute.
+ *
+ * Declaring the foreign key column in `attributes` is the ordinary way to give
+ * it a validation rule, a name, or a nullability - and it used to cost the
+ * relation its ON DELETE without saying so. The same model, the same
+ * `belongsTo`, cascaded or did not depending on whether its `_id` column
+ * happened to be written down twice, which is not a distinction anybody would
+ * expect to matter.
+ *
+ * Found in a forge where every model declares its `repository_id` explicitly:
+ * every cascade it asked for was dropped on the floor.
+ */
+describe('onDelete survives a declared foreign key column', () => {
+  const models = {
+    Repository: {
+      name: 'Repository',
+      table: 'repositories',
+      primaryKey: 'id',
+      attributes: { name: { validation: { rule: {} } } },
+    },
+    // The column is declared *and* the relation is declared - the shape that
+    // used to lose the cascade.
+    Topic: {
+      name: 'Topic',
+      table: 'topics',
+      primaryKey: 'id',
+      belongsTo: [{ model: 'Repository', onDelete: 'cascade' }],
+      attributes: {
+        repository_id: { validation: { rule: {} } },
+        topic: { validation: { rule: {} } },
+      },
+    },
+    // The column is left to be generated from the relation - the path that
+    // already worked, kept here so a fix to one cannot break the other.
+    Star: {
+      name: 'Star',
+      table: 'stars',
+      primaryKey: 'id',
+      belongsTo: [{ model: 'Repository', onDelete: 'cascade' }],
+      attributes: { note: { validation: { rule: {} } } },
+    },
+  } as any
+
+  const plan = buildMigrationPlan(models, { dialect: 'postgres' }) as any
+  const columnFor = (table: string) =>
+    plan.tables.find((t: any) => t.table === table)?.columns.find((c: any) => c.name === 'repository_id')
+
+  it('keeps the cascade when the column is declared as an attribute', () => {
+    expect(columnFor('topics')?.references).toMatchObject({ table: 'repositories', onDelete: 'cascade' })
+  })
+
+  it('still keeps it when the column is generated from the relation', () => {
+    expect(columnFor('stars')?.references).toMatchObject({ table: 'repositories', onDelete: 'cascade' })
+  })
+
+  it('reaches the SQL, which is the only place it does anything', () => {
+    const sql = generateSql(plan).join('\n')
+
+    expect(sql.match(/ON DELETE CASCADE/g)?.length).toBe(2)
   })
 })
