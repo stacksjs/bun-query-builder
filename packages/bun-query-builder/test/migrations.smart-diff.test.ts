@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { generateMigration } from '../src/actions/migrate'
-import { buildPlanFromDatabase, sqlTypeToNormalized } from '../src/actions/introspect-db'
+import { buildPlanFromDatabase, mysqlColumnType, sqlTypeToNormalized } from '../src/actions/introspect-db'
 import { config } from '../src/config'
 import { generateDiffOperations, generateSql, isLosslessTypeChange } from '../src/migrations'
 
@@ -229,6 +229,13 @@ describe('sqlTypeToNormalized', () => {
 
     const { operations } = generateDiffOperations(live, fromModels)
     expect(operations.filter(o => o.kind === 'modify_column')).toHaveLength(0)
+  })
+})
+
+describe('mysqlColumnType', () => {
+  it('prefers COLUMN_TYPE so boolean width and varchar bounds survive introspection', () => {
+    expect(mysqlColumnType('tinyint', 'tinyint(1)')).toBe('boolean')
+    expect(mysqlColumnType('varchar', 'varchar(500)')).toBe('text')
   })
 })
 

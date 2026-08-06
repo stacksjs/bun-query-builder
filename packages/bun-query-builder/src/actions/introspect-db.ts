@@ -233,6 +233,18 @@ export function sqlTypeToNormalized(rawType: string, dialect: SupportedDialect, 
   return 'string'
 }
 
+/**
+ * Normalize a MySQL information_schema column without discarding physical
+ * details carried only by COLUMN_TYPE (for example TINYINT(1) and VARCHAR(n)).
+ */
+export function mysqlColumnType(
+  dataType: unknown,
+  columnType: unknown,
+  enumValues?: string[],
+): NormalizedColumnType {
+  return sqlTypeToNormalized(String(columnType || dataType || ''), 'mysql', { enumValues })
+}
+
 function asAction(raw: unknown): OnForeignKeyAction | undefined {
   const v = String(raw ?? '').toLowerCase().trim()
   if (v === 'cascade' || v === 'restrict' || v === 'set null')
@@ -509,7 +521,7 @@ async function buildMysqlTable(qb: any, table: string): Promise<TablePlan> {
     const hasDefault = rawDefault != null
     return {
       name,
-      type: sqlTypeToNormalized(String(r.data_type ?? r.DATA_TYPE ?? columnType), 'mysql', { enumValues }),
+      type: mysqlColumnType(r.data_type ?? r.DATA_TYPE, columnType, enumValues),
       isPrimaryKey,
       isUnique: uniqueColumns.has(name),
       isNullable: isPrimaryKey ? false : String(r.is_nullable ?? r.IS_NULLABLE).toUpperCase() === 'YES',
