@@ -126,6 +126,21 @@ export class MySQLDriver implements DialectDriver {
     return `CREATE ${kind}INDEX ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns});`
   }
 
+  /**
+   * Replace the foreign key on a column, rather than adding a second one.
+   *
+   * Same defect the Postgres driver had, and the same consequence: a column
+   * created inline with `REFERENCES` already carries a constraint under a name
+   * the server chose, adding another leaves both, and every one the server
+   * holds is enforced - so a migration that adds `ON DELETE CASCADE` applies
+   * cleanly and deletes go on failing against the `RESTRICT` beside it.
+   *
+   * MySQL has no `DROP CONSTRAINT IF EXISTS` and no anonymous DO block, so
+   * this is a prepared statement built from `information_schema`. It drops
+   * every single-column foreign key on the column, whatever it is called;
+   * composite keys are left alone, because a composite key that mentions this
+   * column is a different rule nobody asked to change.
+   */
   addForeignKey(tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string): string {
     const fkName = `${tableName}_${columnName}_fk`
     let sql = `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD CONSTRAINT ${this.quoteIdentifier(fkName)} FOREIGN KEY (${this.quoteIdentifier(columnName)}) REFERENCES ${this.quoteIdentifier(refTable)}(${this.quoteIdentifier(refColumn)})`
@@ -133,7 +148,59 @@ export class MySQLDriver implements DialectDriver {
       sql += ` ON DELETE ${onDelete.toUpperCase()}`
     if (onUpdate)
       sql += ` ON UPDATE ${onUpdate.toUpperCase()}`
-    return `${sql};`
+
+    return `${this.dropForeignKeysOn(tableName, columnName)}\n${sql};`
+  }
+
+  /**
+   * Drop every single-column foreign key on a column, by discovery.
+   *
+   * The `HAVING COUNT(*) = 1` is what keeps it to single-column keys: a
+   * composite key has more than one row in `KEY_COLUMN_USAGE` for the same
+   * constraint name.
+   *
+   * The drops are folded into **one** `ALTER TABLE … DROP FOREIGN KEY a, DROP
+   * FOREIGN KEY b`, because `PREPARE` takes a single statement - stringing
+   * several together with semicolons is a syntax error, not a batch. When
+   * there is nothing to drop the statement becomes `SELECT 1`, since `PREPARE`
+   * on an empty string is an error rather than a no-op.
+   */
+  private dropForeignKeysOn(tableName: string, columnName: string): string {
+    const table = this.quoteLiteral(tableName)
+    const column = this.quoteLiteral(columnName)
+
+    return `SET @drop_fks := (
+  SELECT CONCAT(
+    'ALTER TABLE \`', ${table}, '\` DROP FOREIGN KEY \`',
+    GROUP_CONCAT(kcu.CONSTRAINT_NAME SEPARATOR '\`, DROP FOREIGN KEY \`'),
+    '\`'
+  )
+  FROM information_schema.KEY_COLUMN_USAGE kcu
+  WHERE kcu.TABLE_SCHEMA = DATABASE()
+    AND kcu.TABLE_NAME = ${table}
+    AND kcu.COLUMN_NAME = ${column}
+    AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+    AND kcu.CONSTRAINT_NAME IN (
+      SELECT single.CONSTRAINT_NAME FROM (
+        SELECT inner_kcu.CONSTRAINT_NAME
+        FROM information_schema.KEY_COLUMN_USAGE inner_kcu
+        WHERE inner_kcu.TABLE_SCHEMA = DATABASE()
+          AND inner_kcu.TABLE_NAME = ${table}
+          AND inner_kcu.REFERENCED_TABLE_NAME IS NOT NULL
+        GROUP BY inner_kcu.CONSTRAINT_NAME
+        HAVING COUNT(*) = 1
+      ) AS single
+    )
+);
+SET @drop_fks := IFNULL(@drop_fks, 'SELECT 1');
+PREPARE drop_fks_stmt FROM @drop_fks;
+EXECUTE drop_fks_stmt;
+DEALLOCATE PREPARE drop_fks_stmt;`
+  }
+
+  /** A single-quoted SQL string, for the identifiers `information_schema` stores as text. */
+  private quoteLiteral(value: string): string {
+    return `'${value.replace(/'/g, '\'\'')}'`
   }
 
   addColumn(tableName: string, column: ColumnPlan): string {

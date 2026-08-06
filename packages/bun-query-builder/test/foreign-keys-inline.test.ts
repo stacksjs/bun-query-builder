@@ -1,6 +1,9 @@
 import type { TablePlan } from '../src/migrations'
 import { describe, expect, it } from 'bun:test'
 import { generateDiffOperations, generateSql } from '../src/migrations'
+import { MySQLDriver } from '../src/drivers/mysql'
+import { PostgresDriver } from '../src/drivers/postgres'
+import { SQLiteDriver } from '../src/drivers/sqlite'
 
 // stacksjs/bun-query-builder#1019 — Foreign keys must reach the
 // generated DDL via *some* path on every supported dialect. Prior
@@ -132,7 +135,11 @@ describe('CREATE TABLE foreign-key emission (stacksjs/bun-query-builder#1019)', 
       ],
     }).join('\n')
 
-    expect(sql.match(/ALTER TABLE/g)?.length).toBe(2)
+    // Counted by `ADD CONSTRAINT` rather than by `ALTER TABLE`: a deferred FK
+    // now arrives with a drop of whatever is already on the column, and that
+    // drop is an ALTER too. Two deferred keys is the claim; how many
+    // statements it takes to install one is not.
+    expect(sql.match(/ADD CONSTRAINT/g)?.length).toBe(2)
     expect(sql).toContain('REFERENCES "books"("id")')
     expect(sql).toContain('REFERENCES "authors"("id")')
   })
@@ -181,5 +188,84 @@ describe('CREATE TABLE foreign-key emission (stacksjs/bun-query-builder#1019)', 
       const sql = generateSql({ ...basePlan, dialect }).join('\n')
       expect(sql).not.toContain('REFERENCES')
     }
+  })
+})
+
+/**
+ * A foreign key is replaced, not accumulated.
+ *
+ * A column created inline with `REFERENCES` already carries a constraint, and
+ * the server named it: Postgres calls it `posts_user_id_fkey`, not the
+ * `posts_user_id_fk` this library adds. Adding without dropping left both, and
+ * a server enforces every constraint it holds - so a migration that adds
+ * `ON DELETE CASCADE` applied cleanly, the cascade was real, and deletes went
+ * on failing against the `NO ACTION` sitting beside it. Nothing in the output
+ * said so, which is what made it expensive to find.
+ *
+ * Found in a forge where twenty-two tables hang off one row: every delete had
+ * to walk the schema at runtime and order the deletions itself, because the
+ * cascade it had declared was never the only rule in force.
+ */
+describe('replacing a foreign key rather than adding a second one', () => {
+  const drivers = [
+    { name: 'postgres', make: () => new PostgresDriver() },
+    { name: 'mysql', make: () => new MySQLDriver() },
+  ]
+
+  for (const { name, make } of drivers) {
+    describe(name, () => {
+      const sql = make().addForeignKey('posts', 'user_id', 'users', 'id', 'cascade')
+
+      it('still adds the constraint it was asked for', () => {
+        expect(sql).toContain('FOREIGN KEY')
+        expect(sql).toContain('ON DELETE CASCADE')
+        expect(sql).toContain('posts_user_id_fk')
+      })
+
+      it('drops what is already on the column first', () => {
+        const dropsAt = sql.search(/DROP\s+(?:CONSTRAINT|FOREIGN KEY)/i)
+        const addsAt = sql.indexOf('ADD CONSTRAINT')
+
+        expect(dropsAt).toBeGreaterThanOrEqual(0)
+        expect(addsAt).toBeGreaterThan(dropsAt)
+      })
+
+      /**
+       * By discovery, not by name. Guessing the server's convention would
+       * cover the constraint the server named and miss one named by hand, by
+       * an earlier version of this library, or by whatever built the schema
+       * before anybody used this library - and missing it reproduces the
+       * original bug exactly.
+       */
+      it('finds the existing constraint whatever it is called', () => {
+        expect(sql).toMatch(/pg_constraint|information_schema/i)
+        expect(sql).not.toContain('posts_user_id_fkey')
+      })
+
+      /**
+       * A composite key that happens to mention this column is a different
+       * rule, and dropping it would remove something nobody asked about.
+       */
+      it('leaves composite keys alone', () => {
+        expect(sql).toMatch(/ARRAY\[|COUNT\(\*\) = 1/)
+      })
+
+      it('names the table and column it was given, quoted as literals', () => {
+        expect(sql).toContain('\'posts\'')
+        expect(sql).toContain('\'user_id\'')
+      })
+    })
+  }
+
+  /** An identifier is not a place to let a quote through. */
+  it('escapes a quote in an identifier rather than closing the string', () => {
+    const sql = new PostgresDriver().addForeignKey('po\'sts', 'user_id', 'users', 'id')
+
+    expect(sql).toContain('\'po\'\'sts\'')
+  })
+
+  /** SQLite emits inline and skips the ALTER pass entirely, so there is nothing to replace. */
+  it('does not touch the dialects that never ALTER', () => {
+    expect(new SQLiteDriver().addForeignKey('posts', 'user_id', 'users', 'id')).toBe('')
   })
 })
