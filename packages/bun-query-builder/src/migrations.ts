@@ -1385,6 +1385,24 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
         return 'TEXT'
     }
   }
+  if (dialect === 'mysql' || dialect === 'vitess' || dialect === 'singlestore') {
+    switch (col.type) {
+      case 'string': return `VARCHAR(${col.maxLength ?? 255})`
+      case 'text': return 'TEXT'
+      case 'boolean': return 'TINYINT(1)'
+      case 'integer': return 'INTEGER'
+      case 'bigint': return 'BIGINT'
+      case 'float': return 'REAL'
+      case 'double': return 'DOUBLE'
+      case 'decimal': return 'DECIMAL'
+      case 'date': return 'DATE'
+      case 'datetime':
+      case 'timestamptz': return 'DATETIME'
+      case 'json': return 'JSON'
+      case 'enum': return 'ENUM'
+      default: return col.type
+    }
+  }
   return col.type
 }
 

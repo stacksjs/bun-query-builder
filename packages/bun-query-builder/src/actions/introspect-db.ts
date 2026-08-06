@@ -200,6 +200,12 @@ export function sqlTypeToNormalized(rawType: string, dialect: SupportedDialect, 
   if (/^(?:varchar|character varying|nvarchar|nchar|char|character|bpchar)/.test(base)) {
     const m = t.match(/\((\d+)\)/)
     const len = m ? Number(m[1]) : undefined
+    // MySQL's VARCHAR(n) stays a bounded string regardless of whether n is
+    // above 255. The bound is carried separately on ColumnPlan; promoting it
+    // to `text` here makes an unchanged varchar(500) look different from the
+    // model's string(maxLength: 500) on every reconciliation.
+    if (isMysqlLike(dialect))
+      return 'string'
     return len !== undefined && len > 255 ? 'text' : 'string'
   }
   if (/text|clob/.test(base))
@@ -243,6 +249,15 @@ export function mysqlColumnType(
   enumValues?: string[],
 ): NormalizedColumnType {
   return sqlTypeToNormalized(String(columnType || dataType || ''), 'mysql', { enumValues })
+}
+
+/** Preserve the physical bound of a MySQL VARCHAR column for round-trip diffs. */
+export function mysqlColumnMaxLength(columnType: unknown): number | undefined {
+  const match = String(columnType || '').trim().match(/^varchar\((\d+)\)/i)
+  if (!match)
+    return undefined
+  const length = Number(match[1])
+  return Number.isSafeInteger(length) && length > 0 ? length : undefined
 }
 
 function asAction(raw: unknown): OnForeignKeyAction | undefined {
@@ -528,6 +543,7 @@ async function buildMysqlTable(qb: any, table: string): Promise<TablePlan> {
       hasDefault,
       defaultValue: hasDefault ? (normalizeRawDefault(rawDefault) as PrimitiveDefault) : undefined,
       enumValues,
+      maxLength: mysqlColumnMaxLength(columnType),
       references: fkByColumn.get(name),
     }
   })

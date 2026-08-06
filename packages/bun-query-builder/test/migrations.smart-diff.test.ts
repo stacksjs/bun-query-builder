@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { generateMigration } from '../src/actions/migrate'
-import { buildPlanFromDatabase, mysqlColumnType, sqlTypeToNormalized } from '../src/actions/introspect-db'
+import { buildPlanFromDatabase, mysqlColumnMaxLength, mysqlColumnType, sqlTypeToNormalized } from '../src/actions/introspect-db'
 import { config } from '../src/config'
 import { generateDiffOperations, generateSql, isLosslessTypeChange } from '../src/migrations'
 
@@ -196,7 +196,7 @@ describe('sqlite rebuild path', () => {
 describe('sqlTypeToNormalized', () => {
   it('maps raw dialect types back to normalized types', () => {
     expect(sqlTypeToNormalized('varchar(255)', 'postgres')).toBe('string')
-    expect(sqlTypeToNormalized('varchar(1000)', 'mysql')).toBe('text')
+    expect(sqlTypeToNormalized('varchar(1000)', 'mysql')).toBe('string')
     expect(sqlTypeToNormalized('text', 'sqlite')).toBe('text')
     expect(sqlTypeToNormalized('tinyint(1)', 'mysql')).toBe('boolean')
     expect(sqlTypeToNormalized('bigint', 'postgres')).toBe('bigint')
@@ -235,7 +235,24 @@ describe('sqlTypeToNormalized', () => {
 describe('mysqlColumnType', () => {
   it('prefers COLUMN_TYPE so boolean width and varchar bounds survive introspection', () => {
     expect(mysqlColumnType('tinyint', 'tinyint(1)')).toBe('boolean')
-    expect(mysqlColumnType('varchar', 'varchar(500)')).toBe('text')
+    expect(mysqlColumnType('varchar', 'varchar(500)')).toBe('string')
+    expect(mysqlColumnMaxLength('varchar(500)')).toBe(500)
+    expect(mysqlColumnMaxLength('text')).toBeUndefined()
+  })
+
+  it('round-trips bounded MySQL strings without destructive type churn', () => {
+    const modelColumn = col('mailbox', 'string', { isNullable: false, maxLength: 320 })
+    const liveColumn = col('mailbox', mysqlColumnType('varchar', 'varchar(320)'), {
+      isNullable: false,
+      maxLength: mysqlColumnMaxLength('varchar(320)'),
+    })
+    const modelPlan = { dialect: 'mysql' as const, tables: [{ table: 'mail_preferences', columns: [idCol, modelColumn], indexes: [] }] }
+    const livePlan = { dialect: 'mysql' as const, tables: [{ table: 'mail_preferences', columns: [idCol, liveColumn], indexes: [] }] }
+
+    expect(generateDiffOperations(livePlan, modelPlan).operations.filter(operation => operation.kind === 'modify_column')).toHaveLength(0)
+
+    const wrongWidthPlan = { dialect: 'mysql' as const, tables: [{ table: 'mail_preferences', columns: [idCol, { ...liveColumn, maxLength: 255 }], indexes: [] }] }
+    expect(generateDiffOperations(wrongWidthPlan, modelPlan).operations.filter(operation => operation.kind === 'modify_column')).toHaveLength(1)
   })
 })
 
