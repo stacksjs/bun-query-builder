@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.14...v0.2.15)
+
+## 🐛 Bug Fixes
+
+- **migrations**: preserve live-only indexes ([349a165](https://github.com/stacksjs/bun-query-builder/commit/349a165)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.15 ([f69aad2](https://github.com/stacksjs/bun-query-builder/commit/f69aad2)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.13...v0.2.14)
 
 ## 🐛 Bug Fixes
