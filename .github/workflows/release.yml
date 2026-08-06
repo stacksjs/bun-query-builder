@@ -25,6 +25,16 @@ jobs:
       - name: Install Dependencies
         run: bun install --ignore-scripts
 
+      - name: Build Package
+        working-directory: packages/bun-query-builder
+        run: bun --bun build.ts
+
+      - name: Verify Package
+        run: >-
+          bun -e "import { isLosslessTypeChange } from './packages/bun-query-builder/dist/src/index.js';
+          if (!isLosslessTypeChange('integer', 'bigint') || !isLosslessTypeChange('string', 'text'))
+          throw new Error('published package build is stale')"
+
       - name: Publish
         working-directory: packages/bun-query-builder
         run: pantry publish --npm --access public
