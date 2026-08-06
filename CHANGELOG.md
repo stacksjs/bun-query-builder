@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.11...v0.2.12)
+
+## 🐛 Bug Fixes
+
+- **release**: build package before publish ([1a41528](https://github.com/stacksjs/bun-query-builder/commit/1a41528)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.12 ([568fb37](https://github.com/stacksjs/bun-query-builder/commit/568fb37)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.10...v0.2.11)
 
 ## 🐛 Bug Fixes
