@@ -5,7 +5,7 @@ export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
   createTable: (table: TablePlan) => string
   createIndex: (tableName: string, index: IndexPlan) => string
-  addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string) => string
+  addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string, existingConstraintNames?: string[]) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
   modifyColumn: (tableName: string, column: ColumnPlan) => string
   /** Rename a column in place (SQLite 3.25+, MySQL 8.0+, Postgres). */
@@ -120,24 +120,8 @@ export class PostgresDriver implements DialectDriver {
     return `CREATE ${kind}INDEX IF NOT EXISTS ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns})${where};`
   }
 
-  /**
-   * Replace the foreign key on a column, rather than adding a second one.
-   *
-   * A column created inline with `REFERENCES` already carries a constraint,
-   * and Postgres named it itself - `posts_user_id_fkey`, not the
-   * `posts_user_id_fk` this method would add. Adding without dropping left
-   * both in place, and Postgres enforces every one it holds: the migration
-   * applied cleanly, the new `ON DELETE CASCADE` was real, and deletes went on
-   * failing against the old `NO ACTION` beside it. Nothing in the output said
-   * so, which is what made it expensive to find.
-   *
-   * The drop is by discovery rather than by name. Guessing `_fkey` would cover
-   * the constraint Postgres itself named and miss one named by hand, by an
-   * earlier version of this library, or by whatever created the schema before
-   * anybody used this library at all - and missing it reproduces the original
-   * bug exactly.
-   */
-  addForeignKey(tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string): string {
+  /** Add a foreign key, dropping exact live constraint names when replacing one. */
+  addForeignKey(tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string, existingConstraintNames: string[] = []): string {
     const fkName = `${tableName}_${columnName}_fk`
     let sql = `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD CONSTRAINT ${this.quoteIdentifier(fkName)} FOREIGN KEY (${this.quoteIdentifier(columnName)}) REFERENCES ${this.quoteIdentifier(refTable)}(${this.quoteIdentifier(refColumn)})`
     if (onDelete)
@@ -145,49 +129,10 @@ export class PostgresDriver implements DialectDriver {
     if (onUpdate)
       sql += ` ON UPDATE ${onUpdate.toUpperCase()}`
 
-    return `${this.dropForeignKeysOn(tableName, columnName)}\n${sql};`
-  }
-
-  /**
-   * Drop every foreign key whose only column is this one.
-   *
-   * `conkey` is the constraint's column list, so `= ARRAY[attnum]` matches a
-   * single-column key and deliberately leaves composite keys alone: a
-   * composite foreign key is a different constraint that happens to mention
-   * this column, and dropping it would silently remove a rule nobody asked
-   * about.
-   *
-   * Written as a DO block because a plain `DROP CONSTRAINT` needs a name, and
-   * the whole point is that the name is not known.
-   */
-  private dropForeignKeysOn(tableName: string, columnName: string): string {
-    const table = this.quoteLiteral(tableName)
-    const column = this.quoteLiteral(columnName)
-
-    return `DO $$
-DECLARE existing_name text;
-BEGIN
-  FOR existing_name IN
-    SELECT con.conname
-    FROM pg_constraint con
-    JOIN pg_class rel ON rel.oid = con.conrelid
-    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
-    WHERE con.contype = 'f'
-      AND rel.relname = ${table}
-      AND nsp.nspname = current_schema()
-      AND con.conkey = ARRAY[(
-        SELECT att.attnum FROM pg_attribute att
-        WHERE att.attrelid = rel.oid AND att.attname = ${column} AND att.attnum > 0
-      )]::smallint[]
-  LOOP
-    EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', ${table}, existing_name);
-  END LOOP;
-END $$;`
-  }
-
-  /** A single-quoted SQL string, for the identifiers the catalog stores as text. */
-  private quoteLiteral(value: string): string {
-    return `'${value.replace(/'/g, '\'\'')}'`
+    const drops = [...new Set(existingConstraintNames)]
+      .map(name => `ALTER TABLE ${this.quoteIdentifier(tableName)} DROP CONSTRAINT ${this.quoteIdentifier(name)};`)
+      .join('\n')
+    return drops ? `${drops}\n${sql};` : `${sql};`
   }
 
   addColumn(tableName: string, column: ColumnPlan): string {

@@ -269,7 +269,14 @@ export interface ColumnPlan {
   isNullable: boolean
   hasDefault: boolean
   defaultValue?: PrimitiveDefault
-  references?: { table: string, column: string, onDelete?: OnForeignKeyAction, onUpdate?: OnForeignKeyAction }
+  references?: {
+    table: string
+    column: string
+    onDelete?: OnForeignKeyAction
+    onUpdate?: OnForeignKeyAction
+    /** Physical names discovered from a live database; models leave this unset. */
+    constraintNames?: string[]
+  }
   enumValues?: string[]
   /**
    * Explicit max length for `string` columns, taken from the model's
@@ -1562,6 +1569,11 @@ function referencesAreDifferent(r1?: ColumnPlan['references'], r2?: ColumnPlan['
     return true
   if (!r1 || !r2)
     return false
+  // More than one single-column FK on the same column means an older
+  // reconciliation accumulated constraints. Collapse them back to the one
+  // rule declared by the model even if one of the live rules already matches.
+  if ((r1.constraintNames?.length ?? 0) > 1)
+    return true
   // Canonicalize the referential action: an omitted action is `NO ACTION` in
   // SQL, so a model `onDelete: undefined` must compare equal to a live DB that
   // reports `'no action'` (otherwise the live-DB path would churn — and on
@@ -1977,7 +1989,15 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
       const currCol = currCols[colName]
       if (!currCol.references)
         continue
-      const addFkStatement = driver.addForeignKey(curr.table, currCol.name, currCol.references.table, currCol.references.column, currCol.references.onDelete, currCol.references.onUpdate)
+      const addFkStatement = driver.addForeignKey(
+        curr.table,
+        currCol.name,
+        currCol.references.table,
+        currCol.references.column,
+        currCol.references.onDelete,
+        currCol.references.onUpdate,
+        prevCols[colName].references?.constraintNames,
+      )
       if (!addFkStatement)
         continue
       tableChanges.push(addFkStatement)

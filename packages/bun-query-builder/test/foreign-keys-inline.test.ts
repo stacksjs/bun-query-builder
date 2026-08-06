@@ -214,54 +214,59 @@ describe('replacing a foreign key rather than adding a second one', () => {
 
   for (const { name, make } of drivers) {
     describe(name, () => {
-      const sql = make().addForeignKey('posts', 'user_id', 'users', 'id', 'cascade')
+      const addSql = make().addForeignKey('posts', 'user_id', 'users', 'id', 'cascade')
+      const replaceSql = make().addForeignKey('posts', 'user_id', 'users', 'id', 'cascade', undefined, [
+        'posts_user_id_fkey',
+        'custom_posts_owner_fk',
+      ])
 
       it('still adds the constraint it was asked for', () => {
-        expect(sql).toContain('FOREIGN KEY')
-        expect(sql).toContain('ON DELETE CASCADE')
-        expect(sql).toContain('posts_user_id_fk')
+        expect(replaceSql).toContain('FOREIGN KEY')
+        expect(replaceSql).toContain('ON DELETE CASCADE')
+        expect(replaceSql).toContain('posts_user_id_fk')
       })
 
-      it('drops what is already on the column first', () => {
-        const dropsAt = sql.search(/DROP\s+(?:CONSTRAINT|FOREIGN KEY)/i)
-        const addsAt = sql.indexOf('ADD CONSTRAINT')
+      it('does not drop anything for a newly-added foreign key', () => {
+        expect(addSql).not.toMatch(/DROP\s+(?:CONSTRAINT|FOREIGN KEY)/i)
+      })
+
+      it('drops every introspected single-column constraint before replacing it', () => {
+        const dropsAt = replaceSql.search(/DROP\s+(?:CONSTRAINT|FOREIGN KEY)/i)
+        const addsAt = replaceSql.indexOf('ADD CONSTRAINT')
 
         expect(dropsAt).toBeGreaterThanOrEqual(0)
         expect(addsAt).toBeGreaterThan(dropsAt)
+        expect(replaceSql).toContain('posts_user_id_fkey')
+        expect(replaceSql).toContain('custom_posts_owner_fk')
       })
 
-      /**
-       * By discovery, not by name. Guessing the server's convention would
-       * cover the constraint the server named and miss one named by hand, by
-       * an earlier version of this library, or by whatever built the schema
-       * before anybody used this library - and missing it reproduces the
-       * original bug exactly.
-       */
-      it('finds the existing constraint whatever it is called', () => {
-        expect(sql).toMatch(/pg_constraint|information_schema/i)
-        expect(sql).not.toContain('posts_user_id_fkey')
-      })
-
-      /**
-       * A composite key that happens to mention this column is a different
-       * rule, and dropping it would remove something nobody asked about.
-       */
-      it('leaves composite keys alone', () => {
-        expect(sql).toMatch(/ARRAY\[|COUNT\(\*\) = 1/)
-      })
-
-      it('names the table and column it was given, quoted as literals', () => {
-        expect(sql).toContain('\'posts\'')
-        expect(sql).toContain('\'user_id\'')
+      it('uses static DDL that works through Vitess and managed MySQL proxies', () => {
+        expect(replaceSql).not.toMatch(/PREPARE|EXECUTE|information_schema|pg_constraint/i)
       })
     })
   }
 
   /** An identifier is not a place to let a quote through. */
   it('escapes a quote in an identifier rather than closing the string', () => {
-    const sql = new PostgresDriver().addForeignKey('po\'sts', 'user_id', 'users', 'id')
+    const sql = new PostgresDriver().addForeignKey('po"sts', 'user_id', 'users', 'id', undefined, undefined, ['odd"name'])
 
-    expect(sql).toContain('\'po\'\'sts\'')
+    expect(sql).toContain('"po""sts"')
+    expect(sql).toContain('"odd""name"')
+  })
+
+  it('passes introspected names through the diff when an FK action changes', () => {
+    const previous = makePlan('mysql')
+    previous.tables[1].columns[1].references = {
+      table: 'users',
+      column: 'id',
+      constraintNames: ['server_named_fk'],
+    }
+    const next = makePlan('mysql')
+    const sql = generateDiffOperations(previous, next).statements.join('\n')
+
+    expect(sql).toContain('DROP FOREIGN KEY `server_named_fk`')
+    expect(sql).toContain('ADD CONSTRAINT `posts_user_id_fk`')
+    expect(sql.indexOf('DROP FOREIGN KEY')).toBeLessThan(sql.indexOf('ADD CONSTRAINT'))
   })
 
   /** SQLite emits inline and skips the ALTER pass entirely, so there is nothing to replace. */
