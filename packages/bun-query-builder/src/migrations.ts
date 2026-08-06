@@ -387,6 +387,17 @@ export interface MigrationOperation {
   sql: string
 }
 
+/**
+ * Whether changing a normalized physical type can preserve every existing
+ * value. Keep this deliberately conservative: integer-to-bigint widens the
+ * numeric range, and varchar-to-text removes a length ceiling. The reverse
+ * directions remain destructive and still require explicit confirmation.
+ */
+export function isLosslessTypeChange(from: NormalizedColumnType, to: NormalizedColumnType): boolean {
+  return (from === 'integer' && to === 'bigint')
+    || (from === 'string' && to === 'text')
+}
+
 /** Result of {@link generateDiffOperations}: raw statements + structured ops. */
 export interface DiffResult {
   statements: string[]
@@ -1898,7 +1909,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
         kind: 'modify_column',
         table: curr.table,
         column: colName,
-        destructive: prevCol.type !== currCol.type,
+        destructive: prevCol.type !== currCol.type && !isLosslessTypeChange(prevCol.type, currCol.type),
         sql: modifyColumnStatement,
       })
       info(`-- Detected column change: ${curr.table}.${colName} (${prevCol.type} -> ${currCol.type})`)

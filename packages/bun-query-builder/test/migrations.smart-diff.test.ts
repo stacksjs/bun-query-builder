@@ -14,7 +14,7 @@ import process from 'node:process'
 import { generateMigration } from '../src/actions/migrate'
 import { buildPlanFromDatabase, sqlTypeToNormalized } from '../src/actions/introspect-db'
 import { config } from '../src/config'
-import { generateDiffOperations, generateSql } from '../src/migrations'
+import { generateDiffOperations, generateSql, isLosslessTypeChange } from '../src/migrations'
 
 function col(name: string, type: any, extra: Record<string, any> = {}): any {
   return {
@@ -89,6 +89,35 @@ describe('rename detection', () => {
     expect(statements.join('\n')).not.toContain('RENAME COLUMN')
     expect(operations.filter(o => o.kind === 'drop_column')).toHaveLength(2)
     expect(operations.filter(o => o.kind === 'add_column')).toHaveLength(2)
+  })
+})
+
+describe('destructive type-change classification', () => {
+  it('allows only value-preserving widening without confirmation', () => {
+    expect(isLosslessTypeChange('integer', 'bigint')).toBe(true)
+    expect(isLosslessTypeChange('string', 'text')).toBe(true)
+    expect(isLosslessTypeChange('bigint', 'integer')).toBe(false)
+    expect(isLosslessTypeChange('text', 'string')).toBe(false)
+  })
+
+  it('marks MySQL integer and string widening operations as non-destructive', () => {
+    const before = { ...plan('records', [idCol, col('owner_id', 'integer'), col('payload', 'string')]), dialect: 'mysql' as const }
+    const after = { ...plan('records', [idCol, col('owner_id', 'bigint'), col('payload', 'text')]), dialect: 'mysql' as const }
+
+    const { operations } = generateDiffOperations(before, after)
+    const changes = operations.filter(op => op.kind === 'modify_column')
+    expect(changes).toHaveLength(2)
+    expect(changes.every(op => !op.destructive)).toBe(true)
+  })
+
+  it('continues to gate narrowing changes', () => {
+    const before = { ...plan('records', [idCol, col('owner_id', 'bigint'), col('payload', 'text')]), dialect: 'mysql' as const }
+    const after = { ...plan('records', [idCol, col('owner_id', 'integer'), col('payload', 'string')]), dialect: 'mysql' as const }
+
+    const { operations } = generateDiffOperations(before, after)
+    const changes = operations.filter(op => op.kind === 'modify_column')
+    expect(changes).toHaveLength(2)
+    expect(changes.every(op => op.destructive)).toBe(true)
   })
 })
 
