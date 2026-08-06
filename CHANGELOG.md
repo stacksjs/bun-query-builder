@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.20...v0.2.21)
+
+## 🐛 Bug Fixes
+
+- **migrations**: a declared foreign key column keeps its relation's onDelete ([04c0e5c](https://github.com/stacksjs/bun-query-builder/commit/04c0e5c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.21 ([83fd66e](https://github.com/stacksjs/bun-query-builder/commit/83fd66e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.19...v0.2.20)
 
 ## 🐛 Bug Fixes
