@@ -1130,6 +1130,30 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
     }
   }
 
+  // A foreign-key column must use the same physical storage type as the
+  // referenced column. Model attributes often validate identifiers with the
+  // generic number validator, which infers INTEGER even though Stacks' default
+  // primary key is BIGINT. SQLite tolerates that mismatch; MySQL and Vitess
+  // reject the constraint. Once both tables are present in the plan, the
+  // referenced column is the authoritative type source.
+  const tablesByName = new Map(tables.map(table => [table.table, table]))
+  for (const table of tables) {
+    for (const column of table.columns) {
+      if (!column.references)
+        continue
+      const referenced = tablesByName
+        .get(column.references.table)
+        ?.columns.find(candidate => candidate.name === column.references!.column)
+      if (!referenced || column.type === referenced.type)
+        continue
+
+      column.type = referenced.type
+      column.maxLength = referenced.maxLength
+      column.enumValues = referenced.enumValues
+      column.enumTypeName = referenced.enumTypeName
+    }
+  }
+
   return { dialect: options.dialect, vitessSharded: options.vitessSharded, tables }
 }
 

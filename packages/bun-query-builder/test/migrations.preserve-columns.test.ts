@@ -106,6 +106,23 @@ describe('belongsTo foreign keys are part of the expected schema', () => {
     const farmIds = built.tables.find(t => t.table === 'missions')!.columns.filter(c => c.name === 'farm_id')
     expect(farmIds).toHaveLength(1)
   })
+
+  it('aligns a declared foreign key with the referenced primary-key type', () => {
+    const built = buildMigrationPlan({
+      Board: { name: 'Board', table: 'boards', primaryKey: 'id', attributes: { name: { validation: { rule: {} } } } },
+      BoardColumn: {
+        name: 'BoardColumn',
+        table: 'board_columns',
+        primaryKey: 'id',
+        belongsTo: ['Board'],
+        attributes: { boardId: { validation: { rule: { name: 'number' } } } },
+      },
+    } as any, { dialect: 'mysql' })
+
+    const boardId = built.tables.find(table => table.table === 'board_columns')!.columns.find(column => column.name === 'board_id')!
+    expect(boardId.type).toBe('bigint')
+    expect(boardId.references).toEqual({ table: 'boards', column: 'id' })
+  })
 })
 
 describe('columns no model declares, reconciled from the database', () => {
