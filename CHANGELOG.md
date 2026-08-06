@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.13...v0.2.14)
+
+## 🐛 Bug Fixes
+
+- **mysql**: preserve indexable bounded strings ([ff67f98](https://github.com/stacksjs/bun-query-builder/commit/ff67f98)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.14 ([83b2c29](https://github.com/stacksjs/bun-query-builder/commit/83b2c29)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.12...v0.2.13)
 
 ## 🐛 Bug Fixes
