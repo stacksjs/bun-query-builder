@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.12...v0.2.13)
+
+## 🐛 Bug Fixes
+
+- **mysql**: render large-object defaults as expressions ([8894d60](https://github.com/stacksjs/bun-query-builder/commit/8894d60)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.13 ([c83a8b6](https://github.com/stacksjs/bun-query-builder/commit/c83a8b6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.11...v0.2.12)
 
 ## 🐛 Bug Fixes
