@@ -30,15 +30,27 @@ function info(message: string): void {
  *   isPersonal -> is_personal
  *   createdAt -> created_at
  *   HTMLParser -> html_parser
+ *   p256dh     -> p256dh      (one token, not two)
+ *   sha256Sum  -> sha256_sum  (a real boundary, on the case change)
  */
 function snakeCase(str: string): string {
   return str
     // Handle acronyms and consecutive uppercase letters
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
-    // Handle transition from lowercase to uppercase
+    // Handle transition from lowercase to uppercase. This already covers every
+    // digit-then-uppercase case, which is the only place a digit is next to a
+    // word boundary.
     .replace(/([a-z\d])([A-Z])/g, '$1_$2')
-    // Handle numbers followed by letters
-    .replace(/(\d)([A-Z])/gi, '$1_$2')
+    // There used to be a third rule here: `.replace(/(\d)([A-Z])/gi, …)`. The
+    // `i` flag made it match a digit followed by a *lowercase* letter, which is
+    // never a boundary - `p256dh` is one token, the name the Push API gives a
+    // subscription key, and it came out as `p256_dh`. An application's model
+    // said `p256dh`, the generated migration said `p256_dh`, and the query that
+    // read it back found nothing. Both spellings look plausible and the failure
+    // is an empty result rather than an error.
+    //
+    // Without the flag the rule was redundant with the one above it, so it is
+    // gone rather than corrected.
     .toLowerCase()
 }
 
