@@ -1855,7 +1855,13 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * ```ts
    * const cnt = await db.updateTable('users').set({ active: true }).where({ id: 1 }).execute()
    * const cnt2 = await db.updateTable('users').set({ active: true }).where('id', '=', 1).execute()
+   * const cnt3 = await db.updateTable('users').set({ active: true }).where('id', 'in', [1, 2]).execute()
    * ```
+   *
+   * `in` and `not in` take a list and render one placeholder per element. The
+   * select builder was fixed for this in stacksjs/bun-query-builder#1013 and
+   * writes were left behind, so the same call that worked on a read failed on
+   * an update - which reads as a bug in the caller rather than in the builder.
    */
   where: (expr: WhereExpression<DB[TTable]['columns']> | string | SqlFragment, op?: WhereOperator, value?: any) => UpdateQueryBuilder<DB, TTable>
   /**
@@ -1933,7 +1939,13 @@ export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * ```ts
    * const count = await db.deleteFrom('users').where({ inactive: true }).execute()
    * const count2 = await db.deleteFrom('users').where('id', '=', 1).execute()
+   * const count3 = await db.deleteFrom('users').where('id', 'in', [1, 2]).execute()
    * ```
+   *
+   * `in` and `not in` take a list, as on the select and update builders. The
+   * operator is checked against the allowed set before it reaches the statement
+   * text - it is not a bound parameter, and a DELETE is the one statement where
+   * an injected operator is unrecoverable.
    */
   where: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => DeleteQueryBuilder<DB, TTable>
   /**
@@ -6568,6 +6580,22 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
               left = expression.text
               params.push(...expression.parameters)
             }
+            // IN takes a list, not a value. Parity with the select builder
+            // (~line 4401): without this the array is bound to one placeholder
+            // and the statement is `col IN $1`, which every server rejects.
+            // The select builder was fixed for this in #1013 and writes were
+            // left behind, so `.where('id', 'in', ids)` on an update or a
+            // delete failed while the same call on a select worked - which
+            // reads as a bug in the caller rather than in the builder.
+            if (safeOperator.toLowerCase() === 'in' || safeOperator.toLowerCase() === 'not in') {
+              const values = Array.isArray(value) ? value : [value]
+              const placeholders = getPlaceholders(values.length, params.length + 1)
+              sqlText = `${sqlText} ${getWhereKeyword()} ${left} ${safeOperator.toUpperCase()} (${placeholders})`
+              params.push(...values)
+              built = _sql.unsafe(sqlText, params)
+              return this
+            }
+
             const paramIndex = params.length + 1
             sqlText = `${sqlText} ${getWhereKeyword()} ${left} ${safeOperator} ${getPlaceholder(paramIndex)}`
             params.push(value)
@@ -6579,6 +6607,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (Array.isArray(expr)) {
             const [col, op, val] = expr
             const safeOperator = assertSafeWhereOperator(op, 'updateTable.where')
+
+            if (safeOperator.toLowerCase() === 'in' || safeOperator.toLowerCase() === 'not in') {
+              const values = Array.isArray(val) ? val : [val]
+              const placeholders = getPlaceholders(values.length, params.length + 1)
+              sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(String(col))} ${safeOperator.toUpperCase()} (${placeholders})`
+              params.push(...values)
+              built = _sql.unsafe(sqlText, params)
+              return this
+            }
+
             const paramIndex = params.length + 1
             sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`
             params.push(val)
@@ -6735,8 +6773,26 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           whereCondition = expr
           // Support 3-arg format: where(column, operator, value)
           if (typeof expr === 'string' && op !== undefined) {
+            // Validated rather than interpolated raw. The operator lands in the
+            // statement text, so an unchecked one is an injection point in a
+            // DELETE — the one statement where getting it wrong is unrecoverable.
+            // updateTable has always asserted here; this builder did not.
+            const safeOperator = assertSafeWhereOperator(op, 'deleteFrom.where')
+
+            // IN takes a list. Parity with the select builder (~line 4401) and
+            // with updateTable: binding an array to a single placeholder emits
+            // `col IN $1`, which every server rejects.
+            if (safeOperator.toLowerCase() === 'in' || safeOperator.toLowerCase() === 'not in') {
+              const values = Array.isArray(value) ? value : [value]
+              const placeholders = getPlaceholders(values.length, delParams.length + 1)
+              sqlText += ` ${getWhereKeyword()} ${quoteId(expr)} ${safeOperator.toUpperCase()} (${placeholders})`
+              delParams.push(...values)
+              built = null
+              return this
+            }
+
             const paramIndex = delParams.length + 1
-            sqlText += ` ${getWhereKeyword()} ${quoteId(expr)} ${op} ${getPlaceholder(paramIndex)}`
+            sqlText += ` ${getWhereKeyword()} ${quoteId(expr)} ${safeOperator} ${getPlaceholder(paramIndex)}`
             delParams.push(value)
             built = null
             return this
@@ -6744,8 +6800,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           // Support array format: where(['column', 'op', value])
           if (Array.isArray(expr)) {
             const [col, oper, val] = expr
+            const safeOperator = assertSafeWhereOperator(oper, 'deleteFrom.where')
+
+            if (safeOperator.toLowerCase() === 'in' || safeOperator.toLowerCase() === 'not in') {
+              const values = Array.isArray(val) ? val : [val]
+              const placeholders = getPlaceholders(values.length, delParams.length + 1)
+              sqlText += ` ${getWhereKeyword()} ${quoteId(String(col))} ${safeOperator.toUpperCase()} (${placeholders})`
+              delParams.push(...values)
+              built = null
+              return this
+            }
+
             const paramIndex = delParams.length + 1
-            sqlText += ` ${getWhereKeyword()} ${quoteId(String(col))} ${oper} ${getPlaceholder(paramIndex)}`
+            sqlText += ` ${getWhereKeyword()} ${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`
             delParams.push(val)
             built = null
             return this
