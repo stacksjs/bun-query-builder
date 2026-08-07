@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.22...v0.2.23)
+
+## 🚀 Features
+
+- **client**: whereNull and whereNotNull on updates and deletes ([7126503](https://github.com/stacksjs/bun-query-builder/commit/7126503)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.23 ([4992598](https://github.com/stacksjs/bun-query-builder/commit/4992598)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.20...v0.2.21)
 
 ## 🐛 Bug Fixes
