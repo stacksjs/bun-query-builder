@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.24...v0.2.25)
+
+## 🐛 Bug Fixes
+
+- **migrations**: an `i` flag turned a digit rule into a word-splitter ([4d0beb2](https://github.com/stacksjs/bun-query-builder/commit/4d0beb2)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.2.25 ([d623e49](https://github.com/stacksjs/bun-query-builder/commit/d623e49)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.23...v0.2.24)
 
 ## 🐛 Bug Fixes
