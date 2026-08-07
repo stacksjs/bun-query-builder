@@ -1859,6 +1859,33 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    */
   where: (expr: WhereExpression<DB[TTable]['columns']> | string | SqlFragment, op?: WhereOperator, value?: any) => UpdateQueryBuilder<DB, TTable>
   /**
+   * # `whereNull`
+   *
+   * Restricts the update to rows where a column is `NULL`.
+   *
+   * `where(column, 'is', null)` cannot express this: the null is bound as a
+   * parameter and the statement comes out as `"col" is $1`, which every server
+   * rejects. `IS NULL` is a predicate rather than a comparison, so it has to be
+   * rendered rather than parameterised.
+   *
+   * The select builder has had this for a long time; updates and deletes did
+   * not, which made an optimistic lock - claim the row only if nobody else has -
+   * impossible to write against them.
+   *
+   * @example
+   * ```ts
+   * // Reserve a job only if it is still unreserved.
+   * await db.updateTable('jobs').set({ reserved_at: now }).where('id', '=', id).whereNull('reserved_at').execute()
+   * ```
+   */
+  whereNull: <K extends keyof DB[TTable]['columns'] & string>(column: K) => UpdateQueryBuilder<DB, TTable>
+  /**
+   * # `whereNotNull`
+   *
+   * Restricts the update to rows where a column is not `NULL`. See `whereNull`.
+   */
+  whereNotNull: <K extends keyof DB[TTable]['columns'] & string>(column: K) => UpdateQueryBuilder<DB, TTable>
+  /**
    * # `returning`
    *
    * Adds a RETURNING clause and switches to a select builder of those columns.
@@ -1909,6 +1936,25 @@ export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * ```
    */
   where: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => DeleteQueryBuilder<DB, TTable>
+  /**
+   * # `whereNull`
+   *
+   * Restricts the delete to rows where a column is `NULL`. See the note on
+   * `UpdateQueryBuilder.whereNull`: `where(column, 'is', null)` binds the null
+   * and produces `"col" is $1`, which is not valid SQL.
+   *
+   * @example
+   * ```ts
+   * await db.deleteFrom('sessions').whereNull('user_id').execute()
+   * ```
+   */
+  whereNull: <K extends keyof DB[TTable]['columns'] & string>(column: K) => DeleteQueryBuilder<DB, TTable>
+  /**
+   * # `whereNotNull`
+   *
+   * Restricts the delete to rows where a column is not `NULL`. See `whereNull`.
+   */
+  whereNotNull: <K extends keyof DB[TTable]['columns'] & string>(column: K) => DeleteQueryBuilder<DB, TTable>
   /**
    * # `returning`
    *
@@ -6555,6 +6601,18 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
           return this
         },
+        whereNull(column: string) {
+          const keyword = SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
+          sqlText = `${sqlText} ${keyword} ${quoteId(String(column))} IS NULL`
+          built = _sql.unsafe(sqlText, params)
+          return this
+        },
+        whereNotNull(column: string) {
+          const keyword = SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
+          sqlText = `${sqlText} ${keyword} ${quoteId(String(column))} IS NOT NULL`
+          built = _sql.unsafe(sqlText, params)
+          return this
+        },
         returning(...cols) {
           const retText = `${sqlText} RETURNING ${cols.join(', ')}`
           const q = params.length > 0
@@ -6706,6 +6764,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             return this
           }
           built = applyWhere(({} as any), ensureDelBuilt(), expr)
+          return this
+        },
+        whereNull(column: string) {
+          sqlText += ` ${getWhereKeyword()} ${quoteId(String(column))} IS NULL`
+          built = null
+          return this
+        },
+        whereNotNull(column: string) {
+          sqlText += ` ${getWhereKeyword()} ${quoteId(String(column))} IS NOT NULL`
+          built = null
           return this
         },
         returning(...cols) {
