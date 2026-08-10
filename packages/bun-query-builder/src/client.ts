@@ -4,7 +4,8 @@
 import type { SchemaMeta } from './meta'
 import type { ResolvedPivot } from './pivot'
 import type { DatabaseSchema } from './schema'
-import { config, getPlaceholder, getPlaceholders, isMysqlLike } from './config'
+import type { QueryBuilderOptions } from './types'
+import { config, getPlaceholder, getPlaceholders, isMysqlLike, setConfig } from './config'
 import type { DriverConnection } from './db'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
@@ -5968,10 +5969,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   }
 
   return {
-    // Create a builder with per-instance option overrides
-    configure(opts: Partial<typeof config>) {
-      // This keeps types simple; for now, users can set global config via import
-      Object.assign(config, opts)
+    // Create a builder with per-instance option overrides.
+    //
+    // There is no per-instance config yet: this writes the same process-wide
+    // singleton `setConfig()` does (see the warning on `setConfig`), so it goes
+    // through the same merge rather than a bare `Object.assign`. That assign
+    // was the last write path that could replace a whole nested section —
+    // `db.configure({ debug: { captureText: false } })` used to drop every
+    // other key of `debug`.
+    configure(opts: QueryBuilderOptions) {
+      setConfig(opts)
       return this as any
     },
     /** Escape/validate identifier names (best-effort) */

@@ -81,6 +81,27 @@ const q = db
 const rows = await q.execute()
 ```
 
+### Configuration
+
+Drop a `query-builder.config.ts` in your project root. Every field is optional at
+every depth — supply only what you want to change, and the library defaults the rest:
+
+```ts
+import { defineConfig } from 'bun-query-builder'
+
+export default defineConfig({
+  dialect: 'postgres',
+  database: { database: 'my_app' },
+})
+```
+
+```ts
+// Load it once at app boot, or configure from code with setConfig().
+import { getConfig } from 'bun-query-builder'
+
+await getConfig()
+```
+
 ### Aggregations
 
 ```ts

@@ -452,6 +452,95 @@ export interface QueryBuilderConfig {
   }
 }
 
+/**
+ * # `DeepPartial`
+ *
+ * Every property of `T`, recursively optional — the shape of configuration
+ * INPUT, as opposed to the resolved shape the library reads back out.
+ *
+ * `QueryBuilderConfig` describes the config AFTER `defaultConfig` has been
+ * merged in, so its fields are non-optional on purpose: `getPlaceholder()`,
+ * the dialect dispatch, `resolveDialect()` and the model layer all read
+ * `config.x.y` without guarding, and that is only sound because every key is
+ * guaranteed present. That guarantee is worth keeping.
+ *
+ * The problem was that consumers were handed the same interface to annotate
+ * their own `query-builder.config.ts` with, because it was the only one this
+ * package exported. In that role every non-optional field is a bug: adding
+ * `migrationDir: string` to the resolved config — and `snapshotDir` before it —
+ * broke `tsc --noEmit` in every downstream app until each of them restated
+ * `'database/migrations'`, a value this package already defaults in three
+ * places (`config.ts`, `workspace.ts:38`, `workspace.ts:39`). Nothing in a
+ * config file should ever be required. So consumers get `QueryBuilderOptions`
+ * and internal code keeps `QueryBuilderConfig`.
+ *
+ * The guard clauses are not decoration. A plain
+ * `{ [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }` gets
+ * each of these wrong, and the order matters:
+ *
+ *  1. FUNCTIONS FIRST. A function type extends `object`, so a naive recursion
+ *     descends into it — but a mapped type copies properties, and a call
+ *     signature is not a property. `keyof (() => void)` is `never`, so the
+ *     hook collapses to an empty object type: no longer callable, and loose
+ *     enough to accept `42`. It also erases type parameters, which would turn
+ *     `BrowserConfig.transformResponse` (`<T>(response: any) => T`) into a
+ *     shape with no signature at all. A hook or a token getter is a leaf.
+ *
+ *  2. ARRAYS SECOND, because the merge replaces them rather than merging them.
+ *     A homomorphic map over `string[]` rewrites `TransactionDefaultsConfig`'s
+ *     `sqlStates` as `(string | undefined)[]`, which no longer assigns back to
+ *     `string[]`. Same for `SqliteConfig.pragmas`, whose own doc comment
+ *     already promises that setting it REPLACES the default list. A
+ *     half-supplied array is not a thing, so arrays are leaves — and they come
+ *     back out `readonly`, so that a config file written the idiomatic
+ *     `export default { … } as const` way still assigns. Nothing in `src/`
+ *     mutates a config array, so asking callers for a mutable one bought
+ *     nothing and rejected `as const`.
+ *
+ *  3. INDEX SIGNATURES THIRD, because there is nothing to make optional.
+ *     `BrowserConfig.headers` is a `Record<string, string>` bag whose keys are
+ *     all optional already, so recursing buys nothing and costs something: it
+ *     rewrites the bag as `{ [x: string]: string | undefined }`, which then no
+ *     longer assigns back OUT to a `Record<string, string>`, and which reads
+ *     worse on hover. (At runtime a bag is indistinguishable from a config
+ *     section, so `setConfig` does merge bags key by key — two calls each
+ *     naming one header leave you with both.)
+ *
+ * String-literal unions (`SupportedDialect`, `relationColumnAliasFormat`, …)
+ * and primitives need no clause — they are not objects, so the final check
+ * passes them through and a typo in `dialect` is still an error.
+ *
+ * There is no `Date`, `RegExp`, `Map` or `Set` anywhere in
+ * `QueryBuilderConfig`. If one is ever added, give it a clause here too: a
+ * mapped type shreds its methods exactly like a function's.
+ */
+export type DeepPartial<T> = T extends (...args: any[]) => any // eslint-disable-line pickier/no-unused-vars -- `args` names a parameter in a function TYPE, not a binding
+  ? T
+  : T extends readonly (infer E)[]
+    ? readonly E[]
+    : string extends keyof T
+      ? T
+      : number extends keyof T
+        ? T
+        : T extends object
+          ? { [K in keyof T]?: DeepPartial<T[K]> }
+          : T
+
+/**
+ * # `QueryBuilderOptions`
+ *
+ * The shape a consumer writes: a `query-builder.config.ts`, an argument to
+ * `setConfig()` or `db.configure()`, an embedding framework's own config
+ * slice. Everything is optional at every depth — `defaultConfig` supplies the
+ * rest, and `setConfig()` deep-merges what you do supply, so naming one leaf
+ * of a section keeps the section's other defaults.
+ *
+ * Type your configuration against THIS, not `QueryBuilderConfig`. That one is
+ * the resolved result the library reads; every field added to it would
+ * otherwise become a compile error in your app.
+ */
+export type QueryBuilderOptions = DeepPartial<QueryBuilderConfig>
+
 export interface CliOption {
   verbose: boolean
 }

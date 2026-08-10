@@ -25,6 +25,9 @@ interface ProbeResult {
   snapshotDir?: string
   dialect?: string
   verbose?: boolean
+  dbHost?: string
+  dbPort?: number
+  dbUrl?: string
 }
 
 /**
@@ -46,6 +49,9 @@ function probe(configFile: string, setup: string): ProbeResult {
         snapshotDir: config.snapshotDir,
         dialect: config.dialect,
         verbose: config.verbose,
+        dbHost: config.database?.host,
+        dbPort: config.database?.port,
+        dbUrl: config.database?.url,
       }))
     `
 
@@ -115,5 +121,56 @@ describe('config precedence', () => {
     )
 
     expect(result.snapshotDir).toBe('.qb')
+  })
+
+  /**
+   * The veto is per SECTION, not per leaf — naming one field of `database`
+   * discards the file's whole `database` section.
+   *
+   * That looks coarse, and a per-leaf veto was tried. It is wrong, because the
+   * fields of a section are not always independent settings: `database.url` and
+   * the discrete `host`/`port`/`username`/`password` are two mutually exclusive
+   * SPELLINGS of one setting, and `createConnectionString()` returns `url`
+   * verbatim without reading any of the others. Under a per-leaf veto, an
+   * embedder passing discrete credentials never names `url`, so a stale `url`
+   * in the config file survives the merge and silently wins — the app connects
+   * to a different database than the one its own code asked for.
+   *
+   * So an embedder who speaks for a section owns that whole section.
+   */
+  it('discards the whole section from the file when setConfig named any of it', () => {
+    const result = probe(
+      `export default { database: { port: 6543 } }`,
+      `setConfig({ database: { host: 'from-embedder' } })`,
+    )
+
+    expect(result.dbHost).toBe('from-embedder')
+    expect(result.dbPort).toBe(5432)
+  })
+
+  it('keeps a config-file section that setConfig never mentioned', () => {
+    const result = probe(
+      `export default { database: { host: 'from-file', port: 6543 } }`,
+      `setConfig({ snapshotDir: 'from-embedder' })`,
+    )
+
+    expect(result.dbHost).toBe('from-file')
+    expect(result.dbPort).toBe(6543)
+    expect(result.snapshotDir).toBe('from-embedder')
+  })
+
+  /**
+   * The wrong-database scenario itself, pinned directly: a config file left
+   * over with a `url`, and application code configuring discrete credentials.
+   */
+  it('does not let a stale url in the config file override configured credentials', () => {
+    const result = probe(
+      `export default { database: { url: 'postgres://user:pw@stale-host:5432/stale_db' } }`,
+      `setConfig({ database: { host: 'real-host', port: 6543, database: 'real_db' } })`,
+    )
+
+    expect(result.dbUrl).toBeUndefined()
+    expect(result.dbHost).toBe('real-host')
+    expect(result.dbPort).toBe(6543)
   })
 })

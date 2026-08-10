@@ -45,6 +45,30 @@ await QueryBuilder
   .execute()
 ```
 
+## Configuration
+
+Drop a `query-builder.config.ts` in your project root. Every field is optional at
+every depth — supply only what you want to change, and the library defaults the rest:
+
+```typescript
+import { defineConfig } from 'bun-query-builder'
+
+export default defineConfig({
+  dialect: 'postgres',
+  database: { database: 'my_app' },
+})
+```
+
+```typescript
+// Load it once at app boot, or configure from code with setConfig().
+import { getConfig } from 'bun-query-builder'
+
+await getConfig()
+```
+
+Type your own configuration against `QueryBuilderOptions` (what you write, everything
+optional), not `QueryBuilderConfig` (what the library reads back, everything present).
+
 ## Features
 
 - **Typed from Models** - Infer tables, columns, and primary keys from your model files

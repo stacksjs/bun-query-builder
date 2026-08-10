@@ -472,7 +472,9 @@ function trackConfigurationChange(key: string, oldValue: any, newValue: any) {
 
 ### How do per-instance overrides work
 
-Call `db.configure(partialConfig)` to shallow-merge selected properties for that builder instance.
+Call `db.configure(options)` to deep-merge selected properties — naming one leaf of a
+section keeps that section's other defaults. Note there is no per-instance config yet:
+this writes the same process-wide config `setConfig()` does.
 
 ### Can I change config at runtime
 

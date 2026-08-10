@@ -1,92 +1,81 @@
 # Configuration
 
-The bun-query-builder configuration system allows you to customize behavior across dialects, performance settings, and development preferences. All defaults can be overridden via the global `config` object.
+The bun-query-builder configuration system allows you to customize behavior across dialects, performance settings, and development preferences.
+
+**Nothing is ever required.** Every field is optional, at every depth — whatever you
+leave out keeps the library default, so fields added in future releases never become
+your problem.
 
 ## Quick Start
+
+### A config file
+
+`query-builder.config.ts` in your project root, picked up by `getConfig()`:
+
+```ts
+import { defineConfig } from 'bun-query-builder'
+
+export default defineConfig({
+  dialect: 'postgres',
+  database: { database: 'my_app' },
+})
+```
+
+```ts
+// Then, once at app boot:
+import { getConfig } from 'bun-query-builder'
+
+await getConfig() // applies the config file + QUERY_BUILDER_* env vars
+```
+
+Loading is explicit and async on purpose: the builder otherwise runs off the
+synchronous config singleton, so an early query can never race a background load.
+
+### From application code
+
+`setConfig()` deep-merges, and outranks the config file:
+
+```ts
+import { setConfig } from 'bun-query-builder'
+
+setConfig({ dialect: 'sqlite', pagination: { defaultPerPage: 50 } })
+
+// Naming one leaf keeps the rest of its section — retries becomes 5,
+// while sqlStates and backoff keep their defaults.
+setConfig({ transactionDefaults: { retries: 5 } })
+```
+
+Precedence is `defaults < config file < setConfig()`.
+
+### Mutating the live config
 
 ```ts
 import { config } from 'bun-query-builder'
 
-// Basic PostgreSQL configuration
 config.dialect = 'postgres'
 config.sql.randomFunction = 'RANDOM()'
-config.sql.sharedLockSyntax = 'FOR SHARE'
-config.sql.jsonContainsMode = 'operator'
 config.aliasing.relationColumnAliasFormat = 'table_column'
-config.transactionDefaults.retries = 2
 ```
 
-## Configuration Interface
+Note that assigning a whole section (`config.sql = { … }`) replaces it rather than
+merging — prefer `setConfig()` unless you mean to drop the other keys.
 
-```ts
-export interface QueryBuilderConfig {
-  // General settings
-  verbose: boolean
-  dialect: 'postgres' | 'mysql' | 'sqlite'
+## The two config types
 
-  // Timestamp handling
-  timestamps: {
-    createdAt: string
-    updatedAt: string
-    defaultOrderColumn: string
-  }
+| Type | Role |
+| --- | --- |
+| `QueryBuilderOptions` | What you **write**. Every field optional, recursively. Use it for `query-builder.config.ts`, `setConfig()` and `db.configure()`. |
+| `QueryBuilderConfig` | What you **read**. Your options merged over the defaults, every field present — the type of `config`, `defaultConfig` and `getConfig()`'s result. |
 
-  // Pagination defaults
-  pagination: {
-    defaultPerPage: number
-    cursorColumn: string
-  }
+Annotate your own configuration with `QueryBuilderOptions` (or skip the decision
+entirely and use `defineConfig`). Declaring it against the resolved
+`QueryBuilderConfig` is what made every field added to this package a compile error
+in downstream apps — see
+[#1062](https://github.com/stacksjs/bun-query-builder/issues/1062).
 
-  // Column aliasing for relations
-  aliasing: {
-    relationColumnAliasFormat: 'table_column' | 'table.dot.column' | 'camelCase'
-  }
-
-  // Relationship configuration
-  relations: {
-    foreignKeyFormat: 'singularParent_id' | 'parentId'
-    singularizeStrategy?: 'stripTrailingS' | 'none'
-  }
-
-  // Transaction behavior
-  transactionDefaults: {
-    retries: number
-    isolation?: 'read committed' | 'repeatable read' | 'serializable'
-    sqlStates: string[]
-    backoff: {
-      baseMs: number
-      factor: number
-      maxMs: number
-      jitter: boolean
-    }
-  }
-
-  // SQL dialect-specific settings
-  sql: {
-    randomFunction?: 'RANDOM()' | 'RAND()'
-    sharedLockSyntax?: 'FOR SHARE' | 'LOCK IN SHARE MODE'
-    jsonContainsMode?: 'operator' | 'function'
-  }
-
-  // Feature toggles
-  features: {
-    distinctOn: boolean
-  }
-
-  // Development and debugging
-  debug?: {
-    captureText: boolean
-  }
-
-  // Query lifecycle hooks
-  hooks?: {
-    onQueryStart?: (context: QueryContext) => void
-    onQueryEnd?: (context: QueryContext & { durationMs: number, rowCount: number }) => void
-    onQueryError?: (context: QueryContext & { error: Error }) => void
-    startSpan?: (name: string) => { end: () => void }
-  }
-}
-```
+The authoritative field list ships in the package's type declarations, so your editor
+completes it inline; this page deliberately no longer duplicates the interface, since
+a second hand-maintained copy of the config shape drifts exactly the way the types did.
 
 ## Environment-Specific Configurations
 

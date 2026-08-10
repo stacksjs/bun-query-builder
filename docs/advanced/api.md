@@ -7,7 +7,7 @@ This page summarizes method signatures and brief descriptions. See feature pages
 ## Imports
 
 ```ts
-import type { CursorPaginationResult, DatabaseSchema, PaginationResult, QueryBuilderConfig, SchemaMeta, SortDirection, TransactionOptions, WhereExpression, WhereOperator } from 'bun-query-builder'
+import type { CursorPaginationResult, DatabaseSchema, PaginationResult, QueryBuilderOptions, SchemaMeta, SortDirection, TransactionOptions, WhereExpression, WhereOperator } from 'bun-query-builder'
 import {
   // Schema and Model Definition
   buildDatabaseSchema,
@@ -41,10 +41,26 @@ const db = createQueryBuilder<typeof schema>({ schema, meta })
 
 ## Configuration
 
-- config: Global runtime config (merged via bunfig). Shape: `QueryBuilderConfig`
-- defaultConfig: Library defaults
+- `defineConfig(options)`: identity helper for a typed `query-builder.config.ts`
+- `setConfig(options)`: deep-merges `QueryBuilderOptions` into the live config
+- `getConfig()`: loads `query-builder.config.ts` and `QUERY_BUILDER_*` env vars once, merges them in, returns the resolved config
+- `config`: the live process-wide config, typed `QueryBuilderConfig` — every field is present, so `config.pagination.defaultPerPage` needs no guard
+- `defaultConfig`: the library defaults, same resolved shape
 
-Key sections: `dialect`, `timestamps`, `pagination`, `aliasing`, `relations`, `transactionDefaults`, `sql`, `features`, `debug`.
+Two types, two jobs. **Write** `QueryBuilderOptions`: every field optional at every
+depth, so you supply only what you want to change. **Read** `QueryBuilderConfig`:
+your options merged over the defaults, every field present. Annotating your own
+config with the resolved type is what made every field added here a compile error
+downstream ([#1062](https://github.com/stacksjs/bun-query-builder/issues/1062)).
+
+Key sections: `dialect`, `database`, `snapshotDir`, `migrationDir`, `timestamps`, `pagination`, `aliasing`, `relations`, `transactionDefaults`, `sql`, `features`, `softDeletes`, `hooks`, `debug`.
+
+Naming one leaf keeps the rest of its section:
+
+```ts
+setConfig({ transactionDefaults: { retries: 5 } })
+// retries is 5; sqlStates and backoff keep their defaults
+```
 
 ## Schema & Models
 
@@ -276,7 +292,9 @@ await db
 
 - WhereOperator: '=', '!=', '<', '>', '<=', '>=', 'like', 'in', 'not in', 'is', 'is not'
 - WhereExpression<TColumns>: object | tuple | raw
-- QueryBuilderConfig: see Configuration section
+- QueryBuilderOptions: user-supplied configuration — every field optional, recursively. What you write in `query-builder.config.ts` or pass to `setConfig()`
+- QueryBuilderConfig: defaults merged with your configuration — every field present. What `config`, `defaultConfig` and `getConfig()` give you
+- DeepPartial&lt;T&gt;: the utility behind `QueryBuilderOptions`
 - DatabaseSchema<ModelRecord>
 
 ---
