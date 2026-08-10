@@ -452,6 +452,50 @@ export interface QueryBuilderConfig {
   }
 }
 
+/**
+ * Every property optional, recursively, leaving arrays and functions intact.
+ *
+ * Plain `Partial` is only one level deep, which is not enough here: it would
+ * still demand a complete `TimestampConfig` from anyone who wanted to rename a
+ * single column.
+ */
+export type DeepPartial<T> = T extends (...args: any[]) => any
+  ? T
+  : T extends readonly (infer U)[]
+    ? readonly U[]
+    : T extends object
+      ? { [K in keyof T]?: DeepPartial<T[K]> }
+      : T
+
+/**
+ * # `QueryBuilderOptions`
+ *
+ * **What an application writes.** Every field is optional, because every field
+ * has a default in {@link defaultConfig} — an app supplies only what it wants
+ * to differ.
+ *
+ * Distinct from {@link QueryBuilderConfig}, which is the RESOLVED shape this
+ * library reads after merging those defaults, and where a required field means
+ * "guaranteed present by the time anything reads it".
+ *
+ * Conflating the two made every field added to the resolved config a
+ * downstream compile error. 0.2.25 declared `migrationDir: string` without the
+ * optional marker, and the app that consumed it had to hard-code
+ * `'database/migrations'` — a value this package already defaults in three
+ * separate places — purely to satisfy the type. `snapshotDir` did the same
+ * thing one release earlier. See stacksjs/bun-query-builder#1062.
+ *
+ * `setConfig()` has always accepted a partial, so this names a contract the
+ * library already honoured rather than introducing a new one.
+ *
+ * ```ts
+ * export default {
+ *   dialect: 'postgres',
+ * } satisfies QueryBuilderOptions
+ * ```
+ */
+export type QueryBuilderOptions = DeepPartial<QueryBuilderConfig>
+
 export interface CliOption {
   verbose: boolean
 }

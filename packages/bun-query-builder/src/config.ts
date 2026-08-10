@@ -1,4 +1,4 @@
-import type { QueryBuilderConfig, SupportedDialect } from './types'
+import type { QueryBuilderConfig, QueryBuilderOptions, SupportedDialect } from './types'
 import process from 'node:process'
 import { loadConfig } from 'bunfig'
 
@@ -214,7 +214,7 @@ export async function getConfig(): Promise<QueryBuilderConfig> {
       defaultConfig,
     })
 
-    const applicable: Partial<QueryBuilderConfig> = {}
+    const applicable: QueryBuilderOptions = {}
     for (const [key, value] of Object.entries(loaded ?? {})) {
       if (!configState.explicit.has(key))
         (applicable as Record<string, unknown>)[key] = value
@@ -267,7 +267,7 @@ const _warnedDialectConflicts = new Set<string>()
  * Shared by `setConfig()` (explicit, marks keys) and `getConfig()` (from a
  * file, does not) so the two paths can never drift on how nested objects merge.
  */
-function applyConfig(userConfig: Partial<QueryBuilderConfig>): void {
+function applyConfig(userConfig: QueryBuilderOptions): void {
   // NEVER reassign `config` here (i.e. `config = { ...defaultConfig }`).
   // Reassigning an `export let` triggers Bun's bundler to split the
   // binding: the write goes to one identifier and every reader (e.g.
@@ -290,15 +290,30 @@ function applyConfig(userConfig: Partial<QueryBuilderConfig>): void {
   if (userConfig.pagination) {
     config.pagination = { ...config.pagination, ...userConfig.pagination }
   }
+  // These two sections are optional on the resolved config, so merging only
+  // over the CURRENT value cannot guarantee the required members survive a
+  // partial override. Shallow `Partial` hid that by demanding a complete
+  // section from the caller; a real partial makes it visible. Seeding from
+  // `defaultConfig` is also the behaviour an app expects: setting
+  // `softDeletes: { enabled: true }` should inherit `column` and
+  // `defaultFilter`, not drop them.
   if (userConfig.softDeletes) {
-    config.softDeletes = { ...config.softDeletes, ...userConfig.softDeletes }
+    config.softDeletes = {
+      ...defaultConfig.softDeletes!,
+      ...config.softDeletes,
+      ...userConfig.softDeletes,
+    }
   }
   if (userConfig.vitess) {
-    config.vitess = { ...config.vitess, ...userConfig.vitess }
+    config.vitess = {
+      ...defaultConfig.vitess!,
+      ...config.vitess,
+      ...userConfig.vitess,
+    }
   }
 }
 
-export function setConfig(userConfig: Partial<QueryBuilderConfig>): void {
+export function setConfig(userConfig: QueryBuilderOptions): void {
   // Detect cross-instance dialect conflicts and warn once. The proper
   // fix is per-instance config (stacksjs/stacks#1862 #18); this guard
   // surfaces the symptom so callers can see the shared-state problem
