@@ -459,7 +459,10 @@ export interface QueryBuilderConfig {
  * still demand a complete `TimestampConfig` from anyone who wanted to rename a
  * single column.
  */
-export type DeepPartial<T> = T extends (...args: any[]) => any
+// `_args`, not `args`: this is a type-level signature, so the parameter name is
+// required syntax with nothing that could ever reference it. pickier's
+// no-unused-vars flags it all the same, and `^_` is the pattern it exempts.
+export type DeepPartial<T> = T extends (..._args: any[]) => any
   ? T
   : T extends readonly (infer U)[]
     ? readonly U[]
