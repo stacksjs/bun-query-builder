@@ -4,6 +4,12 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { dts } from 'bun-plugin-dtsx'
 
+// `ts/no-top-level-await` guards the SHIPPED entry, because a top-level await
+// anywhere in the bundle makes `bun build --compile` refuse every consumer that
+// requires it — which is the exact failure `assertCompilable()` below exists to
+// catch. This file is not shipped: it is a script Bun runs directly, where a
+// top-level await is the only way to await at all.
+// eslint-disable-next-line ts/no-top-level-await
 const result = await Bun.build({
   entrypoints: ['src/index.ts', 'src/browser.ts', 'src/dynamodb/index.ts', 'bin/cli.ts'],
   outdir: './dist',
@@ -70,4 +76,5 @@ async function assertCompilable(entry: string): Promise<void> {
   process.exit(1)
 }
 
+// eslint-disable-next-line ts/no-top-level-await -- build script, not shipped; see the note above
 await assertCompilable('./dist/src/index.js')
