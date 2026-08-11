@@ -357,7 +357,7 @@ const buddyManagers = await db
 const averyActiveTeam = await db
   .selectFrom('users')
   .whereHas('Team', ['lead_id', '=', (await db.selectFrom('users').where({ name: 'Avery' }).first())?.id])
-  .whereHas('Activity', ['created_at', '>', new Date(Date.now() - 7 _ 24 _ 60 _ 60 _ 1000)])
+  .whereHas('Activity', ['created_at', '>', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)])
   .execute()
 ```
 

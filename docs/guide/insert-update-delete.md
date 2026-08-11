@@ -86,7 +86,7 @@ await db
 
 ```typescript
 await db
-  .update('users')
+  .updateTable('users')
   .set({ active: false })
   .where({ id: 1 })
   .execute()
@@ -96,7 +96,7 @@ await db
 
 ```typescript
 await db
-  .update('users')
+  .updateTable('users')
   .set({
     name: 'Updated Name',
     email: 'new@example.com',
@@ -111,7 +111,7 @@ await db
 ```typescript
 // Increment a value
 await db
-  .update('products')
+  .updateTable('products')
   .set({
     views: db.raw('views + 1')
   })
@@ -120,7 +120,7 @@ await db
 
 // Decrement stock
 await db
-  .update('products')
+  .updateTable('products')
   .set({
     stock: db.raw('stock - ?', [quantity])
   })
@@ -144,13 +144,9 @@ await db.updateMany(
 
 ```typescript
 await db
-  .update('products')
+  .updateTable('products')
   .set({
-    category_id: db.subquery(
-      db.selectFrom('categories')
-        .select(['id'])
-        .where({ name: 'Electronics' })
-    )
+    category_id: db.raw('(SELECT id FROM categories WHERE name = ?)', ['Electronics']),
   })
   .where({ type: 'gadget' })
   .execute()
@@ -191,8 +187,9 @@ await db.deleteMany('users', [1, 2, 3, 4, 5])
 // Delete all records (use with caution!)
 await db.deleteFrom('temp_data').execute()
 
-// Truncate table (faster, resets auto-increment)
-await db.truncate('temp_data')
+// Truncate table (faster, resets auto-increment).
+// Not supported by SQLite — use the DELETE above there.
+await db.unsafe('TRUNCATE TABLE temp_data')
 ```
 
 ## Soft Deletes
@@ -202,7 +199,7 @@ await db.truncate('temp_data')
 ```typescript
 // Instead of deleting, set deleted_at
 await db
-  .update('users')
+  .updateTable('users')
   .set({ deleted_at: new Date() })
   .where({ id: 1 })
   .execute()
@@ -221,7 +218,7 @@ const activeUsers = await db
 
 ```typescript
 await db
-  .update('users')
+  .updateTable('users')
   .set({ deleted_at: null })
   .where({ id: 1 })
   .execute()
@@ -276,7 +273,7 @@ async function processOrder(orderId: number) {
   await db.transaction(async (trx) => {
     // Update order status
     await trx
-      .update('orders')
+      .updateTable('orders')
       .set({
         status: 'processing',
         processed_at: new Date()
@@ -293,7 +290,7 @@ async function processOrder(orderId: number) {
     // Decrement stock for each item
     for (const item of items) {
       await trx
-        .update('products')
+        .updateTable('products')
         .set({
           stock: db.raw('stock - ?', [item.quantity])
         })
@@ -322,7 +319,7 @@ async function deactivateInactiveUsers(daysInactive: number) {
   cutoffDate.setDate(cutoffDate.getDate() - daysInactive)
 
   const result = await db
-    .update('users')
+    .updateTable('users')
     .set({
       active: false,
       deactivated_at: new Date(),

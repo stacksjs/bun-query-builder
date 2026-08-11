@@ -2,9 +2,75 @@
 title: Update Queries
 description: Update records in your database with type-safe queries.
 ---
+
+# Update Queries
+
+Update records with type-safe queries and automatic timestamp handling.
+
+## Basic Update
+
+```typescript
+import { createQueryBuilder } from 'bun-query-builder'
+
+const db = createQueryBuilder<typeof schema>({ schema, meta })
+
+// Update a single record by ID
+await db
+  .updateTable('users')
+  .set({
+    name: 'Updated Name',
+  })
+  .where({ id: 1 })
+  .execute()
+
+// Update with where clause
+await db
+  .updateTable('users')
+  .set({ active: false })
+  .where({ email: 'old@example.com' })
+  .execute()
+```
+
+## Update Multiple Records
+
+```typescript
+// Update all matching records
+await db
+  .updateTable('users')
+  .set({ status: 'inactive' })
+  .where('last_login', '<', '2024-01-01')
+  .execute()
+
+// Update with multiple conditions
+await db
+  .updateTable('users')
+  .set({ verified: true })
+  .where({ active: true })
+  .andWhere({ email_verified: true })
+  .execute()
+```
+
+## Update Many by Condition
+
+```typescript
+// Update many records matching conditions
+await db.updateMany('users', { active: false }, { status: 'archived' })
+// Updates all users where active = false, setting status = 'archived'
+```
+
+## Increment and Decrement
+
+```typescript
+// Increment a column value
+await db
+  .updateTable('posts')
+  .increment('views', 1)
+  .where({ id: 123 })
+  .execute()
+
 // Decrement a column value
 await db
-  .updateFrom('products')
+  .updateTable('products')
   .decrement('stock', 5)
   .where({ id: 456 })
   .execute()
@@ -18,9 +84,13 @@ If your model has timestamps enabled, `updated_at` is automatically updated:
 ```typescript
 
 // updated_at is automatically set
-await db.update('users', 1, {
-  name: 'New Name',
-})
+await db
+  .updateTable('users')
+  .set({
+    name: 'New Name',
+  })
+  .where({ id: 1 })
+  .execute()
 // Equivalent to: SET name = 'New Name', updated_at = NOW()
 
 ```
@@ -32,7 +102,7 @@ Get the updated record back:
 ```typescript
 
 const updated = await db
-  .updateFrom('users')
+  .updateTable('users')
   .set({ name: 'Updated Name' })
   .where({ id: 1 })
   .returning(['id', 'name', 'updated_at'])
@@ -51,7 +121,7 @@ Update only if conditions are met:
 
 // Update only active users
 const result = await db
-  .updateFrom('users')
+  .updateTable('users')
   .set({ newsletter_sent: true })
   .where({ active: true })
   .where({ newsletter_sent: false })
@@ -90,16 +160,20 @@ const db = createQueryBuilder<typeof schema>({
 ```typescript
 
 // Update a JSON column
-await db.update('users', 1, {
-  preferences: {
-    theme: 'dark',
-    notifications: true,
-  },
-})
+await db
+  .updateTable('users')
+  .set({
+    preferences: {
+      theme: 'dark',
+      notifications: true,
+    },
+  })
+  .where({ id: 1 })
+  .execute()
 
 // Update nested JSON (if supported by your database)
 await db
-  .updateFrom('users')
+  .updateTable('users')
   .set({
     'preferences.theme': 'light',
   })
@@ -116,7 +190,7 @@ Efficiently update multiple records:
 
 // Update many records with the same values
 await db
-  .updateFrom('posts')
+  .updateTable('posts')
   .set({ published: true, published_at: new Date() })
   .where('id', 'IN', [1, 2, 3, 4, 5])
   .execute()
@@ -129,13 +203,17 @@ await db
 
 await db.transaction(async (trx) => {
   // Update user
-  await trx.update('users', userId, {
-    status: 'premium',
-  })
+  await trx
+    .updateTable('users')
+    .set({
+      status: 'premium',
+    })
+    .where({ id: userId })
+    .execute()
 
   // Update related subscription
   await trx
-    .updateFrom('subscriptions')
+    .updateTable('subscriptions')
     .set({ active: true, upgraded_at: new Date() })
     .where({ user_id: userId })
     .execute()
@@ -203,20 +281,24 @@ const db = createQueryBuilder<typeof schema>({
 // Various update operations
 async function updateUsers() {
   // Update single record
-  await db.update('users', 1, {
-    name: 'John Smith',
-  })
+  await db
+    .updateTable('users')
+    .set({
+      name: 'John Smith',
+    })
+    .where({ id: 1 })
+    .execute()
 
   // Update with conditions
   await db
-    .updateFrom('users')
+    .updateTable('users')
     .set({ status: 'inactive' })
     .where('last_login', '<', '2024-01-01')
     .execute()
 
   // Increment login count
   await db
-    .updateFrom('users')
+    .updateTable('users')
     .increment('login_count', 1)
     .where({ id: 1 })
     .execute()

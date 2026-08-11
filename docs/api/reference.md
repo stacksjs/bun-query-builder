@@ -64,7 +64,7 @@ const meta = buildSchemaMeta(models)
 | `whereIn(col, vals)` | WHERE IN | `.whereIn('id', [1, 2, 3])` |
 | `whereNotIn(col, vals)` | WHERE NOT IN | `.whereNotIn('status', ['banned'])` |
 | `whereBetween(col, a, b)` | WHERE BETWEEN | `.whereBetween('age', 18, 65)` |
-| `whereNull(col)` | WHERE IS NULL | `.whereNull('deleted*at')` |
+| `whereNull(col)` | WHERE IS NULL | `.whereNull('deleted_at')` |
 | `whereNotNull(col)` | WHERE IS NOT NULL | `.whereNotNull('email')` |
 | `whereColumn(a, op, b)` | Compare columns | `.whereColumn('a', '=', 'b')` |
 | `whereRaw(sql)` | Raw WHERE clause | `.whereRaw('LOWER(name) = ?', ['john'])` |
@@ -73,7 +73,7 @@ const meta = buildSchemaMeta(models)
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `join(table, a, op, b)` | INNER JOIN | `.join('posts', 'users.id', '=', 'posts.user*id')` |
+| `join(table, a, op, b)` | INNER JOIN | `.join('posts', 'users.id', '=', 'posts.user_id')` |
 | `leftJoin(...)` | LEFT JOIN | `.leftJoin('posts', ...)` |
 | `rightJoin(...)` | RIGHT JOIN | `.rightJoin('posts', ...)` |
 | `crossJoin(table)` | CROSS JOIN | `.crossJoin('categories')` |
@@ -83,8 +83,8 @@ const meta = buildSchemaMeta(models)
 | Method | Description | Example |
 |--------|-------------|---------|
 | `orderBy(col, dir)` | ORDER BY | `.orderBy('name', 'asc')` |
-| `orderByDesc(col)` | ORDER BY DESC | `.orderByDesc('created*at')` |
-| `latest()` | Order by created*at DESC | `.latest()` |
+| `orderByDesc(col)` | ORDER BY DESC | `.orderByDesc('created_at')` |
+| `latest()` | Order by created_at DESC | `.latest()` |
 | `oldest()` | Order by created_at ASC | `.oldest()` |
 | `inRandomOrder()` | Random order | `.inRandomOrder()` |
 | `limit(n)` | LIMIT | `.limit(10)` |
@@ -127,7 +127,7 @@ const meta = buildSchemaMeta(models)
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `update(table)` | Start UPDATE | `db.update('users')` |
+| `update(table)` | Start UPDATE | `db.updateTable('users')` |
 | `set(data)` | Set values | `.set({ active: false })` |
 | `increment(col, n)` | Increment | `.increment('views', 1)` |
 | `decrement(col, n)` | Decrement | `.decrement('stock', 1)` |
@@ -196,7 +196,7 @@ Execute queries in a transaction.
 ```typescript
 await db.transaction(async (trx) => {
   await trx.insertInto('users').values({...}).execute()
-  await trx.update('accounts').set({...}).execute()
+  await trx.updateTable('accounts').set({...}).execute()
 })
 ```
 

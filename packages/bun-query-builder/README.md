@@ -33,7 +33,7 @@ await QueryBuilder
 
 // Update
 await QueryBuilder
-  .update('users')
+  .updateTable('users')
   .set({ active: false })
   .where('id', '=', 1)
   .execute()

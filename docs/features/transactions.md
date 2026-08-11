@@ -160,7 +160,7 @@ await createUser({ name: 'Alice' })
 You can pass options to override defaults:
 
 ```ts
-const createWithRetry = db.transactional(async (tx) => { /_ ... _/ }, { retries: 3 })
+const createWithRetry = db.transactional(async (tx) => { /* ... */ }, { retries: 3 })
 ```
 
 ## Error Handling and Logging
@@ -168,7 +168,7 @@ const createWithRetry = db.transactional(async (tx) => { /_ ... _/ }, { retries:
 Use `onRetry` and `logger` to observe transaction lifecycle.
 
 ```ts
-await db.transaction(async (tx) => { /_ ... _/ }, {
+await db.transaction(async (tx) => { /* ... */ }, {
   logger: (e) => {
     if (e.type === 'retry')
       console.warn('retry', e.attempt)
