@@ -1,3 +1,31 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.25...v0.2.26)
+
+## 🐛 Bug Fixes
+
+- **migrate**: apply each migration atomically, and one run at a time (#1076) ([7afcd4c](https://github.com/stacksjs/bun-query-builder/commit/7afcd4c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1076](https://github.com/stacksjs/bun-query-builder/issues/1076), [#1076](https://github.com/stacksjs/bun-query-builder/issues/1076))
+- **client**: honour the hooks a builder was constructed with (#1074) ([6a345ca](https://github.com/stacksjs/bun-query-builder/commit/6a345ca)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1074](https://github.com/stacksjs/bun-query-builder/issues/1074), [#1074](https://github.com/stacksjs/bun-query-builder/issues/1074))
+- **orm**: an eager load that resolves nothing should say so (#1075) ([2bd3d49](https://github.com/stacksjs/bun-query-builder/commit/2bd3d49)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1075](https://github.com/stacksjs/bun-query-builder/issues/1075), [#1075](https://github.com/stacksjs/bun-query-builder/issues/1075))
+- **client**: a builder's writes belong to the builder's own connection (#1065) ([bb30b75](https://github.com/stacksjs/bun-query-builder/commit/bb30b75)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1065](https://github.com/stacksjs/bun-query-builder/issues/1065), [#1065](https://github.com/stacksjs/bun-query-builder/issues/1065))
+- **types**: config options should not require what the library already defaults (#1064) ([a9b0f6a](https://github.com/stacksjs/bun-query-builder/commit/a9b0f6a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1064](https://github.com/stacksjs/bun-query-builder/issues/1064), [#1064](https://github.com/stacksjs/bun-query-builder/issues/1064))
+
+## 📚 Documentation
+
+- the write-path pages documented an API that does not exist (#1066) ([a05f5eb](https://github.com/stacksjs/bun-query-builder/commit/a05f5eb)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1066](https://github.com/stacksjs/bun-query-builder/issues/1066), [#1066](https://github.com/stacksjs/bun-query-builder/issues/1066))
+
+## 🧪 Tests
+
+- **pg**: make the Postgres-gated tests actually run in CI (#1077) ([8d04b85](https://github.com/stacksjs/bun-query-builder/commit/8d04b85)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1077](https://github.com/stacksjs/bun-query-builder/issues/1077), [#1077](https://github.com/stacksjs/bun-query-builder/issues/1077))
+- **docs**: check the docs against the code, and fix what that found (#1073) ([ea16f35](https://github.com/stacksjs/bun-query-builder/commit/ea16f35)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1073](https://github.com/stacksjs/bun-query-builder/issues/1073), [#1073](https://github.com/stacksjs/bun-query-builder/issues/1073))
+
+## 🧹 Chores
+
+- release v0.2.26 ([13afd02](https://github.com/stacksjs/bun-query-builder/commit/13afd02)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.24...v0.2.25)
 
 ## 🐛 Bug Fixes
