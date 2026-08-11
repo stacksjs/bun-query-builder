@@ -465,20 +465,34 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 ### Environment-Specific Configurations
 
+These are every environment variable the library reads:
+
 ```bash
-# Development environment
-export DB_TIMEOUT=10000
-export DB_RETRY_ATTEMPTS=3
+# Which dialect to connect with. This one is load-bearing: it also ARMS the
+# connection variables below, which are ignored unless it is set and matches
+# the dialect in use. DB_DIALECT is an accepted alias.
+export DB_CONNECTION=postgres
 
-# Production environment
-export DB_TIMEOUT=5000
-export DB_RETRY_ATTEMPTS=1
-export DB_HEALTH_CHECK_INTERVAL=30
+# Connection details, honoured only when DB_CONNECTION is set as above
+export DB_HOST=localhost
+export DB_PORT=5432
+export DB_USERNAME=postgres
+export DB_PASSWORD=secret
+export DB_DATABASE=my_app
 
-# Testing environment
-export DB_TIMEOUT=15000
-export DB_RETRY_ATTEMPTS=5
-export DB_WAIT_READY_ATTEMPTS=30
+# Require TLS ('true' or '1'). Read on its own, no DB_CONNECTION needed.
+export DB_SSL=true
+```
+
+Anything not on this list has no effect. Timeouts, retry counts and health-check
+intervals are configuration, not environment — set them in
+`query-builder.config.ts` or via `setConfig()`:
+
+```ts
+setConfig({
+  transactionDefaults: { retries: 3, backoff: { baseMs: 100, factor: 2, maxMs: 2000, jitter: true } },
+  database: { pool: { acquireTimeoutMs: 5000 } },
+})
 ```
 
 The CLI is designed to integrate seamlessly with modern development workflows, from local development to production monitoring. Choose the right commands and options for your specific use case and environment.

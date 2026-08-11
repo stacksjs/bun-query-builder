@@ -4,7 +4,7 @@
 import type { SchemaMeta } from './meta'
 import type { ResolvedPivot } from './pivot'
 import type { DatabaseSchema } from './schema'
-import type { QueryBuilderOptions } from './types'
+import type { QueryBuilderOptions, QueryHooks } from './types'
 import { config, getPlaceholder, getPlaceholders, isMysqlLike, setConfig } from './config'
 import type { DriverConnection } from './db'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
@@ -2547,6 +2547,21 @@ interface InternalState {
   schema?: any
   txDefaults?: TransactionOptions
   /**
+   * Lifecycle hooks for this builder specifically.
+   *
+   * `createQueryBuilder({ schema, meta, hooks })` is the form the docs have
+   * shown for a long time, and it did not exist: `hooks` was not a member of
+   * this interface, so the call was a `TS2353` excess-property error. The
+   * obvious workaround made it worse rather than better — `as any` compiled,
+   * and then the hooks never fired, because every hook site read the
+   * process-wide `config.hooks` and nothing ever looked at builder state. A
+   * builder that appeared configured silently ignored every hook it was given.
+   *
+   * These merge OVER `config.hooks` per key (see `activeHooks`), so a global
+   * logger or tracer keeps firing for builders that only override one hook.
+   */
+  hooks?: QueryHooks
+  /**
    * Set on the builder handed to a `transaction()` callback. A nested
    * `transaction()` must open a SAVEPOINT (`tx.savepoint(...)`) rather than a
    * new top-level transaction (`tx.begin(...)`) — Bun's driver throws "cannot
@@ -2797,6 +2812,25 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     return Math.abs(hash)
   }
 
+  /**
+   * The hooks this builder should fire.
+   *
+   * Read through this rather than reaching for `config.hooks` directly, for the
+   * same reason statements go through `_sql`: a builder can be handed its own,
+   * and ignoring them makes a configured builder silently do nothing.
+   *
+   * Resolved per call, not captured once, because `setConfig({ hooks })` may
+   * land after the builder is constructed — the usual
+   * `export const db = createQueryBuilder(...)` at module scope followed by
+   * configuration at boot. Merged per key so a global logger still fires for a
+   * builder that overrides only `beforeCreate`.
+   */
+  function activeHooks(): QueryHooks | undefined {
+    if (!state?.hooks)
+      return config.hooks
+    return { ...config.hooks, ...state.hooks }
+  }
+
   // `whereCreatedAt` → `created_at` resolution for the dynamic-where Proxy,
   // cached per (table, prop): the schema is fixed for this builder, and the
   // resolution (regex strip + snake-case + column scan) otherwise re-runs on
@@ -2925,7 +2959,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   }
 
   function runWithHooks<T = any>(q: any, kind: 'select' | 'insert' | 'update' | 'delete' | 'raw', opts?: { signal?: AbortSignal, timeoutMs?: number }): Promise<T> {
-    const hooks = config.hooks
+    const hooks = activeHooks()
     const slowMs = hooks?.slowQueryThresholdMs
     const slowEnabled = slowMs != null && slowMs >= 0
     const hasSlowQuery = Boolean(hooks?.onSlowQuery || slowEnabled)
@@ -5636,7 +5670,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return text
       },
       async get() {
-        const hooks = config.hooks
+        const hooks = activeHooks()
         const hasQueryHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hasSlowQueryHook(hooks))
 
         // Ultra-fast path: skip unsafe() entirely, use _prepareStatement for direct stmt access
@@ -5714,7 +5748,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async first() {
         // Ultra-fast path: skip overhead, prepare statement directly from text
-        const fHooks = config.hooks
+        const fHooks = activeHooks()
         const fHasQueryHooks = fHooks && (fHooks.onQueryStart || fHooks.onQueryEnd || fHooks.onQueryError || fHooks.startSpan || hasSlowQueryHook(fHooks))
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !fHasQueryHooks) {
           const prepareFn = _sql._prepareStatement
@@ -5809,7 +5843,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         }
 
         // Ultra-fast path
-        const cHooks = config.hooks
+        const cHooks = activeHooks()
         const cHasHooks = cHooks && (cHooks.onQueryStart || cHooks.onQueryEnd || cHooks.onQueryError || cHooks.startSpan || hasSlowQueryHook(cHooks))
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !cHasHooks) {
           const prepareFn = _sql._prepareStatement
@@ -5835,7 +5869,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           : `SELECT AVG(${column}) as a FROM ${table}`
 
         // Ultra-fast path
-        const aHooks = config.hooks
+        const aHooks = activeHooks()
         const aHasHooks = aHooks && (aHooks.onQueryStart || aHooks.onQueryEnd || aHooks.onQueryError || aHooks.startSpan || hasSlowQueryHook(aHooks))
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !aHasHooks) {
           const prepareFn = _sql._prepareStatement
@@ -6527,7 +6561,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         },
         execute() {
           // Ultra-fast path: use _prepareStatement to skip unsafe() and runWithHooks overhead
-          const hooks = config.hooks
+          const hooks = activeHooks()
           const hasHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hooks.beforeCreate || hooks.afterCreate || hasSlowQueryHook(hooks))
           if (!hasHooks) {
             const prepareFn = _sql._prepareStatement
@@ -6945,7 +6979,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         },
         async execute() {
           try {
-            await config.hooks?.beforeDelete?.({ table: String(table), where: whereCondition })
+            await activeHooks()?.beforeDelete?.({ table: String(table), where: whereCondition })
           }
           catch (err) {
             throw err
@@ -6954,7 +6988,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const result = mutationCount(await runWithHooks(ensureDelBuilt(), 'delete'))
 
           try {
-            await config.hooks?.afterDelete?.({ table: String(table), where: whereCondition, result })
+            await activeHooks()?.afterDelete?.({ table: String(table), where: whereCondition, result })
           }
           catch {}
 
@@ -7092,7 +7126,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     async reserve() {
       const reserved = await (bunSql as any).reserve()
-      const qb = createQueryBuilder<DB>({ sql: reserved, meta, schema }) as any
+      const qb = createQueryBuilder<DB>({ sql: reserved, meta, schema, hooks: state?.hooks }) as any
       qb.release = () => reserved.release()
       return qb
     },
@@ -7160,7 +7194,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         opts.logger?.({ type: 'start', attempt })
         const start = Date.now()
         return await (txConn as any)[txMethod](async (tx: any) => {
-          const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, inTransaction: true })
+          const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks, inTransaction: true })
 
           // Transaction isolation + read-only mode — dialect-specific
           // SQL, with a clear "not supported" path for SQLite. The
@@ -7269,14 +7303,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return await s.savepoint(async (sp: any) => {
         // Carry the flag: a savepoint body is still inside a transaction, so a
         // nested savepoint()/transaction() from here must nest, not begin.
-        const qb = createQueryBuilder<DB>({ sql: sp, meta, schema, inTransaction: true })
+        const qb = createQueryBuilder<DB>({ sql: sp, meta, schema, hooks: state?.hooks, inTransaction: true })
         return await fn(qb)
       })
     },
     async beginDistributed(name, fn) {
       const txConn: any = state?.sql ?? bunSql
       const res = await (txConn as any).beginDistributed(name, async (tx: any) => {
-        const qb = createQueryBuilder<DB>({ sql: tx, meta, schema })
+        const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks })
         return await fn(qb)
       })
       return res as any
@@ -7425,13 +7459,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     async rawQuery(query: string) {
       const start = Date.now()
       try {
-        config.hooks?.onQueryStart?.({ sql: query, kind: 'raw' })
+        activeHooks()?.onQueryStart?.({ sql: query, kind: 'raw' })
         const res = await (_sql as any).unsafe(query)
-        config.hooks?.onQueryEnd?.({ sql: query, durationMs: Date.now() - start, kind: 'raw' })
+        activeHooks()?.onQueryEnd?.({ sql: query, durationMs: Date.now() - start, kind: 'raw' })
         return res
       }
       catch (err) {
-        config.hooks?.onQueryError?.({ sql: query, error: err, durationMs: Date.now() - start, kind: 'raw' })
+        activeHooks()?.onQueryError?.({ sql: query, error: err, durationMs: Date.now() - start, kind: 'raw' })
         throw err
       }
     },
@@ -7440,7 +7474,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
       // beforeCreate hook
       try {
-        await config.hooks?.beforeCreate?.({ table: String(table), data: values })
+        await activeHooks()?.beforeCreate?.({ table: String(table), data: values })
       }
       catch (err) {
         throw err
@@ -7467,7 +7501,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         // afterCreate hook
         try {
-          await config.hooks?.afterCreate?.({ table: String(table), data: values, result: row })
+          await activeHooks()?.afterCreate?.({ table: String(table), data: values, result: row })
         }
         catch {}
 
@@ -7491,7 +7525,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         // afterCreate hook
         try {
-          await config.hooks?.afterCreate?.({ table: String(table), data: values, result: row })
+          await activeHooks()?.afterCreate?.({ table: String(table), data: values, result: row })
         }
         catch {}
 
