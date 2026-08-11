@@ -1,0 +1,25 @@
+# GitHub Actions version bumps only.
+#
+# buddy-bot owns npm dependencies (see CLAUDE.md) and renovate is disabled in
+# .github/renovate.json, but neither covers this: buddy-bot GENERATES workflow
+# files, it does not bump the `uses:` pins inside them. Every actions bump this
+# repo has received came from renovate, so switching renovate off without this
+# would leave `actions/checkout`, `actions/cache` and `oven-sh/setup-bun` to
+# drift until something breaks.
+#
+# Scoped deliberately to github-actions. Adding an npm ecosystem here would
+# recreate the exact problem being fixed — two bots rewriting bun.lock, each
+# invalidating the other's open PRs.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+    # One PR per action. These diffs are a single line and are read at a glance;
+    # grouping them only makes a bad bump harder to bisect.
+    open-pull-requests-limit: 5

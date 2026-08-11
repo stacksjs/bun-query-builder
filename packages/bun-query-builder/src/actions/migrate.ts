@@ -496,13 +496,22 @@ export async function executeMigration(dir?: string): Promise<boolean> {
   try {
     const qb = createQueryBuilder()
 
-    // Create migrations table if it doesn't exist
-    await createMigrationsTable(qb, dialect)
-
-    // Everything from here runs under the migration lock, and the read of the
-    // ledger is deliberately INSIDE it: computing `pending` before locking is
-    // what lets two processes agree on the same work and then both do it.
+    // Everything from here runs under the migration lock, INCLUDING creating
+    // the ledger table and reading it.
+    //
+    // Reading it inside is what stops two processes agreeing on the same
+    // pending set and both applying it. Creating it inside is the subtler
+    // half: `CREATE TABLE IF NOT EXISTS` is not atomic in Postgres, and two
+    // sessions running it at the same instant race in the system catalogue —
+    // one of them gets `duplicate key value violates unique constraint
+    // "pg_type_typname_nsp_index"` and, since this rethrows, exits non-zero.
+    // Leaving it outside the lock meant the very scenario the lock exists for,
+    // two concurrent boots, still had a way to fail. Caught by the locking
+    // regression test failing intermittently in CI while passing locally.
     return await withMigrationLock(dialect, async () => {
+      // Create migrations table if it doesn't exist
+      await createMigrationsTable(qb, dialect)
+
       // Get already executed migrations
       const executedMigrations = await getExecutedMigrations(qb, dialect)
 

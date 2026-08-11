@@ -117,12 +117,25 @@ import { SQL } from 'bun'
 // the suite, so dropping it wholesale would delete other files' bookkeeping.
 const reset = new SQL(${JSON.stringify(PG_URL)})
 await reset.unsafe('DROP TABLE IF EXISTS mig_concurrent')
-await reset.unsafe("DELETE FROM migrations WHERE migration = '0000000001-concurrent.sql'").catch(() => {})
+// DROP the ledger, not just this file's row. Half the race being guarded here
+// is in creating that table: \`CREATE TABLE IF NOT EXISTS\` is not atomic in
+// Postgres, so concurrent boots collide in the system catalogue. Leaving the
+// table in place means the workers never race to create it and the test cannot
+// see that half at all — which is exactly why an earlier version passed
+// locally while failing in CI. \`resetDatabase()\` drops this table routinely
+// elsewhere in the suite, so this is consistent with how the shared database
+// is already treated.
+await reset.unsafe('DROP TABLE IF EXISTS migrations').catch(() => {})
 await reset.end()
 
-const a = Bun.spawn({ cmd: ['bun', 'worker.ts'], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' })
-const b = Bun.spawn({ cmd: ['bun', 'worker.ts'], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' })
-const codes = await Promise.all([a.exited, b.exited])
+// Five, not two. The race this guards lives in the moments before the lock is
+// held, so the odds of two processes colliding there are low enough that a
+// two-worker version passed locally for a dozen runs while failing in CI. Five
+// makes it reliable: with the ledger-creation race present, this reproduces in
+// roughly one run out of three rather than one in twenty.
+const workers = Array.from({ length: 5 }, () =>
+  Bun.spawn({ cmd: ['bun', 'worker.ts'], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' }))
+const codes = await Promise.all(workers.map(w => w.exited))
 
 // Count only THIS migration. The suite shares one Postgres database, so other
 // files leave rows in the ledger and a total count is not ours to assert on.
@@ -142,7 +155,7 @@ console.log(JSON.stringify({ codes, recorded: count }))
 
     const { codes, recorded } = lastJson(result.out)
     // Both succeed: the loser waits for the lock, then finds nothing pending.
-    expect(codes).toEqual([0, 0])
+    expect(codes).toEqual([0, 0, 0, 0, 0])
     // And it is recorded once, not twice.
     expect(recorded).toBe(1)
   })
