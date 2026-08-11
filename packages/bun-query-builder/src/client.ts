@@ -2740,6 +2740,28 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   // Single boundary cast: `state.sql` is `any` (allows mock/tx injection) and
   // getOrCreateBunSql() returns Bun's `SQL`; both satisfy DriverConnection. With
   // `_sql` typed, the downstream `.unsafe(...)` calls no longer need casts (#1044).
+  //
+  // EVERY statement this builder executes must go through `_sql`, never the
+  // module-global `bunSql`. They are the same object only for a plain builder;
+  // the moment one is created with its own connection — `db.transaction()`,
+  // `savepoint()`, `beginDistributed()`, `reserve()`, or an explicit
+  // `createQueryBuilder({ sql })` — they are two different connections, and the
+  // global is a DIFFERENT pooled session from the one the builder's own reads
+  // and writes use.
+  //
+  // That is not a cosmetic distinction. A write issued on the global while the
+  // caller is inside `db.transaction()` autocommits on its own session, so it
+  // outlives a ROLLBACK: the transaction fails, the caller sees the error, and
+  // the row is still there. A read issued on the global cannot see the
+  // transaction's uncommitted rows, so read-then-decide logic acts on stale
+  // data. With `pool: { max: 1 }` it does not even get that far — the call
+  // blocks forever waiting for the single connection its own transaction is
+  // holding. All three are silent; none produces a driver error.
+  //
+  // The exceptions are the pool-lifecycle methods (`reserve`, `close`), which
+  // act on the pool itself rather than on a session, and the two-phase
+  // `commitDistributed`/`rollbackDistributed`, which by design run outside the
+  // transaction that prepared them.
   const _sql: DriverConnection = (state?.sql ?? getOrCreateBunSql()) as unknown as DriverConnection
   const meta = state?.meta
   const schema = state?.schema
@@ -6973,7 +6995,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         let hash = 7
         for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
         const k = typeof key === 'number' ? key : Math.abs(hash)
-        const q = bunSql`SELECT pg_advisory_lock(${k})`
+        const q = _sql`SELECT pg_advisory_lock(${k})`
         await runWithHooks<any[]>(q, 'raw')
         return
       }
@@ -6981,7 +7003,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // MySQL has `GET_LOCK(name, timeout)`. Wait indefinitely
         // (timeout=-1) to match Postgres `pg_advisory_lock` semantics.
         const lockName = `bqb:${String(key)}`
-        const q = bunSql`SELECT GET_LOCK(${lockName}, -1) AS ok`
+        const q = _sql`SELECT GET_LOCK(${lockName}, -1) AS ok`
         await runWithHooks<any[]>(q, 'raw')
         return
       }
@@ -6997,7 +7019,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         let hash = 7
         for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
         const k = typeof key === 'number' ? key : Math.abs(hash)
-        const q = bunSql`SELECT pg_try_advisory_lock(${k}) as ok`
+        const q = _sql`SELECT pg_try_advisory_lock(${k}) as ok`
         const rows = await runWithHooks<any[]>(q, 'raw')
         return Boolean(rows?.[0]?.ok)
       }
@@ -7005,7 +7027,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // MySQL `GET_LOCK(name, 0)` returns 1 immediately if free, 0
         // if held by another connection.
         const lockName = `bqb:${String(key)}`
-        const q = bunSql`SELECT GET_LOCK(${lockName}, 0) AS ok`
+        const q = _sql`SELECT GET_LOCK(${lockName}, 0) AS ok`
         const rows = await runWithHooks<any[]>(q, 'raw')
         return Number(rows?.[0]?.ok) === 1
       }
@@ -7023,7 +7045,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return (_sql as any).unsafe(query, params)
     },
     file(path: string, params?: any[]) {
-      return (bunSql as any).file(path, params)
+      return (_sql as any).file(path, params)
     },
     async reserve() {
       const reserved = await (bunSql as any).reserve()
@@ -7058,7 +7080,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     async ping() {
       try {
-        const q = bunSql`SELECT 1`
+        const q = _sql`SELECT 1`
         await runWithHooks<any[]>(q, 'select')
         return true
       }
@@ -7242,28 +7264,28 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const sqlText = isMysqlLike(config.dialect)
         ? `INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
         : `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} ON CONFLICT DO NOTHING`
-      return (bunSql.unsafe(sqlText, params) as any).execute()
+      return (_sql.unsafe(sqlText, params) as any).execute()
     },
     async insertGetId(table, values, idColumn = 'id' as any) {
       const { colsSql, valuesSql, params } = buildInsertClause([values as Record<string, any>])
       const tbl = quoteInsertIdent(String(table))
       if (isMysqlLike(config.dialect)) {
         // MySQL has no RETURNING — insert then read LAST_INSERT_ID().
-        await (bunSql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
-        const [row] = await (bunSql.unsafe(`SELECT LAST_INSERT_ID() as id`) as any).execute()
+        await (_sql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+        const [row] = await (_sql.unsafe(`SELECT LAST_INSERT_ID() as id`) as any).execute()
         return row?.id
       }
       if (config.dialect === 'sqlite') {
         // The bun:sqlite wrapper returns { changes, lastInsertRowid } rather
         // than RETURNING rows, so read the rowid directly.
-        const res = await (bunSql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+        const res = await (_sql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
         if (res?.lastInsertRowid != null)
           return res.lastInsertRowid
-        const [row] = await (bunSql.unsafe(`SELECT last_insert_rowid() as id`) as any).execute()
+        const [row] = await (_sql.unsafe(`SELECT last_insert_rowid() as id`) as any).execute()
         return row?.id
       }
       // Postgres supports RETURNING.
-      const [row] = await (bunSql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} RETURNING ${quoteInsertIdent(String(idColumn))} as id`, params) as any).execute()
+      const [row] = await (_sql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} RETURNING ${quoteInsertIdent(String(idColumn))} as id`, params) as any).execute()
       return row?.id
     },
     async updateOrInsert(table, match, values) {
@@ -7272,18 +7294,18 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       let idx = 1
       const whereSql = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(idx++)}`).join(' AND ')
       const whereParams = matchKeys.map(k => (match as any)[k])
-      const existsRows = await (bunSql.unsafe(`SELECT 1 FROM ${tbl} WHERE ${whereSql} LIMIT 1`, whereParams) as any).execute()
+      const existsRows = await (_sql.unsafe(`SELECT 1 FROM ${tbl} WHERE ${whereSql} LIMIT 1`, whereParams) as any).execute()
       if ((existsRows as any[]).length) {
         const setKeys = Object.keys(values)
         let i = 1
         const setSql = setKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(', ')
         const whereSql2 = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(' AND ')
         const params = [...setKeys.map(k => (values as any)[k]), ...matchKeys.map(k => (match as any)[k])]
-        await (bunSql.unsafe(`UPDATE ${tbl} SET ${setSql} WHERE ${whereSql2}`, params) as any).execute()
+        await (_sql.unsafe(`UPDATE ${tbl} SET ${setSql} WHERE ${whereSql2}`, params) as any).execute()
         return true
       }
       const { colsSql, valuesSql, params } = buildInsertClause([{ ...match, ...values } as Record<string, any>])
-      await (bunSql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+      await (_sql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
       return true
     },
     async upsert(table, rows, conflictColumns, mergeColumns) {
@@ -7301,16 +7323,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // "do nothing" form (an empty SET is a syntax error). See #1035, #1052.
       if (isMysqlLike(config.dialect)) {
         if (setCols.length === 0)
-          return (bunSql.unsafe(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+          return (_sql.unsafe(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
         const updateList = setCols.map(c => `${quoteInsertIdent(c)} = VALUES(${quoteInsertIdent(c)})`).join(', ')
-        return (bunSql.unsafe(`${insert} ON DUPLICATE KEY UPDATE ${updateList}`, params) as any).execute()
+        return (_sql.unsafe(`${insert} ON DUPLICATE KEY UPDATE ${updateList}`, params) as any).execute()
       }
 
       const targets = targetCols.map(quoteInsertIdent).join(', ')
       if (setCols.length === 0)
-        return (bunSql.unsafe(`${insert} ON CONFLICT (${targets}) DO NOTHING`, params) as any).execute()
+        return (_sql.unsafe(`${insert} ON CONFLICT (${targets}) DO NOTHING`, params) as any).execute()
       const updateList = setCols.map(c => `${quoteInsertIdent(c)} = EXCLUDED.${quoteInsertIdent(c)}`).join(', ')
-      return (bunSql.unsafe(`${insert} ON CONFLICT (${targets}) DO UPDATE SET ${updateList}`, params) as any).execute()
+      return (_sql.unsafe(`${insert} ON CONFLICT (${targets}) DO UPDATE SET ${updateList}`, params) as any).execute()
     },
     async save(table, values) {
       const pk = meta?.primaryKeys[String(table)] ?? 'id'
@@ -7361,7 +7383,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       const start = Date.now()
       try {
         config.hooks?.onQueryStart?.({ sql: query, kind: 'raw' })
-        const res = await (bunSql as any).unsafe(query)
+        const res = await (_sql as any).unsafe(query)
         config.hooks?.onQueryEnd?.({ sql: query, durationMs: Date.now() - start, kind: 'raw' })
         return res
       }
@@ -7383,10 +7405,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
       if (config.dialect === 'postgres') {
         // For PostgreSQL, use RETURNING to get the ID, then fetch the full row
-        const q = bunSql`INSERT INTO ${bunSql(String(table))} ${bunSql(values as any)} RETURNING ${bunSql(String(pk))} as id`
+        const q = _sql`INSERT INTO ${_sql(String(table))} ${_sql(values as any)} RETURNING ${_sql(String(pk))} as id`
         const [result] = await q.execute()
-
-        console.log('resultId', result)
 
         if (!result?.id) {
           console.error(`create() failed to get insert ID for table ${String(table)}`)
@@ -7600,28 +7620,28 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return await (this as any).create(table, { ...(match as any), ...(values as any) })
     },
     async count(table, column) {
-      const col = column ? bunSql(String(column)) : bunSql`*`
-      const q = bunSql`SELECT COUNT(${col}) as c FROM ${bunSql(String(table))}`
+      const col = column ? _sql(String(column)) : _sql`*`
+      const q = _sql`SELECT COUNT(${col}) as c FROM ${_sql(String(table))}`
       const [row] = await (q as any).execute()
       return Number((row?.c ?? 0) as any)
     },
     async sum(table, column) {
-      const q = bunSql`SELECT SUM(${bunSql(String(column))}) as s FROM ${bunSql(String(table))}`
+      const q = _sql`SELECT SUM(${_sql(String(column))}) as s FROM ${_sql(String(table))}`
       const [row] = await (q as any).execute()
       return Number((row?.s ?? 0) as any)
     },
     async avg(table, column) {
-      const q = bunSql`SELECT AVG(${bunSql(String(column))}) as a FROM ${bunSql(String(table))}`
+      const q = _sql`SELECT AVG(${_sql(String(column))}) as a FROM ${_sql(String(table))}`
       const [row] = await (q as any).execute()
       return Number((row?.a ?? 0) as any)
     },
     async min(table, column) {
-      const q = bunSql`SELECT MIN(${bunSql(String(column))}) as m FROM ${bunSql(String(table))}`
+      const q = _sql`SELECT MIN(${_sql(String(column))}) as m FROM ${_sql(String(table))}`
       const [row] = await (q as any).execute()
       return (row?.m as any)
     },
     async max(table, column) {
-      const q = bunSql`SELECT MAX(${bunSql(String(column))}) as m FROM ${bunSql(String(table))}`
+      const q = _sql`SELECT MAX(${_sql(String(column))}) as m FROM ${_sql(String(table))}`
       const [row] = await (q as any).execute()
       return (row?.m as any)
     },
