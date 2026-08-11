@@ -18,8 +18,12 @@ generated/
 bin/qbx
 packages/bun-query-builder/bin/qbx
 /packages/bun-query-builder/sql
-packages/benchmark/benchmark.db-shm
-packages/benchmark/benchmark.db-wal
+# SQLite scratch databases, wherever a test or a manual run happens to drop
+# them. These were previously listed one path at a time, so `other.db` and its
+# -shm/-wal siblings ended up committed at the repo root.
+*.db
+*.db-shm
+*.db-wal
 *.sql
 *.csv
 users.json
