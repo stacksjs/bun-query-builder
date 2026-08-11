@@ -1451,6 +1451,69 @@ interface ResolvedRelation {
   pivotTimestamps?: boolean
 }
 
+/**
+ * Relation kinds `resolveRelation` can actually resolve, and the ones a model
+ * may declare. `ModelDefinition` accepts considerably more than the resolver
+ * implements, which is the more confusing half of the silent-miss problem
+ * below: a `morphMany` is accepted by the types, encouraged by autocomplete,
+ * and then does nothing at all.
+ */
+const RESOLVABLE_RELATION_KINDS = ['hasMany', 'hasOne', 'belongsTo', 'belongsToMany'] as const
+const DECLARABLE_RELATION_KINDS = [
+  ...RESOLVABLE_RELATION_KINDS,
+  'hasOneThrough',
+  'hasManyThrough',
+  'morphOne',
+  'morphMany',
+  'morphTo',
+  'morphToMany',
+  'morphedByMany',
+] as const
+
+/** Every relation name declared under `kind`, in declaration order. */
+function relationNamesFor(definition: ModelDefinition, kind: string): string[] {
+  const rel = (definition as unknown as Record<string, unknown>)[kind]
+  if (!rel)
+    return []
+  if (Array.isArray(rel))
+    return rel.map(item => (typeof item === 'string' ? item : String((item as any)?.model ?? ''))).filter(Boolean)
+  if (typeof rel === 'object')
+    return Object.keys(rel as Record<string, unknown>)
+  if (typeof rel === 'string')
+    return [rel]
+  return []
+}
+
+/**
+ * Why an eager load found nothing, phrased for the person who typed the name.
+ *
+ * `eagerLoadRelation` used to `return` here. A misspelled relation loaded
+ * nothing and said nothing — indistinguishable from a relation that genuinely
+ * has no rows — and so did every relation kind the resolver does not implement.
+ * Both are mistakes worth surfacing, and they need different wording: one is a
+ * typo, the other is a gap in this library that no amount of squinting at the
+ * model will explain.
+ */
+function unresolvedRelationMessage(definition: ModelDefinition, relationName: string): string {
+  const model = definition.name ?? definition.table ?? 'model'
+
+  const declaredUnder = DECLARABLE_RELATION_KINDS.filter(kind =>
+    relationNamesFor(definition, kind).some(n => n.toLowerCase() === relationName.toLowerCase()),
+  )
+  const unsupported = declaredUnder.filter(k => !(RESOLVABLE_RELATION_KINDS as readonly string[]).includes(k))
+
+  if (unsupported.length > 0) {
+    return `[orm] '${model}' declares '${relationName}' as ${unsupported.join('/')}, which eager loading does not support yet. `
+      + `Supported kinds: ${RESOLVABLE_RELATION_KINDS.join(', ')}. `
+      + `Load it with a manual query for now — see stacksjs/bun-query-builder#1068.`
+  }
+
+  const available = RESOLVABLE_RELATION_KINDS.flatMap(kind => relationNamesFor(definition, kind))
+  return available.length > 0
+    ? `[orm] '${model}' has no relation '${relationName}'. Available: ${available.join(', ')}.`
+    : `[orm] '${model}' has no relation '${relationName}' — it declares no relations at all.`
+}
+
 function resolveRelation(definition: ModelDefinition, relationName: string): ResolvedRelation | null {
   const parentName = definition.name
   const parentTable = definition.table
@@ -2527,7 +2590,8 @@ class ModelQueryBuilder<
         relationCache.clear()
       relationCache.set(cacheKey, rel)
     }
-    if (!rel) return
+    if (!rel)
+      throw new Error(unresolvedRelationMessage(this._definition as ModelDefinition, relationName))
 
     if (rel.type === 'hasMany' || rel.type === 'hasOne') {
       // Get parent IDs
