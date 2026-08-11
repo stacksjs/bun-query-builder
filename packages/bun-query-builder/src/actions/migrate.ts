@@ -383,6 +383,88 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
 
 // `dir` is the models directory. This function runs the SQL corpus, which it
 // finds from the workspace root, so it has no use for it — the parameter stays
+/**
+ * The advisory-lock name every migrate run contends on.
+ *
+ * Constant on purpose: two processes must pick the same key to serialise, and
+ * migrations are global to a database rather than per-model or per-directory.
+ */
+const MIGRATION_LOCK_KEY = 'bun-query-builder:migrate'
+
+/**
+ * Statements that cannot run inside a transaction, so a file containing one
+ * must be applied unwrapped.
+ *
+ * Postgres rejects `CREATE INDEX CONCURRENTLY` and `DROP INDEX CONCURRENTLY`
+ * inside a transaction block outright, and `VACUUM` likewise — and building an
+ * index concurrently is exactly what a migration on a live table SHOULD do, so
+ * refusing to support it is not an option. Files that use them keep the old
+ * unwrapped behaviour and say so, rather than failing on something they were
+ * right to write.
+ */
+const NON_TRANSACTIONAL_SQL = /\bCONCURRENTLY\b|^\s*VACUUM\b/im
+
+/**
+ * Whether this dialect can roll a failed migration file back.
+ *
+ * Postgres has fully transactional DDL. SQLite does too, for the statements a
+ * migration uses. MySQL does NOT: `CREATE TABLE`, `ALTER TABLE` and friends
+ * force an implicit commit, so wrapping a file there produces a transaction
+ * that silently commits mid-way and hands back false confidence — worse than
+ * not wrapping, because it looks like it worked.
+ */
+function supportsTransactionalDdl(dialect: SupportedDialect): boolean {
+  return dialect === 'postgres' || dialect === 'sqlite'
+}
+
+/**
+ * Run `fn` while holding the migration advisory lock.
+ *
+ * Two processes booting at once — an ordinary rolling deploy — both read the
+ * same pending set and both apply it. The lock makes the second wait for the
+ * first, then find nothing pending.
+ *
+ * The lock is taken on a RESERVED connection and released on the same one.
+ * That is not incidental: a Postgres session lock lives until it is released
+ * or the session ends, and a pooled connection does not end when it goes back
+ * to the pool. Taking it on a pooled builder would strand the lock on whatever
+ * connection happened to serve the call, and the next migrate would wait
+ * forever on a lock nobody meant to hold.
+ *
+ * SQLite has no advisory-lock primitive and a single-writer file, so it runs
+ * unlocked rather than throwing.
+ */
+async function withMigrationLock<T>(dialect: SupportedDialect, fn: () => Promise<T>): Promise<T> {
+  if (dialect === 'sqlite')
+    return await fn()
+
+  const qb = createQueryBuilder() as any
+  let reserved: any
+  try {
+    reserved = await qb.reserve()
+  }
+  catch {
+    // A driver that cannot reserve (or a mock) should not block migrating.
+    return await fn()
+  }
+
+  let held = false
+  try {
+    await reserved.advisoryLock(MIGRATION_LOCK_KEY)
+    held = true
+    return await fn()
+  }
+  finally {
+    try {
+      if (held)
+        await reserved.advisoryUnlock(MIGRATION_LOCK_KEY)
+    }
+    finally {
+      reserved.release?.()
+    }
+  }
+}
+
 // because it is public API and every caller passes it.
 // eslint-disable-next-line pickier/no-unused-vars
 export async function executeMigration(dir?: string): Promise<boolean> {
@@ -417,58 +499,86 @@ export async function executeMigration(dir?: string): Promise<boolean> {
     // Create migrations table if it doesn't exist
     await createMigrationsTable(qb, dialect)
 
-    // Get already executed migrations
-    const executedMigrations = await getExecutedMigrations(qb, dialect)
+    // Everything from here runs under the migration lock, and the read of the
+    // ledger is deliberately INSIDE it: computing `pending` before locking is
+    // what lets two processes agree on the same work and then both do it.
+    return await withMigrationLock(dialect, async () => {
+      // Get already executed migrations
+      const executedMigrations = await getExecutedMigrations(qb, dialect)
 
-    /*
-     * Every migration file is permanent, and every one that runs is recorded.
-     *
-     * Generated ALTERs used to be "transient": replayed on every migrate
-     * rather than recorded, then deleted from disk once applied. That made
-     * the corpus a log of one machine's session instead of the schema. Change
-     * an attribute, migrate, and the ALTER that carried the change was gone —
-     * so a teammate who cloned the repo and migrated got the table as it was
-     * BEFORE the change, with no error and no clue. The generator writes each
-     * change once (`createMigrationFile` refuses to write a statement the
-     * corpus already contains), so there is nothing left for replay to fix,
-     * and everything to lose by deleting the evidence.
-     */
-    const pending = scriptFiles.filter(file => !executedMigrations.includes(file))
+      /*
+       * Every migration file is permanent, and every one that runs is recorded.
+       *
+       * Generated ALTERs used to be "transient": replayed on every migrate
+       * rather than recorded, then deleted from disk once applied. That made
+       * the corpus a log of one machine's session instead of the schema. Change
+       * an attribute, migrate, and the ALTER that carried the change was gone —
+       * so a teammate who cloned the repo and migrated got the table as it was
+       * BEFORE the change, with no error and no clue. The generator writes each
+       * change once (`createMigrationFile` refuses to write a statement the
+       * corpus already contains), so there is nothing left for replay to fix,
+       * and everything to lose by deleting the evidence.
+       */
+      const pending = scriptFiles.filter(file => !executedMigrations.includes(file))
 
-    if (pending.length === 0) {
-      info('-- No pending migrations to execute')
-      return true
-    }
-
-    info(`-- Executing ${pending.length} migration${pending.length === 1 ? '' : 's'}`)
-
-    for (const file of pending) {
-      const filePath = join(sqlDir, file)
-      info(`-- Executing: ${file}`)
-
-      try {
-        await qb.file(filePath)
-        await recordMigration(qb, file, dialect)
-        info(`-- ✓ Migration ${file} executed and recorded`)
+      if (pending.length === 0) {
+        info('-- No pending migrations to execute')
+        return true
       }
-      catch (err) {
-        // A generated migration whose change is already in place is not a
-        // failure, it is a bookkeeping gap: the file was applied on a run that
-        // died before recording it, or under the old transient behaviour that
-        // never recorded it at all. Record it and carry on — the schema is
-        // where the file says it should be. Anything else, including every
-        // authored migration, fails loudly.
-        if (isGeneratedMigration(sqlDir, file) && isAlreadyAppliedError(err)) {
-          await recordMigration(qb, file, dialect)
-          info(`-- ✓ Migration ${file} was already applied; recorded it (${err instanceof Error ? err.message : String(err)})`)
-          continue
+
+      info(`-- Executing ${pending.length} migration${pending.length === 1 ? '' : 's'}`)
+
+      for (const file of pending) {
+        const filePath = join(sqlDir, file)
+        info(`-- Executing: ${file}`)
+
+        try {
+          // Apply the file and record it as ONE unit where the dialect allows.
+          //
+          // Unwrapped, a file is applied statement by statement: if statement 3
+          // throws, statements 1 and 2 are already committed and the file is
+          // neither applied nor cleanly re-runnable. Recording inside the same
+          // transaction closes the matching gap at the other end, where the
+          // schema changed but the process died before the ledger was written.
+          const wrappable = supportsTransactionalDdl(dialect)
+            && !NON_TRANSACTIONAL_SQL.test(readFileSync(filePath, 'utf-8'))
+
+          if (wrappable) {
+            await qb.transaction(async (tx: any) => {
+              await tx.file(filePath)
+              await recordMigration(tx, file, dialect)
+            })
+          }
+          else {
+            await qb.file(filePath)
+            await recordMigration(qb, file, dialect)
+            if (!supportsTransactionalDdl(dialect))
+              info(`--   (${dialect} commits DDL implicitly, so ${file} was not applied atomically)`)
+            else
+              info(`--   (${file} contains a statement that cannot run in a transaction, so it was not applied atomically)`)
+          }
+          info(`-- ✓ Migration ${file} executed and recorded`)
         }
-        console.error(`-- ✗ Migration ${file} failed:`, err)
-        throw err
+        catch (err) {
+          // A generated migration whose change is already in place is not a
+          // failure, it is a bookkeeping gap: the file was applied on a run that
+          // died before recording it, or under the old transient behaviour that
+          // never recorded it at all. Record it and carry on — the schema is
+          // where the file says it should be. Anything else, including every
+          // authored migration, fails loudly.
+          if (isGeneratedMigration(sqlDir, file) && isAlreadyAppliedError(err)) {
+            await recordMigration(qb, file, dialect)
+            info(`-- ✓ Migration ${file} was already applied; recorded it (${err instanceof Error ? err.message : String(err)})`)
+            continue
+          }
+          console.error(`-- ✗ Migration ${file} failed:`, err)
+          throw err
+        }
       }
-    }
 
-    info('-- All migrations executed successfully')
+        info('-- All migrations executed successfully')
+        return true
+    })
   }
   catch (err) {
     console.error('-- Migration execution failed:', err)

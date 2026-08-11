@@ -2496,6 +2496,20 @@ finally { reserved.release() }
   advisoryLock?: (key: number | string) => Promise<void>
   /** Try to take an advisory lock and return false if unavailable (PostgreSQL only). */
   tryAdvisoryLock?: (key: number | string) => Promise<boolean>
+  /**
+   * Release an advisory lock taken on THIS builder's connection.
+   *
+   * Both lock helpers existed without this one, which made them a trap rather
+   * than a tool: a Postgres session lock is held until it is released or the
+   * SESSION ends, and a pooled connection does not end when it is returned to
+   * the pool. So `advisoryLock()` on a pooled builder leaked the lock onto
+   * whichever connection happened to serve it, and the next caller waited
+   * forever on a lock nobody was holding on purpose.
+   *
+   * Take the lock on a `reserve()`d connection and release it through the same
+   * builder.
+   */
+  advisoryUnlock?: (key: number | string) => Promise<boolean>
   /** Get all relationships defined for a table. */
   getRelationships?: (table: string) => Record<string, any>
   /** Check if a table has a specific relationship. */
@@ -2780,6 +2794,23 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
   const _sql: DriverConnection = (state?.sql ?? getOrCreateBunSql()) as unknown as DriverConnection
   const meta = state?.meta
   const schema = state?.schema
+
+  /**
+   * The 32-bit key Postgres advisory locks take, derived from a string name.
+   *
+   * Extracted because lock, try-lock and unlock each carried their own copy:
+   * three transcriptions of one hash, where any drift between them means
+   * `advisoryUnlock` computes a different key than `advisoryLock` did and
+   * silently releases nothing.
+   */
+  function advisoryLockKey(key: number | string): number {
+    if (typeof key === 'number')
+      return key
+    const s = String(key)
+    let hash = 7
+    for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
+    return Math.abs(hash)
+  }
 
   /**
    * The hooks this builder should fire.
@@ -7025,10 +7056,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     async advisoryLock(key: number | string): Promise<void> {
       if (config.dialect === 'postgres') {
-        const s = String(key)
-        let hash = 7
-        for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
-        const k = typeof key === 'number' ? key : Math.abs(hash)
+        const k = advisoryLockKey(key)
         const q = _sql`SELECT pg_advisory_lock(${k})`
         await runWithHooks<any[]>(q, 'raw')
         return
@@ -7049,10 +7077,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     },
     async tryAdvisoryLock(key: number | string): Promise<boolean> {
       if (config.dialect === 'postgres') {
-        const s = String(key)
-        let hash = 7
-        for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
-        const k = typeof key === 'number' ? key : Math.abs(hash)
+        const k = advisoryLockKey(key)
         const q = _sql`SELECT pg_try_advisory_lock(${k}) as ok`
         const rows = await runWithHooks<any[]>(q, 'raw')
         return Boolean(rows?.[0]?.ok)
@@ -7069,6 +7094,24 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // callers fall through to whatever non-distributed path they
       // had. Loud throw would crash apps that gracefully degrade
       // when locks aren't held.
+      return false
+    },
+    async advisoryUnlock(key: number | string): Promise<boolean> {
+      // Must run on the same connection that took the lock — hence `_sql`,
+      // and hence the requirement that callers hold a reserved builder.
+      if (config.dialect === 'postgres') {
+        const k = advisoryLockKey(key)
+        const q = _sql`SELECT pg_advisory_unlock(${k}) as ok`
+        const rows = await runWithHooks<any[]>(q, 'raw')
+        return Boolean(rows?.[0]?.ok)
+      }
+      if (isMysqlLike(config.dialect)) {
+        const lockName = `bqb:${String(key)}`
+        const q = _sql`SELECT RELEASE_LOCK(${lockName}) AS ok`
+        const rows = await runWithHooks<any[]>(q, 'raw')
+        return Number(rows?.[0]?.ok) === 1
+      }
+      // SQLite never took one; mirror tryAdvisoryLock's graceful shape.
       return false
     },
     unsafe(query: string, params?: any[]) {
