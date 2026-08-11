@@ -1,5 +1,26 @@
 {
-  "extends": [
-    "github>ow3org/renovate-config"
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "enabled": false,
+  "_comment": [
+    "Renovate is off: buddy-bot owns dependency updates here (see CLAUDE.md).",
+    "",
+    "Both bots were live on the same manifests, which does not merely duplicate",
+    "work — it deadlocks. They both rewrite bun.lock, so whichever lands first",
+    "invalidates every open PR from the other. That is why all six renovate PRs",
+    "were mergeable and all six buddy-bot PRs were conflicting at the same",
+    "moment, and why the queue reached 12 open PRs for 3 distinct upgrades.",
+    "",
+    "It also cost a broken main: renovate's #999 grouped kysely 0.28 -> 0.29 as",
+    "'non-major', but for a 0.x package a minor IS breaking, and it ignored",
+    "kysely-bun-sqlite's declared peer of ^0.28.2. That reddened typecheck on",
+    "main and blocked a release.",
+    "",
+    "This file is kept rather than deleted on purpose: renovate treats a repo",
+    "with no config as un-onboarded and opens a fresh 'Configure Renovate' PR.",
+    "Disabling in-repo is the only way to stay quiet. For belt and braces,",
+    "deselect this repository in the Renovate GitHub App installation settings.",
+    "",
+    "GitHub Actions bumps are handled by .github/dependabot.yml, because",
+    "buddy-bot generates workflow files but does not bump `uses:` pins."
   ]
 }
