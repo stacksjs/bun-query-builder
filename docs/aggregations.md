@@ -3,6 +3,70 @@ title: Aggregations
 description: Perform aggregate calculations with the query builder.
 ---
 
+# Aggregations
+
+Perform aggregate calculations like COUNT, SUM, AVG, MIN, and MAX with full type safety.
+
+## Count
+
+Count records in a table:
+
+```typescript
+import { createQueryBuilder } from 'bun-query-builder'
+
+const db = createQueryBuilder<typeof schema>({ schema, meta })
+
+// Count all records
+const totalUsers = await db.selectFrom('users').count()
+console.log(totalUsers) // 150
+
+// Count with conditions
+const activeUsers = await db
+  .selectFrom('users')
+  .where({ active: true })
+  .count()
+
+// Count specific column (excludes NULL)
+const usersWithEmail = await db.selectFrom('users').count('email')
+
+// Count distinct values
+const uniqueCountries = await db.selectFrom('users').countDistinct('country')
+```
+
+## Sum
+
+Calculate the sum of a column:
+
+```typescript
+// Sum of all order amounts
+const totalRevenue = await db.selectFrom('orders').sum('amount')
+console.log(totalRevenue) // 125000.50
+
+// Sum with conditions
+const yearlyRevenue = await db
+  .selectFrom('orders')
+  .where('created_at', '>=', '2024-01-01')
+  .sum('amount')
+```
+
+## Average
+
+Calculate the average of a column:
+
+```typescript
+// Average age of users
+const avgAge = await db.selectFrom('users').avg('age')
+console.log(avgAge) // 32.5
+
+// Average with conditions
+const avgActiveUserAge = await db
+  .selectFrom('users')
+  .where({ active: true })
+  .avg('age')
+```
+
+## Max
+
 Get the maximum value:
 
 ```typescript

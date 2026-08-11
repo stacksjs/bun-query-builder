@@ -872,9 +872,13 @@ query-builder migrate:status  # Verify migration state
 - **Access Restrictions**: Limit who can use `unsafe` command in production
 
 ```bash
-# Good: Use environment variables for sensitive data
+# Good: Use environment variables for sensitive data.
+# DB_CONNECTION must name the dialect — it is what arms the rest of the
+# DB_* connection variables. Without it they are ignored.
+export DB_CONNECTION=postgres
 export DB_HOST=production.db.company.com
-export DB_USER=readonly_user
+export DB_USERNAME=readonly_user
+export DB_PASSWORD="$PGPASSWORD"
 query-builder ping
 
 # Good: Validate parameters before use
