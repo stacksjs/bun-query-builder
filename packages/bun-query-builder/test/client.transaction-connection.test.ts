@@ -30,19 +30,11 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { SQL } from 'bun'
 import { describe, expect, it } from 'bun:test'
+import { PG_URL, probePostgres } from './pg'
 
-const PG_URL = `postgres://${process.env.USER}@localhost:5432/postgres`
+const pgAvailable = await probePostgres()
 
-let pgAvailable = false
-try {
-  const probe = new SQL(PG_URL)
-  await probe.unsafe('SELECT 1')
-  await probe.end()
-  pgAvailable = true
-}
-catch {
-  pgAvailable = false
-}
+
 
 describe.skipIf(!pgAvailable)('builder-local connection routing', () => {
   it('keeps transactional writes inside the transaction, and reads inside it current', () => {

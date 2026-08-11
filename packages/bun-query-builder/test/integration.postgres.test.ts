@@ -14,18 +14,10 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { SQL } from 'bun'
 import { describe, expect, it } from 'bun:test'
+import { PG_URL, probePostgres } from './pg'
 
-const PG_URL = `postgres://${process.env.USER}@localhost:5432/postgres`
-let pgAvailable = false
-try {
-  const probe = new SQL(PG_URL)
-  await probe.unsafe('SELECT 1')
-  await probe.end()
-  pgAvailable = true
-}
-catch {
-  pgAvailable = false
-}
+const pgAvailable = await probePostgres()
+
 
 describe.skipIf(!pgAvailable)('Postgres integration (#1038)', () => {
   it('runs ORM CRUD + relations + raw builder against live Postgres', () => {
@@ -47,7 +39,9 @@ await raw.unsafe('CREATE TABLE _qb_users (id serial primary key, name text, age 
 await raw.unsafe('CREATE TABLE _qb_posts (id serial primary key, title text, pguser_id int)')
 await raw.end()
 
-setConfig({ dialect: 'postgres', database: { database: 'postgres', username: process.env.USER, host: 'localhost', port: 5432, password: '' } })
+// Configure from the same URL the gate probed, not a second hand-built copy of
+// it — the two drifting is what made this file skip in CI.
+setConfig({ dialect: 'postgres', database: { url: URL } })
 resetConnection()
 
 // defineModel registers in the model registry, so relations resolve to the
