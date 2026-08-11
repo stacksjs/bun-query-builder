@@ -514,7 +514,12 @@ export interface QueryBuilderConfig {
  * `QueryBuilderConfig`. If one is ever added, give it a clause here too: a
  * mapped type shreds its methods exactly like a function's.
  */
-export type DeepPartial<T> = T extends (...args: any[]) => any // eslint-disable-line pickier/no-unused-vars -- `args` names a parameter in a function TYPE, not a binding
+// `args` names a parameter in a function TYPE, not a binding, so there is
+// nothing that could reference it. The trailing `eslint-disable-line` form this
+// used to carry stopped being honoured in pickier 0.1.56; only the
+// next-line form is.
+// eslint-disable-next-line pickier/no-unused-vars
+export type DeepPartial<T> = T extends (...args: any[]) => any
   ? T
   : T extends readonly (infer E)[]
     ? readonly E[]
