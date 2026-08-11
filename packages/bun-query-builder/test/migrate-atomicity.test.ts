@@ -24,20 +24,12 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { SQL } from 'bun'
 import { describe, expect, it } from 'bun:test'
+import { PG_URL, probePostgres } from './pg'
+
+const pgAvailable = await probePostgres()
 
 const SRC = resolve(import.meta.dir, '../src/index.ts')
-const PG_URL = `postgres://${process.env.USER}@localhost:5432/postgres`
 
-let pgAvailable = false
-try {
-  const probe = new SQL(PG_URL)
-  await probe.unsafe('SELECT 1')
-  await probe.end()
-  pgAvailable = true
-}
-catch {
-  pgAvailable = false
-}
 
 /** A throwaway workspace with a migrations directory. */
 function workspace(files: Record<string, string>): string {
