@@ -8,7 +8,7 @@ Learn how to update existing data in your database using bun-query-builder.
 
 ```typescript
 await db
-  .update('users')
+  .updateTable('users')
   .set({ active: false })
   .where({ id: 1 })
   .execute()
@@ -18,7 +18,7 @@ await db
 
 ```typescript
 await db
-  .update('users')
+  .updateTable('users')
   .set({
     name: 'John Smith',
     email: 'john.smith@example.com',
@@ -34,7 +34,7 @@ Return the updated rows:
 
 ```typescript
 const updated = await db
-  .update('users')
+  .updateTable('users')
   .set({ status: 'verified' })
   .where({ email_verified: true })
   .returning(['id', 'name', 'status'])
@@ -49,7 +49,7 @@ console.log(`Updated ${updated.length} users`)
 
 ```typescript
 await db
-  .update('users')
+  .updateTable('users')
   .set({ subscription: 'expired' })
   .where('subscription_ends_at', '<', new Date())
   .andWhere('subscription', '!=', 'lifetime')
@@ -60,7 +60,7 @@ await db
 
 ```typescript
 await db
-  .update('posts')
+  .updateTable('posts')
   .set({ status: 'archived' })
   .whereIn('id', [1, 2, 3, 4, 5])
   .execute()
@@ -73,14 +73,14 @@ await db
 ```typescript
 // Increment a column
 await db
-  .update('posts')
+  .updateTable('posts')
   .increment('views', 1)
   .where({ id: 1 })
   .execute()
 
 // Increment by custom amount
 await db
-  .update('users')
+  .updateTable('users')
   .increment('points', 100)
   .where({ id: userId })
   .execute()
@@ -91,14 +91,14 @@ await db
 ```typescript
 // Decrement a column
 await db
-  .update('products')
+  .updateTable('products')
   .decrement('stock', 1)
   .where({ id: productId })
   .execute()
 
 // Ensure non-negative
 await db
-  .update('products')
+  .updateTable('products')
   .decrement('stock', quantity)
   .where({ id: productId })
   .where('stock', '>=', quantity)
@@ -125,7 +125,7 @@ await db.updateMany(
 // Update multiple records with different values
 for (const update of updates) {
   await db
-    .update('products')
+    .updateTable('products')
     .set({ price: update.newPrice })
     .where({ id: update.productId })
     .execute()
@@ -135,7 +135,7 @@ for (const update of updates) {
 await db.transaction(async (trx) => {
   for (const update of updates) {
     await trx
-      .update('products')
+      .updateTable('products')
       .set({ price: update.newPrice })
       .where({ id: update.productId })
       .execute()
@@ -149,7 +149,7 @@ await db.transaction(async (trx) => {
 
 ```typescript
 await db
-  .update('users')
+  .updateTable('users')
   .set({
     login_count: sql`login_count + 1`,
     last_login: sql`NOW()`
@@ -163,7 +163,7 @@ await db
 ```typescript
 // Update JSON field
 await db
-  .update('users')
+  .updateTable('users')
   .set({
     preferences: sql`JSON_SET(preferences, '$.theme', 'dark')`
   })
@@ -212,7 +212,7 @@ const db = createQueryBuilder({
 
 ```typescript
 await db
-  .update('users')
+  .updateTable('users')
   .set({ deleted_at: new Date() })
   .where({ id: 1 })
   .execute()
@@ -222,7 +222,7 @@ await db
 
 ```typescript
 await db
-  .update('users')
+  .updateTable('users')
   .set({ deleted_at: null })
   .where({ id: 1 })
   .execute()
@@ -245,7 +245,7 @@ async function updateProfile(userId: number, updates: ProfileUpdate) {
   }
 
   const user = await db
-    .update('users')
+    .updateTable('users')
     .set(sanitized)
     .where({ id: userId })
     .returning(['id', 'name', 'bio', 'avatar_url', 'website'])
@@ -263,7 +263,7 @@ async function archiveOldPosts(daysOld: number) {
   cutoffDate.setDate(cutoffDate.getDate() - daysOld)
 
   const result = await db
-    .update('posts')
+    .updateTable('posts')
     .set({
       status: 'archived',
       archived_at: new Date()
@@ -296,7 +296,7 @@ async function processOrder(orderId: number, items: OrderItem[]) {
 
       // Decrement stock
       await trx
-        .update('products')
+        .updateTable('products')
         .decrement('stock', item.quantity)
         .where({ id: item.product_id })
         .execute()
@@ -304,7 +304,7 @@ async function processOrder(orderId: number, items: OrderItem[]) {
 
     // Update order status
     await trx
-      .update('orders')
+      .updateTable('orders')
       .set({ status: 'processing' })
       .where({ id: orderId })
       .execute()
@@ -322,7 +322,7 @@ async function updateWithVersion(
   currentVersion: number
 ) {
   const result = await db
-    .update(table)
+    .updateTable(table)
     .set({
       ...data,
       version: currentVersion + 1
@@ -348,10 +348,10 @@ async function updateWithVersion(
 
 ```typescript
 // Good: Targeted update with index
-await db.update('users').set({ active: false }).where({ id: 1 }).execute()
+await db.updateTable('users').set({ active: false }).where({ id: 1 }).execute()
 
 // Avoid: Table scan
-await db.update('users').set({ active: false }).where('name', 'LIKE', '%test%').execute()
+await db.updateTable('users').set({ active: false }).where('name', 'LIKE', '%test%').execute()
 ```
 
 ## Next Steps

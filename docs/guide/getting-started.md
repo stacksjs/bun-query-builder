@@ -127,7 +127,7 @@ await db.insertMany('users', [
 ```typescript
 // Update by condition
 await db
-  .update('users')
+  .updateTable('users')
   .set({ active: false })
   .where({ id: 1 })
   .execute()

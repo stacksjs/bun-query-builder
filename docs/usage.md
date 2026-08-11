@@ -136,7 +136,7 @@ await db
 // Conditional delete (Chris's data cleanup)
 await db
   .deleteFrom('sessions')
-  .where(['last_activity', '<', new Date(Date.now() - 30 _ 24 _ 60 _ 60 _ 1000)])
+  .where(['last_activity', '<', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)])
   .execute()
 ```
 
@@ -381,7 +381,7 @@ query-builder file ./scripts/analytics.sql --output results.json
 
 ```bash
 # Performance analysis for Chris's dashboard queries
-query-builder explain "SELECT _ FROM users JOIN teams ON users.team_id = teams.id WHERE users.active = true"
+query-builder explain "SELECT * FROM users JOIN teams ON users.team_id = teams.id WHERE users.active = true"
 
 # Avery's e-commerce query optimization
 query-builder explain "SELECT p._, c.name as category_name FROM products p JOIN categories c ON p.category_id = c.id WHERE p.featured = true"
@@ -394,7 +394,7 @@ query-builder explain --analyze "SELECT u.name, COUNT(p.id) as post_count FROM u
 
 ```bash
 # Parameterized queries (use with caution)
-query-builder unsafe "SELECT _ FROM users WHERE id = $1 AND team_id = $2" --params "[1, 3]"
+query-builder unsafe "SELECT * FROM users WHERE id = $1 AND team_id = $2" --params "[1, 3]"
 
 # Bulk operations with transaction support
 query-builder file ./scripts/bulk_update.sql --transaction --batch-size 1000

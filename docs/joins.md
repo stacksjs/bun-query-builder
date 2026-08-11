@@ -2,6 +2,70 @@
 title: Joins
 description: Build type-safe JOIN queries with the query builder.
 ---
+
+# Joins
+
+Build type-safe JOIN queries to combine data from multiple tables.
+
+## Inner Join
+
+Returns only records that have matching values in both tables:
+
+```typescript
+import { createQueryBuilder } from 'bun-query-builder'
+
+const db = createQueryBuilder<typeof schema>({ schema, meta })
+
+// Basic inner join
+const results = await db
+  .selectFrom('posts')
+  .join('users', 'posts.user_id', 'users.id')
+  .get()
+
+// With column selection
+const postsWithAuthors = await db
+  .selectFrom('posts')
+  .select(['posts.title', 'posts.content', 'users.name AS author'])
+  .join('users', 'posts.user_id', 'users.id')
+  .get()
+```
+
+## Left Join
+
+Returns all records from the left table and matching records from the right table:
+
+```typescript
+// Left join - get all users with their posts (if any)
+const usersWithPosts = await db
+  .selectFrom('users')
+  .select(['users.name', 'posts.title'])
+  .leftJoin('posts', 'users.id', 'posts.user_id')
+  .get()
+
+// Users without posts will have null for posts.title
+```
+
+## Right Join
+
+Returns all records from the right table and matching records from the left table:
+
+```typescript
+// Right join
+const postsWithUsers = await db
+  .selectFrom('posts')
+  .select(['posts.title', 'users.name'])
+  .rightJoin('users', 'posts.user_id', 'users.id')
+  .get()
+```
+
+## Cross Join
+
+Returns the Cartesian product of both tables:
+
+```typescript
+// Cross join - combine every row from both tables
+const combinations = await db
+  .selectFrom('colors')
   .crossJoin('sizes')
   .get()
 

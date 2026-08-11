@@ -2,6 +2,68 @@
 title: Select Queries
 description: Build type-safe SELECT queries with the query builder.
 ---
+
+# Select Queries
+
+Build type-safe SELECT queries with full column and table inference.
+
+## Basic Select
+
+```typescript
+import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta } from 'bun-query-builder'
+
+const db = createQueryBuilder<typeof schema>({ schema, meta })
+
+// Select all columns from a table
+const users = await db.selectFrom('users').get()
+
+// Select specific columns
+const names = await db
+  .selectFrom('users')
+  .select(['name', 'email'])
+  .get()
+
+// Select with alias
+const data = await db
+  .selectFrom('users')
+  .select(['name AS userName', 'email AS userEmail'])
+  .get()
+```
+
+## Where Clauses
+
+```typescript
+// Simple where
+const activeUsers = await db
+  .selectFrom('users')
+  .where({ active: true })
+  .get()
+
+// Where with operator
+const adults = await db
+  .selectFrom('users')
+  .where('age', '>=', 18)
+  .get()
+
+// Multiple conditions (AND)
+const activeAdults = await db
+  .selectFrom('users')
+  .where({ active: true })
+  .andWhere('age', '>=', 18)
+  .get()
+
+// OR conditions
+const results = await db
+  .selectFrom('users')
+  .where({ role: 'admin' })
+  .orWhere({ role: 'moderator' })
+  .get()
+```
+
+## Ordering Results
+
+```typescript
+// Order ascending (default)
 const users = await db
   .selectFrom('users')
   .orderBy('name')

@@ -2,6 +2,70 @@
 title: Insert Queries
 description: Insert records into your database with type-safe queries.
 ---
+
+# Insert Queries
+
+Insert single or multiple records with full type safety.
+
+## Basic Insert
+
+```typescript
+import { createQueryBuilder } from 'bun-query-builder'
+
+const db = createQueryBuilder<typeof schema>({ schema, meta })
+
+// Insert a single record
+await db.create('users', {
+  name: 'John Doe',
+  email: 'john@example.com',
+  active: true,
+})
+
+// Insert returns the inserted record (with auto-generated ID)
+const newUser = await db.create('users', {
+  name: 'Jane Doe',
+  email: 'jane@example.com',
+})
+
+console.log(newUser.id) // Auto-generated ID
+```
+
+## Insert Many Records
+
+Insert multiple records efficiently:
+
+```typescript
+// Insert many records at once
+await db.insertMany('users', [
+  { name: 'Alice', email: 'alice@example.com' },
+  { name: 'Bob', email: 'bob@example.com' },
+  { name: 'Charlie', email: 'charlie@example.com' },
+])
+```
+
+## Insert with Timestamps
+
+Timestamps are automatically added if configured:
+
+```typescript
+// If your model has timestamps enabled
+await db.create('users', {
+  name: 'John Doe',
+  email: 'john@example.com',
+})
+// created_at and updated_at are auto-populated
+```
+
+## Insert or Ignore
+
+Insert only if the record doesn't exist (based on unique constraints):
+
+```typescript
+// Insert or ignore on conflict
+await db.insertOrIgnore('users', {
+  email: 'existing@example.com',
+  name: 'New Name',
+})
 ```
 
 ## Upsert (Insert or Update)
@@ -66,7 +130,7 @@ const db = createQueryBuilder<typeof schema>({
 })
 
 // Hooks are called automatically
-await db.insert('users', {
+await db.create('users', {
   name: 'John Doe',
   email: 'john@example.com',
 })
@@ -98,7 +162,7 @@ Insert related records:
 ```typescript
 
 // First insert the user
-const user = await db.insert('users', {
+const user = await db.create('users', {
   name: 'John Doe',
   email: 'john@example.com',
 })
@@ -118,7 +182,7 @@ Wrap inserts in a transaction for atomicity:
 ```typescript
 
 await db.transaction(async (trx) => {
-  const user = await trx.insert('users', {
+  const user = await trx.create('users', {
     name: 'John Doe',
     email: 'john@example.com',
   })
@@ -178,7 +242,7 @@ const db = createQueryBuilder<typeof schema>({
 // Insert operations
 async function createUsers() {
   // Single insert
-  const admin = await db.insert('users', {
+  const admin = await db.create('users', {
     name: 'Admin User',
     email: 'admin@example.com',
     active: true,

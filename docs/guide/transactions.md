@@ -17,7 +17,7 @@ await transaction(async (trx) => {
     .execute()
 
   await trx
-    .update('users')
+    .updateTable('users')
     .set({ has_account: true })
     .where({ id: 1 })
     .execute()
@@ -77,20 +77,24 @@ await transaction(fn, { isolationLevel: 'serializable' })
 
 Create savepoints within a transaction:
 
+`savepoint()` takes a callback, like `transaction()` does — there is no
+`rollbackToSavepoint()`. The savepoint is released when the callback returns and
+rolled back if it throws, so "roll back to the savepoint" means "let the
+callback throw and catch it outside".
+
 ```typescript
-await transaction(async (trx) => {
+await db.transaction(async (trx) => {
   await trx.insertInto('logs').values({ message: 'Step 1' }).execute()
 
-  // Create savepoint
-  await trx.savepoint('step2')
-
   try {
-    await trx.insertInto('logs').values({ message: 'Step 2' }).execute()
-    // Something fails
-    throw new Error('Step 2 failed')
-  } catch (e) {
-    // Rollback to savepoint (step 1 is preserved)
-    await trx.rollbackToSavepoint('step2')
+    await trx.savepoint(async (sp) => {
+      await sp.insertInto('logs').values({ message: 'Step 2' }).execute()
+      // Something fails — only the savepoint's work is undone
+      throw new Error('Step 2 failed')
+    })
+  }
+  catch {
+    // Step 1 is preserved; the transaction itself is still alive
     await trx.insertInto('logs').values({ message: 'Step 2 fallback' }).execute()
   }
 
@@ -98,25 +102,40 @@ await transaction(async (trx) => {
 })
 ```
 
-## Manual Transaction Control
+`savepoint()` must be called inside a transaction; calling it outside throws.
 
-For more control over transaction lifecycle:
+## Commit and rollback
+
+There is no manual `beginTransaction()` / `commit()` / `rollback()` API. The
+callback form owns the lifecycle: return normally and the transaction commits,
+throw and it rolls back.
 
 ```typescript
-const trx = await db.beginTransaction()
+await db.transaction(async (tx) => {
+  await tx.insertInto('users').values({ name: 'Test' }).execute()
+  await tx.updateTable('counters').set({ value: db.raw('value + 1') }).execute()
+  // committed when this callback returns
+})
+```
 
+To roll back deliberately, throw — then handle the error outside:
+
+```typescript
 try {
-  await trx.insertInto('users').values({ name: 'Test' }).execute()
-  await trx.update('counters').set({ value: db.raw('value + 1') }).execute()
-
-  // Explicitly commit
-  await trx.commit()
-} catch (error) {
-  // Explicitly rollback
-  await trx.rollback()
-  throw error
+  await db.transaction(async (tx) => {
+    await tx.insertInto('users').values({ name: 'Test' }).execute()
+    if (!ok)
+      throw new Error('rolling back')
+  })
+}
+catch (error) {
+  // the transaction has already rolled back by the time you get here
 }
 ```
+
+Use `tx`, not `db`, for every statement inside the callback. `db` holds a
+different connection, so work issued through it is not part of the transaction
+and will not be rolled back with it.
 
 ## Nested Transactions
 
@@ -133,7 +152,7 @@ await transaction(async (trx) => {
     }
   })
 
-  await trx.update('inventory').set(/_ ... _/).execute()
+  await trx.updateTable('inventory').set(/* ... */).execute()
 })
 ```
 
@@ -149,7 +168,7 @@ try {
       throw new Error('Business logic error')
     }
 
-    await trx.update('accounts').set({ balance: 500 }).execute()
+    await trx.updateTable('accounts').set({ balance: 500 }).execute()
   })
 } catch (error) {
   console.error('Transaction failed:', error.message)
@@ -166,7 +185,7 @@ await transaction(
   async (trx) => {
     // This might fail due to lock contention
     await trx
-      .update('accounts')
+      .updateTable('accounts')
       .set({ balance: db.raw('balance - ?', [100]) })
       .where({ id: 1 })
       .execute()
@@ -205,14 +224,14 @@ async function transferMoney(
     }
 
     await trx
-      .update('accounts')
+      .updateTable('accounts')
       .set({ balance: fromAccount.balance - amount })
       .where({ id: fromAccountId })
       .execute()
 
     // Add to destination account
     await trx
-      .update('accounts')
+      .updateTable('accounts')
       .set({ balance: db.raw('balance + ?', [amount]) })
       .where({ id: toAccountId })
       .execute()
@@ -277,17 +296,17 @@ async function placeOrder(userId: number, items: OrderItem[]) {
 
       // Reduce inventory
       await trx
-        .update('products')
+        .updateTable('products')
         .set({ stock: product.stock - item.quantity })
         .where({ id: item.productId })
         .execute()
 
-      total += product.price _ item.quantity
+      total += product.price * item.quantity
     }
 
     // Update order total
     await trx
-      .update('orders')
+      .updateTable('orders')
       .set({ total, status: 'confirmed' })
       .where({ id: order.id })
       .execute()
@@ -304,28 +323,32 @@ async function placeOrder(userId: number, items: OrderItem[]) {
 
 ### Batch Processing with Checkpoints
 
+Wrap each chunk in its own savepoint. A chunk that throws is undone on its own,
+and the surrounding transaction — and every chunk before it — survives.
+
 ```typescript
 async function processBatch(records: any[]) {
-  await transaction(async (trx) => {
-    for (let i = 0; i < records.length; i++) {
-      // Create checkpoint every 100 records
-      if (i > 0 && i % 100 === 0) {
-        await trx.savepoint(`batch_${i}`)
-      }
+  const failed: number[] = []
+
+  await db.transaction(async (trx) => {
+    for (let i = 0; i < records.length; i += 100) {
+      const chunk = records.slice(i, i + 100)
 
       try {
-        await processRecord(trx, records[i])
-      } catch (error) {
-        // On error, rollback to last checkpoint and skip
-        const checkpoint = Math.floor(i / 100) _ 100
-        if (checkpoint > 0) {
-          await trx.rollbackToSavepoint(`batch_${checkpoint}`)
-        }
-        console.error(`Failed at record ${i}:`, error)
-        throw error
+        await trx.savepoint(async (sp) => {
+          for (const record of chunk)
+            await processRecord(sp, record)
+        })
+      }
+      catch (error) {
+        // Only this chunk rolled back; earlier chunks are intact.
+        console.error(`Failed in chunk starting at ${i}:`, error)
+        failed.push(i)
       }
     }
   })
+
+  return failed
 }
 ```
 

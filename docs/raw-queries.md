@@ -2,6 +2,69 @@
 title: Raw Queries
 description: Execute raw SQL queries when you need full control.
 ---
+
+# Raw Queries
+
+Execute raw SQL queries when you need full control over the query structure.
+
+## Raw Select
+
+Execute a raw SELECT query:
+
+```typescript
+import { createQueryBuilder } from 'bun-query-builder'
+
+const db = createQueryBuilder<typeof schema>({ schema, meta })
+
+// Raw query with parameters
+const users = await db.raw(
+  'SELECT * FROM users WHERE active = ? AND age > ?',
+  [true, 18]
+)
+
+// Using named parameters
+const posts = await db.raw(
+  'SELECT * FROM posts WHERE user_id = $userId AND published = $published',
+  { userId: 1, published: true }
+)
+```
+
+## Raw Expressions in Queries
+
+Use raw expressions within the query builder:
+
+```typescript
+// Raw in select
+const results = await db
+  .selectFrom('users')
+  .selectRaw('COUNT(*) AS total, AVG(age) AS avg_age')
+  .get()
+
+// Raw in where
+const recentUsers = await db
+  .selectFrom('users')
+  .whereRaw('DATE(created_at) > DATE_SUB(NOW(), INTERVAL 30 DAY)')
+  .get()
+
+// Raw in order by
+const sorted = await db
+  .selectFrom('products')
+  .orderByRaw('price * quantity DESC')
+  .get()
+
+// Raw in group by
+const grouped = await db
+  .selectFrom('orders')
+  .select(['SUM(amount) AS total'])
+  .groupByRaw("strftime('%Y-%m', created_at)")
+  .get()
+
+// Raw in having
+const filtered = await db
+  .selectFrom('orders')
+  .select(['user_id', 'SUM(amount) AS total'])
+  .groupBy('user_id')
+  .havingRaw('SUM(amount) > 1000')
   .get()
 
 ```
@@ -16,7 +79,7 @@ For queries that cannot use parameterized values:
 const result = await db.unsafe(`
   SELECT * FROM users
   WHERE email LIKE '%@example.com'
-  ORDER BY created*at DESC
+  ORDER BY created_at DESC
   LIMIT 10
 `)
 
@@ -33,13 +96,13 @@ Execute non-query SQL statements:
 ```typescript
 
 // Create an index
-await db.execute('CREATE INDEX idx*users*email ON users(email)')
+await db.unsafe('CREATE INDEX idx_users_email ON users(email)')
 
 // Update statistics
-await db.execute('ANALYZE users')
+await db.unsafe('ANALYZE users')
 
 // Truncate table
-await db.execute('TRUNCATE TABLE logs')
+await db.unsafe('TRUNCATE TABLE logs')
 
 ```
 
@@ -110,14 +173,14 @@ Get typed results from raw queries:
 interface UserStats {
   country: string
   count: number
-  avg*age: number
+  avg_age: number
 }
 
 const stats = await db.raw<UserStats[]>(`
   SELECT
     country,
     COUNT(*) AS count,
-    AVG(age) AS avg*age
+    AVG(age) AS avg_age
   FROM users
   GROUP BY country
   ORDER BY count DESC
@@ -125,7 +188,7 @@ const stats = await db.raw<UserStats[]>(`
 
 // stats is typed as UserStats[]
 stats.forEach((s) => {
-  console.log(`${s.country}: ${s.count} users, avg age ${s.avg*age}`)
+  console.log(`${s.country}: ${s.count} users, avg age ${s.avg_age}`)
 })
 
 ```
@@ -137,7 +200,7 @@ Use prepared statements for repeated queries:
 ```typescript
 
 // Prepare a statement
-const stmt = db.prepare('SELECT * FROM users WHERE id = ?')
+const stmt = db.unsafe('SELECT * FROM users WHERE id = ?')
 
 // Execute multiple times efficiently
 const user1 = await stmt.get([1])
@@ -158,16 +221,16 @@ Execute raw queries within transactions:
 await db.transaction(async (trx) => {
   // Raw insert
   await trx.raw(
-    'INSERT INTO audit*log (action, user*id) VALUES (?, ?)',
+    'INSERT INTO audit_log (action, user_id) VALUES (?, ?)',
     ['login', userId]
   )
 
   // Regular query builder
-  await trx.update('users', userId, { last*login: new Date() })
+  await trx.updateTable('users').set({ last_login: new Date() }).where({ id: userId })
 
   // Raw update
   await trx.raw(
-    'UPDATE statistics SET login*count = login*count + 1 WHERE user*id = ?',
+    'UPDATE statistics SET login_count = login_count + 1 WHERE user_id = ?',
     [userId]
   )
 })
@@ -180,8 +243,8 @@ Analyze query execution plans:
 
 ```typescript
 
-// Get query execution plan
-const explain = await db.explain('SELECT * FROM users WHERE active = true')
+// Get query execution plan — `explain()` terminates a builder chain
+const explain = await db.selectFrom('users').where({ active: true }).explain()
 console.log(explain)
 
 // Using CLI
@@ -206,7 +269,7 @@ const models = {
       email: { validation: { rule: {} } },
       age: { validation: { rule: {} } },
       country: { validation: { rule: {} } },
-      created*at: { validation: { rule: {} } },
+      created_at: { validation: { rule: {} } },
     },
   },
 }
@@ -220,26 +283,26 @@ async function getComplexAnalytics() {
   // Complex aggregation not easily expressible with query builder
   interface MonthlyStats {
     month: string
-    new*users: number
-    returning*users: number
-    total*active: number
+    new_users: number
+    returning_users: number
+    total_active: number
   }
 
   const stats = await db.raw<MonthlyStats[]>(`
-    WITH monthly*users AS (
+    WITH monthly_users AS (
       SELECT
-        strftime('%Y-%m', created*at) AS month,
+        strftime('%Y-%m', created_at) AS month,
         id,
-        COUNT(*) OVER (PARTITION BY id) AS visit*count
+        COUNT(*) OVER (PARTITION BY id) AS visit_count
       FROM users
-      WHERE created*at >= date('now', '-12 months')
+      WHERE created_at >= date('now', '-12 months')
     )
     SELECT
       month,
-      SUM(CASE WHEN visit*count = 1 THEN 1 ELSE 0 END) AS new*users,
-      SUM(CASE WHEN visit*count > 1 THEN 1 ELSE 0 END) AS returning*users,
-      COUNT(*) AS total*active
-    FROM monthly*users
+      SUM(CASE WHEN visit_count = 1 THEN 1 ELSE 0 END) AS new_users,
+      SUM(CASE WHEN visit_count > 1 THEN 1 ELSE 0 END) AS returning_users,
+      COUNT(*) AS total_active
+    FROM monthly_users
     GROUP BY month
     ORDER BY month
   `)
@@ -250,7 +313,7 @@ async function getComplexAnalytics() {
     .selectRaw(`
       COUNT(*) AS total,
       COUNT(CASE WHEN active = 1 THEN 1 END) AS active,
-      AVG(age) AS avg*age
+      AVG(age) AS avg_age
     `)
     .first()
 
@@ -259,8 +322,8 @@ async function getComplexAnalytics() {
     `
     SELECT
       country,
-      COUNT(*) AS user*count,
-      AVG(age) AS avg*age
+      COUNT(*) AS user_count,
+      AVG(age) AS avg_age
     FROM users
     WHERE active = ?
     GROUP BY country

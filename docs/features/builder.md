@@ -707,7 +707,7 @@ await db
 // Delete with complex conditions
 await db
   .deleteFrom('sessions')
-  .where(['created_at', '<', new Date(Date.now() - 24 _ 60 _ 60 _ 1000)]) // older than 24h
+  .where(['created_at', '<', new Date(Date.now() - 24 * 60 * 60 * 1000)]) // older than 24h
   .andWhere(['user_id', 'is not', null])
   .execute()
 
@@ -765,7 +765,7 @@ See the Pagination page for details. Highlights:
 await db.selectFrom('users').paginate(25, 1)
 await db.selectFrom('users').simplePaginate(25)
 await db.selectFrom('users').cursorPaginate(100, undefined, 'id', 'asc')
-await db.selectFrom('users').chunkById(1000, 'id', async (batch) => { /_ ... */ })
+await db.selectFrom('users').chunkById(1000, 'id', async (batch) => { /* ... */ })
 ```
 
 ## CTEs and Recursive Queries
@@ -1139,7 +1139,7 @@ const projectsWithCollaborators = await db
 ```ts
 // Cleanup old sessions
 async function cleanupOldSessions() {
-  const cutoffDate = new Date(Date.now() - 30 _ 24 _ 60 _ 60 _ 1000) // 30 days ago
+  const cutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // 30 days ago
 
   const deletedCount = await db
     .deleteFrom('user_sessions')
@@ -1159,7 +1159,7 @@ async function archiveCompletedProjects() {
       .selectFrom('projects')
       .select('projects', 'id', 'name')
       .where(['status', '=', 'completed'])
-      .where(['completed_at', '<', new Date(Date.now() - 6 _ 30 _ 24 _ 60 _ 60 _ 1000)])
+      .where(['completed_at', '<', new Date(Date.now() - 6 * 30 * 24 * 60 * 60 * 1000)])
       .execute()
 
     if (projectsToArchive.length === 0)

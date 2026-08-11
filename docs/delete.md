@@ -2,6 +2,67 @@
 title: Delete Queries
 description: Delete records from your database with type-safe queries.
 ---
+
+# Delete Queries
+
+Delete records with type-safe queries, soft deletes, and cascade support.
+
+## Basic Delete
+
+```typescript
+import { createQueryBuilder } from 'bun-query-builder'
+
+const db = createQueryBuilder<typeof schema>({ schema, meta })
+
+// Delete by ID
+await db.remove('users', 1)
+
+// Delete with where clause
+await db
+  .deleteFrom('users')
+  .where({ active: false })
+  .execute()
+```
+
+## Delete with Conditions
+
+```typescript
+// Delete records matching conditions
+await db
+  .deleteFrom('posts')
+  .where('created_at', '<', '2023-01-01')
+  .execute()
+
+// Delete with multiple conditions
+await db
+  .deleteFrom('sessions')
+  .where('expired', '=', true)
+  .andWhere('last_activity', '<', '2024-01-01')
+  .execute()
+```
+
+## Delete Many
+
+```typescript
+// Delete multiple records by IDs
+await db.deleteMany('users', [1, 2, 3, 4, 5])
+
+// Delete many with conditions
+await db
+  .deleteFrom('logs')
+  .where('level', '=', 'debug')
+  .where('created_at', '<', '2024-01-01')
+  .execute()
+```
+
+## Soft Deletes
+
+If your model supports soft deletes, records are marked as deleted instead of being removed:
+
+```typescript
+// Model with soft deletes enabled
+const models = {
+  User: {
     name: 'User',
     table: 'users',
     softDeletes: true,  // Enable soft deletes
@@ -10,7 +71,7 @@ description: Delete records from your database with type-safe queries.
 }
 
 // Soft delete a record
-await db.delete('users', 1)
+await db.remove('users', 1)
 // Sets deleted_at = NOW() instead of removing the record
 
 // Query excluding soft deleted records (default behavior)
@@ -34,13 +95,15 @@ const deletedUsers = await db
 
 ```typescript
 
-// Restore a soft deleted record
-await db.restore('users', 1)
+// Restoring is a model-layer operation: load the trashed row, then restore it.
+const user = await User.withTrashed().find(1)
+await user.restore()
 // Sets deleted_at = NULL
 
-// Restore with conditions
+// From the query builder, clear the soft-delete column directly
 await db
-  .restoreFrom('users')
+  .updateTable('users')
+  .set({ deleted_at: null })
   .where({ email: 'restored@example.com' })
   .execute()
 
@@ -50,8 +113,9 @@ await db
 
 ```typescript
 
-// Permanently delete a soft deleted record
-await db.forceDelete('users', 1)
+// Permanently delete a soft deleted record — `remove()` issues a real DELETE,
+// so it removes the row whether or not it was already soft-deleted.
+await db.remove('users', 1)
 
 // Force delete with conditions
 await db
@@ -106,11 +170,15 @@ Remove all records from a table:
 
 ```typescript
 
-// Truncate entire table
-await db.truncate('logs')
+// Truncate entire table — a model-layer static
+await Log.truncate()
+
+// From the query builder, issue the statement directly.
+// TRUNCATE is not supported by SQLite; use DELETE there.
+await db.unsafe('TRUNCATE TABLE logs')
 
 // With cascade (if foreign keys exist)
-await db.truncate('users', { cascade: true })
+await db.unsafe('TRUNCATE TABLE users CASCADE')
 
 ```
 
@@ -126,7 +194,7 @@ await db.transaction(async (trx) => {
     .execute()
 
   // Then delete the user
-  await trx.delete('users', userId)
+  await trx.remove('users', userId)
 
   // All or nothing - if any delete fails, all are rolled back
 })
@@ -149,7 +217,7 @@ async function deleteUserWithRelations(userId: number) {
     await trx.deleteFrom('posts').where({ user_id: userId }).execute()
 
     // Delete user
-    await trx.delete('users', userId)
+    await trx.remove('users', userId)
   })
 }
 
@@ -225,15 +293,15 @@ async function cleanupData() {
     .where('created_at', '<', '2023-01-01')
     .execute()
 
-  // Restore a user
-  await db.restore('users', 1)
+  // Restore a user (clear the soft-delete column)
+  await db.updateTable('users').set({ deleted_at: null }).where({ id: 1 }).execute()
 
   // Query with trashed
   const allUsers = await db.selectFrom('users').withTrashed().get()
   const deletedOnly = await db.selectFrom('users').onlyTrashed().get()
 
-  // Force delete
-  await db.forceDelete('users', [2, 3, 4])
+  // Permanently delete — a real DELETE, regardless of soft-delete state
+  await db.deleteMany('users', [2, 3, 4])
 
   console.log('Cleanup completed')
 }
