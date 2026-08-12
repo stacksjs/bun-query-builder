@@ -117,7 +117,7 @@ describe('query builder - modifiers and raws', () => {
   it('date/json helpers compose', () => {
     const q1 = qb().selectFrom('users').whereDate('created_at', '>=', '2024-01-01').toSQL() as any
     expect(typeof q1.execute).toBe('function')
-    const q2 = qb().selectFrom('users').whereJsonContains('meta', { a: 1 }).toSQL() as any
+    const q2 = qb().selectFrom('users').whereJsonContains('meta', ['a']).toSQL() as any
     expect(typeof q2.execute).toBe('function')
   })
 })

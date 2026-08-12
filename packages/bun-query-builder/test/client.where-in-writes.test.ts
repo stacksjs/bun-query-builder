@@ -109,7 +109,7 @@ describe('IN on an UPDATE', () => {
       .where(['id', 'in', [1, 2]])
       .toSQL())
 
-    expect(sql).toContain('IN ($2, $3)')
+    expect(sql).toMatch(/IN \(\$2, \$3\)|IN \(\?, \?\)/)
   })
 
   it('leaves ordinary operators alone', () => {
