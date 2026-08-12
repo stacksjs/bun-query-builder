@@ -184,6 +184,38 @@ function renderSelectColumn(col: unknown): string {
   )
 }
 
+/**
+ * Constant predicates, for the cases where a collection is empty.
+ *
+ * `1 = 0` and `1 = 1` take no parameters and parse identically on SQLite,
+ * Postgres and MySQL, which is the point: the alternatives are engine-specific.
+ * `IN ()` is the example that motivated these — SQLite parses it and matches
+ * nothing, while Postgres and MySQL reject it as a syntax error, so the same
+ * call site behaved differently depending on where it ran.
+ */
+const FALSE_PREDICATE = '1 = 0'
+const TRUE_PREDICATE = '1 = 1'
+
+/**
+ * Render `col IN (…)` / `col NOT IN (…)`, including the empty case.
+ *
+ * An empty `IN` is FALSE (nothing is a member of the empty set) and an empty
+ * `NOT IN` is TRUE (everything is a non-member). Those constants are not
+ * interchangeable and the mirror is easy to get backwards: writing FALSE for
+ * `NOT IN` would silently drop every row from any query whose exclusion list
+ * happened to come back empty — the same shape of silent, widening-or-narrowing
+ * failure as the `IN ()` bug itself.
+ *
+ * Shared rather than inlined at each call site because there are four of them
+ * (`whereIn`, `orWhereIn`, `whereNotIn`, `orWhereNotIn`) and they have already
+ * drifted once.
+ */
+function renderInPredicate(column: string, values: any[], negated: boolean, placeholders: string): string {
+  if (values.length === 0)
+    return negated ? TRUE_PREDICATE : FALSE_PREDICATE
+  return `${column} ${negated ? 'NOT IN' : 'IN'} (${placeholders})`
+}
+
 // Pre-compiled regex patterns for performance
 const SQL_PATTERNS = {
   SELECT_STAR: /^SELECT\s+\*/i,
@@ -4793,7 +4825,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return this as any
       },
       whereAny(cols: string[], op: WhereOperator, value: any) {
-        if (cols.length === 0) return this as any
+        // An empty disjunction is FALSE, not absent. Returning `this` emitted
+        // the identity of the wrong connective, so a `.filter()` that removed
+        // every column WIDENED the query to all the rows it existed to
+        // exclude — silently, and in the dangerous direction.
+        //
+        // `whereAll([])` and `whereNone([])` keep their no-op just below,
+        // because TRUE genuinely is their identity. The asymmetry is the point,
+        // not an inconsistency to tidy up.
+        if (cols.length === 0) {
+          const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+          text += ` ${kw} (${FALSE_PREDICATE})`
+          built = null
+          return this as any
+        }
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const idx = whereParams.length + 1
         const conds = cols.map((c, i) => `${c} ${op} ${getPlaceholder(idx + i)}`)
@@ -4876,7 +4921,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-          text += ` ${keyword} ${column} IN (${placeholders})`
+          text += ` ${keyword} ${renderInPredicate(column, values, false, placeholders)}`
           whereParams.push(...values)
         }
         else {
@@ -4889,7 +4934,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         validateIdentifier(String(column), 'orWhereIn(column)')
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-          text += ` OR ${column} IN (${placeholders})`
+          text += ` OR ${renderInPredicate(column, values, false, placeholders)}`
           whereParams.push(...values)
         }
         else {
@@ -4903,7 +4948,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-          text += ` ${keyword} ${column} NOT IN (${placeholders})`
+          text += ` ${keyword} ${renderInPredicate(column, values, true, placeholders)}`
           whereParams.push(...values)
         }
         else {
@@ -4916,7 +4961,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         validateIdentifier(String(column), 'orWhereNotIn(column)')
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-          text += ` OR ${column} NOT IN (${placeholders})`
+          text += ` OR ${renderInPredicate(column, values, true, placeholders)}`
           whereParams.push(...values)
         }
         else {
