@@ -63,9 +63,11 @@ type InferType<T> =
   T extends keyof PrimitiveTypeMap ? PrimitiveTypeMap[T] :
     T extends readonly (infer U)[] ? U :
       T extends (infer U)[] ? U :
-        T extends { validate: (value: infer U) => unknown } ? U :
-          T extends { test: (value: infer U) => unknown } ? U :
-            unknown
+        T extends { getShape: () => infer TShape extends Readonly<Record<string, unknown>> }
+          ? { -readonly [TKey in keyof TShape]: InferType<TShape[TKey]> }
+          : T extends { test: (value: infer U) => unknown } ? U :
+            T extends { validate: (value: infer U) => unknown } ? U :
+              unknown
 
 // ============================================================================
 // Base model definition shape (compatible with both orm.ts and browser.ts)

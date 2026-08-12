@@ -75,7 +75,7 @@
     "typecheck": "bun --bun tsc"
   },
   "dependencies": {
-    "@stacksjs/ts-validation": "^0.5.2"
+    "@stacksjs/ts-validation": "^0.5.3"
   },
   "devDependencies": {
     "@stacksjs/launchpad": "^0.6.4",

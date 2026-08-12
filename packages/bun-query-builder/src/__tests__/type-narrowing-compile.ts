@@ -42,6 +42,12 @@ const MinimalDef = {
 
 const Minimal = createModel(MinimalDef)
 
+const settingsRule = {
+  getShape: () => ({ enabled: schema.boolean(), retries: schema.number() }),
+  test: (_value: unknown) => true,
+  validate: (_value: unknown) => ({ valid: true, errors: [] }),
+}
+
 const ValidatedDef = {
   name: 'Validated',
   table: 'validated',
@@ -49,6 +55,12 @@ const ValidatedDef = {
     active: { fillable: true as const, validation: { rule: schema.boolean() } },
     age: { fillable: true as const, validation: { rule: schema.number() } },
     name: { fillable: true as const, validation: { rule: schema.string() } },
+    settings: {
+      fillable: true as const,
+      validation: {
+        rule: settingsRule,
+      },
+    },
     score: { fillable: false as const, validation: { rule: schema.number() } },
   },
 } as const satisfies ModelDefinition
@@ -65,6 +77,7 @@ async function _typeChecks() {
   Validated.where('age', '>', 18)
   Validated.where('active', true)
   Validated.whereName('Ada')
+  Validated.where('settings', { enabled: true, retries: 2 })
   Validated.avg('age')
   Validated.sum('score')
   await Validated.create({ active: true, age: 36, name: 'Ada' })
@@ -75,12 +88,15 @@ async function _typeChecks() {
   Validated.where('active', 1)
   // @ts-expect-error - non-numeric columns cannot be aggregated
   Validated.avg('name')
+  // @ts-expect-error - nested object validators retain their inferred fields
+  Validated.where('settings', { enabled: 'yes', retries: 2 })
 
   const validated = await Validated.firstOrFail()
   const validatedAge: number = validated.age
   const validatedName: string = validated.get('name')
   const validatedActive: boolean = validated.active
-  void [validatedAge, validatedName, validatedActive]
+  const validatedSettings: { enabled: boolean, retries: number } = validated.settings
+  void [validatedAge, validatedName, validatedActive, validatedSettings]
 
   // ---------------------------------------------------------------
   // 1. where() accepts only valid column names
