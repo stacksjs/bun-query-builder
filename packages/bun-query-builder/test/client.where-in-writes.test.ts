@@ -23,8 +23,8 @@
  * injected operator cannot be walked back.
  */
 
-import { describe, expect, it } from 'bun:test'
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from '../src'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { buildDatabaseSchema, buildSchemaMeta, config, createQueryBuilder } from '../src'
 
 function qb() {
   const models = {
@@ -44,7 +44,16 @@ function qb() {
   })
 }
 
+// The dialect decides whether placeholders are `$n` or `?`, and it lives in
+// process-wide config — so without pinning it here these assertions depended on
+// whichever test file happened to run first. Pinned rather than hedged, because
+// the numbering (`$2, $3`, not `$1, $2`) is exactly what this file is about:
+// an IN that restarted at $1 would update every row in the table.
 describe('IN on an UPDATE', () => {
+  let dialect: string
+  beforeEach(() => { dialect = config.dialect; config.dialect = 'postgres' as any })
+  afterEach(() => { config.dialect = dialect as any })
+
   it('renders one placeholder per element, parenthesised', () => {
     const sql = String((qb() as any)
       .updateTable('notifications')
@@ -67,7 +76,7 @@ describe('IN on an UPDATE', () => {
       .where('id', 'in', [7, 8])
       .toSQL())
 
-    expect(sql).toMatch(/IN \(\$2, \$3\)|IN \(\?, \?\)/)
+    expect(sql).toContain('IN ($2, $3)')
   })
 
   it('continues an existing WHERE with AND rather than opening a second one', () => {
@@ -125,6 +134,10 @@ describe('IN on an UPDATE', () => {
 })
 
 describe('IN on a DELETE', () => {
+  let dialect: string
+  beforeEach(() => { dialect = config.dialect; config.dialect = 'postgres' as any })
+  afterEach(() => { config.dialect = dialect as any })
+
   it('renders one placeholder per element', () => {
     const sql = String((qb() as any)
       .deleteFrom('notifications')
