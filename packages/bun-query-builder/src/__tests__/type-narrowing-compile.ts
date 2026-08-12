@@ -80,6 +80,7 @@ async function _typeChecks() {
   const validatedAge: number = validated.age
   const validatedName: string = validated.get('name')
   const validatedActive: boolean = validated.active
+  void [validatedAge, validatedName, validatedActive]
 
   // ---------------------------------------------------------------
   // 1. where() accepts only valid column names

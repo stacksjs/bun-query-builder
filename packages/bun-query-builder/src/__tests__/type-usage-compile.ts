@@ -563,6 +563,43 @@ async function _clientUsage(
   // @ts-expect-error — no column 'seats', no dynamic method
   users.whereSeats(4)
 
+  users.where({ login_count: 3 })
+  users.where(['login_count', '>', 3])
+  users.whereIn('login_count', [1, 2, 3])
+  users.whereBetween('login_count', 1, 10)
+  // @ts-expect-error - object predicates preserve each column's value type
+  users.where({ login_count: '3' })
+  // @ts-expect-error - tuple predicates preserve the selected column's value type
+  users.where(['login_count', '>', '3'])
+  // @ts-expect-error - IN values use the selected column's type
+  users.whereIn('login_count', ['1'])
+  // @ts-expect-error - range endpoints use the selected column's type
+  users.whereBetween('login_count', 1, '10')
+
+  const found = await users.find(1)
+  if (found) {
+    const foundEmail: string = found.email
+    void foundEmail
+  }
+  // @ts-expect-error - the primary key is numeric
+  await users.find('1')
+
+  await users.chunk(100, (chunk) => {
+    const chunkEmail: string = chunk[0].email
+    void chunkEmail
+    // @ts-expect-error - chunk rows keep the selected row shape
+    chunk[0].seats
+  })
+
+  await users.eachById(100, 'id', (row) => {
+    const rowEmail: string = row.email
+    void rowEmail
+  })
+
+  await users.avg('login_count')
+  // @ts-expect-error - avg only accepts numeric columns
+  await users.avg('email')
+
   // --- typed SQL strings (compile-time toSQL hovers) --------------------------
   // eslint-disable-next-line pickier/no-unused-vars
   type Sql0 = Expect<Equal<ReturnType<typeof users.toSQL>, 'SELECT * FROM users'>>
@@ -585,12 +622,29 @@ async function _clientUsage(
   // @ts-expect-error — record-form keys are narrowed to declared relations
   posts.with?.({ subscribers: q => q })
   posts.whereHas?.('comments')
+  posts.whereHas?.('comments', q => q.where('body', '=', 'useful'))
+  // @ts-expect-error - relation callbacks use the related table's columns
+  posts.whereHas?.('comments', q => q.where('published', '=', true))
   posts.whereDoesntHave?.('tags')
   posts.has?.('user')
   posts.doesntHave?.('comments')
   posts.withCount?.('comments', 'tags')
   posts.withSum?.('comments', 'id')
   posts.withAvg?.('comments', 'id')
+  // @ts-expect-error - aggregate columns come from the related table
+  posts.withSum?.('comments', 'published')
+
+  const countedPosts = await posts.withCount?.('comments').get()
+  if (countedPosts?.length) {
+    const commentsCount: number = countedPosts[0].comments_count
+    void commentsCount
+  }
+
+  const summedPosts = await posts.withSum?.('comments', 'id').get()
+  if (summedPosts?.length) {
+    const commentsIdSum: number = summedPosts[0].comments_sum_id
+    void commentsIdSum
+  }
 
   // @ts-expect-error — 'badges' is a users relation, not a posts relation
   posts.with?.('badges')

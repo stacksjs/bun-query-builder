@@ -471,7 +471,7 @@ type ValueOrRef = Primitive
 export type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'in' | 'not in' | 'is' | 'is not'
 
 export interface WhereRaw {
-  raw: any
+  raw: SqlFragment
 }
 
 /**
@@ -497,12 +497,14 @@ export interface WhereRaw {
  */
 export type SqlFragment = object
 
+type WhereValue<T> = T | T[] | SqlFragment
+
 export type WhereExpression<TableColumns> =
-  | Partial<{ [K in keyof TableColumns & string]: ValueOrRef | ValueOrRef[] }>
-  | [key: keyof TableColumns & string, op: WhereOperator, value: ValueOrRef | ValueOrRef[]]
+  | Partial<{ [K in keyof TableColumns & string]: WhereValue<TableColumns[K]> }>
+  | { [K in keyof TableColumns & string]: [key: K, op: WhereOperator, value: WhereValue<TableColumns[K]>] }[keyof TableColumns & string]
   | WhereRaw
 
-export type QueryResult = any
+export type QueryResult = unknown
 
 /**
  * # `SortDirection`
@@ -524,6 +526,17 @@ export type SelectedRow<
   TSelected,
 > = Readonly<TSelected>
 
+type PrimaryKeyValue<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> =
+  DB[TTable]['primaryKey'] extends keyof DB[TTable]['columns']
+    ? DB[TTable]['columns'][DB[TTable]['primaryKey']]
+    : unknown
+
+type NumericColumnName<Columns> = {
+  [K in keyof Columns & string]: unknown extends Columns[K]
+    ? K
+    : Exclude<Columns[K], null | undefined> extends number ? K : never
+}[keyof Columns & string]
+
 type JoinColumn<DB extends DatabaseSchema<any>, TTables extends string> = TTables extends any
   ? `${TTables}.${keyof DB[TTables]['columns'] & string}`
   : never
@@ -543,6 +556,30 @@ export type TableRelationName<DB extends DatabaseSchema<any>, TTable extends key
     ? unknown extends R ? string : keyof NonNullable<R> & string
     : string
 
+type RelatedTableName<
+  DB extends DatabaseSchema<any>,
+  TTable extends keyof DB & string,
+  TRelation extends TableRelationName<DB, TTable>,
+> = DB[TTable] extends { relations?: infer Relations }
+  ? TRelation extends keyof NonNullable<Relations>
+    ? Extract<NonNullable<Relations>[TRelation], keyof DB & string>
+    : keyof DB & string
+  : keyof DB & string
+
+type RelationQueryBuilder<
+  DB extends DatabaseSchema<any>,
+  TTable extends keyof DB & string,
+  TRelation extends TableRelationName<DB, TTable>,
+> = SelectQueryBuilder<
+  DB,
+  RelatedTableName<DB, TTable, TRelation>,
+  DB[RelatedTableName<DB, TTable, TRelation>]['columns']
+>
+
+type RelationConstraintRecord<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> = {
+  [R in TableRelationName<DB, TTable>]: Partial<Record<R, (qb: RelationQueryBuilder<DB, TTable, R>) => unknown>>
+}[TableRelationName<DB, TTable>]
+
 /**
  * # `WithRelationArg<DB, TTable>`
  *
@@ -558,7 +595,7 @@ export type WithRelationArg<DB extends DatabaseSchema<any>, TTable extends keyof
     :
       | TableRelationName<DB, TTable>
       | `${TableRelationName<DB, TTable>}.${string}`
-      | Partial<Record<TableRelationName<DB, TTable>, (qb: any) => any>>
+      | RelationConstraintRecord<DB, TTable>
 
 // Convert snake_case to PascalCase at the type level (e.g. created_at -> CreatedAt)
 type SnakeToPascal<S extends string> = S extends `${infer H}_${infer T}`
@@ -608,29 +645,29 @@ export type TypedSelectQueryBuilder<
   where: (<K extends keyof DB[TTable]['columns'] & string>(
     expr: Record<K, DB[TTable]['columns'][K]>,
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${K} = ?`>) & (<K extends keyof DB[TTable]['columns'] & string, OP extends WhereOperator>(
-    expr: [K, OP, any],
+    expr: [K, OP, WhereValue<DB[TTable]['columns'][K]>],
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${K} ${Uppercase<OP>} ${OP extends 'in' | 'not in' ? '(?)' : '?'}`>) & ((
     expr: WhereExpression<DB[TTable]['columns']> | string,
     op?: WhereOperator,
-    value?: any,
+    value?: WhereValue<DB[TTable]['columns'][keyof DB[TTable]['columns'] & string]>,
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${string}`>)
   andWhere: (<K extends keyof DB[TTable]['columns'] & string>(
     expr: Record<K, DB[TTable]['columns'][K]>,
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${K} = ?`>) & (<K extends keyof DB[TTable]['columns'] & string, OP extends WhereOperator>(
-    expr: [K, OP, any],
+    expr: [K, OP, WhereValue<DB[TTable]['columns'][K]>],
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${K} ${Uppercase<OP>} ${OP extends 'in' | 'not in' ? '(?)' : '?'}`>) & ((
     expr: WhereExpression<DB[TTable]['columns']> | string,
     op?: WhereOperator,
-    value?: any,
+    value?: WhereValue<DB[TTable]['columns'][keyof DB[TTable]['columns'] & string]>,
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${string}`>)
   orWhere: (<K extends keyof DB[TTable]['columns'] & string>(
     expr: Record<K, DB[TTable]['columns'][K]>,
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${K} = ?`>) & (<K extends keyof DB[TTable]['columns'] & string, OP extends WhereOperator>(
-    expr: [K, OP, any],
+    expr: [K, OP, WhereValue<DB[TTable]['columns'][K]>],
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${K} ${Uppercase<OP>} ${OP extends 'in' | 'not in' ? '(?)' : '?'}`>) & ((
     expr: WhereExpression<DB[TTable]['columns']> | string,
     op?: WhereOperator,
-    value?: any,
+    value?: WhereValue<DB[TTable]['columns'][keyof DB[TTable]['columns'] & string]>,
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${string}`>)
   orderBy: <C extends keyof DB[TTable]['columns'] & string, D extends 'asc' | 'desc' = 'asc'>(
     column: C,
@@ -707,7 +744,11 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').where({ id: 1 }).toSQL()
    * ```
    */
-  where: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => SelectQueryBuilder<DB, TTable, TSelected>
+  where: <K extends keyof DB[TTable]['columns'] & string>(
+    expr: WhereExpression<DB[TTable]['columns']> | K,
+    op?: WhereOperator,
+    value?: WhereValue<DB[TTable]['columns'][K]>,
+  ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereRaw`
    *
@@ -755,7 +796,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').whereIn('id', db.selectFrom('admins').selectRaw(sql`id`)).toSQL()
    * ```
    */
-  whereIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereIn: <K extends keyof DB[TTable]['columns'] & string>(column: K, values: DB[TTable]['columns'][K][] | { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orWhereIn`
    *
@@ -767,7 +808,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').orWhereIn('id', [1, 2]).toSQL()
    * ```
    */
-  orWhereIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereIn: <K extends keyof DB[TTable]['columns'] & string>(column: K, values: DB[TTable]['columns'][K][] | { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereNotIn`
    *
@@ -779,7 +820,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').whereNotIn('id', [4, 5]).toSQL()
    * ```
    */
-  whereNotIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereNotIn: <K extends keyof DB[TTable]['columns'] & string>(column: K, values: DB[TTable]['columns'][K][] | { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orWhereNotIn`
    *
@@ -791,7 +832,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').orWhereNotIn('role', ['banned']).toSQL()
    * ```
    */
-  orWhereNotIn: (column: keyof DB[TTable]['columns'] & string, values: any[] | { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereNotIn: <K extends keyof DB[TTable]['columns'] & string>(column: K, values: DB[TTable]['columns'][K][] | { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // convenience like wrappers
   /**
    * # `whereLike`
@@ -858,7 +899,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').whereAny(['email', 'username'], 'like', 'a%').toSQL()
    * ```
    */
-  whereAny: (columns: (keyof DB[TTable]['columns'] & string)[], op: WhereOperator, value: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereAny: <K extends keyof DB[TTable]['columns'] & string>(columns: K[], op: WhereOperator, value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereAll`
    *
@@ -870,7 +911,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').whereAll(['a', 'b'], '=', 1).toSQL()
    * ```
    */
-  whereAll: (columns: (keyof DB[TTable]['columns'] & string)[], op: WhereOperator, value: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereAll: <K extends keyof DB[TTable]['columns'] & string>(columns: K[], op: WhereOperator, value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereNone`
    *
@@ -882,7 +923,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').whereNone(['a'], '!=', 1).toSQL()
    * ```
    */
-  whereNone: (columns: (keyof DB[TTable]['columns'] & string)[], op: WhereOperator, value: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereNone: <K extends keyof DB[TTable]['columns'] & string>(columns: K[], op: WhereOperator, value: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereNested`
    *
@@ -895,7 +936,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').whereNested(sub).toSQL()
    * ```
    */
-  whereNested: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereNested: (fragment: { toSQL: () => string } | SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orWhereNested`
    *
@@ -908,7 +949,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').orWhereNested(sub).toSQL()
    * ```
    */
-  orWhereNested: (fragment: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereNested: (fragment: { toSQL: () => string } | SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // date/json helpers (basic variants)
   /**
    * # `whereDate`
@@ -933,7 +974,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').whereBetween('created_at', '2024-01-01', '2024-12-31').toSQL()
    * ```
    */
-  whereBetween: (column: string, start: any, end: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereBetween: <K extends keyof DB[TTable]['columns'] & string>(column: K, start: DB[TTable]['columns'][K], end: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereNotBetween`
    *
@@ -945,7 +986,7 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').whereNotBetween('created_at', '2024-01-01', '2024-12-31').toSQL()
    * ```
    */
-  whereNotBetween: (column: string, start: any, end: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereNotBetween: <K extends keyof DB[TTable]['columns'] & string>(column: K, start: DB[TTable]['columns'][K], end: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereJsonContains`
    *
@@ -971,7 +1012,11 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').where({ active: true }).andWhere({ email_verified: true }).toSQL()
    * ```
    */
-  andWhere: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => SelectQueryBuilder<DB, TTable, TSelected>
+  andWhere: <K extends keyof DB[TTable]['columns'] & string>(
+    expr: WhereExpression<DB[TTable]['columns']> | K,
+    op?: WhereOperator,
+    value?: WhereValue<DB[TTable]['columns'][K]>,
+  ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orWhere`
    *
@@ -983,7 +1028,11 @@ export interface BaseSelectQueryBuilder<
    * const sqlText = db.selectFrom('users').orWhere(['id', 'in', [1,2,3]]).toSQL()
    * ```
    */
-  orWhere: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => SelectQueryBuilder<DB, TTable, TSelected>
+  orWhere: <K extends keyof DB[TTable]['columns'] & string>(
+    expr: WhereExpression<DB[TTable]['columns']> | K,
+    op?: WhereOperator,
+    value?: WhereValue<DB[TTable]['columns'][K]>,
+  ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `orderBy`
    *
@@ -1095,7 +1144,7 @@ export interface BaseSelectQueryBuilder<
   /** Apply a timeout (ms) for this query (cancel on expiration). */
   withTimeout?: (ms: number) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /** Attach an AbortSignal to cancel this query when aborted. */
-  abort?: (signal: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  abort?: (signal: AbortSignal) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // Joins
   join: <T2 extends keyof DB & string>(
     table: T2,
@@ -1103,7 +1152,7 @@ export interface BaseSelectQueryBuilder<
     operator: '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like',
     onRight: JoinColumn<DB, TJoined | T2>,
   ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined | T2>
-  joinSub: (sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  joinSub: (sub: { toSQL: () => string }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   innerJoin: <T2 extends keyof DB & string>(
     table: T2,
     onLeft: JoinColumn<DB, TJoined | T2>,
@@ -1116,7 +1165,7 @@ export interface BaseSelectQueryBuilder<
     operator: '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like',
     onRight: JoinColumn<DB, TJoined | T2>,
   ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined | T2>
-  leftJoinSub: (sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  leftJoinSub: (sub: { toSQL: () => string }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   rightJoin: <T2 extends keyof DB & string>(
     table: T2,
     onLeft: JoinColumn<DB, TJoined | T2>,
@@ -1124,7 +1173,7 @@ export interface BaseSelectQueryBuilder<
     onRight: JoinColumn<DB, TJoined | T2>,
   ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined | T2>
   crossJoin: <T2 extends keyof DB & string>(table: T2) => SelectQueryBuilder<DB, TTable, TSelected, TJoined | T2>
-  crossJoinSub: (sub: { toSQL: () => any }, alias: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  crossJoinSub: (sub: { toSQL: () => string }, alias: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `groupBy`
    *
@@ -1160,7 +1209,7 @@ export interface BaseSelectQueryBuilder<
    * const rows = await db.selectFrom('users').having({ active: true }).get()
    * ```
    */
-  having: (expr: WhereExpression<any>) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  having: (expr: WhereExpression<TSelected>) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `havingRaw`
    *
@@ -1223,7 +1272,7 @@ export interface BaseSelectQueryBuilder<
    * const sql = a.union(b).toSQL()
    * ```
    */
-  union: (other: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  union: (other: { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `unionAll`
    *
@@ -1237,7 +1286,7 @@ export interface BaseSelectQueryBuilder<
    * const sql = a.unionAll(b).toSQL()
    * ```
    */
-  unionAll: (other: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  unionAll: (other: { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `forPage`
    *
@@ -1250,7 +1299,7 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   forPage: (page: number, perPage: number) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
-  selectAllRelations?: () => SelectQueryBuilder<DB, TTable, any, TJoined>
+  selectAllRelations?: () => SelectQueryBuilder<DB, TTable, TSelected & Record<string, unknown>, TJoined>
   // where helpers
   /**
    * # `whereNull`
@@ -1289,7 +1338,7 @@ export interface BaseSelectQueryBuilder<
    * const sql = db.selectFrom('users').whereExists(sub).toSQL()
    * ```
    */
-  whereExists?: (subquery: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  whereExists?: (subquery: { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereJsonDoesntContain`
    *
@@ -1350,7 +1399,7 @@ export interface BaseSelectQueryBuilder<
    * const sql = db.selectFrom('users').with('posts').toSQL()
    * ```
    */
-  with?: (...relations: WithRelationArg<DB, TTable>[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  with?: (...relations: WithRelationArg<DB, TTable>[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereHas`
    *
@@ -1363,26 +1412,26 @@ export interface BaseSelectQueryBuilder<
    * const active = await db.selectFrom('users').whereHas('posts', qb => qb.where('published', '=', true)).get()
    * ```
    */
-  whereHas?: (relation: TableRelationName<DB, TTable>, callback?: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  whereHas?: <R extends TableRelationName<DB, TTable>>(relation: R, callback?: (qb: RelationQueryBuilder<DB, TTable, R>) => unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `whereDoesntHave`
    *
    * Filter records that have no related records, with an optional constraint
    * callback applied to the related table.
    */
-  whereDoesntHave?: (relation: TableRelationName<DB, TTable>, callback?: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  whereDoesntHave?: <R extends TableRelationName<DB, TTable>>(relation: R, callback?: (qb: RelationQueryBuilder<DB, TTable, R>) => unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `has`
    *
    * Shorthand for `whereHas(relation)` without a constraint callback.
    */
-  has?: (relation: TableRelationName<DB, TTable>) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  has?: (relation: TableRelationName<DB, TTable>) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `doesntHave`
    *
    * Shorthand for `whereDoesntHave(relation)` without a constraint callback.
    */
-  doesntHave?: (relation: TableRelationName<DB, TTable>) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  doesntHave?: (relation: TableRelationName<DB, TTable>) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `withCount`
    *
@@ -1393,15 +1442,15 @@ export interface BaseSelectQueryBuilder<
    * const rows = await db.selectFrom('users').withCount('posts').get()
    * ```
    */
-  withCount?: (...relations: TableRelationName<DB, TTable>[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  withCount?: <R extends TableRelationName<DB, TTable>>(...relations: R[]) => SelectQueryBuilder<DB, TTable, TSelected & { [K in `${R}_count`]: number }, TJoined>
   /** Select a correlated SUM of a related column as `${relation}_sum_${column}`. */
-  withSum?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  withSum?: <R extends TableRelationName<DB, TTable>, K extends keyof DB[RelatedTableName<DB, TTable, R>]['columns'] & string>(relation: R, column: K) => SelectQueryBuilder<DB, TTable, TSelected & { [P in `${R}_sum_${K}`]: number }, TJoined>
   /** Select a correlated AVG of a related column as `${relation}_avg_${column}`. */
-  withAvg?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  withAvg?: <R extends TableRelationName<DB, TTable>, K extends keyof DB[RelatedTableName<DB, TTable, R>]['columns'] & string>(relation: R, column: K) => SelectQueryBuilder<DB, TTable, TSelected & { [P in `${R}_avg_${K}`]: number }, TJoined>
   /** Select a correlated MAX of a related column as `${relation}_max_${column}`. */
-  withMax?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  withMax?: <R extends TableRelationName<DB, TTable>, K extends keyof DB[RelatedTableName<DB, TTable, R>]['columns'] & string>(relation: R, column: K) => SelectQueryBuilder<DB, TTable, TSelected & { [P in `${R}_max_${K}`]: DB[RelatedTableName<DB, TTable, R>]['columns'][K] | null }, TJoined>
   /** Select a correlated MIN of a related column as `${relation}_min_${column}`. */
-  withMin?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  withMin?: <R extends TableRelationName<DB, TTable>, K extends keyof DB[RelatedTableName<DB, TTable, R>]['columns'] & string>(relation: R, column: K) => SelectQueryBuilder<DB, TTable, TSelected & { [P in `${R}_min_${K}`]: DB[RelatedTableName<DB, TTable, R>]['columns'][K] | null }, TJoined>
   /**
    * # `withPivot`
    *
@@ -1412,7 +1461,7 @@ export interface BaseSelectQueryBuilder<
    * const rows = await db.selectFrom('users').with('tags').withPivot('tags', 'created_at', 'role').get()
    * ```
    */
-  withPivot?: (relation: TableRelationName<DB, TTable>, ...columns: string[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  withPivot?: (relation: TableRelationName<DB, TTable>, ...columns: string[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `wherePivot`
    *
@@ -1425,37 +1474,37 @@ export interface BaseSelectQueryBuilder<
    * await db.selectFrom('coaches').with('athletes').wherePivot('athletes', 'status', '!=', 'archived').get()
    * ```
    */
-  wherePivot?: (relation: TableRelationName<DB, TTable>, column: string, opOrValue: any, value?: any) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivot?: (relation: TableRelationName<DB, TTable>, column: string, opOrValue: unknown, value?: unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `wherePivotIn`
    *
    * Filter a `belongsToMany` query by a column on the pivot table being in a list.
    */
-  wherePivotIn?: (relation: TableRelationName<DB, TTable>, column: string, values: any[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivotIn?: (relation: TableRelationName<DB, TTable>, column: string, values: unknown[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `wherePivotNotIn`
    *
    * Filter a `belongsToMany` query by a column on the pivot table being not in a list.
    */
-  wherePivotNotIn?: (relation: TableRelationName<DB, TTable>, column: string, values: any[]) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivotNotIn?: (relation: TableRelationName<DB, TTable>, column: string, values: unknown[]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `wherePivotNull`
    *
    * Filter a `belongsToMany` query by a column on the pivot table being NULL.
    */
-  wherePivotNull?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivotNull?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `wherePivotNotNull`
    *
    * Filter a `belongsToMany` query by a column on the pivot table being NOT NULL.
    */
-  wherePivotNotNull?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, any>
+  wherePivotNotNull?: (relation: TableRelationName<DB, TTable>, column: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `applyPivotColumns`
    *
    * Apply pivot columns to the SELECT clause.
    */
-  applyPivotColumns?: () => SelectQueryBuilder<DB, TTable, TSelected, any>
+  applyPivotColumns?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // locks
   /**
    * # `lockForUpdate`
@@ -1494,7 +1543,7 @@ export interface BaseSelectQueryBuilder<
    * const sql = db.selectFrom('users').withCTE('recent_users', recent).toSQL()
    * ```
    */
-  withCTE: (name: string, sub: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  withCTE: (name: string, sub: { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `withRecursive`
    *
@@ -1507,7 +1556,7 @@ export interface BaseSelectQueryBuilder<
    * const sql = db.selectFrom('categories').withRecursive('tree', tree).toSQL()
    * ```
    */
-  withRecursive: (name: string, sub: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  withRecursive: (name: string, sub: { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // results helpers
   /**
    * # `value`
@@ -1596,7 +1645,7 @@ export interface BaseSelectQueryBuilder<
    * const done = await db.selectFrom('users').chunk(50, () => {})
    * ```
    */
-  chunk: (size: number, handler: (rows: any[]) => Promise<void> | void) => Promise<void>
+  chunk: (size: number, handler: (rows: SelectedRow<DB, TTable, TSelected>[]) => Promise<void> | void) => Promise<void>
   /**
    * # `chunkById`
    *
@@ -1608,7 +1657,7 @@ export interface BaseSelectQueryBuilder<
    * await db.selectFrom('users').chunkById(100)
    * ```
    */
-  chunkById: (size: number, column?: string, handler?: (rows: any[]) => Promise<void> | void) => Promise<void>
+  chunkById: (size: number, column?: keyof DB[TTable]['columns'] & string, handler?: (rows: SelectedRow<DB, TTable, TSelected>[]) => Promise<void> | void) => Promise<void>
   /**
    * # `eachById`
    *
@@ -1620,7 +1669,7 @@ export interface BaseSelectQueryBuilder<
    * await db.selectFrom('users').eachById(50)
    * ```
    */
-  eachById: (size: number, column?: string, handler?: (row: any) => Promise<void> | void) => Promise<void>
+  eachById: (size: number, column?: keyof DB[TTable]['columns'] & string, handler?: (row: SelectedRow<DB, TTable, TSelected>) => Promise<void> | void) => Promise<void>
   /**
    * # `when`
    *
@@ -1633,7 +1682,7 @@ export interface BaseSelectQueryBuilder<
    * const sql = q.toSQL()
    * ```
    */
-  when: (condition: any, then: (qb: any) => any, otherwise?: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  when: (condition: unknown, then: (qb: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => unknown, otherwise?: (qb: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `tap`
    *
@@ -1645,7 +1694,7 @@ export interface BaseSelectQueryBuilder<
    * const sql = db.selectFrom('users').tap(() => {}).toSQL()
    * ```
    */
-  tap: (fn: (qb: any) => any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  tap: (fn: (qb: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
    * # `dump`
    *
@@ -1680,7 +1729,7 @@ export interface BaseSelectQueryBuilder<
    * const plan2 = await db.selectFrom('users').orderBy('id').limit(1).explain()
    * ```
    */
-  explain: () => Promise<any[]>
+  explain: () => Promise<Record<string, unknown>[]>
   /**
    * # `simple`
    *
@@ -1692,7 +1741,7 @@ export interface BaseSelectQueryBuilder<
    * const t = db.selectFrom('users').orderBy('id').simple()
    * ```
    */
-  simple: () => any
+  simple: () => unknown
   toText?: () => string
   /**
    * # `paginate`
@@ -1705,7 +1754,7 @@ export interface BaseSelectQueryBuilder<
    * const res2 = await db.selectFrom('users').where({ active: true }).paginate(25)
    * ```
    */
-  paginate: (perPage: number, page?: number, opts?: { tx?: { unsafe: (sql: string, params?: any[]) => any } }) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
+  paginate: (perPage: number, page?: number, opts?: { tx?: { unsafe: (sql: string, params?: unknown[]) => unknown } }) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
   /**
    * # `simplePaginate`
    *
@@ -1770,15 +1819,15 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   firstOrFail: () => Promise<SelectedRow<DB, TTable, TSelected>>
-  find: (id: any) => Promise<SelectedRow<DB, TTable, TSelected> | undefined>
-  findOrFail: (id: any) => Promise<SelectedRow<DB, TTable, TSelected>>
-  findMany: (ids: any[]) => Promise<TSelected[]>
-  lazy: () => AsyncIterable<TSelected>
-  lazyById: () => AsyncIterable<TSelected>
+  find: (id: PrimaryKeyValue<DB, TTable>) => Promise<SelectedRow<DB, TTable, TSelected> | undefined>
+  findOrFail: (id: PrimaryKeyValue<DB, TTable>) => Promise<SelectedRow<DB, TTable, TSelected>>
+  findMany: (ids: PrimaryKeyValue<DB, TTable>[]) => Promise<SelectedRow<DB, TTable, TSelected>[]>
+  lazy: () => AsyncIterable<SelectedRow<DB, TTable, TSelected>>
+  lazyById: () => AsyncIterable<SelectedRow<DB, TTable, TSelected>>
   pipe: <R>(fn: (qb: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => R) => R
   count: () => Promise<number>
-  avg: (column: keyof DB[TTable]['columns'] & string) => Promise<number>
-  sum: (column: keyof DB[TTable]['columns'] & string) => Promise<number>
+  avg: (column: NumericColumnName<DB[TTable]['columns']>) => Promise<number>
+  sum: (column: NumericColumnName<DB[TTable]['columns']>) => Promise<number>
   /** MAX of a column — typed as that column's value (string columns yield strings), or null on an empty set. */
   max: <K extends keyof DB[TTable]['columns'] & string>(column: K) => Promise<DB[TTable]['columns'][K] | null>
   /** MIN of a column — typed as that column's value (string columns yield strings), or null on an empty set. */
@@ -1786,17 +1835,17 @@ export interface BaseSelectQueryBuilder<
   // Type-only convenience properties for IDE hovers; not implemented at runtime
   readonly rows: TSelected[]
   readonly row: TSelected
-  values: () => Promise<any[][]>
+  values: () => Promise<unknown[][]>
   /** Return parameter values for debugging/tests. */
-  toParams?: () => any[]
-  raw: () => Promise<any[][]>
+  toParams?: () => unknown[]
+  raw: () => Promise<unknown[][]>
   cancel: () => void
   /** Include soft-deleted rows in results. */
   withTrashed?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /** Only return soft-deleted rows. */
   onlyTrashed?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /** Apply a named scope defined on the model. */
-  scope?: (name: string, value?: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  scope?: (name: string, value?: unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /** Shallow clone of this builder to branch query modifications. */
   clone?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /** Enable query result caching with TTL in milliseconds (default 60000ms / 1 minute). */
@@ -1896,7 +1945,11 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * writes were left behind, so the same call that worked on a read failed on
    * an update - which reads as a bug in the caller rather than in the builder.
    */
-  where: (expr: WhereExpression<DB[TTable]['columns']> | string | SqlFragment, op?: WhereOperator, value?: any) => UpdateQueryBuilder<DB, TTable>
+  where: <K extends keyof DB[TTable]['columns'] & string>(
+    expr: WhereExpression<DB[TTable]['columns']> | K | SqlFragment,
+    op?: WhereOperator,
+    value?: WhereValue<DB[TTable]['columns'][K]>,
+  ) => UpdateQueryBuilder<DB, TTable>
   /**
    * # `whereNull`
    *
@@ -1980,7 +2033,11 @@ export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
    * text - it is not a bound parameter, and a DELETE is the one statement where
    * an injected operator is unrecoverable.
    */
-  where: (expr: WhereExpression<DB[TTable]['columns']> | string, op?: WhereOperator, value?: any) => DeleteQueryBuilder<DB, TTable>
+  where: <K extends keyof DB[TTable]['columns'] & string>(
+    expr: WhereExpression<DB[TTable]['columns']> | K,
+    op?: WhereOperator,
+    value?: WhereValue<DB[TTable]['columns'][K]>,
+  ) => DeleteQueryBuilder<DB, TTable>
   /**
    * # `whereNull`
    *
@@ -2109,7 +2166,7 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
     <TTable extends keyof DB & string>(
       table: TTable,
       ...columns: ((keyof DB[TTable]['columns'] & string) | `${string} as ${string}`)[]
-    ): SelectQueryBuilder<DB, TTable, any>
+    ): SelectQueryBuilder<DB, TTable, Record<string, unknown>>
   }
   /**
    * # `selectFrom`
@@ -2182,7 +2239,7 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * const sql = db.selectFromSub(sub, 'u').toSQL()
    * ```
    */
-  selectFromSub: (sub: { toSQL: () => any }, alias: string) => SelectQueryBuilder<DB, keyof DB & string, any>
+  selectFromSub: (sub: { toSQL: () => string }, alias: string) => SelectQueryBuilder<DB, keyof DB & string, Record<string, unknown>>
   /**
    * # `sql`
    *
@@ -2193,7 +2250,7 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * const rows = await db.sql`SELECT 1 as one`.execute()
    * ```
    */
-  sql: any
+  sql: DriverConnection
   /**
    * # `raw`
    *
@@ -2204,7 +2261,7 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * const q = db.raw`SELECT ${1} as one`
    * ```
    */
-  raw: (strings: TemplateStringsArray, ...values: any[]) => any
+  raw: (strings: TemplateStringsArray, ...values: unknown[]) => SqlFragment
   /**
    * # `simple`
    *
@@ -2215,7 +2272,7 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * const s = db.simple`SELECT ${1}`
    * ```
    */
-  simple: (strings: TemplateStringsArray, ...values: any[]) => any
+  simple: (strings: TemplateStringsArray, ...values: unknown[]) => unknown
   /**
    * # `unsafe`
    *
@@ -2226,7 +2283,7 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * const rows = await db.unsafe('SELECT 1 as one')
    * ```
    */
-  unsafe: (query: string, params?: any[]) => Promise<any>
+  unsafe: <TRow extends Record<string, unknown> = Record<string, unknown>>(query: string, params?: unknown[]) => Promise<TRow[]>
   /**
    * # `file`
    *
@@ -2237,7 +2294,7 @@ export interface QueryBuilder<DB extends DatabaseSchema<any>> {
    * const rows = await db.file('queries/users.sql')
    * ```
    */
-  file: (path: string, params?: any[]) => Promise<any>
+  file: <TRow extends Record<string, unknown> = Record<string, unknown>>(path: string, params?: unknown[]) => Promise<TRow[]>
   /**
    * # `reserve`
    *
@@ -2273,7 +2330,7 @@ finally { reserved.release() }
    * await db.listen('events')
    * ```
    */
-  listen: (channel: string, handler?: (payload: any) => void) => Promise<void>
+  listen: (channel: string, handler?: (payload: unknown) => void) => Promise<void>
   /**
    * # `unlisten`
    *
@@ -2285,20 +2342,20 @@ finally { reserved.release() }
    *
    * Sends a notification to a channel (placeholder).
    */
-  notify: (channel: string, payload?: any) => Promise<void>
+  notify: (channel: string, payload?: unknown) => Promise<void>
   // COPY support (stubs until available)
   /**
    * # `copyTo`
    *
    * Streams out data from a query or table (placeholder).
    */
-  copyTo: (queryOrTable: string, options?: Record<string, any>) => Promise<any>
+  copyTo: (queryOrTable: string, options?: Record<string, unknown>) => Promise<unknown>
   /**
    * # `copyFrom`
    *
    * Streams data into a table (placeholder).
    */
-  copyFrom: (queryOrTable: string, source: AsyncIterable<any> | Iterable<any>, options?: Record<string, any>) => Promise<any>
+  copyFrom: (queryOrTable: string, source: AsyncIterable<unknown> | Iterable<unknown>, options?: Record<string, unknown>) => Promise<unknown>
   // Pool readiness
   /**
    * # `ping`
@@ -2357,18 +2414,18 @@ finally { reserved.release() }
    *
    * Wraps a function so it runs inside a new transaction when called.
    */
-  transactional: <TArgs extends any[], R>(fn: (tx: QueryBuilder<DB>, ...args: TArgs) => Promise<R> | R, options?: TransactionOptions) => (...args: TArgs) => Promise<R>
+  transactional: <TArgs extends unknown[], R>(fn: (tx: QueryBuilder<DB>, ...args: TArgs) => Promise<R> | R, options?: TransactionOptions) => (...args: TArgs) => Promise<R>
   // aggregates
   count: <TTable extends keyof DB & string>(table: TTable, column?: keyof DB[TTable]['columns'] & string) => Promise<number>
   sum: <TTable extends keyof DB & string>(table: TTable, column: keyof DB[TTable]['columns'] & string) => Promise<number>
   avg: <TTable extends keyof DB & string>(table: TTable, column: keyof DB[TTable]['columns'] & string) => Promise<number>
-  min: <TTable extends keyof DB & string>(table: TTable, column: keyof DB[TTable]['columns'] & string) => Promise<any>
-  max: <TTable extends keyof DB & string>(table: TTable, column: keyof DB[TTable]['columns'] & string) => Promise<any>
+  min: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(table: TTable, column: K) => Promise<DB[TTable]['columns'][K] | null>
+  max: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(table: TTable, column: K) => Promise<DB[TTable]['columns'][K] | null>
   // dml helpers
-  insertOrIgnore: <TTable extends keyof DB & string>(table: TTable, values: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[]) => Promise<any>
-  insertGetId: <TTable extends keyof DB & string>(table: TTable, values: Partial<DB[TTable]['columns']>, idColumn?: keyof DB[TTable]['columns'] & string) => Promise<any>
+  insertOrIgnore: <TTable extends keyof DB & string>(table: TTable, values: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[]) => Promise<number>
+  insertGetId: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string = DB[TTable]['primaryKey'] & keyof DB[TTable]['columns'] & string>(table: TTable, values: Partial<DB[TTable]['columns']>, idColumn?: K) => Promise<DB[TTable]['columns'][K]>
   updateOrInsert: <TTable extends keyof DB & string>(table: TTable, match: Partial<DB[TTable]['columns']>, values: Partial<DB[TTable]['columns']>) => Promise<boolean>
-  upsert: <TTable extends keyof DB & string>(table: TTable, rows: Partial<DB[TTable]['columns']>[], conflictColumns: (keyof DB[TTable]['columns'] & string)[], mergeColumns?: (keyof DB[TTable]['columns'] & string)[]) => Promise<any>
+  upsert: <TTable extends keyof DB & string>(table: TTable, rows: Partial<DB[TTable]['columns']>[], conflictColumns: (keyof DB[TTable]['columns'] & string)[], mergeColumns?: (keyof DB[TTable]['columns'] & string)[]) => Promise<number>
 
   /**
    * # `create(table, values)`
@@ -2418,7 +2475,7 @@ finally { reserved.release() }
    */
   deleteMany: <TTable extends keyof DB & string>(
     table: TTable,
-    ids: any[],
+    ids: PrimaryKeyValue<DB, TTable>[],
   ) => Promise<number>
 
   /**
@@ -2458,8 +2515,8 @@ finally { reserved.release() }
    */
   remove: <TTable extends keyof DB & string>(
     table: TTable,
-    id: DB[TTable]['columns'][DB[TTable]['primaryKey'] & keyof DB[TTable]['columns']] | any,
-  ) => Promise<any>
+    id: PrimaryKeyValue<DB, TTable>,
+  ) => Promise<unknown>
 
   /**
    * # `find(table, id)`
@@ -2467,7 +2524,7 @@ finally { reserved.release() }
    */
   find: <TTable extends keyof DB & string>(
     table: TTable,
-    id: DB[TTable]['columns'][DB[TTable]['primaryKey'] & keyof DB[TTable]['columns']] | any,
+    id: PrimaryKeyValue<DB, TTable>,
   ) => Promise<DB[TTable]['columns'] | undefined>
 
   /**
@@ -2476,7 +2533,7 @@ finally { reserved.release() }
    */
   findOrFail: <TTable extends keyof DB & string>(
     table: TTable,
-    id: DB[TTable]['columns'][DB[TTable]['primaryKey'] & keyof DB[TTable]['columns']] | any,
+    id: PrimaryKeyValue<DB, TTable>,
   ) => Promise<DB[TTable]['columns']>
 
   /**
@@ -2485,7 +2542,7 @@ finally { reserved.release() }
    */
   findMany: <TTable extends keyof DB & string>(
     table: TTable,
-    ids: any[],
+    ids: PrimaryKeyValue<DB, TTable>[],
   ) => Promise<DB[TTable]['columns'][]>
 
   /**
@@ -2519,11 +2576,11 @@ finally { reserved.release() }
    * # `rawQuery(sql)`
    * Execute a raw SQL string (single statement) with no parameters.
    */
-  rawQuery: (query: string) => Promise<any>
+  rawQuery: (query: string) => Promise<Record<string, unknown>[]>
   /** Safely wrap/validate an identifier for raw fragments. */
-  id?: (name: string) => any
+  id?: (name: string) => SqlFragment
   /** Safely wrap/validate multiple identifiers. */
-  ids?: (...names: string[]) => any
+  ids?: (...names: string[]) => SqlFragment
   /** Take an advisory lock (PostgreSQL only). */
   advisoryLock?: (key: number | string) => Promise<void>
   /** Try to take an advisory lock and return false if unavailable (PostgreSQL only). */
@@ -2543,7 +2600,7 @@ finally { reserved.release() }
    */
   advisoryUnlock?: (key: number | string) => Promise<boolean>
   /** Get all relationships defined for a table. */
-  getRelationships?: (table: string) => Record<string, any>
+  getRelationships?: (table: string) => Record<string, unknown>
   /** Check if a table has a specific relationship. */
   hasRelationship?: (table: string, relationName: string) => boolean
   /** Get the type of a relationship (hasMany, belongsTo, etc.). */
