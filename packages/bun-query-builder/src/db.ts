@@ -263,15 +263,38 @@ function createSQLiteSQL(filename: string): SQL {
     for (let i = 0; i < values.length; i++) {
       const value = values[i]
 
-      // Handle raw SQL markers (from sql('identifier') or sql.raw())
-      if (value && typeof value === 'object' && (value.__raw || value.raw)) {
-        const rawValue = value.__raw ? value.value : (typeof value.raw === 'string' ? value.raw : value.raw())
-        sql += rawValue + (strings[i + 1] || '')
-      }
-      // Handle query objects (nested queries)
-      else if (value && typeof value === 'object' && 'sql' in value && 'values' in value) {
+      // Handle query objects (nested queries) FIRST.
+      //
+      // Order matters, and getting it wrong is stacksjs/bun-query-builder#1084.
+      // The queries this wrapper hands back (see the object returned below)
+      // carry `raw: () => sql` so callers can read their text — which means
+      // they satisfy the raw-marker test underneath as well. With that branch
+      // first, interpolating one query into another spliced its SQL TEXT and
+      // silently threw away its `values`, so the placeholders arrived with no
+      // bindings behind them:
+      //
+      //   db.selectFrom('t').where('id', '>', 0).paginate(5)
+      //   -> SQLite query expected 3 values, received 2
+      //
+      // and the COUNT half of the same call failed the other way: bun:sqlite
+      // only arity-checks when some values are passed, so `WHERE id > ?` bound
+      // the placeholder to NULL, matched nothing, and reported total 0 rather
+      // than throwing. `paginate` nests twice, which is why it was the loudest
+      // victim, but every method that composes a query into a template — the
+      // pagination family, exists/first/value, the soft-delete filter — was
+      // dropping bindings the same way.
+      //
+      // The discriminator is `values` being an ARRAY: raw markers carry
+      // `__raw` and no `values`, and Bun's native query objects expose `values`
+      // as a method, so neither is captured here.
+      if (value && typeof value === 'object' && typeof value.sql === 'string' && Array.isArray(value.values)) {
         sql += value.sql + (strings[i + 1] || '')
         params.push(...value.values)
+      }
+      // Handle raw SQL markers (from sql('identifier') or sql.raw())
+      else if (value && typeof value === 'object' && (value.__raw || value.raw)) {
+        const rawValue = value.__raw ? value.value : (typeof value.raw === 'string' ? value.raw : value.raw())
+        sql += rawValue + (strings[i + 1] || '')
       }
       // Handle arrays - expand to placeholders
       else if (Array.isArray(value)) {
