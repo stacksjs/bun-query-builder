@@ -74,6 +74,48 @@ const users = await db
   .get()
 ```
 
+#### How `orWhere` groups
+
+A chained `orWhere` groups with the term immediately before it, and that group
+is ANDed into the rest of the chain:
+
+```typescript
+db.selectFrom('posts')
+  .where('status', '=', 'pending')
+  .where('title', 'like', term)
+  .orWhere('content', 'like', term)
+
+// WHERE status = ? AND (title like ? OR content like ?)
+```
+
+In other words `OR` binds **tighter** than `AND` here — the inverse of raw SQL,
+and the reading the chain has when you say it out loud. It also matches what
+`whereAny` already does.
+
+This matters because the other reading fails silently and in the widening
+direction. Under raw SQL precedence the same chain means
+`(status AND title) OR content`, so every row matching `content` comes back
+regardless of its status — a valid query, no warning, and a result set that
+looks like data rather than an error.
+
+To get `(a AND b) OR c`, use `whereGroup`:
+
+```typescript
+db.selectFrom('posts')
+  .whereGroup(qb => qb.where('status', '=', 'pending').where('title', 'like', term))
+  .orWhere('content', 'like', term)
+
+// WHERE (status = ? AND title like ?) OR content like ?
+```
+
+Two notes:
+
+- An object passed to `where`/`orWhere` is a **single** term, so
+  `.where({ a, b }).orWhere(c)` means `(a AND b) OR c`.
+- A `whereRaw`/`orWhereRaw` fragment is also a single term and is **not**
+  auto-parenthesised. If your fragment contains a top-level `OR`, bracket it
+  yourself.
+
 ## Special Where Methods
 
 ### whereIn / whereNotIn
@@ -207,6 +249,21 @@ const users = await db
 
 // Generates: WHERE active = true AND (role = 'admin' OR role = 'moderator')
 ```
+
+`whereGroup(callback)` is the same thing under an explicit name, and
+`orWhereGroup(callback)` ORs the group onto the query instead of ANDing it:
+
+```typescript
+db.selectFrom('users')
+  .where('active', '=', true)
+  .orWhereGroup(qb => qb.where('role', '=', 'admin').where('verified', '=', true))
+
+// WHERE active = ? OR (role = ? AND verified = ?)
+```
+
+A callback that adds no conditions **throws**. A group that contributed nothing
+would drop out of the query and leave it matching every row the filter existed
+to exclude, which is the failure this API exists to prevent.
 
 ## Existence Checks
 

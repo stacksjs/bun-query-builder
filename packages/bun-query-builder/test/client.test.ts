@@ -313,6 +313,11 @@ describe('query builder - SQL text for clauses and helpers', () => {
     expectTextOutput(s2)
     const s3 = toTextOf(qb().selectFrom('projects').orWhereNested(nested as any) as any)
     expectTextOutput(s3)
+    // An orWhereNested with nothing before it used to emit
+    // `SELECT * FROM projects OR (...)` — invalid SQL that expectTextOutput
+    // waved through, since it only checks the result is a string. See #1083.
+    expect(s3).toContain('WHERE (')
+    expect(s3).not.toMatch(/FROM projects\s+OR\b/)
     const s4 = toTextOf(qb().selectFrom('users').where(['id', '>', 0]).andWhere(['name', 'like', '%a%']) as any)
     expectTextOutput(s4)
     const s5 = toTextOf(qb().selectFrom('users').where(['id', '>', 0]).orWhere(['name', 'like', '%a%']) as any)

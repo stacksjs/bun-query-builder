@@ -10,6 +10,8 @@ import type { DriverConnection } from './db'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
+import type { WhereTerm } from './sql-fragments'
+import { FALSE_PREDICATE, renderInPredicate, renderWhereTerms } from './sql-fragments'
 
 export { resetConnection }
 
@@ -182,38 +184,6 @@ function renderSelectColumn(col: unknown): string {
   throw new TypeError(
     `[query-builder] select(): unsupported column ${String(col)} — pass a column name, a string[], or a SQL fragment (e.g. sql\`count(*) as c\`)`,
   )
-}
-
-/**
- * Constant predicates, for the cases where a collection is empty.
- *
- * `1 = 0` and `1 = 1` take no parameters and parse identically on SQLite,
- * Postgres and MySQL, which is the point: the alternatives are engine-specific.
- * `IN ()` is the example that motivated these — SQLite parses it and matches
- * nothing, while Postgres and MySQL reject it as a syntax error, so the same
- * call site behaved differently depending on where it ran.
- */
-const FALSE_PREDICATE = '1 = 0'
-const TRUE_PREDICATE = '1 = 1'
-
-/**
- * Render `col IN (…)` / `col NOT IN (…)`, including the empty case.
- *
- * An empty `IN` is FALSE (nothing is a member of the empty set) and an empty
- * `NOT IN` is TRUE (everything is a non-member). Those constants are not
- * interchangeable and the mirror is easy to get backwards: writing FALSE for
- * `NOT IN` would silently drop every row from any query whose exclusion list
- * happened to come back empty — the same shape of silent, widening-or-narrowing
- * failure as the `IN ()` bug itself.
- *
- * Shared rather than inlined at each call site because there are four of them
- * (`whereIn`, `orWhereIn`, `whereNotIn`, `orWhereNotIn`) and they have already
- * drifted once.
- */
-function renderInPredicate(column: string, values: any[], negated: boolean, placeholders: string): string {
-  if (values.length === 0)
-    return negated ? TRUE_PREDICATE : FALSE_PREDICATE
-  return `${column} ${negated ? 'NOT IN' : 'IN'} (${placeholders})`
 }
 
 // Pre-compiled regex patterns for performance
@@ -846,6 +816,47 @@ export interface BaseSelectQueryBuilder<
    */
   orWhereNotLike: (column: keyof DB[TTable]['columns'] & string, pattern: string, caseSensitive?: boolean) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   orWhereNotILike?: (column: keyof DB[TTable]['columns'] & string, pattern: string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `whereGroup`
+   *
+   * A parenthesised group of conditions, ANDed onto the query.
+   *
+   * A chained `orWhere` groups with the term immediately before it, so
+   * `.where(a).where(b).orWhere(c)` means `a AND (b OR c)`. This is the escape
+   * hatch for the other reading — `(a AND b) OR c` — which chaining alone can
+   * no longer express. Throws if the callback adds no conditions, rather than
+   * leaving the query unfiltered.
+   *
+   * @example
+   * ```ts
+   * // (status = 'live' AND role = 'admin') OR owner_id = 7
+   * db.selectFrom('users')
+   *   .whereGroup(b => b.where('status', '=', 'live').where('role', '=', 'admin'))
+   *   .orWhere('owner_id', '=', 7)
+   * ```
+   */
+  whereGroup: (callback: (builder: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * # `orWhereGroup`
+   *
+   * A parenthesised group of conditions, ORed onto the query.
+   */
+  orWhereGroup: (callback: (builder: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** OR-connected counterpart of `whereNull`. */
+  orWhereNull: (column: keyof DB[TTable]['columns'] & string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** OR-connected counterpart of `whereNotNull`. */
+  orWhereNotNull: (column: keyof DB[TTable]['columns'] & string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** OR-connected counterpart of `whereBetween`. */
+  orWhereBetween: (column: keyof DB[TTable]['columns'] & string, start: any, end: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /** OR-connected counterpart of `whereExists`. */
+  orWhereExists: (subquery: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
+   * OR-connected counterpart of `whereRaw`.
+   *
+   * A raw fragment is one term and is not auto-parenthesised — if it contains a
+   * top-level `OR`, bracket it yourself.
+   */
+  orWhereRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   // where any/all/none on list of columns
   /**
    * # `whereAny`
@@ -3159,12 +3170,28 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       ? `SELECT ${columns.join(', ')} FROM ${String(table)}`
       : `SELECT * FROM ${String(table)}`
 
+    // The WHERE clause is a TERM LIST, not text appended to `text`. Each term
+    // records the connector its caller asked for, and the body is rendered at
+    // emit time by renderWhereTerms(), which brackets each maximal OR-run with
+    // the term that opens it.
+    //
+    // A `whereConditions: string[]` used to live here with 25 pushes and zero
+    // reads — a structured representation nobody ever wired to the emit path,
+    // which is exactly why `orWhere` shipped as flat text and mis-grouped.
+    // See stacksjs/bun-query-builder#1083.
+    const whereTerms: WhereTerm[] = []
+    const whereParams: unknown[] = []
+    // Set once a set operator closes the current SELECT. Terms pushed after a
+    // UNION/INTERSECT/EXCEPT belong to the RIGHT-hand SELECT and must render at
+    // the end of `text`, or their params would bind in the wrong order.
+    let whereTail = false
+
     // Lazy building: don't prepare statement until execution
     // built is initialized lazily to avoid expensive template tag calls on every query
     let built: any = null
     const ensureBuilt = () => {
       if (built === null) {
-        const finalText = reorderSelectClauses(text)
+        const finalText = reorderSelectClauses(currentSql())
         built = whereParams.length > 0
           ? _sql.unsafe(finalText, whereParams)
           : _sql.unsafe(finalText)
@@ -3172,17 +3199,168 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       return built
     }
 
+    /** Record one WHERE predicate. The connector is the caller's intent, not a
+     *  position — renderWhereTerms() decides what the first term emits. */
+    const pushWhere = (conn: 'AND' | 'OR', clause: string) => {
+      whereTerms.push({ conn, sql: clause })
+      built = null
+    }
+
+    // Kept so the existing call sites need no edit. Callers pass 'WHERE' to
+    // mean "a where-type clause" (whereLike/whereExists/whereILike/the dynamic
+    // whereX proxy all do); only 'OR' is a real disjunction.
     const addWhereText = (prefix: 'WHERE' | 'AND' | 'OR', clause: string) => {
-      const hasWhere = SQL_PATTERNS.WHERE.test(text)
-      // When a WHERE already exists the new clause needs a CONNECTOR, not a
-      // second WHERE keyword. Callers pass 'WHERE' to mean "a where-type
-      // clause" (whereLike/whereExists/whereILike/dynamic whereX all do); if
-      // one is chained after an existing WHERE, that must become AND — emitting
-      // a literal second `WHERE` produced invalid SQL (`WHERE a = ? WHERE b = ?`).
-      // 'OR'/'AND' connectors pass through unchanged. The first clause is always
-      // forced to WHERE regardless of the requested prefix.
-      const p = !hasWhere ? 'WHERE' : (prefix === 'WHERE' ? 'AND' : prefix)
-      text = `${text} ${p} ${clause}`
+      pushWhere(prefix === 'OR' ? 'OR' : 'AND', clause)
+    }
+
+    // Index of the first TOP-LEVEL clause that must follow WHERE, or -1.
+    // Paren-depth scan so a subquery's own ORDER BY/LIMIT doesn't match.
+    const TAIL_CLAUSE = /\(|\)|\b(?:GROUP\s+BY|HAVING|ORDER\s+BY|LIMIT|OFFSET|WINDOW|UNION|INTERSECT|EXCEPT|FOR\s+UPDATE|FOR\s+SHARE|LOCK\s+IN\s+SHARE\s+MODE)\b/gi
+    const firstTailIndex = (s: string): number => {
+      TAIL_CLAUSE.lastIndex = 0
+      let depth = 0
+      let m: RegExpExecArray | null
+      // eslint-disable-next-line no-cond-assign
+      while ((m = TAIL_CLAUSE.exec(s))) {
+        if (m[0] === '(') { depth++ }
+        else if (m[0] === ')') { depth = Math.max(0, depth - 1) }
+        else if (depth === 0) { return m.index }
+      }
+      return -1
+    }
+
+    /**
+     * `text` with the rendered WHERE spliced in ahead of the first trailing
+     * clause.
+     *
+     * EVERY path that emits executable SQL must go through this. The WHERE no
+     * longer lives in `text`, so reading `text` directly now yields a query
+     * with no filter at all — the worst failure mode available here, and the
+     * reason this function exists rather than the splice being inlined.
+     *
+     * Splicing rather than appending also fixes `.where(a).orderBy(c).orWhere(b)`,
+     * which used to emit `… ORDER BY c ASC OR b` and fail to parse.
+     */
+    const currentSql = (): string => {
+      const body = renderWhereTerms(whereTerms)
+      if (!body)
+        return text
+      if (whereTail) {
+        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+        return `${text} ${kw} ${body}`
+      }
+      const cut = firstTailIndex(text)
+      return cut >= 0
+        ? `${text.slice(0, cut)}WHERE ${body} ${text.slice(cut)}`
+        : `${text} WHERE ${body}`
+    }
+
+    /**
+     * A parenthesised sub-group: the escape hatch for `(a AND b) OR c`, the one
+     * shape the new precedence rule can no longer express by chaining alone.
+     *
+     * The callback receives a fresh builder over the same table and only its
+     * WHERE state is harvested — nothing else it touches has any effect.
+     */
+    const addWhereGroup = (conn: 'AND' | 'OR', cb: (b: any) => unknown) => {
+      const sub: any = makeSelect(table as any)
+      cb(sub)
+      const st = sub.__whereState?.() as { body: string, params: unknown[] } | undefined
+      if (!st || !st.body) {
+        // Fails closed, for the same reason where() throws on a condition it
+        // does not understand: a group that contributed nothing would leave the
+        // query matching every row the filter existed to exclude.
+        throw new TypeError(
+          '[query-builder] whereGroup(callback): the callback added no conditions. '
+          + 'Add at least one where()/orWhere() to the builder it receives.',
+        )
+      }
+      const offset = whereParams.length
+      // The sub-builder numbered its placeholders from $1; on Postgres they
+      // have to continue ours. `?` dialects need no renumbering.
+      const body = offset > 0 && config.dialect === 'postgres'
+        ? st.body.replace(/\$(\d+)/g, (_m: string, n: string) => `$${Number(n) + offset}`)
+        : st.body
+      whereParams.push(...st.params)
+      pushWhere(conn, `(${body})`)
+    }
+
+    /**
+     * The body of `andWhere` and `orWhere`.
+     *
+     * These were two near-identical 75-line copies that differed only in the
+     * connector they emitted — which is exactly how the OR variant came to be
+     * the one that mis-grouped. One implementation, connector as a parameter.
+     */
+    const addBooleanWhere = (self: any, conn: 'AND' | 'OR', label: string, expr: any, op?: WhereOperator, value?: any) => {
+      if (typeof expr === 'string' && op !== undefined) {
+        validateIdentifier(String(expr), `${label}(column)`)
+        assertSafeWhereOperator(op, `${label}(operator)`)
+        const paramIndex = whereParams.length + 1
+        whereParams.push(value)
+        pushWhere(conn, `${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
+        return self
+      }
+
+      // Array format: ['column', 'op', value]
+      if (Array.isArray(expr)) {
+        const [col, rawOp, val] = expr
+        const colName = String(col)
+        validateIdentifier(colName, `${label}(column)`)
+        const operator = assertSafeWhereOperator(rawOp, `${label}(operator)`)
+
+        if (operator === 'in' || operator === 'not in') {
+          const values = Array.isArray(val) ? val : [val]
+          const placeholders = getPlaceholders(values.length, whereParams.length + 1)
+          const clause = renderInPredicate(colName, values, operator === 'not in', placeholders)
+          whereParams.push(...values)
+          pushWhere(conn, clause)
+        }
+        else {
+          const paramIndex = whereParams.length + 1
+          whereParams.push(val)
+          pushWhere(conn, `${colName} ${operator} ${getPlaceholder(paramIndex)}`)
+        }
+        return self
+      }
+
+      // Callback: a parenthesised group, same as where(callback)/whereGroup().
+      if (typeof expr === 'function') {
+        addWhereGroup(conn, expr)
+        return self
+      }
+
+      // Object format: { name: 'Alice', age: 25 }
+      if (expr && typeof expr === 'object' && !('raw' in expr)) {
+        const conditions: string[] = []
+        for (const key of Object.keys(expr)) {
+          validateIdentifier(key, `${label}(column)`)
+          const v = (expr as any)[key]
+          if (Array.isArray(v)) {
+            const placeholders = getPlaceholders(v.length, whereParams.length + 1)
+            conditions.push(renderInPredicate(key, v, false, placeholders))
+            whereParams.push(...v)
+          }
+          else {
+            const paramIndex = whereParams.length + 1
+            conditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
+            whereParams.push(v)
+          }
+        }
+        // One term. `orWhere({a, b})` means "OR (a AND b)", so the conjunction
+        // has to be bracketed — un-bracketed it bound only `a` to the OR.
+        if (conditions.length > 0)
+          pushWhere(conn, conditions.length > 1 ? `(${conditions.join(' AND ')})` : conditions[0])
+        return self
+      }
+
+      // Raw expressions
+      if (expr && typeof (expr as any).raw !== 'undefined') {
+        pushWhere(conn, (expr as any).raw)
+        return self
+      }
+
+      return self
     }
 
     // Append a UNION/UNION ALL (extensible to INTERSECT/EXCEPT) while MERGING
@@ -3190,6 +3368,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
     // ours on Postgres — previously the set-op appended text only, dropping the
     // right side's params and colliding `$1`. See stacksjs/bun-query-builder#1029.
     const appendSetOp = (op: string, other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) => {
+      // Params are one flat array in push order, so the WHERE text has to
+      // precede the set operator's params in the emitted string. Materialize it
+      // into `text` now; terms added after this point belong to the RIGHT-hand
+      // SELECT and render at the end — which is what the old text-append did.
+      if (whereTerms.length > 0) {
+        text = currentSql()
+        whereTerms.length = 0
+      }
+      whereTail = true
       const st = other.__rawState?.()
       if (st) {
         const offset = whereParams.length
@@ -3314,9 +3501,6 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       joinedTables.add(resolved.pivotTable)
     }
 
-    // Track WHERE conditions and parameters for proper merging
-    const whereConditions: string[] = []
-    const whereParams: unknown[] = []
 
     // Helper function to add columns to the SELECT clause
     const addToSelectClause = (columnsToAdd: string): void => {
@@ -4131,11 +4315,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           throw new Error(`[query-builder] Unsupported relationship type '${type}' for whereHas`)
         }
 
-        built = sql`${ensureBuilt()} WHERE EXISTS (${sql([subquerySQL] as any)})`
-        try {
-          addWhereText('WHERE', `EXISTS (${subquerySQL})`)
-        }
-        catch {}
+        // The record of truth is the term list; ensureBuilt() renders from it.
+        // This used to ALSO assign `built = sql`${ensureBuilt()} WHERE ...``, a
+        // parallel representation carrying an unconditional WHERE keyword. See #1083.
+        addWhereText('WHERE', `EXISTS (${subquerySQL})`)
 
         return this as any
       },
@@ -4184,11 +4367,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           throw new Error(`[query-builder] Unsupported relationship type '${type}' for whereDoesntHave`)
         }
 
-        built = sql`${ensureBuilt()} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
-        try {
-          addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`)
-        }
-        catch {}
+        // See the note in whereHas: the term list is the single record.
+        addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`)
 
         return this as any
       },
@@ -4235,11 +4415,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           throw new Error(`[query-builder] Unsupported relationship type '${type}' for has`)
         }
 
-        built = sql`${ensureBuilt()} WHERE EXISTS (${sql([subquerySQL] as any)})`
-        try {
-          addWhereText('WHERE', `EXISTS (${subquerySQL})`)
-        }
-        catch {}
+        // The record of truth is the term list; ensureBuilt() renders from it.
+        // This used to ALSO assign `built = sql`${ensureBuilt()} WHERE ...``, a
+        // parallel representation carrying an unconditional WHERE keyword. See #1083.
+        addWhereText('WHERE', `EXISTS (${subquerySQL})`)
 
         return this as any
       },
@@ -4286,11 +4465,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           throw new Error(`[query-builder] Unsupported relationship type '${type}' for doesntHave`)
         }
 
-        built = sql`${ensureBuilt()} WHERE NOT EXISTS (${sql([subquerySQL] as any)})`
-        try {
-          addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`)
-        }
-        catch {}
+        // See the note in whereHas: the term list is the single record.
+        addWhereText('WHERE', `NOT EXISTS (${subquerySQL})`)
 
         return this as any
       },
@@ -4423,17 +4599,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const val = value === undefined ? opOrValue : value
         const paramIndex = whereParams.length + 1
         const clause = `${resolved.pivotTable}.${column} ${op} ${getPlaceholder(paramIndex)}`
-        whereConditions.push(clause)
         whereParams.push(val)
-        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text = `${text} ${kw} ${clause}`
-        built = null
+        pushWhere('AND', clause)
         if (resolved.hasConfig)
           pivotConfigRelations.add(relation)
         return this as any
       },
       wherePivotIn(relation: string, column: string, values: any[]) {
-        if (!meta || !Array.isArray(values) || values.length === 0)
+        if (!meta || !Array.isArray(values))
           return this as any
         const resolved = resolvePivotLocal(relation)
         if (!resolved) {
@@ -4443,13 +4616,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         validateIdentifier(column, 'wherePivotIn (column)')
         ensurePivotJoined(resolved)
 
+        // An empty list is FALSE, not absent: `return this` here dropped the
+        // predicate and widened the query to every row it existed to exclude.
+        // `wherePivotNotIn([])` keeps its no-op below — non-membership in the
+        // empty set is TRUE, so dropping the term there is correct. See #1083.
         const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-        const clause = `${resolved.pivotTable}.${column} IN (${placeholders})`
-        whereConditions.push(clause)
+        const clause = renderInPredicate(`${resolved.pivotTable}.${column}`, values, false, placeholders)
         whereParams.push(...values)
-        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text = `${text} ${kw} ${clause}`
-        built = null
+        pushWhere('AND', clause)
         if (resolved.hasConfig)
           pivotConfigRelations.add(relation)
         return this as any
@@ -4467,11 +4641,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
 
         const placeholders = getPlaceholders(values.length, whereParams.length + 1)
         const clause = `${resolved.pivotTable}.${column} NOT IN (${placeholders})`
-        whereConditions.push(clause)
         whereParams.push(...values)
-        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text = `${text} ${kw} ${clause}`
-        built = null
+        pushWhere('AND', clause)
         if (resolved.hasConfig)
           pivotConfigRelations.add(relation)
         return this as any
@@ -4485,11 +4656,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         validateIdentifier(resolved.pivotTable, 'wherePivotNull (pivot table)')
         validateIdentifier(column, 'wherePivotNull (column)')
         ensurePivotJoined(resolved)
-        const clause = `${resolved.pivotTable}.${column} IS NULL`
-        whereConditions.push(clause)
-        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text = `${text} ${kw} ${clause}`
-        built = null
+        pushWhere('AND', `${resolved.pivotTable}.${column} IS NULL`)
         if (resolved.hasConfig)
           pivotConfigRelations.add(relation)
         return this as any
@@ -4503,19 +4670,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         validateIdentifier(resolved.pivotTable, 'wherePivotNotNull (pivot table)')
         validateIdentifier(column, 'wherePivotNotNull (column)')
         ensurePivotJoined(resolved)
-        const clause = `${resolved.pivotTable}.${column} IS NOT NULL`
-        whereConditions.push(clause)
-        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text = `${text} ${kw} ${clause}`
-        built = null
+        pushWhere('AND', `${resolved.pivotTable}.${column} IS NOT NULL`)
         if (resolved.hasConfig)
           pivotConfigRelations.add(relation)
         return this as any
       },
       where(expr: any, op?: WhereOperator, value?: any) {
-        // Helper to get the correct keyword (WHERE for first condition, AND for subsequent)
-        const getWhereKeyword = () => SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-
         if (typeof expr === 'string' && op !== undefined) {
           // Boundary validation: the column and operator are interpolated
           // into SQL text (values stay parameterized). Compile-time types
@@ -4533,19 +4693,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(value) ? value : [value]
             const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-            const clause = `${String(expr)} ${operator.toUpperCase()} (${placeholders})`
-            whereConditions.push(clause)
+            const clause = renderInPredicate(String(expr), values, operator === 'not in', placeholders)
             whereParams.push(...values)
-            text = `${text} ${getWhereKeyword()} ${clause}`
-            built = null
+            pushWhere('AND', clause)
             return this
           }
           const paramIndex = whereParams.length + 1
-          whereConditions.push(`${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
           whereParams.push(value)
-          // Update built and text immediately
-          text = `${text} ${getWhereKeyword()} ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`
-          built = null
+          pushWhere('AND', `${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
           return this
         }
 
@@ -4559,17 +4714,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(val) ? val : [val]
             const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-            whereConditions.push(`${colName} ${operator.toUpperCase()} (${placeholders})`)
+            const clause = renderInPredicate(colName, values, operator === 'not in', placeholders)
             whereParams.push(...values)
-            text = `${text} ${getWhereKeyword()} ${colName} ${operator.toUpperCase()} (${placeholders})`
-            built = null
+            pushWhere('AND', clause)
           }
           else {
             const paramIndex = whereParams.length + 1
-            whereConditions.push(`${colName} ${operator} ${getPlaceholder(paramIndex)}`)
             whereParams.push(val)
-            text = `${text} ${getWhereKeyword()} ${colName} ${operator} ${getPlaceholder(paramIndex)}`
-            built = null
+            pushWhere('AND', `${colName} ${operator} ${getPlaceholder(paramIndex)}`)
           }
 
           return this
@@ -4586,30 +4738,27 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             const value = whereObject[key]
             if (Array.isArray(value)) {
               const placeholders = getPlaceholders(value.length, whereParams.length + 1)
-              conditions.push(`${key} IN (${placeholders})`)
-              whereConditions.push(`${key} IN (${placeholders})`)
+              conditions.push(renderInPredicate(key, value, false, placeholders))
               whereParams.push(...value)
             }
             else {
               const paramIndex = whereParams.length + 1
               conditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
-              whereConditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
               whereParams.push(value)
             }
           }
 
-          if (conditions.length > 0) {
-            text = `${text} ${getWhereKeyword()} ${conditions.join(' AND ')}`
-            built = null
-          }
+          // One term, not one per key: an object literal is a single
+          // conjunction, so a later `.orWhere(z)` must OR against the whole of
+          // it rather than against its last key.
+          if (conditions.length > 0)
+            pushWhere('AND', conditions.length > 1 ? `(${conditions.join(' AND ')})` : conditions[0])
           return this
         }
 
         // Handle raw expressions
         if (isRawExpression(expr)) {
-          whereConditions.push(expr.raw)
-          text = `${text} ${getWhereKeyword()} ${expr.raw}`
-          built = null
+          pushWhere('AND', expr.raw)
           return this
         }
 
@@ -4619,17 +4768,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // A `where` that fails open is a data leak in any application where the
         // filter is the access check, and nothing anywhere says it happened.
         //
-        // The callback form is the one people actually write, because that is
-        // how Kysely and Knex express an `OR` group. It is not supported here -
-        // `whereNested`, `whereAny` and the `orWhere*` helpers are - so it says
-        // so instead of ignoring it.
+        // The callback form is the one people actually write, because it is how
+        // Kysely and Knex express a group, and docs/guide/where.md has shown it
+        // for longer than the builder has rejected it. It is now a real group —
+        // see addWhereGroup, which still throws if the callback adds nothing, so
+        // the fails-closed guarantee is unchanged.
         if (typeof expr === 'function') {
-          throw new TypeError(
-            'where(callback) is not supported. This builder has no expression callback, and '
-            + 'ignoring one silently would leave the query matching every row the filter was '
-            + 'meant to exclude. Use whereNested(subquery), whereAny(...), or the orWhere* '
-            + 'helpers to build a grouped condition.',
-          )
+          addWhereGroup('AND', expr)
+          return this
         }
 
         if (expr === undefined || expr === null) {
@@ -4648,52 +4794,83 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // where helpers
       whereNull(column: string) {
         validateIdentifier(String(column), 'whereNull(column)')
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text = `${text} ${keyword} ${String(column)} IS NULL`
-        built = null
+        pushWhere('AND', `${String(column)} IS NULL`)
         return this
       },
       whereNotNull(column: string) {
         validateIdentifier(String(column), 'whereNotNull(column)')
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text = `${text} ${keyword} ${String(column)} IS NOT NULL`
-        built = null
+        pushWhere('AND', `${String(column)} IS NOT NULL`)
         return this
+      },
+      orWhereNull(column: string) {
+        validateIdentifier(String(column), 'orWhereNull(column)')
+        pushWhere('OR', `${String(column)} IS NULL`)
+        return this as any
+      },
+      orWhereNotNull(column: string) {
+        validateIdentifier(String(column), 'orWhereNotNull(column)')
+        pushWhere('OR', `${String(column)} IS NOT NULL`)
+        return this as any
       },
       whereBetween(column: string, start: any, end: any) {
         validateIdentifier(String(column), 'whereBetween(column)')
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         // Dialect-aware placeholders: Postgres needs `$n`, not `?` (#1027).
         const i = whereParams.length + 1
-        text = `${text} ${keyword} ${String(column)} BETWEEN ${getPlaceholder(i)} AND ${getPlaceholder(i + 1)}`
         whereParams.push(start, end)
-        built = null
+        pushWhere('AND', `${String(column)} BETWEEN ${getPlaceholder(i)} AND ${getPlaceholder(i + 1)}`)
         return this
       },
+      orWhereBetween(column: string, start: any, end: any) {
+        validateIdentifier(String(column), 'orWhereBetween(column)')
+        const i = whereParams.length + 1
+        whereParams.push(start, end)
+        pushWhere('OR', `${String(column)} BETWEEN ${getPlaceholder(i)} AND ${getPlaceholder(i + 1)}`)
+        return this as any
+      },
       whereExists(subquery: { toSQL: () => any }) {
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text = `${text} ${keyword} EXISTS (${subquery.toSQL()})`
-        built = null
+        pushWhere('AND', `EXISTS (${subquery.toSQL()})`)
         return this
+      },
+      orWhereExists(subquery: { toSQL: () => any }) {
+        pushWhere('OR', `EXISTS (${subquery.toSQL()})`)
+        return this as any
+      },
+      /**
+       * A parenthesised group of conditions.
+       *
+       * This is the escape hatch for `(a AND b) OR c` — the shape that chaining
+       * alone can no longer express now that a chained `orWhere` groups with the
+       * term before it. See renderWhereTerms and #1083.
+       */
+      whereGroup(cb: (b: any) => unknown) {
+        addWhereGroup('AND', cb)
+        return this as any
+      },
+      orWhereGroup(cb: (b: any) => unknown) {
+        addWhereGroup('OR', cb)
+        return this as any
+      },
+      /** Internal: the rendered WHERE body and its params, harvested by whereGroup(). */
+      __whereState() {
+        return { body: renderWhereTerms(whereTerms), params: [...whereParams] }
       },
       whereJsonContains(column: string, json: unknown) {
         // Dialect-aware JSON containment. Previously hardcoded Postgres `@>`,
         // which is a syntax error on MySQL/SQLite and ignored the configured
         // `jsonContainsMode`. See stacksjs/bun-query-builder#1026.
         validateIdentifier(String(column), 'whereJsonContains(column)')
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const dialect = config.dialect
         const idx = whereParams.length + 1
         if (dialect === 'postgres') {
           // operator (`@>`, default) or function (`jsonb_contains`) per config.
           if (config.sql?.jsonContainsMode === 'function')
-            text += ` ${keyword} jsonb_contains(${column}, ${getPlaceholder(idx)})`
+            pushWhere('AND', `jsonb_contains(${column}, ${getPlaceholder(idx)})`)
           else
-            text += ` ${keyword} ${column} @> ${getPlaceholder(idx)}`
+            pushWhere('AND', `${column} @> ${getPlaceholder(idx)}`)
           whereParams.push(JSON.stringify(json))
         }
         else if (isMysqlLike(dialect)) {
-          text += ` ${keyword} JSON_CONTAINS(${column}, ${getPlaceholder(idx)})`
+          pushWhere('AND', `JSON_CONTAINS(${column}, ${getPlaceholder(idx)})`)
           whereParams.push(JSON.stringify(json))
         }
         else {
@@ -4703,18 +4880,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           // value must be present.
           if (Array.isArray(json)) {
             const conds = json.map((_, i) => `EXISTS (SELECT 1 FROM json_each(${column}) WHERE json_each.value = ${getPlaceholder(idx + i)})`)
-            text += ` ${keyword} (${conds.join(' AND ')})`
+            pushWhere('AND', `(${conds.join(' AND ')})`)
             for (const v of json) whereParams.push(v as any)
           }
           else if (json !== null && typeof json === 'object') {
             throw new Error('[query-builder] whereJsonContains: object containment is not supported on SQLite — pass a scalar or array, or use whereJsonPath.')
           }
           else {
-            text += ` ${keyword} EXISTS (SELECT 1 FROM json_each(${column}) WHERE json_each.value = ${getPlaceholder(idx)})`
+            pushWhere('AND', `EXISTS (SELECT 1 FROM json_each(${column}) WHERE json_each.value = ${getPlaceholder(idx)})`)
             whereParams.push(json as any)
           }
         }
-        built = null
         return this as any
       },
       whereJsonPath(path: string, op: WhereOperator, value: any) {
@@ -4733,19 +4909,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           throw new TypeError(`[query-builder] whereJsonPath(path): refusing to use '${path}' — contains characters outside the allowed JSON-path set`)
 
         const dialect = config.dialect
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const idx = whereParams.length + 1
-        if (dialect === 'postgres') {
-          text += ` ${keyword} ${path} ${op} ${getPlaceholder(idx)}`
-        }
-        else if (isMysqlLike(dialect)) {
-          text += ` ${keyword} JSON_EXTRACT(${path}) ${op} ${getPlaceholder(idx)}`
-        }
-        else {
-          text += ` ${keyword} json_extract(${path}) ${op} ${getPlaceholder(idx)}`
-        }
+        if (dialect === 'postgres')
+          pushWhere('AND', `${path} ${op} ${getPlaceholder(idx)}`)
+        else if (isMysqlLike(dialect))
+          pushWhere('AND', `JSON_EXTRACT(${path}) ${op} ${getPlaceholder(idx)}`)
+        else
+          pushWhere('AND', `json_extract(${path}) ${op} ${getPlaceholder(idx)}`)
         whereParams.push(value)
-        built = null
         return this as any
       },
       // The LIKE/ILIKE family records the clause in `text` + `whereParams`
@@ -4834,46 +5005,36 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // because TRUE genuinely is their identity. The asymmetry is the point,
         // not an inconsistency to tidy up.
         if (cols.length === 0) {
-          const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-          text += ` ${kw} (${FALSE_PREDICATE})`
-          built = null
+          pushWhere('AND', `(${FALSE_PREDICATE})`)
           return this as any
         }
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const idx = whereParams.length + 1
         const conds = cols.map((c, i) => `${c} ${op} ${getPlaceholder(idx + i)}`)
-        text += ` ${keyword} (${conds.join(' OR ')})`
         for (let i = 0; i < cols.length; i++) whereParams.push(value)
-        built = null
+        pushWhere('AND', `(${conds.join(' OR ')})`)
         return this as any
       },
       whereAll(cols: string[], op: WhereOperator, value: any) {
         if (cols.length === 0) return this as any
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const idx = whereParams.length + 1
         const conds = cols.map((c, i) => `${c} ${op} ${getPlaceholder(idx + i)}`)
-        text += ` ${keyword} (${conds.join(' AND ')})`
         for (let i = 0; i < cols.length; i++) whereParams.push(value)
-        built = null
+        pushWhere('AND', `(${conds.join(' AND ')})`)
         return this as any
       },
       whereNone(cols: string[], op: WhereOperator, value: any) {
         if (cols.length === 0) return this as any
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const idx = whereParams.length + 1
         const conds = cols.map((c, i) => `${c} ${op} ${getPlaceholder(idx + i)}`)
-        text += ` ${keyword} NOT (${conds.join(' OR ')})`
         for (let i = 0; i < cols.length; i++) whereParams.push(value)
-        built = null
+        pushWhere('AND', `NOT (${conds.join(' OR ')})`)
         return this as any
       },
       whereNotBetween(column: string, start: any, end: any) {
         validateIdentifier(String(column), 'whereNotBetween(column)')
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const i = whereParams.length + 1
-        text += ` ${keyword} ${column} NOT BETWEEN ${getPlaceholder(i)} AND ${getPlaceholder(i + 1)}`
         whereParams.push(start, end)
-        built = null
+        pushWhere('AND', `${column} NOT BETWEEN ${getPlaceholder(i)} AND ${getPlaceholder(i + 1)}`)
         return this as any
       },
       whereDate(column: string, op: WhereOperator, date: string | Date) {
@@ -4887,253 +5048,101 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           : typeof date === 'string'
             ? date
             : (() => { throw new TypeError(`[query-builder] whereDate(date): expected string or Date, got ${typeof date}`) })()
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const idx = whereParams.length + 1
-        text += ` ${keyword} ${column} ${op} ${getPlaceholder(idx)}`
         whereParams.push(dateString)
-        built = null
+        pushWhere('AND', `${column} ${op} ${getPlaceholder(idx)}`)
         return this as any
       },
+      // A raw fragment is ONE term and is deliberately not auto-parenthesised —
+      // wrapping would churn emitted SQL for no correctness gain. A fragment
+      // containing a top-level OR must bracket itself; see docs/guide/where.md.
       whereRaw(fragment: any) {
-        const frag = renderRawFragment(fragment, 'whereRaw(fragment)')
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text += ` ${keyword} ${frag}`
-        built = null
+        pushWhere('AND', renderRawFragment(fragment, 'whereRaw(fragment)'))
+        return this as any
+      },
+      orWhereRaw(fragment: any) {
+        pushWhere('OR', renderRawFragment(fragment, 'orWhereRaw(fragment)'))
         return this as any
       },
       whereColumn(left: string, op: WhereOperator, right: string) {
         validateIdentifier(left, 'whereColumn(left)')
         validateIdentifier(right, 'whereColumn(right)')
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
-        text += ` ${keyword} ${left} ${op} ${right}`
-        built = null
+        pushWhere('AND', `${left} ${op} ${right}`)
         return this as any
       },
       orWhereColumn(left: string, op: WhereOperator, right: string) {
         validateIdentifier(left, 'orWhereColumn(left)')
         validateIdentifier(right, 'orWhereColumn(right)')
-        text += ` OR ${left} ${op} ${right}`
-        built = null
+        pushWhere('OR', `${left} ${op} ${right}`)
         return this as any
       },
       whereIn(column: string, values: any[] | { toSQL: () => any }) {
         validateIdentifier(String(column), 'whereIn(column)')
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-          text += ` ${keyword} ${renderInPredicate(column, values, false, placeholders)}`
+          const clause = renderInPredicate(column, values, false, placeholders)
           whereParams.push(...values)
+          pushWhere('AND', clause)
         }
         else {
-          text += ` ${keyword} ${column} IN (${String((values as any).toSQL())})`
+          pushWhere('AND', `${column} IN (${String((values as any).toSQL())})`)
         }
-        built = null
         return this as any
       },
       orWhereIn(column: string, values: any[] | { toSQL: () => any }) {
         validateIdentifier(String(column), 'orWhereIn(column)')
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-          text += ` OR ${renderInPredicate(column, values, false, placeholders)}`
+          const clause = renderInPredicate(column, values, false, placeholders)
           whereParams.push(...values)
+          pushWhere('OR', clause)
         }
         else {
-          text += ` OR ${column} IN (${String((values as any).toSQL())})`
+          pushWhere('OR', `${column} IN (${String((values as any).toSQL())})`)
         }
-        built = null
         return this as any
       },
       whereNotIn(column: string, values: any[] | { toSQL: () => any }) {
         validateIdentifier(String(column), 'whereNotIn(column)')
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-          text += ` ${keyword} ${renderInPredicate(column, values, true, placeholders)}`
+          const clause = renderInPredicate(column, values, true, placeholders)
           whereParams.push(...values)
+          pushWhere('AND', clause)
         }
         else {
-          text += ` ${keyword} ${column} NOT IN (${String((values as any).toSQL())})`
+          pushWhere('AND', `${column} NOT IN (${String((values as any).toSQL())})`)
         }
-        built = null
         return this as any
       },
       orWhereNotIn(column: string, values: any[] | { toSQL: () => any }) {
         validateIdentifier(String(column), 'orWhereNotIn(column)')
         if (Array.isArray(values)) {
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-          text += ` OR ${renderInPredicate(column, values, true, placeholders)}`
+          const clause = renderInPredicate(column, values, true, placeholders)
           whereParams.push(...values)
+          pushWhere('OR', clause)
         }
         else {
-          text += ` OR ${column} NOT IN (${String((values as any).toSQL())})`
+          pushWhere('OR', `${column} NOT IN (${String((values as any).toSQL())})`)
         }
-        built = null
         return this as any
       },
       whereNested(fragment: any) {
-        const keyword = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
         const inner = fragment.toSQL ? String(fragment.toSQL()) : String(fragment)
-        text += ` ${keyword} (${inner})`
-        built = null
+        pushWhere('AND', `(${inner})`)
         return this as any
       },
       orWhereNested(fragment: any) {
         const inner = fragment.toSQL ? String(fragment.toSQL()) : String(fragment)
-        text += ` OR (${inner})`
-        built = null
+        pushWhere('OR', `(${inner})`)
         return this as any
       },
       andWhere(expr: any, op?: WhereOperator, value?: any) {
-        if (typeof expr === 'string' && op !== undefined) {
-          validateIdentifier(String(expr), 'andWhere(column)')
-          assertSafeWhereOperator(op, 'andWhere(operator)')
-          const paramIndex = whereParams.length + 1
-          whereConditions.push(`${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
-          whereParams.push(value)
-          text = `${text} AND ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`
-          built = null
-          return this
-        }
-
-        // Handle array format: ['column', 'op', value]
-        if (Array.isArray(expr)) {
-          const [col, op, val] = expr
-          const colName = String(col)
-          validateIdentifier(colName, 'andWhere(column)')
-          const operator = assertSafeWhereOperator(op, 'andWhere(operator)')
-
-          if (operator === 'in' || operator === 'not in') {
-            const values = Array.isArray(val) ? val : [val]
-            const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-            whereConditions.push(`${colName} ${operator.toUpperCase()} (${placeholders})`)
-            whereParams.push(...values)
-            text = `${text} AND ${colName} ${operator.toUpperCase()} (${placeholders})`
-            built = null
-          }
-          else {
-            const paramIndex = whereParams.length + 1
-            whereConditions.push(`${colName} ${operator} ${getPlaceholder(paramIndex)}`)
-            whereParams.push(val)
-            text = `${text} AND ${colName} ${operator} ${getPlaceholder(paramIndex)}`
-            built = null
-          }
-
-          return this
-        }
-
-        // Handle object format: { name: 'Alice', age: 25 }
-        if (expr && typeof expr === 'object' && !('raw' in expr)) {
-          const keys = Object.keys(expr)
-          const conditions: string[] = []
-
-          for (const key of keys) {
-            const value = (expr as any)[key]
-            if (Array.isArray(value)) {
-              const placeholders = getPlaceholders(value.length, whereParams.length + 1)
-              conditions.push(`${key} IN (${placeholders})`)
-              whereConditions.push(`${key} IN (${placeholders})`)
-              whereParams.push(...value)
-            }
-            else {
-              const paramIndex = whereParams.length + 1
-              conditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
-              whereConditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
-              whereParams.push(value)
-            }
-          }
-
-          if (conditions.length > 0) {
-            text = `${text} AND ${conditions.join(' AND ')}`
-            built = null
-          }
-          return this
-        }
-
-        // Handle raw expressions
-        if (expr && typeof (expr as any).raw !== 'undefined') {
-          whereConditions.push((expr as any).raw)
-          text = `${text} AND ${(expr as any).raw}`
-          built = null
-          return this
-        }
-
-        return this
+        return addBooleanWhere(this, 'AND', 'andWhere', expr, op, value)
       },
       orWhere(expr: any, op?: WhereOperator, value?: any) {
-        if (typeof expr === 'string' && op !== undefined) {
-          validateIdentifier(String(expr), 'orWhere(column)')
-          assertSafeWhereOperator(op, 'orWhere(operator)')
-          const paramIndex = whereParams.length + 1
-          whereConditions.push(`OR ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
-          whereParams.push(value)
-          text = `${text} OR ${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`
-          built = null
-          return this
-        }
-
-        // Handle array format: ['column', 'op', value]
-        if (Array.isArray(expr)) {
-          const [col, op, val] = expr
-          const colName = String(col)
-          validateIdentifier(colName, 'orWhere(column)')
-          const operator = assertSafeWhereOperator(op, 'orWhere(operator)')
-
-          if (operator === 'in' || operator === 'not in') {
-            const values = Array.isArray(val) ? val : [val]
-            const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-            whereConditions.push(`OR ${colName} ${operator.toUpperCase()} (${placeholders})`)
-            whereParams.push(...values)
-            text = `${text} OR ${colName} ${operator.toUpperCase()} (${placeholders})`
-            built = null
-          }
-          else {
-            const paramIndex = whereParams.length + 1
-            whereConditions.push(`OR ${colName} ${operator} ${getPlaceholder(paramIndex)}`)
-            whereParams.push(val)
-            text = `${text} OR ${colName} ${operator} ${getPlaceholder(paramIndex)}`
-            built = null
-          }
-
-          return this
-        }
-
-        // Handle object format: { name: 'Alice', age: 25 }
-        if (expr && typeof expr === 'object' && !('raw' in expr)) {
-          const keys = Object.keys(expr)
-          const conditions: string[] = []
-
-          for (const key of keys) {
-            const value = (expr as any)[key]
-            if (Array.isArray(value)) {
-              const placeholders = getPlaceholders(value.length, whereParams.length + 1)
-              conditions.push(`${key} IN (${placeholders})`)
-              whereConditions.push(`OR ${key} IN (${placeholders})`)
-              whereParams.push(...value)
-            }
-            else {
-              const paramIndex = whereParams.length + 1
-              conditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
-              whereConditions.push(`OR ${key} = ${getPlaceholder(paramIndex)}`)
-              whereParams.push(value)
-            }
-          }
-
-          if (conditions.length > 0) {
-            text = `${text} OR ${conditions.join(' AND ')}`
-            built = null
-          }
-          return this
-        }
-
-        // Handle raw expressions
-        if (expr && typeof (expr as any).raw !== 'undefined') {
-          whereConditions.push(`OR ${(expr as any).raw}`)
-          text = `${text} OR ${(expr as any).raw}`
-          built = null
-          return this
-        }
-
-        return this
+        return addBooleanWhere(this, 'OR', 'orWhere', expr, op, value)
       },
       orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
         // Compose-aware: detect an existing ORDER BY clause and append the
@@ -5439,7 +5448,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // text — most toSQL() calls never execute the returned handle.
         // ensureBuilt() still runs (memoized) if execute()/values()/raw()
         // is actually invoked.
-        const sqlText = reorderSelectClauses(text)
+        const sqlText = reorderSelectClauses(currentSql())
         return {
           sql: sqlText,
           toString: () => sqlText,
@@ -5498,7 +5507,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // so a concurrent INSERT/DELETE can't desync `total` from `data.length`.
         // The caller owns the transaction (and thus the isolation level).
         if (opts.tx) {
-          const baseSql = reorderSelectClauses(text)
+          const baseSql = reorderSelectClauses(currentSql())
           const baseParams = [...whereParams]
           const cRows = await opts.tx.unsafe(`SELECT COUNT(*) as c FROM (${baseSql}) as sub`, baseParams) as any[]
           const total = Number(cRows?.[0]?.c ?? 0)
@@ -5712,7 +5721,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return (ensureBuilt() as any).simple()
       },
       toText() {
-        return text
+        return currentSql()
       },
       async get() {
         const hooks = activeHooks()
@@ -5722,15 +5731,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
           const prepareFn = _sql._prepareStatement
           if (prepareFn) {
-            const stmt = prepareFn(text)
+            const stmt = prepareFn(currentSql())
             return hydratePivotRows(whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all())
           }
         }
 
         // Build query at execution time (statement will be cached by db-clients.ts)
+        const getText = currentSql()
         built = whereParams.length > 0
-          ? _sql.unsafe(text, whereParams)
-          : _sql.unsafe(text)
+          ? _sql.unsafe(getText, whereParams)
+          : _sql.unsafe(getText)
 
         // Fast path: no soft-deletes, no cache, no timeout, no signal, no hooks
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
@@ -5754,9 +5764,12 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const col = config.softDeletes.column
           const tbl = String(table)
           const hasCol = schema ? Boolean((schema as any)[tbl]?.columns?.[col]) : true
-          if (hasCol && !SQL_PATTERNS.DELETED_AT.test(text)) {
-            finalQuery = sql`${ensureBuilt()} WHERE ${sql(String(col))} IS ${onlyTrashed ? sql`NOT NULL` : sql`NULL`}`
+          if (hasCol && !SQL_PATTERNS.DELETED_AT.test(currentSql())) {
+            // Record the term, then rebuild. The previous version composed
+            // `sql`${ensureBuilt()} WHERE ...`` as well, which appended a second
+            // unconditional WHERE keyword on top of any filter already present.
             addWhereText('WHERE', `${String(col)} IS ${onlyTrashed ? 'NOT ' : ''}NULL`)
+            finalQuery = ensureBuilt()
           }
         }
 
@@ -5798,7 +5811,8 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !fHasQueryHooks) {
           const prepareFn = _sql._prepareStatement
           if (prepareFn) {
-            const firstText = text.includes(' LIMIT ') ? text : `${text} LIMIT 1`
+            const base = currentSql()
+            const firstText = base.includes(' LIMIT ') ? base : `${base} LIMIT 1`
             const stmt = prepareFn(firstText)
             const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
             return hydratePivotRow(rows[0]) as any
@@ -5874,14 +5888,17 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // `rows[0]` silently returns just the first group's count.
         // Wrap in a subquery when GROUP BY is present.
         // See stacksjs/stacks#1862 #26.
-        const fromIdx = text.indexOf(' FROM ')
-        const hasGroupBy = / GROUP BY /i.test(text)
+        // Rebuild from currentSql(), not `text` — the WHERE lives in the term
+        // list now, and slicing `text` here would count the UNFILTERED table.
+        const src = currentSql()
+        const fromIdx = src.indexOf(' FROM ')
+        const hasGroupBy = / GROUP BY /i.test(src)
         let countText: string
         if (hasGroupBy) {
-          countText = `SELECT COUNT(*) as c FROM (${text}) AS _bqb_count_sub`
+          countText = `SELECT COUNT(*) as c FROM (${src}) AS _bqb_count_sub`
         }
         else if (fromIdx !== -1) {
-          countText = `SELECT COUNT(*) as c${text.substring(fromIdx)}`
+          countText = `SELECT COUNT(*) as c${src.substring(fromIdx)}`
         }
         else {
           countText = `SELECT COUNT(*) as c FROM ${table}`
@@ -5908,9 +5925,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       },
       async avg(column: string) {
         // Build optimized AVG query without subquery or helpers
-        const fromIdx = text.indexOf(' FROM ')
+        const src = currentSql()
+        const fromIdx = src.indexOf(' FROM ')
         const avgText = fromIdx !== -1
-          ? `SELECT AVG(${column}) as a${text.substring(fromIdx)}`
+          ? `SELECT AVG(${column}) as a${src.substring(fromIdx)}`
           : `SELECT AVG(${column}) as a FROM ${table}`
 
         // Ultra-fast path
@@ -5933,9 +5951,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return Number(row?.a ?? 0)
       },
       async sum(column: string) {
-        const fromIdx = text.indexOf(' FROM ')
+        const src = currentSql()
+        const fromIdx = src.indexOf(' FROM ')
         const sumText = fromIdx !== -1
-          ? `SELECT SUM(${column}) as s${text.substring(fromIdx)}`
+          ? `SELECT SUM(${column}) as s${src.substring(fromIdx)}`
           : `SELECT SUM(${column}) as s FROM ${table}`
         const q = whereParams.length > 0
           ? _sql.unsafe(sumText, whereParams)
@@ -5945,9 +5964,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return Number(row?.s ?? 0)
       },
       async max(column: string) {
-        const fromIdx = text.indexOf(' FROM ')
+        const src = currentSql()
+        const fromIdx = src.indexOf(' FROM ')
         const maxText = fromIdx !== -1
-          ? `SELECT MAX(${column}) as m${text.substring(fromIdx)}`
+          ? `SELECT MAX(${column}) as m${src.substring(fromIdx)}`
           : `SELECT MAX(${column}) as m FROM ${table}`
         const q = whereParams.length > 0
           ? _sql.unsafe(maxText, whereParams)
@@ -5957,9 +5977,10 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return row?.m
       },
       async min(column: string) {
-        const fromIdx = text.indexOf(' FROM ')
+        const src = currentSql()
+        const fromIdx = src.indexOf(' FROM ')
         const minText = fromIdx !== -1
-          ? `SELECT MIN(${column}) as m${text.substring(fromIdx)}`
+          ? `SELECT MIN(${column}) as m${src.substring(fromIdx)}`
           : `SELECT MIN(${column}) as m FROM ${table}`
         const q = whereParams.length > 0
           ? _sql.unsafe(minText, whereParams)
@@ -6009,7 +6030,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       // by union()/unionAll() on the other side to merge params and renumber
       // placeholders. See stacksjs/bun-query-builder#1029.
       __rawState() {
-        return { sql: reorderSelectClauses(text), params: [...whereParams] }
+        return { sql: reorderSelectClauses(currentSql()), params: [...whereParams] }
       },
       raw() {
         return (ensureBuilt() as any).raw()
@@ -6067,20 +6088,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             return () => receiver
           const column = chosen
           return (value: any) => {
-            const expr = Array.isArray(value)
-              ? sql`${sql(column)} IN ${sql(value as any)}`
-              : sql`${sql(column)} = ${value}`
-            built = isOr
-              ? sql`${ensureBuilt()} OR ${expr}`
-              : isAnd
-                ? sql`${ensureBuilt()} AND ${expr}`
-                : sql`${ensureBuilt()} WHERE ${expr}`
-            // Mirror into text AND whereParams with dialect-aware
-            // placeholders. The params must be pushed: any later call that
-            // invalidates `built` (orderBy, limit, ...) rebuilds from
-            // text+whereParams, and the previous version left the value
-            // only inside the template-built query — the rebuilt statement
-            // had a dangling placeholder. Same bug class as #1028.
+            // Record the term and let ensureBuilt() rebuild from it.
+            //
+            // This used to ALSO assign `built = sql\`${ensureBuilt()} OR …\``,
+            // a second representation of the same predicate that appended a
+            // bare top-level OR — so the dynamic `orWhereX` proxy mis-grouped
+            // even where the text path did not. It was the query object
+            // actually executed. See #1083.
             if (Array.isArray(value)) {
               const phs = getPlaceholders(value.length, whereParams.length + 1)
               addWhereText(isOr ? 'OR' : isAnd ? 'AND' : 'WHERE', `${column} IN (${phs})`)
@@ -6175,21 +6189,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         ?? (Array.isArray(subExec?.values) ? subExec.values : [])
       const baseText = `SELECT * FROM (${subText}) AS ${String(alias)}`
 
-      // Append a WHERE/AND/OR condition, returning the new (text, params).
-      // `hasWhere` is tracked explicitly rather than regex-tested: the SUBQUERY
-      // text contains its own `WHERE` inside the parens, so SQL_PATTERNS.WHERE
-      // would falsely report the OUTER query already has one and emit `AS u AND
-      // …` (syntax error) for the first outer condition.
+      // Render one condition into a clause, returning it plus the extended
+      // params. The connector is NOT applied here: the caller records it as a
+      // term and renderWhereTerms() decides the shape at emit time, which is
+      // what stops a chained `orWhere` from mis-grouping (#1083). It also
+      // retires the `hasWhere` flag this used to thread through every method —
+      // the flag existed because the SUBQUERY text contains its own `WHERE`
+      // inside the parens, so regex-testing for one reported the OUTER query as
+      // already having a WHERE. A term list has no such question to ask.
       const appendWhere = (
-        text: string,
         params: any[],
-        hasWhere: boolean,
         expr: any,
         op: WhereOperator | undefined,
         value: any,
-        connector: 'WHERE' | 'AND' | 'OR',
-      ): { text: string, params: any[] } => {
-        const kw = !hasWhere ? 'WHERE' : (connector === 'WHERE' ? 'AND' : connector)
+      ): { clause: string | null, params: any[] } => {
         const out = [...params]
         const cmp = (col: string, operator: string, val: any): string => {
           validateIdentifier(col, 'selectFromSub where(column)')
@@ -6205,73 +6218,126 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return `${col} ${o} ${ph}`
         }
         let clause: string
-        if (typeof expr === 'string' && op !== undefined)
+        if (typeof expr === 'string' && op !== undefined) {
           clause = cmp(expr, op, value)
-        else if (Array.isArray(expr) && expr.length === 3)
+        }
+        else if (Array.isArray(expr) && expr.length === 3) {
           clause = cmp(expr[0], expr[1], expr[2])
-        else if (expr && typeof expr === 'object')
-          clause = Object.entries(expr).map(([k, v]) => cmp(k, '=', v)).join(' AND ')
-        else
-          return { text, params }
-        return { text: `${text} ${kw} ${clause}`, params: out }
+        }
+        else if (expr && typeof expr === 'object') {
+          const parts = Object.entries(expr).map(([k, v]) => cmp(k, '=', v))
+          // One term: `orWhere({a, b})` means "OR (a AND b)".
+          clause = parts.length > 1 ? `(${parts.join(' AND ')})` : parts[0]
+        }
+        else {
+          return { clause: null, params }
+        }
+        return { clause, params: out }
       }
 
       // Build the base API. makeSub() is the single factory; every mutating
-      // method returns a fresh builder over the new (text, params, hasWhere).
-      function makeSub(text: string, params: any[], hasWhere = false): BaseSelectQueryBuilder<DB, any, any, any> {
+      // method returns a fresh builder over the new (baseText, terms, params,
+      // tail). `text` is DERIVED — the WHERE is rendered from the term list and
+      // spliced between the SELECT body and the trailing clauses, so a `where`
+      // added after an `orderBy` still lands in front of it.
+      function makeSub(baseText: string, terms: WhereTerm[], params: any[], tail = ''): BaseSelectQueryBuilder<DB, any, any, any> {
+        const body = renderWhereTerms(terms)
+        const text = body ? `${baseText} WHERE ${body}${tail}` : `${baseText}${tail}`
         const build = (): any => params.length > 0 ? _sql.unsafe(text, params) : _sql.unsafe(text)
+        const withTerm = (conn: 'AND' | 'OR', expr: any, op: WhereOperator | undefined, value: any) => {
+          const r = appendWhere(params, expr, op, value)
+          return r.clause === null
+            ? makeSub(baseText, terms, params, tail) as any
+            : makeSub(baseText, [...terms, { conn, sql: r.clause }], r.params, tail) as any
+        }
+        /**
+         * A parenthesised sub-group. The callback gets a minimal collector that
+         * records terms and params in the outer builder's numbering, so the
+         * group's placeholders continue rather than restart.
+         */
+        const withGroup = (conn: 'AND' | 'OR', cb: (b: any) => unknown) => {
+          const gTerms: WhereTerm[] = []
+          let gParams = [...params]
+          const add = (c: 'AND' | 'OR') => (expr: any, op?: WhereOperator, value?: any) => {
+            const r = appendWhere(gParams, expr, op, value)
+            if (r.clause !== null) {
+              gTerms.push({ conn: c, sql: r.clause })
+              gParams = r.params
+            }
+            return collector
+          }
+          const collector: any = { where: add('AND'), andWhere: add('AND'), orWhere: add('OR') }
+          cb(collector)
+          const body = renderWhereTerms(gTerms)
+          if (!body) {
+            // Same fails-closed rule as the main builder: a group that
+            // contributed nothing would leave the query matching everything.
+            throw new TypeError(
+              '[query-builder] selectFromSub.whereGroup(callback): the callback added no conditions. '
+              + 'Add at least one where()/orWhere() to the builder it receives.',
+            )
+          }
+          return makeSub(baseText, [...terms, { conn, sql: `(${body})` }], gParams, tail) as any
+        }
         const base: BaseSelectQueryBuilder<DB, any, any, any> = {
         distinct() {
-          return makeSub(text.replace(/^SELECT\s+/i, 'SELECT DISTINCT '), params, hasWhere) as any
+          return makeSub(baseText.replace(/^SELECT\s+/i, 'SELECT DISTINCT '), terms, params, tail) as any
         },
         distinctOn(...columns: any[]) {
           const cols = columns.map(String).join(', ')
-          return makeSub(text.replace(/^SELECT\s+/i, `SELECT DISTINCT ON (${cols}) `), params, hasWhere) as any
+          return makeSub(baseText.replace(/^SELECT\s+/i, `SELECT DISTINCT ON (${cols}) `), terms, params, tail) as any
         },
         selectRaw(fragment: any) {
           const frag = renderRawFragment(fragment, 'selectFromSub.selectRaw(fragment)')
-          const fromIdx = text.indexOf(' FROM ')
-          const newText = fromIdx !== -1
-            ? `${text.slice(0, fromIdx)}, ${frag}${text.slice(fromIdx)}`
-            : `${text}, ${frag}`
-          return makeSub(newText, params, hasWhere) as any
+          const fromIdx = baseText.indexOf(' FROM ')
+          const newBase = fromIdx !== -1
+            ? `${baseText.slice(0, fromIdx)}, ${frag}${baseText.slice(fromIdx)}`
+            : `${baseText}, ${frag}`
+          return makeSub(newBase, terms, params, tail) as any
         },
         where(expr: any, op?: WhereOperator, value?: any) {
-          const r = appendWhere(text, params, hasWhere, expr, op, value, 'WHERE')
-          return makeSub(r.text, r.params, true) as any
+          return withTerm('AND', expr, op, value)
         },
         andWhere(expr: any, op?: WhereOperator, value?: any) {
-          const r = appendWhere(text, params, hasWhere, expr, op, value, 'AND')
-          return makeSub(r.text, r.params, true) as any
+          return withTerm('AND', expr, op, value)
         },
         orWhere(expr: any, op?: WhereOperator, value?: any) {
-          const r = appendWhere(text, params, hasWhere, expr, op, value, 'OR')
-          return makeSub(r.text, r.params, true) as any
+          return withTerm('OR', expr, op, value)
+        },
+        // Supported here because `orWhere` is: now that a chained OR groups
+        // with the term before it, this is the only way to express the other
+        // reading. The rest of the where-family keeps the deliberate
+        // subqueryNotSupported() throw further down.
+        whereGroup(cb: any) {
+          return withGroup('AND', cb)
+        },
+        orWhereGroup(cb: any) {
+          return withGroup('OR', cb)
         },
         orderBy(column: string, direction: 'asc' | 'desc' = 'asc') {
           validateIdentifier(String(column), 'selectFromSub.orderBy(column)')
           const dir = direction === 'asc' ? 'ASC' : 'DESC'
           // Compose-aware: a second orderBy appends with a comma.
-          const newText = SQL_PATTERNS.ORDER_BY.test(text)
-            ? `${text}, ${column} ${dir}`
-            : `${text} ORDER BY ${column} ${dir}`
-          return makeSub(newText, params, hasWhere) as any
+          const newTail = SQL_PATTERNS.ORDER_BY.test(tail)
+            ? `${tail}, ${column} ${dir}`
+            : `${tail} ORDER BY ${column} ${dir}`
+          return makeSub(baseText, terms, params, newTail) as any
         },
         limit(n: number) {
           if (!Number.isInteger(n) || n < 0)
             throw new TypeError(`[query-builder] selectFromSub.limit(n): expected non-negative integer, got ${n}`)
-          const newText = SQL_PATTERNS.LIMIT.test(text)
-            ? text.replace(SQL_PATTERNS.LIMIT, ` LIMIT ${n}`)
-            : `${text} LIMIT ${n}`
-          return makeSub(newText, params, hasWhere) as any
+          const newTail = SQL_PATTERNS.LIMIT.test(tail)
+            ? tail.replace(SQL_PATTERNS.LIMIT, ` LIMIT ${n}`)
+            : `${tail} LIMIT ${n}`
+          return makeSub(baseText, terms, params, newTail) as any
         },
         offset(n: number) {
           if (!Number.isInteger(n) || n < 0)
             throw new TypeError(`[query-builder] selectFromSub.offset(n): expected non-negative integer, got ${n}`)
-          const newText = SQL_PATTERNS.OFFSET.test(text)
-            ? text.replace(SQL_PATTERNS.OFFSET, ` OFFSET ${n}`)
-            : `${text} OFFSET ${n}`
-          return makeSub(newText, params, hasWhere) as any
+          const newTail = SQL_PATTERNS.OFFSET.test(tail)
+            ? tail.replace(SQL_PATTERNS.OFFSET, ` OFFSET ${n}`)
+            : `${tail} OFFSET ${n}`
+          return makeSub(baseText, terms, params, newTail) as any
         },
         toSQL() {
           return makeExecutableQuery(build(), text) as any
@@ -6378,8 +6444,13 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         whereJsonContains: subqueryNotSupported('whereJsonContains'),
         whereJsonPath: subqueryNotSupported('whereJsonPath'),
         whereNull: subqueryNotSupported('whereNull'),
+        orWhereNull: subqueryNotSupported('orWhereNull'),
         whereNotNull: subqueryNotSupported('whereNotNull'),
+        orWhereNotNull: subqueryNotSupported('orWhereNotNull'),
         whereExists: subqueryNotSupported('whereExists'),
+        orWhereExists: subqueryNotSupported('orWhereExists'),
+        orWhereBetween: subqueryNotSupported('orWhereBetween'),
+        orWhereRaw: subqueryNotSupported('orWhereRaw'),
         whereJsonDoesntContain: subqueryNotSupported('whereJsonDoesntContain'),
         whereJsonContainsKey: subqueryNotSupported('whereJsonContainsKey'),
         whereJsonDoesntContainKey: subqueryNotSupported('whereJsonDoesntContainKey'),
@@ -6454,7 +6525,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return base
       }
 
-      return makeSub(baseText, subParams) as any
+      return makeSub(baseText, [], subParams) as any
     },
     insertInto<TTable extends keyof DB & string>(table: TTable) {
       let built: any

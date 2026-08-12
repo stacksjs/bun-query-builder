@@ -890,9 +890,11 @@ describe('Query Builder: fluent chaining', () => {
       .where({ id: 1 })
       .orWhere({ email: 'test@test.com' })
       .andWhere({ is_active: true }))
-    expect(s).toContain('WHERE')
-    expect(s).toContain('OR')
-    expect(s).toContain('AND')
+    // Asserted as a whole string, not as three toContain()s for 'WHERE'/'OR'/
+    // 'AND'. This is the test that should have caught #1083: it emitted
+    // `id = ? OR email = ? AND is_active = ?` — `(id) OR (email AND active)` —
+    // and passed, because every keyword it looked for was present.
+    expect(s).toContain('WHERE (id = $1 OR email = $2) AND is_active = $3')
   })
 })
 
