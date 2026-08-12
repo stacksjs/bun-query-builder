@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.27...v0.2.28)
+
+## 🐛 Bug Fixes
+
+- **types**: preserve nested validators and polymorphic relations ([e6ca208](https://github.com/stacksjs/bun-query-builder/commit/e6ca208)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.28 ([85b6f84](https://github.com/stacksjs/bun-query-builder/commit/85b6f84)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.26...v0.2.27)
 
 ## 🚀 Features
