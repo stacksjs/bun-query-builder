@@ -125,7 +125,8 @@ type InferType<T> =
   T extends keyof PrimitiveTypeMap ? PrimitiveTypeMap[T] :
   T extends readonly (infer U)[] ? U :
   T extends (infer U)[] ? U :
-  T extends { validate: (value: infer U) => any } ? U :
+  T extends { validate: (value: infer U) => unknown } ? U :
+  T extends { test: (value: infer U) => unknown } ? U :
   unknown
 
 // Attribute definition with explicit type
@@ -403,9 +404,9 @@ type FillableAttributes<TDef extends ModelDefinition> = Partial<Pick<
   FillableKeys<TDef> | SnakeCase<FillableKeys<TDef>> | BelongsToKeys<TDef>
 >>
 
-// Numeric attribute columns — constrains aggregate methods (sum, avg, etc.)
+// Numeric attribute columns - constrains aggregate methods (sum, avg, etc.)
 type NumericColumns<TDef extends ModelDefinition> = {
-  [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { type: 'number' } ? K : never
+  [K in AttributeKeys<TDef>]: InferAttributeType<TDef['attributes'][K]> extends number ? K : never
 }[AttributeKeys<TDef>]
 
 // Infer relation names from model definition (supports both array and object syntax)

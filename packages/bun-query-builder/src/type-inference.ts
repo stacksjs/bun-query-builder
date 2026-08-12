@@ -63,7 +63,9 @@ type InferType<T> =
   T extends keyof PrimitiveTypeMap ? PrimitiveTypeMap[T] :
     T extends readonly (infer U)[] ? U :
       T extends (infer U)[] ? U :
-        unknown
+        T extends { validate: (value: infer U) => unknown } ? U :
+          T extends { test: (value: infer U) => unknown } ? U :
+            unknown
 
 // ============================================================================
 // Base model definition shape (compatible with both orm.ts and browser.ts)
@@ -78,6 +80,10 @@ interface InferableAttribute<T = unknown> {
   guarded?: boolean
   nullable?: boolean
   default?: InferType<T>
+  validation?: {
+    rule: ValidationType
+    message?: Record<string, string>
+  }
   factory?: (faker: Faker) => InferType<T>
 }
 
@@ -181,7 +187,9 @@ type SnakeCase<S extends string> = S extends `${infer C}${infer Rest}`
 type InferSingleAttributeType<TAttr> =
   TAttr extends { type: infer T } ? InferType<T> :
     TAttr extends { factory: (faker: Faker) => infer R } ? R :
-      unknown
+      TAttr extends { validation: { rule: infer R } } ? InferType<R> :
+        TAttr extends { default: infer D } ? D :
+          unknown
 
 // ============================================================================
 // Public type utilities
@@ -373,7 +381,7 @@ export type InferNumericColumns<TModel> =
   ResolveDefinition<TModel> extends infer TDef extends InferableModelDefinition
     ? {
         [K in DefinitionAttributeKeys<TDef>]:
-        TDef['attributes'][K] extends { type: 'number' } ? K : never
+        InferSingleAttributeType<TDef['attributes'][K]> extends number ? K : never
       }[DefinitionAttributeKeys<TDef>]
     : never
 
