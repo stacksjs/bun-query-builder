@@ -1,3 +1,30 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.26...v0.2.27)
+
+## 🚀 Features
+
+- **types**: preserve query result inference ([dc681d5](https://github.com/stacksjs/bun-query-builder/commit/dc681d5)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **types**: infer models from validation rules ([6fe83dd](https://github.com/stacksjs/bun-query-builder/commit/6fe83dd)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **client**: an empty list is a predicate, not the absence of one (#1087) ([68fd61c](https://github.com/stacksjs/bun-query-builder/commit/68fd61c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1087](https://github.com/stacksjs/bun-query-builder/issues/1087), [#1087](https://github.com/stacksjs/bun-query-builder/issues/1087))
+- **sqlite**: a nested query's bindings were being thrown away (#1085) ([10ace55](https://github.com/stacksjs/bun-query-builder/commit/10ace55)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1085](https://github.com/stacksjs/bun-query-builder/issues/1085), [#1085](https://github.com/stacksjs/bun-query-builder/issues/1085))
+- **migrate**: create the ledger inside the lock, and stop the two bots racing (#1079) ([3813270](https://github.com/stacksjs/bun-query-builder/commit/3813270)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1079](https://github.com/stacksjs/bun-query-builder/issues/1079), [#1079](https://github.com/stacksjs/bun-query-builder/issues/1079))
+- **deps**: main is red — kysely bumped past its adapter's peer range (#1078) ([daf9f3b](https://github.com/stacksjs/bun-query-builder/commit/daf9f3b)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1078](https://github.com/stacksjs/bun-query-builder/issues/1078), [#1078](https://github.com/stacksjs/bun-query-builder/issues/1078))
+
+## 🧹 Chores
+
+- release v0.2.27 ([8853ad5](https://github.com/stacksjs/bun-query-builder/commit/8853ad5)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: update dependency chalk to v6 (#1060) ([4d5c1a7](https://github.com/stacksjs/bun-query-builder/commit/4d5c1a7)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#1060](https://github.com/stacksjs/bun-query-builder/issues/1060), [#1060](https://github.com/stacksjs/bun-query-builder/issues/1060))
+- **deps**: update actions/checkout action to v7 (#1053) ([5d37cae](https://github.com/stacksjs/bun-query-builder/commit/5d37cae)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#1053](https://github.com/stacksjs/bun-query-builder/issues/1053), [#1053](https://github.com/stacksjs/bun-query-builder/issues/1053))
+- **deps**: update all non-major dependencies (#999) ([77fa3ce](https://github.com/stacksjs/bun-query-builder/commit/77fa3ce)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#999](https://github.com/stacksjs/bun-query-builder/issues/999), [#999](https://github.com/stacksjs/bun-query-builder/issues/999))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _[renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot])_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.25...v0.2.26)
 
 ## 🐛 Bug Fixes
