@@ -67,12 +67,30 @@ const ValidatedDef = {
 
 const Validated = createModel(ValidatedDef)
 
+const PolymorphicDef = {
+  name: 'Polymorphic',
+  table: 'polymorphics',
+  morphOne: { heroImage: 'Image' },
+  morphMany: { attachments: 'Attachment' },
+  morphToMany: ['Tag'],
+  morphedByMany: ['Post'],
+  attributes: {
+    label: { type: 'string' as const, fillable: true as const },
+  },
+} as const satisfies ModelDefinition
+
+const Polymorphic = createModel(PolymorphicDef)
+
 // The model read/write API is async (the network drivers are async-only),
 // so the runtime-narrowing assertions live inside an async function to await
 // the terminal calls. The pure builder-level checks (where/with/select) stay
 // synchronous. This file is never executed — it only has to type-check.
 // eslint-disable-next-line pickier/no-unused-vars
 async function _typeChecks() {
+  Polymorphic.with('heroImage', 'attachments', 'tag', 'post')
+  // @ts-expect-error - only declared polymorphic relation names are valid
+  Polymorphic.with('image')
+
   // Validation rules are the type source. No duplicate `type:` declaration is needed.
   Validated.where('age', '>', 18)
   Validated.where('active', true)
