@@ -894,7 +894,8 @@ describe('Query Builder: fluent chaining', () => {
     // 'AND'. This is the test that should have caught #1083: it emitted
     // `id = ? OR email = ? AND is_active = ?` — `(id) OR (email AND active)` —
     // and passed, because every keyword it looked for was present.
-    expect(s).toContain('WHERE (id = $1 OR email = $2) AND is_active = $3')
+    // Placeholders normalised — `?` vs `$n` depends on process-wide config.
+    expect(s.replace(/\$\d+/g, '?')).toContain('WHERE (id = ? OR email = ?) AND is_active = ?')
   })
 })
 
