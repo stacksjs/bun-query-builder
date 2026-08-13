@@ -1,4 +1,4 @@
-import type { Faker } from '@stacksjs/ts-faker'
+import type { FactoryFaker } from './faker-compat'
 // Minimal schema/type definitions to describe models and attributes
 
 /**
@@ -63,7 +63,16 @@ export interface Attribute {
   guarded?: boolean
   /** Control FK constraint: false to skip, true to auto-infer, or explicit config */
   foreignKey?: boolean | ForeignKeyConfig
-  factory?: (faker: Faker) => unknown
+  /**
+   * Sample data for `buddy seed`.
+   *
+   * The argument is `FactoryFaker`, not ts-faker's own `Faker`: the seeder wraps
+   * the instance so factories can be written in the faker-js dialect the whole
+   * ecosystem uses - `helpers.arrayElement`, `datatype`, `location`,
+   * `string.alphanumeric(12)`. Typing this as the raw instance made every one of
+   * those a type error while the runtime accepted them.
+   */
+  factory?: (faker: FactoryFaker) => unknown
   validation: {
     rule: ValidationType
     message?: ValidatorMessage

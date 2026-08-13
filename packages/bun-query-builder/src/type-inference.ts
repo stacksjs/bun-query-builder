@@ -36,7 +36,7 @@
  * ```
  */
 
-import type { Faker } from '@stacksjs/ts-faker'
+import type { FactoryFaker } from './faker-compat'
 import type { ValidationType } from './schema'
 
 // Local mirror of the runtime PivotColumnAttribute shape (kept structural so we
@@ -86,7 +86,7 @@ interface InferableAttribute<T = unknown> {
     rule: ValidationType
     message?: Record<string, string>
   }
-  factory?: (faker: Faker) => InferType<T>
+  factory?: (faker: FactoryFaker) => InferType<T>
 }
 
 /** Minimal model definition shape for type inference */
@@ -188,7 +188,7 @@ type SnakeCase<S extends string> = S extends `${infer C}${infer Rest}`
 
 type InferSingleAttributeType<TAttr> =
   TAttr extends { type: infer T } ? InferType<T> :
-    TAttr extends { factory: (faker: Faker) => infer R } ? R :
+    TAttr extends { factory: (faker: FactoryFaker) => infer R } ? R :
       TAttr extends { validation: { rule: infer R } } ? InferType<R> :
         TAttr extends { default: infer D } ? D :
           unknown

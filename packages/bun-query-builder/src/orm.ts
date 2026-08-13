@@ -25,13 +25,14 @@
  */
 
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
-import type { Faker } from '@stacksjs/ts-faker'
+import type { FactoryFaker } from './faker-compat'
 import type { SupportedDialect } from './types'
 import type { RelationCardinality } from './type-inference'
 import { config, isMysqlLike } from './config'
 import type { DriverConnection } from './db'
 import { getOrCreateBunSql } from './db'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
+import { createFakerCompatLayer } from './faker-compat'
 import { normalizeRelationList } from './relation-utils'
 import { singularizerFor, toTableName as sharedToTableName } from './inflect'
 import type { WhereTerm } from './sql-fragments'
@@ -149,7 +150,7 @@ export interface TypedAttribute<T = unknown> {
     rule: unknown
     message?: Record<string, string>
   }
-  factory?: (faker: Faker) => InferType<T>
+  factory?: (faker: FactoryFaker) => InferType<T>
 }
 
 /** Structural type for model instances passed to lifecycle hooks. */
@@ -262,7 +263,7 @@ type AttributeKeys<TDef extends ModelDefinition> = keyof TDef['attributes'] & st
 // Infer single attribute type
 type InferAttributeType<TAttr> =
   TAttr extends { type: infer T } ? InferType<T> :
-  TAttr extends { factory: (faker: Faker) => infer R }
+  TAttr extends { factory: (faker: FactoryFaker) => infer R }
     ? [Exclude<R, null | undefined>] extends [never]
       ? TAttr extends { validation: { rule: infer V } } ? InferType<V> | Extract<R, null | undefined> : R
       : R
@@ -3459,27 +3460,6 @@ export async function createTableFromModel(definition: ModelDefinition): Promise
   await exec.run(`CREATE TABLE IF NOT EXISTS ${definition.table} (${columns.join(', ')})`, [])
 }
 
-function createFakerCompatLayer(underlying: Record<string, unknown>): Record<string, unknown> {
-  return new Proxy(underlying, {
-    get(target, prop: string) {
-      if (prop === 'location') return target.address
-      if (prop === 'datatype') {
-        const rng = target.random as Record<string, (...args: unknown[]) => unknown> | undefined
-        const num = target.number as Record<string, (...args: unknown[]) => unknown> | undefined
-        const str = target.string as Record<string, (...args: unknown[]) => unknown> | undefined
-        return {
-          boolean: () => rng?.boolean?.(),
-          number: (opts?: { min?: number; max?: number }) => num?.int?.(opts),
-          float: (opts?: { min?: number; max?: number }) => num?.float?.(opts),
-          uuid: () => crypto.randomUUID(),
-          string: (length?: number) => str?.alphanumeric?.(length ?? 10),
-        }
-      }
-      return target[prop]
-    },
-  })
-}
-
 export async function seedModel(definition: ModelDefinition, count?: number, faker?: Record<string, unknown>): Promise<void> {
   const exec = getExecutor()
   const seeder = definition.traits?.useSeeder
@@ -3488,7 +3468,7 @@ export async function seedModel(definition: ModelDefinition, count?: number, fak
   if (!faker) {
     try {
       const tsFaker = await (import('@stacksjs/ts-faker' as string) as Promise<{ faker: Record<string, unknown> }>)
-      faker = createFakerCompatLayer(tsFaker.faker)
+      faker = createFakerCompatLayer(tsFaker.faker) as unknown as Record<string, unknown>
     }
 catch {
       console.warn('@stacksjs/ts-faker not found. Install it for seeding support.')
