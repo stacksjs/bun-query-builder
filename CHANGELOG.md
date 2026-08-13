@@ -1,3 +1,29 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.28...v0.2.29)
+
+## 💥 Breaking Changes
+
+- **client**: orWhere now groups, so an earlier where keeps applying (#1083) (#1088) ([6ff6e57](https://github.com/stacksjs/bun-query-builder/commit/6ff6e57)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1083](https://github.com/stacksjs/bun-query-builder/issues/1083), [#1088](https://github.com/stacksjs/bun-query-builder/issues/1088), [#1083](https://github.com/stacksjs/bun-query-builder/issues/1083), [#1088](https://github.com/stacksjs/bun-query-builder/issues/1088), [#1083](https://github.com/stacksjs/bun-query-builder/issues/1083))
+
+## 🐛 Bug Fixes
+
+- **seeder**: hand factories the faker they are written against ([493af0f](https://github.com/stacksjs/bun-query-builder/commit/493af0f)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **migrate**: do not wrap a migration that brackets its own transaction ([7bff7e6](https://github.com/stacksjs/bun-query-builder/commit/7bff7e6)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **ci**: renovate rejects unknown keys, so the disable never took effect (#1082) (#1089) ([93e8d69](https://github.com/stacksjs/bun-query-builder/commit/93e8d69)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1082](https://github.com/stacksjs/bun-query-builder/issues/1082), [#1082](https://github.com/stacksjs/bun-query-builder/issues/1082), [#1089](https://github.com/stacksjs/bun-query-builder/issues/1089), [#1082](https://github.com/stacksjs/bun-query-builder/issues/1082), [#1089](https://github.com/stacksjs/bun-query-builder/issues/1089))
+
+## ✅ Tests
+
+- make dialect assertions deterministic ([0542934](https://github.com/stacksjs/bun-query-builder/commit/0542934)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **types**: cover polymorphic relation inference ([197d2e5](https://github.com/stacksjs/bun-query-builder/commit/197d2e5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.29 ([7dbc86d](https://github.com/stacksjs/bun-query-builder/commit/7dbc86d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.27...v0.2.28)
 
 ## 🐛 Bug Fixes
