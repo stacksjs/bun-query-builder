@@ -16,7 +16,7 @@
     },
     "packages/benchmark": {
       "name": "@bun-query-builder/benchmark",
-      "version": "0.1.13",
+      "version": "0.2.28",
       "dependencies": {
         "drizzle-orm": "^0.45.1",
         "kysely": "^0.28.11",
@@ -36,7 +36,7 @@
     },
     "packages/bun-query-builder": {
       "name": "bun-query-builder",
-      "version": "0.1.13",
+      "version": "0.2.28",
       "dependencies": {
         "@stacksjs/ts-validation": "^0.4.9",
         "dynamodb-tooling": "^0.3.2",
@@ -82,7 +82,10 @@
       "bin": {
         "prisma": "build/index.js"
       },
-      "optionalPeers": ["better-sqlite3", "typescript"]
+      "optionalPeers": [
+        "better-sqlite3",
+        "typescript"
+      ]
     },
     "ts-mocker@^0.1.7": {
       "name": "ts-mocker",
@@ -187,7 +190,37 @@
         "@types/better-sqlite3": "*",
         "@cloudflare/workers-types": ">=4"
       },
-      "optionalPeers": ["@libsql/client", "postgres", "@upstash/redis", "@types/sql.js", "@op-engineering/op-sqlite", "prisma", "@planetscale/database", "@tidbcloud/serverless", "kysely", "@aws-sdk/client-rds-data", "@libsql/client-wasm", "bun-types", "mysql2", "@electric-sql/pglite", "better-sqlite3", "pg", "@xata.io/client", "sql.js", "@prisma/client", "@types/pg", "sqlite3", "gel", "knex", "@opentelemetry/api", "@vercel/postgres", "expo-sqlite", "@neondatabase/serverless", "@types/better-sqlite3", "@cloudflare/workers-types"]
+      "optionalPeers": [
+        "@libsql/client",
+        "postgres",
+        "@upstash/redis",
+        "@types/sql.js",
+        "@op-engineering/op-sqlite",
+        "prisma",
+        "@planetscale/database",
+        "@tidbcloud/serverless",
+        "kysely",
+        "@aws-sdk/client-rds-data",
+        "@libsql/client-wasm",
+        "bun-types",
+        "mysql2",
+        "@electric-sql/pglite",
+        "better-sqlite3",
+        "pg",
+        "@xata.io/client",
+        "sql.js",
+        "@prisma/client",
+        "@types/pg",
+        "sqlite3",
+        "gel",
+        "knex",
+        "@opentelemetry/api",
+        "@vercel/postgres",
+        "expo-sqlite",
+        "@neondatabase/serverless",
+        "@types/better-sqlite3",
+        "@cloudflare/workers-types"
+      ]
     },
     "bunfig@^0.15.6": {
       "name": "bunfig",
@@ -280,7 +313,24 @@
         "typeorm-ts-node-commonjs": "./cli-ts-node-commonjs.js",
         "typeorm": "./cli.js"
       },
-      "optionalPeers": ["mongodb", "sql.js", "ioredis", "oracledb", "sqlite3", "redis", "@google-cloud/spanner", "mssql", "typeorm-aurora-data-api-driver", "mysql2", "better-sqlite3", "pg", "@sap/hana-client", "pg-query-stream", "pg-native", "ts-node"]
+      "optionalPeers": [
+        "mongodb",
+        "sql.js",
+        "ioredis",
+        "oracledb",
+        "sqlite3",
+        "redis",
+        "@google-cloud/spanner",
+        "mssql",
+        "typeorm-aurora-data-api-driver",
+        "mysql2",
+        "better-sqlite3",
+        "pg",
+        "@sap/hana-client",
+        "pg-query-stream",
+        "pg-native",
+        "ts-node"
+      ]
     },
     "dynamodb-tooling@^0.3.2": {
       "name": "dynamodb-tooling",

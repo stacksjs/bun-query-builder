@@ -6,7 +6,7 @@ export interface ColumnInfo {
   name: string
   type: string
   nullable: boolean
-  default: any
+  default: unknown
   isPrimaryKey?: boolean
   isForeignKey?: boolean
 }
@@ -28,6 +28,34 @@ export interface InspectOptions {
   verbose?: boolean
 }
 
+interface CountRow extends Record<string, unknown> { count: number | string }
+interface PostgresColumnRow extends Record<string, unknown> {
+  column_name: string
+  data_type: string
+  is_nullable: string
+  column_default: unknown
+  is_primary_key: boolean
+  is_foreign_key: boolean
+}
+interface PostgresIndexRow extends Record<string, unknown> { name: string; indexdef: string; is_unique: boolean }
+interface MysqlColumnRow extends Record<string, unknown> {
+  column_name: string
+  data_type: string
+  is_nullable: string
+  column_default: unknown
+  column_key: string
+}
+interface MysqlIndexRow extends Record<string, unknown> { Key_name: string; Non_unique: number; Column_name: string }
+interface SqliteColumnRow extends Record<string, unknown> {
+  name: string
+  type: string
+  notnull: number
+  dflt_value: unknown
+  pk: number
+}
+interface SqliteIndexRow extends Record<string, unknown> { name: string; unique: number }
+interface SqliteIndexColumnRow extends Record<string, unknown> { name: string }
+
 /**
  * Inspect a table's structure, indexes, and statistics
  */
@@ -47,12 +75,12 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
     const indexes: IndexInfo[] = []
 
     // Get row count
-    const countResult = await qb.unsafe(`SELECT COUNT(*) as count FROM ${tableName}`)
+    const countResult = await qb.unsafe<CountRow>(`SELECT COUNT(*) as count FROM ${tableName}`)
     const rowCount = Number(countResult[0]?.count || 0)
 
     // Get columns based on dialect
     if (dialect === 'postgres') {
-      const colsResult = await qb.unsafe(`
+      const colsResult = await qb.unsafe<PostgresColumnRow>(`
         SELECT
           c.column_name,
           c.data_type,
@@ -99,7 +127,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       }
 
       // Get indexes
-      const idxResult = await qb.unsafe(`
+      const idxResult = await qb.unsafe<PostgresIndexRow>(`
         SELECT
           i.indexname as name,
           i.indexdef,
@@ -124,7 +152,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       }
     }
     else if (isMysqlLike(dialect)) {
-      const colsResult = await qb.unsafe(`
+      const colsResult = await qb.unsafe<MysqlColumnRow>(`
         SELECT
           COLUMN_NAME as column_name,
           DATA_TYPE as data_type,
@@ -149,7 +177,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       }
 
       // Get indexes
-      const idxResult = await qb.unsafe(`
+      const idxResult = await qb.unsafe<MysqlIndexRow>(`
         SHOW INDEXES FROM ${tableName}
       `)
 
@@ -175,7 +203,7 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       }
     }
     else if (dialect === 'sqlite') {
-      const colsResult = await qb.unsafe(`PRAGMA table_info(${tableName})`)
+      const colsResult = await qb.unsafe<SqliteColumnRow>(`PRAGMA table_info(${tableName})`)
 
       for (const col of colsResult) {
         columns.push({
@@ -188,13 +216,13 @@ export async function inspectTable(tableName: string, options: InspectOptions = 
       }
 
       // Get indexes
-      const idxResult = await qb.unsafe(`PRAGMA index_list(${tableName})`)
+      const idxResult = await qb.unsafe<SqliteIndexRow>(`PRAGMA index_list(${tableName})`)
 
       for (const idx of idxResult) {
-        const idxInfo = await qb.unsafe(`PRAGMA index_info(${idx.name})`)
+        const idxInfo = await qb.unsafe<SqliteIndexColumnRow>(`PRAGMA index_info(${idx.name})`)
         indexes.push({
           name: idx.name,
-          columns: idxInfo.map((i: any) => i.name),
+          columns: idxInfo.map(i => i.name),
           unique: idx.unique === 1,
         })
       }

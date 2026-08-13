@@ -127,8 +127,11 @@ type InferType<T> =
   T extends keyof PrimitiveTypeMap ? PrimitiveTypeMap[T] :
   T extends readonly (infer U)[] ? U :
   T extends (infer U)[] ? U :
-  T extends { validate: (value: infer U) => any } ? U :
-  unknown
+  T extends { getShape: () => infer TShape extends Readonly<Record<string, unknown>> }
+    ? { -readonly [TKey in keyof TShape]: InferType<TShape[TKey]> }
+    : T extends { test: (value: infer U) => unknown } ? U :
+      T extends { validate: (value: infer U) => unknown } ? U :
+        unknown
 
 // Attribute definition with explicit type
 export interface TypedAttribute<T = unknown> {
@@ -405,9 +408,9 @@ type FillableAttributes<TDef extends ModelDefinition> = Partial<Pick<
   FillableKeys<TDef> | SnakeCase<FillableKeys<TDef>> | BelongsToKeys<TDef>
 >>
 
-// Numeric attribute columns — constrains aggregate methods (sum, avg, etc.)
+// Numeric attribute columns - constrains aggregate methods (sum, avg, etc.)
 type NumericColumns<TDef extends ModelDefinition> = {
-  [K in AttributeKeys<TDef>]: TDef['attributes'][K] extends { type: 'number' } ? K : never
+  [K in AttributeKeys<TDef>]: InferAttributeType<TDef['attributes'][K]> extends number ? K : never
 }[AttributeKeys<TDef>]
 
 // Infer relation names from model definition (supports both array and object syntax)
@@ -420,13 +423,15 @@ type NumericColumns<TDef extends ModelDefinition> = {
  * relation-name union.
  */
 type RelationKeyOf<V> =
-  V extends readonly (infer E)[]
-    ? E extends string ? Lowercase<E>
-      : E extends { model: infer M extends string } ? Lowercase<M>
+  V extends string
+    ? Lowercase<V>
+    : V extends readonly (infer E)[]
+      ? E extends string ? Lowercase<E>
+        : E extends { model: infer M extends string } ? Lowercase<M>
+          : never
+      : V extends Readonly<Record<infer K, unknown>>
+        ? K & string
         : never
-    : V extends Readonly<Record<infer K, unknown>>
-      ? K & string
-      : never
 
 type InferBelongsToNames<TDef> = TDef extends { belongsTo: infer V } ? RelationKeyOf<V> : never
 
@@ -440,6 +445,14 @@ type InferHasOneThroughNames<TDef> = TDef extends { hasOneThrough: infer V } ? R
 
 type InferHasManyThroughNames<TDef> = TDef extends { hasManyThrough: infer V } ? RelationKeyOf<V> : never
 
+type InferMorphOneNames<TDef> = TDef extends { morphOne: infer V } ? RelationKeyOf<V> : never
+
+type InferMorphManyNames<TDef> = TDef extends { morphMany: infer V } ? RelationKeyOf<V> : never
+
+type InferMorphToManyNames<TDef> = TDef extends { morphToMany: infer V } ? RelationKeyOf<V> : never
+
+type InferMorphedByManyNames<TDef> = TDef extends { morphedByMany: infer V } ? RelationKeyOf<V> : never
+
 export type InferRelationNames<TDef> =
   | InferBelongsToNames<TDef>
   | InferHasManyNames<TDef>
@@ -447,6 +460,10 @@ export type InferRelationNames<TDef> =
   | InferBelongsToManyNames<TDef>
   | InferHasOneThroughNames<TDef>
   | InferHasManyThroughNames<TDef>
+  | InferMorphOneNames<TDef>
+  | InferMorphManyNames<TDef>
+  | InferMorphToManyNames<TDef>
+  | InferMorphedByManyNames<TDef>
 
 /**
  * Cardinality-aware value of a loaded relation as returned by

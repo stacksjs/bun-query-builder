@@ -5,7 +5,7 @@
     "": {
       "name": "bun-query-builder",
       "dependencies": {
-        "@stacksjs/ts-validation": "^0.5.2",
+        "@stacksjs/ts-validation": "^0.5.3",
       },
       "devDependencies": {
         "@stacksjs/launchpad": "^0.6.4",
@@ -16,7 +16,7 @@
     },
     "packages/benchmark": {
       "name": "@bun-query-builder/benchmark",
-      "version": "0.2.26",
+      "version": "0.2.28",
       "dependencies": {
         "@prisma/adapter-better-sqlite3": "^7.9.1",
         "@prisma/client": "6.19.3",
@@ -38,7 +38,7 @@
     },
     "packages/bun-query-builder": {
       "name": "bun-query-builder",
-      "version": "0.2.26",
+      "version": "0.2.28",
       "bin": {
         "query-builder": "./dist/bin/cli.js",
         "qbx": "./dist/bin/cli.js",
@@ -137,7 +137,7 @@
 
     "@stacksjs/ts-svg": ["@stacksjs/ts-svg@0.1.1", "", { "dependencies": { "@stacksjs/ts-css": "^0.1.0", "@stacksjs/ts-png": "^0.1.2" }, "bin": { "svg": "dist/cli.js" } }, "sha512-jG/DC3JaWEvblsrl3X1mVFPZY+1+DEtt9ypWXuXHyWyud+CaD/MQdGRypJbRyLrT03HWx/x6TG9UOzh7GDaing=="],
 
-    "@stacksjs/ts-validation": ["@stacksjs/ts-validation@0.5.2", "", {}, "sha512-2I6klAbujib44rAO7b88IYFJF0cUlfwgLqBolY7oAjnEWuV0Sm0qU3obtU0VudTsNxBTgdWX2LnFnrUVcYof6w=="],
+    "@stacksjs/ts-validation": ["@stacksjs/ts-validation@0.5.3", "", {}, "sha512-oICa06sPRSl5SRkyT7Dwf5rdZQUbrxOe12xSVG+ubtX6FfM6nLab2PrAf4fnfP7/fj/waSB3LZ29+wfGUQ66vg=="],
 
     "@stacksjs/ts-webp": ["@stacksjs/ts-webp@0.1.0", "", {}, "sha512-wWA+HEmRszZg4av8jzSa1l2eDPEu06Cdy/c9gjlP/7rqUb7K5ETzK5rZt9DgDe28treKGy/vGo/1YS4yiUvtUA=="],
 

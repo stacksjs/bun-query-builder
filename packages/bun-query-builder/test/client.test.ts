@@ -117,19 +117,12 @@ describe('query builder - modifiers and raws', () => {
   it('date/json helpers compose', () => {
     const q1 = qb().selectFrom('users').whereDate('created_at', '>=', '2024-01-01').toSQL() as any
     expect(typeof q1.execute).toBe('function')
-
-    // Pinned: OBJECT containment throws on SQLite by design (there is no
-    // json_each equivalent for it), so this assertion silently depended on some
-    // earlier test file leaving the process-wide dialect on postgres.
-    const dialect = config.dialect
-    try {
-      config.dialect = 'postgres' as any
-      const q2 = qb().selectFrom('users').whereJsonContains('meta', { a: 1 }).toSQL() as any
-      expect(typeof q2.execute).toBe('function')
-    }
-    finally {
-      config.dialect = dialect as any
-    }
+    // An ARRAY, not an object: object containment throws on SQLite by design
+    // (there is no json_each equivalent for it), so the object form made this
+    // depend on some earlier test file leaving the process-wide dialect on
+    // postgres. The array form means the same thing on every dialect.
+    const q2 = qb().selectFrom('users').whereJsonContains('meta', ['a']).toSQL() as any
+    expect(typeof q2.execute).toBe('function')
   })
 })
 

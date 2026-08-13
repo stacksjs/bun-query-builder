@@ -63,7 +63,7 @@ export interface Attribute {
   guarded?: boolean
   /** Control FK constraint: false to skip, true to auto-infer, or explicit config */
   foreignKey?: boolean | ForeignKeyConfig
-  factory?: (faker: Faker) => any
+  factory?: (faker: Faker) => unknown
   validation: {
     rule: ValidationType
     message?: ValidatorMessage

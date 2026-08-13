@@ -8,6 +8,7 @@
 
 import type { SelectQueryBuilder } from '../client'
 import type { DatabaseSchema } from '../schema'
+import { schema } from '@stacksjs/ts-validation'
 import { createModel, type ModelDefinition } from '../orm'
 
 const UserDef = {
@@ -41,12 +42,80 @@ const MinimalDef = {
 
 const Minimal = createModel(MinimalDef)
 
+const settingsRule = {
+  getShape: () => ({ enabled: schema.boolean(), retries: schema.number() }),
+  test: (_value: unknown) => true,
+  validate: (_value: unknown) => ({ valid: true, errors: [] }),
+}
+
+const ValidatedDef = {
+  name: 'Validated',
+  table: 'validated',
+  attributes: {
+    active: { fillable: true as const, validation: { rule: schema.boolean() } },
+    age: { fillable: true as const, validation: { rule: schema.number() } },
+    name: { fillable: true as const, validation: { rule: schema.string() } },
+    settings: {
+      fillable: true as const,
+      validation: {
+        rule: settingsRule,
+      },
+    },
+    score: { fillable: false as const, validation: { rule: schema.number() } },
+  },
+} as const satisfies ModelDefinition
+
+const Validated = createModel(ValidatedDef)
+
+const PolymorphicDef = {
+  name: 'Polymorphic',
+  table: 'polymorphics',
+  morphOne: { heroImage: 'Image' },
+  morphMany: { attachments: 'Attachment' },
+  morphToMany: ['Tag'],
+  morphedByMany: ['Post'],
+  attributes: {
+    label: { type: 'string' as const, fillable: true as const },
+  },
+} as const satisfies ModelDefinition
+
+const Polymorphic = createModel(PolymorphicDef)
+
 // The model read/write API is async (the network drivers are async-only),
 // so the runtime-narrowing assertions live inside an async function to await
 // the terminal calls. The pure builder-level checks (where/with/select) stay
 // synchronous. This file is never executed — it only has to type-check.
 // eslint-disable-next-line pickier/no-unused-vars
 async function _typeChecks() {
+  Polymorphic.with('heroImage', 'attachments', 'tag', 'post')
+  // @ts-expect-error - only declared polymorphic relation names are valid
+  Polymorphic.with('image')
+
+  // Validation rules are the type source. No duplicate `type:` declaration is needed.
+  Validated.where('age', '>', 18)
+  Validated.where('active', true)
+  Validated.whereName('Ada')
+  Validated.where('settings', { enabled: true, retries: 2 })
+  Validated.avg('age')
+  Validated.sum('score')
+  await Validated.create({ active: true, age: 36, name: 'Ada' })
+
+  // @ts-expect-error - validation says age is numeric
+  Validated.where('age', 'old')
+  // @ts-expect-error - validation says active is boolean
+  Validated.where('active', 1)
+  // @ts-expect-error - non-numeric columns cannot be aggregated
+  Validated.avg('name')
+  // @ts-expect-error - nested object validators retain their inferred fields
+  Validated.where('settings', { enabled: 'yes', retries: 2 })
+
+  const validated = await Validated.firstOrFail()
+  const validatedAge: number = validated.age
+  const validatedName: string = validated.get('name')
+  const validatedActive: boolean = validated.active
+  const validatedSettings: { enabled: boolean, retries: number } = validated.settings
+  void [validatedAge, validatedName, validatedActive, validatedSettings]
+
   // ---------------------------------------------------------------
   // 1. where() accepts only valid column names
   // ---------------------------------------------------------------
