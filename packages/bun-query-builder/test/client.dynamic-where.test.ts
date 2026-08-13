@@ -48,6 +48,15 @@ describe('dynamic whereX/orWhereX/andWhereX methods', () => {
       .limit(10)
 
     expect(typeof q.toSQL).toBe('function')
+    // Assert the emitted string, not just that a builder came back. The
+    // dynamic proxy mis-grouped too — `email = ? AND name = ? OR role = ? AND
+    // created_at = ?` — and it did so through a second code path (it also
+    // assigned `built = sql`${ensureBuilt()} OR ...``, which was the query
+    // actually executed). See #1083.
+    // Placeholders normalised: the dialect comes from process-wide config, and
+    // this assertion is about grouping, not about `?` vs `$n`.
+    const s = String(q.toSQL()).replace(/\$\d+/g, '?')
+    expect(s).toContain('WHERE email = ? AND (name = ? OR role = ?) AND created_at = ?')
   })
 
   it('treats array values as IN and scalars as =', () => {

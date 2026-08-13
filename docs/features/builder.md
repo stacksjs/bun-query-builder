@@ -112,12 +112,27 @@ const adults = await db
   .where(['age', '>=', 18])
   .execute()
 
-// Complex conditions with multiple filters
+// Complex conditions with multiple filters.
+//
+// A chained `orWhere` groups with the term immediately before it, so this is
+//   active AND age >= 18 AND (country IN (...) OR role = 'admin')
+// If you mean "all three filters, OR an admin", make the conjunction explicit
+// with whereGroup — see the note under Logical grouping below.
 const eligibleUsers = await db
   .selectFrom('users')
   .where({ active: true })
   .andWhere(['age', '>=', 18])
   .andWhere(['country', 'in', ['US', 'CA', 'GB']])
+  .orWhere(['role', '=', 'admin'])
+  .execute()
+
+// "Everything above, OR an admin":
+const eligibleOrAdmin = await db
+  .selectFrom('users')
+  .whereGroup(qb => qb
+    .where({ active: true })
+    .andWhere(['age', '>=', 18])
+    .andWhere(['country', 'in', ['US', 'CA', 'GB']]))
   .orWhere(['role', '=', 'admin'])
   .execute()
 
@@ -246,7 +261,7 @@ const averyPrefs = await db
 
 - **Use indexes**: Ensure filtered columns have appropriate database indexes
 - **Parameterized queries**: The builder automatically parameterizes values for SQL injection safety
-- **Logical grouping**: Use `orWhere` and `andWhere` to create clear logical groups
+- **Logical grouping**: A chained `orWhere` groups with the term before it — `.where(a).where(b).orWhere(c)` is `a AND (b OR c)`. Use `whereGroup(cb)` / `orWhereGroup(cb)` when you need the other reading, `(a AND b) OR c`
 - **Dynamic filters**: Build conditions conditionally based on user input or application state
 - **JSON performance**: Be mindful that JSON operations may require special indexes
 

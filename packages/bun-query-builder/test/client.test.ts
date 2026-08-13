@@ -117,6 +117,10 @@ describe('query builder - modifiers and raws', () => {
   it('date/json helpers compose', () => {
     const q1 = qb().selectFrom('users').whereDate('created_at', '>=', '2024-01-01').toSQL() as any
     expect(typeof q1.execute).toBe('function')
+    // An ARRAY, not an object: object containment throws on SQLite by design
+    // (there is no json_each equivalent for it), so the object form made this
+    // depend on some earlier test file leaving the process-wide dialect on
+    // postgres. The array form means the same thing on every dialect.
     const q2 = qb().selectFrom('users').whereJsonContains('meta', ['a']).toSQL() as any
     expect(typeof q2.execute).toBe('function')
   })
@@ -313,6 +317,11 @@ describe('query builder - SQL text for clauses and helpers', () => {
     expectTextOutput(s2)
     const s3 = toTextOf(qb().selectFrom('projects').orWhereNested(nested as any) as any)
     expectTextOutput(s3)
+    // An orWhereNested with nothing before it used to emit
+    // `SELECT * FROM projects OR (...)` — invalid SQL that expectTextOutput
+    // waved through, since it only checks the result is a string. See #1083.
+    expect(s3).toContain('WHERE (')
+    expect(s3).not.toMatch(/FROM projects\s+OR\b/)
     const s4 = toTextOf(qb().selectFrom('users').where(['id', '>', 0]).andWhere(['name', 'like', '%a%']) as any)
     expectTextOutput(s4)
     const s5 = toTextOf(qb().selectFrom('users').where(['id', '>', 0]).orWhere(['name', 'like', '%a%']) as any)

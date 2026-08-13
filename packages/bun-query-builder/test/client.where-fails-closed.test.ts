@@ -11,6 +11,12 @@
  *
  * Failing closed is the whole point of these tests: an exception is recoverable
  * and a silently missing predicate is not.
+ *
+ * The callback form is no longer among the rejected shapes — as of #1083 it
+ * builds a real parenthesised group. The guarantee these tests exist to protect
+ * survives that change unaltered: a callback that adds NO conditions still
+ * throws, because a group contributing nothing is the same silent widening by
+ * another route.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -21,12 +27,22 @@ function query() {
 }
 
 describe('where() refuses what it cannot apply', () => {
-  it('rejects the expression-callback form rather than dropping it', () => {
-    expect(() => query().where((eb: any) => eb.or([]))).toThrow(/where\(callback\) is not supported/)
+  it('rejects a callback that adds no conditions rather than dropping it', () => {
+    // The failure mode this replaced: the callback ran, contributed nothing,
+    // and the builder came back unfiltered.
+    expect(() => query().where((b: any) => { void b })).toThrow(/added no conditions/)
+    expect(() => query().where(() => true)).toThrow(/added no conditions/)
   })
 
-  it('names the alternatives, because there are working ones', () => {
-    expect(() => query().where(() => true)).toThrow(/whereNested|whereAny|orWhere/)
+  it('names what to do about it, because there is a working form', () => {
+    expect(() => query().where(() => true)).toThrow(/where\(\)\/orWhere\(\)/)
+  })
+
+  it('applies a callback that does add conditions', () => {
+    const sql = String(query().where('id', '=', 1).where((b: any) => b.where('a', '=', 1).orWhere('b', '=', 2)).toSQL())
+
+    expect(sql).toContain('(a = ')
+    expect(sql).toContain(' OR b = ')
   })
 
   it('rejects a missing condition', () => {

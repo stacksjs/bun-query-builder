@@ -34,6 +34,8 @@ import { getOrCreateBunSql } from './db'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 import { normalizeRelationList } from './relation-utils'
 import { singularizerFor, toTableName as sharedToTableName } from './inflect'
+import type { WhereTerm } from './sql-fragments'
+import { renderInPredicate, renderWhereTerms } from './sql-fragments'
 
 /**
  * Current timestamp formatted for the active dialect.
@@ -2494,9 +2496,8 @@ class ModelQueryBuilder<
    * Shared by buildQuery, count, aggregates, delete, and update.
    */
   private buildWhereClauses(params: unknown[]): string {
-    const clauses: string[] = []
-    for (let i = 0; i < this._wheres.length; i++) {
-      const w = this._wheres[i]
+    const terms: WhereTerm[] = []
+    for (const w of this._wheres) {
       let clause: string
 
       if (w.raw) {
@@ -2508,8 +2509,11 @@ class ModelQueryBuilder<
         clause = w.operator === '=' ? `${col} IS NULL` : `${col} IS NOT NULL`
       }
       else if (w.operator === 'in' || w.operator === 'not in') {
+        // `IN ()` is a syntax error on Postgres and MySQL while SQLite parses
+        // it, so the empty case renders as a constant predicate instead — see
+        // renderInPredicate for why the NOT IN mirror is TRUE, not FALSE.
         const arr = w.value as unknown[]
-        clause = `${sqlColumn(w.column!)} ${w.operator.toUpperCase()} (${arr.map(() => '?').join(', ')})`
+        clause = renderInPredicate(sqlColumn(w.column!), arr, w.operator === 'not in', arr.map(() => '?').join(', '))
         params.push(...arr)
       }
       else {
@@ -2517,9 +2521,13 @@ class ModelQueryBuilder<
         params.push(w.value)
       }
 
-      clauses.push(i === 0 ? clause : `${w.boolean.toUpperCase()} ${clause}`)
+      terms.push({ conn: w.boolean === 'or' ? 'OR' : 'AND', sql: clause })
     }
-    return clauses.join(' ')
+    // Was a flat join: `clauses.push(i === 0 ? clause : `${BOOL} ${clause}`)`.
+    // SQL binds AND tighter than OR, so `.where(a).whereLike(b).orWhereLike(c)`
+    // meant `(a AND b) OR c` and returned every row `a` was meant to exclude.
+    // renderWhereTerms brackets each OR-run instead. See #1083.
+    return renderWhereTerms(terms)
   }
 
   /**
