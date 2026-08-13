@@ -86,6 +86,56 @@ console.log(JSON.stringify({ leftBehind: tables.map(r => r.name) }))
     // Was ['mig_a'] — the first statement had already committed.
     expect(lastJson(result.out).leftBehind).toEqual([])
   })
+
+  it('applies a file that brackets its own transaction, instead of nesting one', () => {
+    // SQLite's table-recreate recipe, as `SQLiteDriver.rebuildTable` emits it:
+    // the foreign_keys pragma is ignored inside a transaction, so it has to
+    // bracket one the file opens itself. Wrapping that raised `cannot start a
+    // transaction within a transaction`, which meant no column whose type or
+    // constraint changed could ever be migrated on SQLite.
+    const dir = workspace({
+      '0000000001-seed.sql': 'CREATE TABLE rebuilt (id INTEGER PRIMARY KEY, qty TEXT);\nINSERT INTO rebuilt (id, qty) VALUES (1, \'7\');',
+      '0000000002-rebuild.sql': [
+        'PRAGMA foreign_keys=OFF;',
+        'BEGIN;',
+        'CREATE TABLE "_qb_tmp_rebuilt" ("id" INTEGER PRIMARY KEY, "qty" INTEGER);',
+        'INSERT INTO "_qb_tmp_rebuilt" ("id", "qty") SELECT "id", "qty" FROM "rebuilt";',
+        'DROP TABLE "rebuilt";',
+        'ALTER TABLE "_qb_tmp_rebuilt" RENAME TO "rebuilt";',
+        'PRAGMA foreign_key_check;',
+        'COMMIT;',
+        'PRAGMA foreign_keys=ON;',
+      ].join('\n'),
+    })
+
+    const result = run(dir, 'probe.ts', `
+import { Database } from 'bun:sqlite'
+import { setConfig, executeMigration } from ${JSON.stringify(SRC)}
+
+setConfig({ dialect: 'sqlite', database: { database: './t.sqlite' }, verbose: false })
+let error = ''
+try { await executeMigration(process.cwd()) } catch (e) { error = e instanceof Error ? e.message : String(e) }
+
+const db = new Database('./t.sqlite')
+const type = db.query("SELECT type FROM pragma_table_info('rebuilt') WHERE name = 'qty'").get()
+const rows = db.query('SELECT qty FROM rebuilt').all()
+const recorded = db.query("SELECT migration FROM migrations WHERE migration LIKE '%rebuild%'").all()
+console.log(JSON.stringify({ error, type: type?.type, rows, recorded: recorded.length }))
+`)
+
+    rmSync(dir, { recursive: true, force: true })
+    if (result.code !== 0)
+      throw new Error(`probe exited ${result.code}: ${result.err || result.out}`)
+
+    const outcome = lastJson(result.out)
+    // Was: 'cannot start a transaction within a transaction'.
+    expect(outcome.error).toBe('')
+    expect(outcome.type).toBe('INTEGER')
+    // The rebuild carried the row across rather than dropping it.
+    expect(outcome.rows).toEqual([{ qty: 7 }])
+    // Unwrapped is still recorded, or it would replay on the next run.
+    expect(outcome.recorded).toBe(1)
+  })
 })
 
 describe.skipIf(!pgAvailable)('migration locking (#1067)', () => {

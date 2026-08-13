@@ -401,8 +401,16 @@ const MIGRATION_LOCK_KEY = 'bun-query-builder:migrate'
  * refusing to support it is not an option. Files that use them keep the old
  * unwrapped behaviour and say so, rather than failing on something they were
  * right to write.
+ *
+ * A file that opens its own transaction belongs here too. `SQLiteDriver
+ * .rebuildTable` emits SQLite's own table-recreate recipe — `PRAGMA
+ * foreign_keys=OFF`, `BEGIN`, build, copy, swap, `COMMIT`, `PRAGMA
+ * foreign_keys=ON` — because the pragma is ignored inside a transaction and
+ * has to bracket it. Wrapping that file raised `cannot start a transaction
+ * within a transaction` and took the whole migration down, so any table whose
+ * column type or constraint changed could never be migrated on SQLite.
  */
-const NON_TRANSACTIONAL_SQL = /\bCONCURRENTLY\b|^\s*VACUUM\b/im
+const NON_TRANSACTIONAL_SQL = /\bCONCURRENTLY\b|^\s*VACUUM\b|^\s*BEGIN\s*(?:;|TRANSACTION\b)|^\s*PRAGMA\s+foreign_keys\b/im
 
 /**
  * Whether this dialect can roll a failed migration file back.
