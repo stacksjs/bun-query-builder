@@ -186,6 +186,26 @@ function renderSelectColumn(col: unknown): string {
   )
 }
 
+/**
+ * Does this SQL have an `ORDER BY` of its own, at paren depth 0?
+ *
+ * Depth-aware because a subquery in the FROM list or an `IN (SELECT … ORDER BY
+ * …)` carries its own, and matching that one would reject a query whose outer
+ * SELECT is unordered.
+ */
+function hasTopLevelOrderBy(s: string): boolean {
+  const re = /\(|\)|\bORDER\s+BY\b/gi
+  let depth = 0
+  let m: RegExpExecArray | null
+  // eslint-disable-next-line no-cond-assign
+  while ((m = re.exec(s))) {
+    if (m[0] === '(') { depth++ }
+    else if (m[0] === ')') { depth = Math.max(0, depth - 1) }
+    else if (depth === 0) { return true }
+  }
+  return false
+}
+
 // Pre-compiled regex patterns for performance
 const SQL_PATTERNS = {
   SELECT_STAR: /^SELECT\s+\*/i,
@@ -3297,9 +3317,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
      *
      * Splicing rather than appending also fixes `.where(a).orderBy(c).orWhere(b)`,
      * which used to emit `… ORDER BY c ASC OR b` and fail to parse.
+     *
+     * `extra` appends one more AND-term for this render only, without recording
+     * it. That is what cursorPaginate needs: its cursor predicate changes on
+     * every page, so pushing it onto `whereTerms` would accumulate one stale
+     * predicate per iteration.
      */
-    const currentSql = (): string => {
-      const body = renderWhereTerms(whereTerms)
+    const currentSql = (extra?: WhereTerm): string => {
+      const body = renderWhereTerms(extra ? [...whereTerms, extra] : whereTerms)
       if (!body)
         return text
       if (whereTail) {
@@ -5608,29 +5633,58 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         return { data: hasMore ? data.slice(0, perPage) : data, meta: { perPage, page: p, hasMore } }
       },
       async cursorPaginate(perPage: number, cursor?: any, column: string | string[] = 'id', direction: 'asc' | 'desc' = 'asc') {
-        let q = ensureBuilt()
+        if (!Number.isInteger(perPage) || perPage <= 0)
+          throw new TypeError(`[query-builder] cursorPaginate(perPage): expected positive integer, got ${perPage}`)
+
+        const cols = (Array.isArray(column) ? column : [column]).map(String)
+        for (const c of cols) validateIdentifier(c, 'cursorPaginate(column)')
+        const cmp = direction === 'asc' ? '>' : '<'
+        const dir = direction === 'asc' ? 'ASC' : 'DESC'
+        const params = [...whereParams]
+
+        // The cursor predicate is a WHERE TERM, not a second WHERE keyword.
+        // It used to be composed as `sql`${q} WHERE ...``, unconditionally — so
+        // any filter already on the builder produced `... WHERE a WHERE b`, a
+        // syntax error on every dialect. That is why `.where(x).chunkById(...)`
+        // never worked: page one has no cursor and succeeds, and the failure
+        // only lands on page two. See stacksjs/bun-query-builder#1090.
+        let predicate = ''
         if (cursor !== undefined && cursor !== null) {
           if (Array.isArray(column)) {
-            const cols = column.map(c => sql(String(c)))
-            const comp = direction === 'asc' ? sql`>` : sql`<`
-            const tupleCols = sql`(${sql(cols as any)})`
-            const tupleVals = sql`(${sql(cursor as any)})`
-            q = sql`${q} WHERE ${tupleCols} ${comp} ${tupleVals}`
+            const phs = (cursor as any[]).map((v) => { params.push(v); return getPlaceholder(params.length) })
+            predicate = `(${cols.join(', ')}) ${cmp} (${phs.join(', ')})`
           }
           else {
-            q = direction === 'asc'
-              ? sql`${q} WHERE ${sql(String(column))} > ${cursor}`
-              : sql`${q} WHERE ${sql(String(column))} < ${cursor}`
+            params.push(cursor)
+            predicate = `${cols[0]} ${cmp} ${getPlaceholder(params.length)}`
           }
         }
-        if (Array.isArray(column)) {
-          const orderParts = column.map(c => sql`${sql(String(c))} ${direction === 'asc' ? sql`ASC` : sql`DESC`}`)
-          const orderExpr = orderParts.reduce((acc, p, i) => (i === 0 ? p : sql`${acc}, ${p}`))
-          q = sql`${q} ORDER BY ${orderExpr} LIMIT ${perPage + 1}`
+
+        // Rendered through currentSql() so the predicate is spliced ahead of any
+        // trailing clause rather than appended past it, and so the builder's own
+        // WHERE terms come along.
+        const base = reorderSelectClauses(predicate ? currentSql({ conn: 'AND', sql: predicate }) : currentSql())
+        const order = cols.map(c => `${c} ${dir}`).join(', ')
+
+        // Cursor pagination OWNS the ordering — the cursor predicate `col > ?`
+        // only selects "the rows after this one" if the rows are sorted by that
+        // same column, so a different ORDER BY makes the cursor meaningless and
+        // silently skips or repeats rows.
+        //
+        // This case has always been broken: it emitted a second ORDER BY and
+        // failed to parse. It was invisible until now only because the
+        // duplicate-WHERE error above fired first. Refusing it says so, rather
+        // than dropping the caller's ordering without mentioning it.
+        if (hasTopLevelOrderBy(base)) {
+          throw new TypeError(
+            `[query-builder] cursorPaginate() cannot be combined with orderBy() — it orders by `
+            + `${order} itself, and a cursor is only meaningful in that order. `
+            + `Remove the orderBy(), or pass the column and direction to cursorPaginate().`,
+          )
         }
-        else {
-          q = sql`${q} ORDER BY ${sql(String(column))} ${direction === 'asc' ? sql`ASC` : sql`DESC`} LIMIT ${perPage + 1}`
-        }
+        const q = params.length > 0
+          ? _sql.unsafe(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`, params)
+          : _sql.unsafe(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         // We fetch perPage+1 rows to detect whether more exist; the extra row
         // is only a "has more?" probe and is NOT delivered. The next cursor
