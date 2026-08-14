@@ -1,3 +1,23 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.29...v0.2.30)
+
+## 🐛 Bug Fixes
+
+- **sqlite**: bind $n placeholders by index, as Postgres does ([e02349f](https://github.com/stacksjs/bun-query-builder/commit/e02349f)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **ci**: pantry cannot resolve `latest`, so ask for ranges instead (#1099) ([0671de8](https://github.com/stacksjs/bun-query-builder/commit/0671de8)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1099](https://github.com/stacksjs/bun-query-builder/issues/1099), [#1099](https://github.com/stacksjs/bun-query-builder/issues/1099))
+- **client**: the cursor predicate is a where term, not a second WHERE (#1090) (#1098) ([e568f9a](https://github.com/stacksjs/bun-query-builder/commit/e568f9a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1090](https://github.com/stacksjs/bun-query-builder/issues/1090), [#1090](https://github.com/stacksjs/bun-query-builder/issues/1090), [#1098](https://github.com/stacksjs/bun-query-builder/issues/1098), [#1090](https://github.com/stacksjs/bun-query-builder/issues/1090), [#1098](https://github.com/stacksjs/bun-query-builder/issues/1098))
+
+## 🔧 Chores
+
+- release v0.2.30 ([208a42a](https://github.com/stacksjs/bun-query-builder/commit/208a42a)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: update dependency typeorm to v1 (#1007) ([278786e](https://github.com/stacksjs/bun-query-builder/commit/278786e)) _(by [renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot]))_ ([#1007](https://github.com/stacksjs/bun-query-builder/issues/1007), [#1007](https://github.com/stacksjs/bun-query-builder/issues/1007))
+- **deps**: bump actions/cache from 5.1.0 to 6.1.0 (#1081) ([6cf6b64](https://github.com/stacksjs/bun-query-builder/commit/6cf6b64)) _(by [dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>](https://github.com/dependabot[bot]))_ ([#1081](https://github.com/stacksjs/bun-query-builder/issues/1081), [#1081](https://github.com/stacksjs/bun-query-builder/issues/1081))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _[renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>](https://github.com/renovate[bot])_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.28...v0.2.29)
 
 ## 💥 Breaking Changes
