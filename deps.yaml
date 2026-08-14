@@ -1,5 +1,21 @@
+# Ranges, never `latest`.
+#
+# pantry's installer SDK resolves `latest` from a hardcoded per-domain switch
+# (nodejs.org, ziglang.org, ...) that ends in a bare throw. A domain the SDK
+# supports but has no case for cannot resolve `latest` at all — it fails with
+# `Cannot resolve latest version for <domain>`. A range takes a different path
+# that reads the package's published version list, so it always resolves.
+#
+# That is not hypothetical: `sqlite: latest` was fine only because the SDK did
+# not support sqlite.org and skipped it with a warning. Adding it upstream
+# promoted it from skipped to installed and reddened main. `bun` never broke
+# here precisely because it was already a range.
+#
+# mysql and postgres are still skipped as unsupported, so their spec is inert
+# today — they are ranges so that being added upstream is a no-op, not an
+# outage.
 dependencies:
   bun: ^1.3.14
-  mysql: latest
-  postgres: latest
-  sqlite: latest
+  mysql: ^8.0.45
+  postgres: ^18.0.0
+  sqlite: ^3.52.0
