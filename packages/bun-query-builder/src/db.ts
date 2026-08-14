@@ -50,6 +50,113 @@ import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
  * SQLite wrapper that provides a SQL-like tagged template literal interface
  * using bun:sqlite's Database class for better compiled binary support.
  */
+/**
+ * Give `$1`-style placeholders their Postgres meaning on SQLite: `$n` is the
+ * n-th value, wherever it appears and however often.
+ *
+ * bun:sqlite treats `$1` as a NAME, not an index. Handed an array it binds the
+ * values to those names in ORDER OF FIRST APPEARANCE and ignores the numbers
+ * entirely, so a query whose placeholders are not already in ascending order
+ * binds the wrong values and says nothing:
+ *
+ *   sql.unsafe('SELECT $2 AS a, $1 AS b', ['ONE', 'TWO'])
+ *   -> { a: 'ONE', b: 'TWO' }        // both backwards, no error
+ *
+ * Every caller writing `$n` means the Postgres semantics, because the same
+ * query text is expected to run on both drivers. The failure is silent, and it
+ * lands hardest in exactly the queries that repeat a parameter - authorisation
+ * checks of the shape "owner_id = $2 OR EXISTS (... user_id = $2)" - where the
+ * result is a permission answer computed from the wrong values.
+ *
+ * Rewritten to ordinal `?` here, once, at the only place both `query` and `run`
+ * pass through. Placeholders inside string literals, quoted identifiers and
+ * comments are left alone: `'$1'` is data, not a parameter. SQL with no
+ * numbered placeholders is returned untouched, so `?` queries and Bun's own
+ * tagged-template output are unaffected.
+ */
+export function bindNumberedPlaceholders(sql: string, params: any[]): { sql: string, params: any[] } {
+  if (params.length === 0 || !/\$\d/.test(sql))
+    return { sql, params }
+
+  const out: any[] = []
+  let rewritten = ''
+  let highest = 0
+
+  // Walk the statement so string literals, quoted identifiers and comments can
+  // be skipped wholesale rather than matched around.
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i]
+
+    if (char === '\'' || char === '"' || char === '`') {
+      const end = skipQuoted(sql, i, char)
+      rewritten += sql.slice(i, end)
+      i = end - 1
+      continue
+    }
+
+    if (char === '-' && sql[i + 1] === '-') {
+      const end = sql.indexOf('\n', i)
+      const stop = end === -1 ? sql.length : end
+      rewritten += sql.slice(i, stop)
+      i = stop - 1
+      continue
+    }
+
+    if (char === '/' && sql[i + 1] === '*') {
+      const end = sql.indexOf('*/', i + 2)
+      const stop = end === -1 ? sql.length : end + 2
+      rewritten += sql.slice(i, stop)
+      i = stop - 1
+      continue
+    }
+
+    if (char === '$') {
+      const digits = /^\d+/.exec(sql.slice(i + 1))?.[0]
+      if (digits) {
+        const index = Number(digits)
+        // Recorded before the range check, so a reference past the end of the
+        // array is reported below rather than left in the statement to fail
+        // later as an unbound parameter.
+        highest = Math.max(highest, index)
+
+        if (index >= 1 && index <= params.length) {
+          out.push(params[index - 1])
+          rewritten += '?'
+          i += digits.length
+          continue
+        }
+      }
+    }
+
+    rewritten += char
+  }
+
+  if (highest > params.length)
+    throw new Error(`SQL references $${highest} but only ${params.length} value${params.length === 1 ? ' was' : 's were'} provided`)
+
+  // Nothing numbered was actually substituted, so the statement is whatever it
+  // was: `?` positional, or a `$name` the caller binds some other way.
+  if (out.length === 0)
+    return { sql, params }
+
+  return { sql: rewritten, params: out }
+}
+
+/** Index just past the closing quote of the literal starting at `start`. */
+function skipQuoted(sql: string, start: number, quote: string): number {
+  for (let i = start + 1; i < sql.length; i++) {
+    if (sql[i] !== quote)
+      continue
+    // A doubled quote is an escaped one and the literal continues.
+    if (sql[i + 1] === quote) {
+      i++
+      continue
+    }
+    return i + 1
+  }
+  return sql.length
+}
+
 class SQLiteWrapper {
   private db: Database
 
@@ -79,16 +186,18 @@ class SQLiteWrapper {
    * This mimics the SQL tagged template literal behavior.
    */
   query(sql: string, params: any[] = []): any[] {
-    const stmt = this.db.prepare(sql)
-    return stmt.all(...params)
+    const bound = bindNumberedPlaceholders(sql, params)
+    const stmt = this.db.prepare(bound.sql)
+    return stmt.all(...bound.params)
   }
 
   /**
    * Execute a query that doesn't return results (INSERT, UPDATE, DELETE).
    */
   run(sql: string, params: any[] = []): any {
-    const stmt = this.db.prepare(sql)
-    return stmt.run(...params)
+    const bound = bindNumberedPlaceholders(sql, params)
+    const stmt = this.db.prepare(bound.sql)
+    return stmt.run(...bound.params)
   }
 
   /**
