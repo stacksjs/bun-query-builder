@@ -25,7 +25,63 @@ export interface DialectDriver {
   createMigrationsTable: () => string
   getExecutedMigrationsQuery: () => string
   recordMigrationQuery: () => string
+
+  // ---------------------------------------------------------------------------
+  // Query-time fragments
+  //
+  // DDL is not the only place the dialects disagree, and the disagreements at
+  // query time are the expensive ones: a `strftime` or a `json_extract` parses
+  // on SQLite and is a syntax error on Postgres, so an application developed
+  // against SQLite passes its whole suite and then fails on the live site. The
+  // renderers below exist so an application never has to name a dialect.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Read one key out of a JSON/JSONB column, yielding text.
+   *
+   * `key` is SQL, not a value: pass a placeholder (`'?'`, `'$3'`) to bind it, or
+   * a quoted literal. SQLite cannot take a bound parameter as a JSON *path* —
+   * bound, it is treated as a literal string and matches nothing — so a caller
+   * that must interpolate should validate the key against an allowlist first.
+   */
+  jsonExtract: (column: string, key: string) => string
+
+  /**
+   * Truncate a timestamp column to a bucket, rendered as an ISO-8601 string.
+   *
+   * Every dialect returns the same `YYYY-MM-DDTHH:MM:SS.000Z` shape, because
+   * callers compare the result against buckets generated in application code. A
+   * format that varied by dialect would line up in development and silently
+   * produce empty series in production.
+   *
+   * `offsetHours` shifts into a target timezone before truncating. Weeks start
+   * on Monday everywhere, which SQLite needs to be told and Postgres does not.
+   *
+   * The column may be a real timestamp or an ISO string in a text column; each
+   * driver casts as its dialect requires.
+   */
+  dateBucket: (column: string, grain: DateBucketGrain, offsetHours?: number) => string
+
+  /**
+   * A boolean literal for a SQL statement.
+   *
+   * SQLite accepts `1` and `0` for a boolean column and Postgres rejects them
+   * with `is of type boolean but expression is of type integer`, so an app that
+   * writes integers works until the day it meets a stricter database.
+   */
+  booleanLiteral: (value: boolean) => string
 }
+
+/** The buckets {@link DialectDriver.dateBucket} can truncate to. */
+export type DateBucketGrain = 'hour' | 'day' | 'week' | 'month' | 'year'
+
+/**
+ * The ISO shape every driver's {@link DialectDriver.dateBucket} must produce.
+ *
+ * Exported so a driver's tests can assert against one definition rather than
+ * each restating the format it happens to emit.
+ */
+export const DATE_BUCKET_FORMAT = 'YYYY-MM-DDTHH:MM:SS.000Z'
 
 export class PostgresDriver implements DialectDriver {
   private quoteIdentifier(id: string): string {
@@ -248,6 +304,45 @@ export class PostgresDriver implements DialectDriver {
 
   recordMigrationQuery(): string {
     return 'INSERT INTO migrations (migration) VALUES ($1)'
+  }
+
+  /**
+   * `->>` yields text, matching what SQLite's `json_extract` returns for a
+   * scalar, so the two dialects agree on the type a caller gets back.
+   *
+   * The cast is explicit because a JSON document is very often kept in a text
+   * column: `->>` on a `varchar` is an operator-does-not-exist error, and
+   * casting an already-`jsonb` column is free.
+   */
+  jsonExtract(column: string, key: string): string {
+    return `(${column}::jsonb ->> ${key})`
+  }
+
+  dateBucket(column: string, grain: DateBucketGrain, offsetHours = 0): string {
+    const shifted = offsetHours === 0
+      ? `${column}::timestamp`
+      : `(${column}::timestamp ${offsetHours >= 0 ? '+' : '-'} interval '${Math.abs(offsetHours)} hours')`
+
+    // date_trunc already starts weeks on Monday, which is what the SQLite
+    // driver goes to some trouble to arrange.
+    const truncated = grain === 'week' ? `date_trunc('week', ${shifted})` : shifted
+
+    switch (grain) {
+      case 'hour':
+        return `to_char(${truncated}, 'YYYY-MM-DD"T"HH24:00:00.000"Z"')`
+      case 'month':
+        return `to_char(${truncated}, 'YYYY-MM-01"T"00:00:00.000"Z"')`
+      case 'year':
+        return `to_char(${truncated}, 'YYYY-01-01"T"00:00:00.000"Z"')`
+      case 'week':
+      case 'day':
+      default:
+        return `to_char(${truncated}, 'YYYY-MM-DD"T"00:00:00.000"Z"')`
+    }
+  }
+
+  booleanLiteral(value: boolean): string {
+    return value ? 'TRUE' : 'FALSE'
   }
 
   private renderColumn(column: ColumnPlan): string {

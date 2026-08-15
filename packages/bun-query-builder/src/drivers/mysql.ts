@@ -1,4 +1,5 @@
 import type { ColumnPlan, IndexPlan, RebuildTableSpec, TablePlan } from '../migrations'
+import type { DateBucketGrain } from './postgres'
 import { qualifiedIndexName } from './index-name'
 
 export interface DialectDriver {
@@ -222,6 +223,42 @@ export class MySQLDriver implements DialectDriver {
 
   recordMigrationQuery(): string {
     return 'INSERT INTO migrations (migration) VALUES (?)'
+  }
+
+  /**
+   * `->>` is MySQL's unquoting extract and returns text, matching SQLite's
+   * `json_extract` and Postgres's `->>`.
+   *
+   * MySQL takes the path as an expression, so a bound `key` works here without
+   * the concatenation SQLite needs.
+   */
+  jsonExtract(column: string, key: string): string {
+    return `JSON_UNQUOTE(JSON_EXTRACT(${column}, CONCAT('$.', ${key})))`
+  }
+
+  dateBucket(column: string, grain: DateBucketGrain, offsetHours = 0): string {
+    const shifted = offsetHours === 0
+      ? column
+      : `DATE_ADD(${column}, INTERVAL ${offsetHours} HOUR)`
+
+    switch (grain) {
+      case 'hour':
+        return `DATE_FORMAT(${shifted}, '%Y-%m-%dT%H:00:00.000Z')`
+      case 'week':
+        // Mode 3 makes the week start on Monday, matching the other drivers.
+        return `DATE_FORMAT(DATE_SUB(${shifted}, INTERVAL WEEKDAY(${shifted}) DAY), '%Y-%m-%dT00:00:00.000Z')`
+      case 'month':
+        return `DATE_FORMAT(${shifted}, '%Y-%m-01T00:00:00.000Z')`
+      case 'year':
+        return `DATE_FORMAT(${shifted}, '%Y-01-01T00:00:00.000Z')`
+      case 'day':
+      default:
+        return `DATE_FORMAT(${shifted}, '%Y-%m-%dT00:00:00.000Z')`
+    }
+  }
+
+  booleanLiteral(value: boolean): string {
+    return value ? 'TRUE' : 'FALSE'
   }
 
   protected renderColumn(column: ColumnPlan): string {

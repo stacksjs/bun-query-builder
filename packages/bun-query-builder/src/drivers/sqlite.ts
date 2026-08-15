@@ -1,4 +1,5 @@
 import type { ColumnPlan, IndexPlan, RebuildTableSpec, TablePlan } from '../migrations'
+import type { DateBucketGrain } from './postgres'
 import { qualifiedIndexName } from './index-name'
 
 /**
@@ -262,6 +263,51 @@ export class SQLiteDriver implements DialectDriver {
 
   recordMigrationQuery(): string {
     return 'INSERT INTO migrations (migration) VALUES (?)'
+  }
+
+  /**
+   * `json_extract` returns a scalar for a scalar, matching what Postgres `->>`
+   * yields, so both dialects hand a caller the same kind of value.
+   *
+   * The `'$.' || key` concatenation is what lets the key be a bound parameter
+   * for the caller that can bind one. Note that SQLite will NOT accept a bound
+   * parameter as a whole path, which is why the interface documents that a
+   * caller interpolating a key must validate it first.
+   */
+  jsonExtract(column: string, key: string): string {
+    return `json_extract(${column}, '$.' || ${key})`
+  }
+
+  dateBucket(column: string, grain: DateBucketGrain, offsetHours = 0): string {
+    const shifted = offsetHours === 0
+      ? column
+      : `datetime(${column}, '${offsetHours >= 0 ? '+' : '-'}${Math.abs(offsetHours)} hours')`
+
+    switch (grain) {
+      case 'hour':
+        return `strftime('%Y-%m-%dT%H:00:00.000Z', ${shifted})`
+      case 'week':
+        // SQLite weeks start on Sunday. Walking back six days and then forward
+        // to the next Monday lands on the Monday of the current week, which is
+        // what date_trunc('week') gives on Postgres.
+        return `strftime('%Y-%m-%dT00:00:00.000Z', ${shifted}, '-6 days', 'weekday 1')`
+      case 'month':
+        return `strftime('%Y-%m-01T00:00:00.000Z', ${shifted})`
+      case 'year':
+        return `strftime('%Y-01-01T00:00:00.000Z', ${shifted})`
+      case 'day':
+      default:
+        return `strftime('%Y-%m-%dT00:00:00.000Z', ${shifted})`
+    }
+  }
+
+  /**
+   * SQLite has understood the `TRUE` and `FALSE` keywords since 3.23 and stores
+   * them as 1 and 0, so emitting them costs nothing here and is what keeps a
+   * statement portable to a database that refuses the integers.
+   */
+  booleanLiteral(value: boolean): string {
+    return value ? 'TRUE' : 'FALSE'
   }
 
   private renderColumn(column: ColumnPlan): string {
