@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.35...v0.2.36)
+
+## ✨ Features
+
+- **schema**: audit a live database against the models ([77b0bc1](https://github.com/stacksjs/bun-query-builder/commit/77b0bc1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.36 ([3236059](https://github.com/stacksjs/bun-query-builder/commit/3236059)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.34...v0.2.35)
 
 ## 🔧 Chores
