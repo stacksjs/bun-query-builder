@@ -54,3 +54,5 @@ export type {
   ModelCreateDataLoose,
   RelationCardinality,
 } from './type-inference'
+
+export { toDialectPlaceholders } from './sql-fragments'

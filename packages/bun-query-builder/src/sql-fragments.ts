@@ -1,3 +1,4 @@
+import type { SupportedDialect } from './types'
 /**
  * SQL fragment renderers shared by the select builder (`client.ts`) and the ORM
  * query builder (`orm.ts`).
@@ -96,4 +97,94 @@ export function renderInPredicate(column: string, values: any[], negated: boolea
   if (values.length === 0)
     return negated ? TRUE_PREDICATE : FALSE_PREDICATE
   return `${column} ${negated ? 'NOT IN' : 'IN'} (${placeholders})`
+}
+
+/**
+ * Rewrite `?` placeholders into the numbered form Postgres requires.
+ *
+ * Raw SQL written with `?` runs on SQLite and MySQL and is a syntax error on
+ * Postgres, which reports it as a problem with whatever token follows: a WHERE
+ * built as `project_id = ? AND …` is rejected with `syntax error at or near
+ * "AND"`, which sends the reader looking at the wrong part of the query. An
+ * application that developed against SQLite therefore finds out at the point
+ * its raw queries first meet Postgres, and the error does not name the cause.
+ *
+ * Only unquoted placeholders are rewritten. A `?` inside a string literal, a
+ * quoted identifier, or a dollar-quoted block is data and is left exactly as
+ * written — the naive global replace is the reason this needs to be a function
+ * with tests rather than one line at a call site.
+ *
+ * Dialects that already take `?` get the string back unchanged, so this is safe
+ * to apply unconditionally.
+ */
+export function toDialectPlaceholders(sql: string, dialect: SupportedDialect): string {
+  if (dialect !== 'postgres')
+    return sql
+
+  let out = ''
+  let index = 0
+  let position = 0
+
+  while (position < sql.length) {
+    const char = sql[position]!
+
+    // Single-quoted string literal, with '' as the escape.
+    if (char === '\'') {
+      const end = closingQuote(sql, position, '\'')
+      out += sql.slice(position, end)
+      position = end
+      continue
+    }
+
+    // Double-quoted identifier, with "" as the escape.
+    if (char === '"') {
+      const end = closingQuote(sql, position, '"')
+      out += sql.slice(position, end)
+      position = end
+      continue
+    }
+
+    // Dollar-quoted block: $tag$ … $tag$, where the tag may be empty.
+    if (char === '$') {
+      const tag = sql.slice(position).match(/^\$[A-Z_a-z]\w*\$|^\$\$/)?.[0]
+      if (tag) {
+        const close = sql.indexOf(tag, position + tag.length)
+        const end = close === -1 ? sql.length : close + tag.length
+        out += sql.slice(position, end)
+        position = end
+        continue
+      }
+    }
+
+    if (char === '?') {
+      index++
+      out += `$${index}`
+      position++
+      continue
+    }
+
+    out += char
+    position++
+  }
+
+  return out
+}
+
+/** Index just past the closing quote of the literal starting at `start`. */
+function closingQuote(sql: string, start: number, quote: string): number {
+  let position = start + 1
+
+  while (position < sql.length) {
+    if (sql[position] === quote) {
+      // A doubled quote is an escaped one, not the end.
+      if (sql[position + 1] === quote) {
+        position += 2
+        continue
+      }
+      return position + 1
+    }
+    position++
+  }
+
+  return sql.length
 }
