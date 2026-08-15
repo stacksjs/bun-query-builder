@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.32...v0.2.33)
+
+## 🐛 Bug Fixes
+
+- **migrations**: honour schema.text() instead of collapsing it to varchar ([0f0c7a5](https://github.com/stacksjs/bun-query-builder/commit/0f0c7a5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.33 ([cf0b020](https://github.com/stacksjs/bun-query-builder/commit/cf0b020)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.31...v0.2.32)
 
 ## ✨ Features
