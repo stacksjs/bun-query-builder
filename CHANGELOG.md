@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.34...v0.2.35)
+
+## 🔧 Chores
+
+- release v0.2.35 ([9696b86](https://github.com/stacksjs/bun-query-builder/commit/9696b86)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ⏪ Reverts
+
+- **migrations**: keep schema.number() as integer ([3ba6dd2](https://github.com/stacksjs/bun-query-builder/commit/3ba6dd2)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.32...v0.2.33)
 
 ## 🐛 Bug Fixes
