@@ -16,7 +16,7 @@
     },
     "packages/benchmark": {
       "name": "@bun-query-builder/benchmark",
-      "version": "0.2.31",
+      "version": "0.2.32",
       "dependencies": {
         "@prisma/adapter-better-sqlite3": "^7.9.1",
         "@prisma/client": "6.19.3",
@@ -38,7 +38,7 @@
     },
     "packages/bun-query-builder": {
       "name": "bun-query-builder",
-      "version": "0.2.31",
+      "version": "0.2.32",
       "bin": {
         "query-builder": "./dist/bin/cli.js",
         "qbx": "./dist/bin/cli.js",

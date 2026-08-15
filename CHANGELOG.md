@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.31...v0.2.32)
+
+## ✨ Features
+
+- **sql**: rewrite ? placeholders for Postgres, quoting-aware ([1d78313](https://github.com/stacksjs/bun-query-builder/commit/1d78313)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.32 ([f537efa](https://github.com/stacksjs/bun-query-builder/commit/f537efa)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.30...v0.2.31)
 
 ## ✨ Features
