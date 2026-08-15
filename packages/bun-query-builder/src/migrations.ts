@@ -543,16 +543,21 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
       case 'float':
         return 'float'
       case 'number':
-        // A JS number is a double, so an integer column silently truncates
-        // every fractional value it is given: an order of 99.5 stores as 100
-        // with no error anywhere. `integer()` and `int()` are right above for
-        // an author who means whole numbers.
+        // Integer, deliberately, even though a JS number is a double.
         //
-        // This also settles a disagreement inside this file: the explicit
-        // `type: 'number'` path already normalises to `decimal`, so the same
-        // word produced different columns depending on which way it was
-        // declared.
-        return 'decimal'
+        // This was briefly changed to `decimal` because a model using
+        // `number()` for a money column silently rounded 99.5 to 100. The
+        // change was far too blunt: `number()` is what almost every count,
+        // grid coordinate, port, hour and foreign key is declared as, and it
+        // turned all of them into `decimal(10,2)` — an arbitrary two-place
+        // scale and a magnitude ceiling of 99,999,999.99, on columns that are
+        // conceptually whole numbers and in one case a foreign key.
+        //
+        // The ambiguity is real and the fix belongs in the model: `integer()`,
+        // `float()` and `decimal()` all exist and say precisely what is meant.
+        // A default cannot read intent, so it stays with the reading that has
+        // always been here rather than quietly reshaping every schema.
+        return 'integer'
       case 'double':
         return 'double'
       case 'decimal':

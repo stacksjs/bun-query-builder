@@ -404,11 +404,10 @@ describe('migrations - complex model attributes', () => {
       expect(getColumn(plan, 'financials', 'amount')?.type).toBe('float')
       expect(getColumn(plan, 'financials', 'rate')?.type).toBe('double')
       expect(getColumn(plan, 'financials', 'price')?.type).toBe('decimal')
-      // `number` used to map to integer, which silently truncated every
-      // fractional value: 99.5 stored as 100 with no error. It also disagreed
-      // with the explicit `type: 'number'` path, which already normalised to
-      // decimal.
-      expect(getColumn(plan, 'financials', 'generic_num')?.type).toBe('decimal')
+      // `number` stays an integer: it is what nearly every count, coordinate
+      // and foreign key is declared as, so widening it reshapes whole schemas.
+      // A model that means fractions says `float()` or `decimal()`.
+      expect(getColumn(plan, 'financials', 'generic_num')?.type).toBe('integer')
     })
 
     it('keeps integer() and int() as integers', () => {
@@ -431,9 +430,11 @@ describe('migrations - complex model attributes', () => {
       expect(getColumn(plan, 'counters', 'misses')?.type).toBe('integer')
     })
 
-    it('agrees whichever way number is declared', () => {
-      // A validator-declared `number` and an explicitly typed one produced
-      // different columns from the same word.
+    it('pins the two spellings of number, which differ', () => {
+      // A validator `number()` is an integer; an explicit `type: 'number'`
+      // normalises to decimal. That split is long-standing and load-bearing —
+      // changing either reshapes every schema that uses it — so it is pinned
+      // here rather than left to be discovered.
       const viaValidator = defineModels({
         A: { name: 'A', table: 'a', attributes: { id: { validation: { rule: {} } }, n: { validation: { rule: { name: 'number' } } } } },
       })
@@ -441,10 +442,8 @@ describe('migrations - complex model attributes', () => {
         A: { name: 'A', table: 'a', attributes: { id: { validation: { rule: {} } }, n: { type: 'number' } } },
       })
 
-      const fromValidator = buildMigrationPlan(viaValidator as any, { dialect: 'postgres' })
-      const fromType = buildMigrationPlan(viaType as any, { dialect: 'postgres' })
-
-      expect(getColumn(fromValidator, 'a', 'n')?.type).toBe(getColumn(fromType, 'a', 'n')?.type)
+      expect(getColumn(buildMigrationPlan(viaValidator as any, { dialect: 'postgres' }), 'a', 'n')?.type).toBe('integer')
+      expect(getColumn(buildMigrationPlan(viaType as any, { dialect: 'postgres' }), 'a', 'n')?.type).toBe('decimal')
     })
 
     it('detects boolean type from validation rule', () => {
