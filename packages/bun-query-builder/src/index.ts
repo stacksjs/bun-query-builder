@@ -56,3 +56,6 @@ export type {
 } from './type-inference'
 
 export { toDialectPlaceholders } from './sql-fragments'
+
+export { auditSchemaDrift, familyOfDeclared, familyOfSqlType, formatSchemaDrift, satisfies } from './actions/schema-drift'
+export type { ColumnDrift, SchemaDrift, TypeFamily } from './actions/schema-drift'
