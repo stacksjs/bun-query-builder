@@ -404,7 +404,47 @@ describe('migrations - complex model attributes', () => {
       expect(getColumn(plan, 'financials', 'amount')?.type).toBe('float')
       expect(getColumn(plan, 'financials', 'rate')?.type).toBe('double')
       expect(getColumn(plan, 'financials', 'price')?.type).toBe('decimal')
-      expect(getColumn(plan, 'financials', 'generic_num')?.type).toBe('integer')
+      // `number` used to map to integer, which silently truncated every
+      // fractional value: 99.5 stored as 100 with no error. It also disagreed
+      // with the explicit `type: 'number'` path, which already normalised to
+      // decimal.
+      expect(getColumn(plan, 'financials', 'generic_num')?.type).toBe('decimal')
+    })
+
+    it('keeps integer() and int() as integers', () => {
+      // The other half: an author who means whole numbers still gets them, so
+      // the fix does not turn every count into a decimal.
+      const models = defineModels({
+        Counter: {
+          name: 'Counter',
+          table: 'counters',
+          attributes: {
+            id: { validation: { rule: {} } },
+            hits: { validation: { rule: { name: 'integer' } } },
+            misses: { validation: { rule: { name: 'int' } } },
+          },
+        },
+      })
+
+      const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
+      expect(getColumn(plan, 'counters', 'hits')?.type).toBe('integer')
+      expect(getColumn(plan, 'counters', 'misses')?.type).toBe('integer')
+    })
+
+    it('agrees whichever way number is declared', () => {
+      // A validator-declared `number` and an explicitly typed one produced
+      // different columns from the same word.
+      const viaValidator = defineModels({
+        A: { name: 'A', table: 'a', attributes: { id: { validation: { rule: {} } }, n: { validation: { rule: { name: 'number' } } } } },
+      })
+      const viaType = defineModels({
+        A: { name: 'A', table: 'a', attributes: { id: { validation: { rule: {} } }, n: { type: 'number' } } },
+      })
+
+      const fromValidator = buildMigrationPlan(viaValidator as any, { dialect: 'postgres' })
+      const fromType = buildMigrationPlan(viaType as any, { dialect: 'postgres' })
+
+      expect(getColumn(fromValidator, 'a', 'n')?.type).toBe(getColumn(fromType, 'a', 'n')?.type)
     })
 
     it('detects boolean type from validation rule', () => {

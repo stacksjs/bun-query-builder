@@ -543,7 +543,16 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
       case 'float':
         return 'float'
       case 'number':
-        return 'integer'
+        // A JS number is a double, so an integer column silently truncates
+        // every fractional value it is given: an order of 99.5 stores as 100
+        // with no error anywhere. `integer()` and `int()` are right above for
+        // an author who means whole numbers.
+        //
+        // This also settles a disagreement inside this file: the explicit
+        // `type: 'number'` path already normalises to `decimal`, so the same
+        // word produced different columns depending on which way it was
+        // declared.
+        return 'decimal'
       case 'double':
         return 'double'
       case 'decimal':
