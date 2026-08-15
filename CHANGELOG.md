@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.30...v0.2.31)
+
+## ✨ Features
+
+- **drivers**: render JSON access, date buckets and booleans per dialect ([a1110da](https://github.com/stacksjs/bun-query-builder/commit/a1110da)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.31 ([499f616](https://github.com/stacksjs/bun-query-builder/commit/499f616)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.29...v0.2.30)
 
 ## 🐛 Bug Fixes
