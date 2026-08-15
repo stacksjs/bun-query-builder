@@ -324,7 +324,45 @@ describe('migrations - complex model attributes', () => {
 
       const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
       expect(getColumn(plan, 'users', 'name')?.type).toBe('string')
-      expect(getColumn(plan, 'users', 'bio')?.type).toBe('string')
+      // `text` used to collapse to `string`, which made the validator a no-op
+      // for schema generation and put JSON blobs in varchar(255).
+      expect(getColumn(plan, 'users', 'bio')?.type).toBe('text')
+    })
+
+    it('keeps a text rule as TEXT even with no max', () => {
+      const models = defineModels({
+        Event: {
+          name: 'Event',
+          table: 'events',
+          attributes: {
+            id: { validation: { rule: {} } },
+            properties: { validation: { rule: { name: 'text' } } },
+          },
+        },
+      })
+
+      for (const dialect of ['postgres', 'mysql', 'sqlite'] as const) {
+        const plan = buildMigrationPlan(models as any, { dialect })
+        expect(getColumn(plan, 'events', 'properties')?.type).toBe('text')
+      }
+    })
+
+    it('still narrows a bounded string to varchar', () => {
+      // The other half of the rule: an indexable identifier should not become
+      // TEXT and eat the MySQL row-size budget.
+      const models = defineModels({
+        Tag: {
+          name: 'Tag',
+          table: 'tags',
+          attributes: {
+            id: { validation: { rule: {} } },
+            code: { validation: { rule: { name: 'string' } } },
+          },
+        },
+      })
+
+      const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
+      expect(getColumn(plan, 'tags', 'code')?.type).toBe('string')
     })
 
     it('detects integer types from validation rule', () => {

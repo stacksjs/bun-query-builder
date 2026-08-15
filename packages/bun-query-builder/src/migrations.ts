@@ -519,13 +519,22 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
     const name = String(ruleObj.name).toLowerCase()
 
     switch (name) {
-      case 'string':
-      case 'text': {
+      case 'string': {
         // Keep indexable bounded identifiers as varchar(n). Larger content
         // belongs in TEXT so it does not consume the MySQL row-size budget.
         const maxValue = extractMaxFromRules(ruleObj)
         return maxValue && maxValue > MAX_BOUNDED_VARCHAR_LENGTH ? 'text' : 'string'
       }
+
+      case 'text':
+        // An author who reaches for `text()` has said what they want, and
+        // collapsing it to varchar(255) unless it also carries a large `.max()`
+        // made the validator a no-op for schema generation: `text()` and
+        // `string()` produced identical columns. SQLite ignores a declared
+        // width, so a JSON blob in such a column stored fine in development and
+        // Postgres rejected it with "value too long for type character
+        // varying(255)".
+        return 'text'
       case 'integer':
       case 'int':
         return 'integer'
