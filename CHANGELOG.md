@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.36...v0.2.37)
+
+## 🐛 Bug Fixes
+
+- **migrations**: reset tables with foreign keys ([9e01697](https://github.com/stacksjs/bun-query-builder/commit/9e01697)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.37 ([a7a06e5](https://github.com/stacksjs/bun-query-builder/commit/a7a06e5)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.35...v0.2.36)
 
 ## ✨ Features
