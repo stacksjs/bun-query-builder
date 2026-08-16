@@ -742,7 +742,7 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
     // migrations; deleting those unconditionally left the project with
     // zero migration files and no way to get them back, since nothing
     // would repopulate the directory afterward.
-    if (tableNames.length > 0) {
+    if (tableNames.length > 0 && !opts.preserveMigrationState) {
       try {
         await deleteMigrationFiles(dir, workspaceRoot, opts)
       }
@@ -751,17 +751,22 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
         info('-- Could not clean up migration files')
       }
     }
-    else {
+    else if (tableNames.length === 0) {
       info('-- No models directory found; keeping committed migration files in place')
+    }
+    else {
+      info('-- Preserving migration files and model snapshot for fresh replay')
     }
 
     // Clear generated directory to force fresh migration generation
-    try {
-      await clearGeneratedDirectory(workspaceRoot)
-    }
-    catch (err) {
-      console.error(err)
-      info('-- Could not clear generated directory')
+    if (!opts.preserveMigrationState) {
+      try {
+        await clearGeneratedDirectory(workspaceRoot)
+      }
+      catch (err) {
+        console.error(err)
+        info('-- Could not clear generated directory')
+      }
     }
 
     info('-- Database reset completed successfully')

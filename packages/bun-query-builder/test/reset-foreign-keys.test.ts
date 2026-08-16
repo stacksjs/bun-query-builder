@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { Database } from 'bun:sqlite'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resetDatabase } from '../src/actions/migrate'
@@ -45,6 +45,40 @@ describe('resetDatabase foreign-key teardown', () => {
       const tables = check.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('parents', 'children')").all()
       check.close()
       expect(tables).toEqual([])
+    }
+    finally {
+      process.chdir(originalCwd)
+    }
+  })
+
+  it('preserves the migration corpus and snapshot for framework fresh replay', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'bqb-preserve-migrations-'))
+    workspaces.push(workspace)
+    const modelsDir = join(workspace, 'app', 'Models')
+    const migrationsDir = join(workspace, 'database', 'migrations')
+    const snapshotDir = join(workspace, '.qb')
+    mkdirSync(modelsDir, { recursive: true })
+    mkdirSync(migrationsDir, { recursive: true })
+    mkdirSync(snapshotDir, { recursive: true })
+    writeFileSync(join(modelsDir, 'Widget.ts'), `export default { name: 'Widget', table: 'widgets', attributes: {} }`)
+    const migration = join(migrationsDir, '0000000001-create-widgets-table.sql')
+    const snapshot = join(snapshotDir, 'model-snapshot.sqlite.json')
+    writeFileSync(migration, '-- qb:generated\nCREATE TABLE widgets (id INTEGER PRIMARY KEY);')
+    writeFileSync(snapshot, JSON.stringify({ version: 1, dialect: 'sqlite', hash: 'test', plan: { dialect: 'sqlite', tables: [] } }))
+
+    const dbFile = join(workspace, 'database', 'test.sqlite')
+    const sqlite = new Database(dbFile)
+    sqlite.exec('CREATE TABLE widgets (id INTEGER PRIMARY KEY)')
+    sqlite.close()
+
+    const originalCwd = process.cwd()
+    process.chdir(workspace)
+    setConfig({ dialect: 'sqlite', database: { database: dbFile }, migrationDir: 'database/migrations', snapshotDir: '.qb', verbose: false } as any)
+    resetConnection()
+    try {
+      expect(await resetDatabase(modelsDir, { dialect: 'sqlite', preserveMigrationState: true })).toBeTrue()
+      expect(existsSync(migration)).toBeTrue()
+      expect(existsSync(snapshot)).toBeTrue()
     }
     finally {
       process.chdir(originalCwd)

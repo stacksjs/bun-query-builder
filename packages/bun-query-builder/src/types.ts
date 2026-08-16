@@ -569,6 +569,12 @@ export interface IntrospectOptions {
 
 export interface MigrateOptions {
   dialect?: SupportedDialect
+  /**
+   * Keep generated migration files and model snapshots while dropping tables.
+   * Frameworks use this for `migrate:fresh`, which must replay the existing
+   * corpus instead of manufacturing a second full-schema migration batch.
+   */
+  preserveMigrationState?: boolean
   /** Explicit Vitess topology for reproducible DDL generation. */
   vitessSharded?: boolean
   state?: string
