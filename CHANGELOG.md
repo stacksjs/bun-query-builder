@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.37...v0.2.38)
+
+## 🐛 Bug Fixes
+
+- **migrations**: preserve state during fresh reset ([8a40a47](https://github.com/stacksjs/bun-query-builder/commit/8a40a47)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.38 ([a8820fd](https://github.com/stacksjs/bun-query-builder/commit/a8820fd)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.36...v0.2.37)
 
 ## 🐛 Bug Fixes
