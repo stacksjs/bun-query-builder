@@ -631,15 +631,30 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
   const driver = getDialectDriver(dialect)
   const workspaceRoot = getWorkspaceRoot()
 
+  // Foreign-key toggles are connection-local in SQLite and MySQL. Reset used
+  // a new connection for every DROP, while callers disabled constraints on a
+  // different connection, so parent tables survived whenever a child still
+  // referenced them. Run the toggle and DROP on the same connection.
+  const dropTableForReset = async (tableName: string): Promise<void> => {
+    const dropSql = driver.dropTable(tableName)
+    await withFreshConnection(async (bunSql) => {
+      if (dialect === 'sqlite') await bunSql.unsafe('PRAGMA foreign_keys = OFF').execute()
+      if (dialect === 'mysql' || dialect === 'vitess') await bunSql.unsafe('SET FOREIGN_KEY_CHECKS = 0').execute()
+      try {
+        await bunSql.unsafe(dropSql).execute()
+      }
+      finally {
+        if (dialect === 'sqlite') await bunSql.unsafe('PRAGMA foreign_keys = ON').execute()
+        if (dialect === 'mysql' || dialect === 'vitess') await bunSql.unsafe('SET FOREIGN_KEY_CHECKS = 1').execute()
+      }
+    })
+  }
+
   try {
     // Drop migrations table first to clear migration history
-    const dropMigrationsSql = driver.dropTable('migrations')
-
     try {
-      await withFreshConnection(async (bunSql) => {
-        await bunSql.unsafe(dropMigrationsSql).execute()
-        info('-- Dropped migrations table')
-      })
+      await dropTableForReset('migrations')
+      info('-- Dropped migrations table')
     }
     catch (err) {
       // Ignore errors when dropping migrations table
@@ -684,11 +699,8 @@ export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Pr
       // (drop dependent tables first)
       for (const tableName of tableNames.reverse()) {
         try {
-          const dropSql = driver.dropTable(tableName)
-          await withFreshConnection(async (bunSql) => {
-            await bunSql.unsafe(dropSql).execute()
-            info(`-- Dropped table: ${tableName}`)
-          })
+          await dropTableForReset(tableName)
+          info(`-- Dropped table: ${tableName}`)
         }
         catch (err) {
           console.error(err)
