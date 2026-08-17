@@ -1,3 +1,13 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.40...HEAD)
+
+## 🐛 Bug Fixes
+
+- **orm**: only nullable columns accept null on write ([09a85e8](https://github.com/stacksjs/bun-query-builder/commit/09a85e8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.39...HEAD)
 
 ## 🐛 Bug Fixes
