@@ -8,7 +8,7 @@
  * the global config and cwd-based file discovery are isolated from other tests.
  */
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -22,6 +22,7 @@ describe('getConfig() applies a config file to the runtime singleton', () => {
       `export default { dialect: 'mysql', pagination: { defaultPerPage: 7 } }\n`,
     )
     const probe = join(dir, 'probe.ts')
+    const resultPath = join(dir, 'result.json')
     writeFileSync(probe, `
 import { config, getConfig } from ${JSON.stringify(SRC)}
 const before = config.dialect
@@ -35,7 +36,7 @@ const out = {
   // env var via bunfig (QUERY_BUILDER_ prefix from config name) reaches the singleton
   verboseFromEnv: config.verbose,
 }
-process.stdout.write(JSON.stringify(out))
+await Bun.write(${JSON.stringify(resultPath)}, JSON.stringify(out))
 `)
     const proc = Bun.spawnSync({
       cmd: ['bun', probe],
@@ -46,10 +47,10 @@ process.stdout.write(JSON.stringify(out))
     })
     const stdout = new TextDecoder().decode(proc.stdout).trim()
     const stderr = new TextDecoder().decode(proc.stderr).trim()
+    const out = JSON.parse(readFileSync(resultPath, 'utf8'))
     rmSync(dir, { recursive: true, force: true })
 
     expect(proc.exitCode, `probe failed.\nstdout: ${stdout}\nstderr: ${stderr}`).toBe(0)
-    const out = JSON.parse(stdout)
     expect(out.before).toBe('postgres') // default before load
     expect(out.dialect).toBe('mysql') // from config file
     expect(out.perPage).toBe(7) // nested value from file

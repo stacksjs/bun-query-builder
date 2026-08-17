@@ -18,7 +18,7 @@
 
 import { describe, expect, it, afterEach, beforeEach } from 'bun:test'
 import { Database } from 'bun:sqlite'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { config } from '../src/config'
@@ -95,6 +95,7 @@ describe('setConfig reaches the model layer (#1022 / #1021)', () => {
     const dbFile = join(workdir, 'routed.db')
     const srcEntry = resolve(import.meta.dir, '../src/index.ts')
     const scriptPath = join(workdir, 'probe.ts')
+    const resultPath = join(workdir, 'result.json')
     writeFileSync(scriptPath, `
 import { setConfig, createModel, createTableFromModel } from ${JSON.stringify(srcEntry)}
 import { Database } from 'bun:sqlite'
@@ -111,7 +112,7 @@ await createTableFromModel(M.getDefinition())
 await M.create({ name: 'routed' })
 
 const rows = new Database(file).query('SELECT name FROM cfg_probe').all()
-process.stdout.write(JSON.stringify(rows))
+await Bun.write(${JSON.stringify(resultPath)}, JSON.stringify(rows))
 `)
 
     const proc = Bun.spawnSync({
@@ -122,11 +123,10 @@ process.stdout.write(JSON.stringify(rows))
       env: { ...process.env },
     })
     const dec = new TextDecoder()
-    const stdout = dec.decode(proc.stdout).trim()
     const stderr = dec.decode(proc.stderr).trim()
 
     expect(proc.exitCode, `probe failed (stderr: ${stderr})`).toBe(0)
-    expect(stdout).toBe(JSON.stringify([{ name: 'routed' }]))
+    expect(readFileSync(resultPath, 'utf8')).toBe(JSON.stringify([{ name: 'routed' }]))
 
     // And independently confirm the row really lives in the configured file —
     // not some in-memory database the model layer used instead.

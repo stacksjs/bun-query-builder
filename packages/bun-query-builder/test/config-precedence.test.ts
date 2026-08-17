@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -40,12 +40,13 @@ function probe(configFile: string, setup: string): ProbeResult {
 
   try {
     writeFileSync(join(dir, 'query-builder.config.ts'), configFile)
+    const resultPath = join(dir, 'result.json')
 
     const script = `
       import { config, setConfig, getConfig } from ${JSON.stringify(SRC_INDEX)}
       ${setup}
       await getConfig()
-      console.log(JSON.stringify({
+      await Bun.write(${JSON.stringify(resultPath)}, JSON.stringify({
         snapshotDir: config.snapshotDir,
         dialect: config.dialect,
         verbose: config.verbose,
@@ -72,9 +73,7 @@ function probe(configFile: string, setup: string): ProbeResult {
     if (proc.exitCode !== 0)
       throw new Error(`probe exited ${proc.exitCode}: ${stderr || stdout}`)
 
-    // The probe may share stdout with library chatter; the JSON is the last line.
-    const lastLine = stdout.split('\n').filter(Boolean).at(-1) ?? ''
-    return JSON.parse(lastLine) as ProbeResult
+    return JSON.parse(readFileSync(resultPath, 'utf8')) as ProbeResult
   }
   finally {
     rmSync(dir, { recursive: true, force: true })

@@ -8,7 +8,7 @@
  * reaches the model layer. Skipped when dist/ hasn't been built.
  */
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'bun:test'
@@ -21,6 +21,7 @@ describe.skipIf(!distBuilt)('config singleton survives bundling (#1043)', () => 
     const dir = mkdtempSync(join(tmpdir(), 'qb-dist43-'))
     const dbFile = join(dir, 'r.db')
     const script = join(dir, 'probe.ts')
+    const resultPath = join(dir, 'result.json')
     writeFileSync(script, `
 import { setConfig, createModel, createTableFromModel, config } from ${JSON.stringify(DIST)}
 import { Database } from 'bun:sqlite'
@@ -30,10 +31,10 @@ const M = createModel({ name: 'D43', table: 'd43', primaryKey: 'id', autoIncreme
 await createTableFromModel(M.getDefinition())
 await M.create({ name: 'ok' })
 const rows = new Database(${JSON.stringify(dbFile)}).query('SELECT name FROM d43').all()
-process.stdout.write(JSON.stringify(rows))
+await Bun.write(${JSON.stringify(resultPath)}, JSON.stringify(rows))
 `)
     const proc = Bun.spawnSync({ cmd: ['bun', script], stdout: 'pipe', stderr: 'pipe', cwd: process.cwd(), env: { ...process.env } })
-    const out = new TextDecoder().decode(proc.stdout).trim()
+    const out = readFileSync(resultPath, 'utf8').trim()
     const err = new TextDecoder().decode(proc.stderr).trim()
     rmSync(dir, { recursive: true, force: true })
     expect(proc.exitCode, `dist config-routing failed.\nstdout: ${out}\nstderr: ${err}`).toBe(0)

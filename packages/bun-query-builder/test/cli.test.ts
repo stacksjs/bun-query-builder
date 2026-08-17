@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -8,7 +9,7 @@ import { EXAMPLES_MODELS_PATH, setupDatabase } from './setup'
 
 // Store the test directory root for CLI path resolution
 const TEST_ROOT = resolve(__dirname, '..')
-const CLI_PATH = join(TEST_ROOT, 'bin/cli.ts')
+const CLI_PATH = join(TEST_ROOT, 'bin/qbx')
 
 beforeAll(async () => {
   await setupDatabase()
@@ -19,18 +20,38 @@ afterAll(async () => {
 })
 
 function runCli(args: string[]) {
-  const proc = Bun.spawnSync({
-    cmd: ['bun', CLI_PATH, ...args],
-    stdout: 'pipe',
-    stderr: 'pipe',
+  const outputDir = mkdtempSync(join(tmpdir(), 'qb-cli-output-'))
+  const runnerPath = join(outputDir, 'runner.ts')
+  const resultPath = join(outputDir, 'result.json')
+  writeFileSync(runnerPath, `
+const proc = Bun.spawnSync({
+  cmd: ${JSON.stringify([CLI_PATH, ...args])},
+  cwd: ${JSON.stringify(process.cwd())},
+  env: { ...process.env },
+  stdout: 'pipe',
+  stderr: 'pipe',
+})
+const decoder = new TextDecoder()
+await Bun.write(${JSON.stringify(resultPath)}, JSON.stringify({
+  code: proc.exitCode,
+  stdout: decoder.decode(proc.stdout).trim(),
+  stderr: decoder.decode(proc.stderr).trim(),
+}))
+`)
+  const runner = spawnSync(process.execPath, [runnerPath], {
     cwd: process.cwd(),
+    encoding: 'utf8',
     env: { ...process.env },
   })
-  const dec = new TextDecoder()
-  return {
-    code: proc.exitCode,
-    stdout: dec.decode(proc.stdout).trim(),
-    stderr: dec.decode(proc.stderr).trim(),
+
+  try {
+    if (runner.status !== 0)
+      throw new Error(`CLI test runner exited ${runner.status}: ${runner.stderr || runner.stdout}`)
+
+    return JSON.parse(readFileSync(resultPath, 'utf8')) as { code: number, stdout: string, stderr: string }
+  }
+  finally {
+    rmSync(outputDir, { recursive: true, force: true })
   }
 }
 

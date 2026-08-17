@@ -18,7 +18,7 @@
  *    so it has no collision to prevent.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
@@ -44,11 +44,18 @@ function workspace(files: Record<string, string>): string {
 
 function run(dir: string, name: string, script: string): { code: number, out: string, err: string } {
   const path = join(dir, name)
+  const resultPath = join(dir, `${name}.result.json`)
   writeFileSync(path, script)
-  const proc = Bun.spawnSync({ cmd: ['bun', path], cwd: dir, stdout: 'pipe', stderr: 'pipe', env: { ...process.env } })
+  const proc = Bun.spawnSync({
+    cmd: ['bun', path],
+    cwd: dir,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, QB_TEST_RESULT_PATH: resultPath },
+  })
   return {
     code: proc.exitCode ?? -1,
-    out: new TextDecoder().decode(proc.stdout).trim(),
+    out: existsSync(resultPath) ? readFileSync(resultPath, 'utf8').trim() : new TextDecoder().decode(proc.stdout).trim(),
     err: new TextDecoder().decode(proc.stderr).trim(),
   }
 }
@@ -76,7 +83,7 @@ try { await executeMigration(process.cwd()) } catch {}
 const db = new Database('./t.sqlite')
 // Explicit names, not a LIKE: 'mig_%' also matches the 'migrations' ledger.
 const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('mig_a','mig_b')").all()
-console.log(JSON.stringify({ leftBehind: tables.map(r => r.name) }))
+await Bun.write(process.env.QB_TEST_RESULT_PATH!, JSON.stringify({ leftBehind: tables.map(r => r.name) }))
 `)
 
     rmSync(dir, { recursive: true, force: true })
@@ -120,7 +127,7 @@ const db = new Database('./t.sqlite')
 const type = db.query("SELECT type FROM pragma_table_info('rebuilt') WHERE name = 'qty'").get()
 const rows = db.query('SELECT qty FROM rebuilt').all()
 const recorded = db.query("SELECT migration FROM migrations WHERE migration LIKE '%rebuild%'").all()
-console.log(JSON.stringify({ error, type: type?.type, rows, recorded: recorded.length }))
+await Bun.write(process.env.QB_TEST_RESULT_PATH!, JSON.stringify({ error, type: type?.type, rows, recorded: recorded.length }))
 `)
 
     rmSync(dir, { recursive: true, force: true })
@@ -196,7 +203,7 @@ const [{ count }] = await check.unsafe(
 await check.unsafe('DROP TABLE IF EXISTS mig_concurrent')
 await check.unsafe("DELETE FROM migrations WHERE migration = '0000000001-concurrent.sql'")
 await check.end()
-console.log(JSON.stringify({ codes, recorded: count }))
+await Bun.write(process.env.QB_TEST_RESULT_PATH!, JSON.stringify({ codes, recorded: count }))
 `)
 
     rmSync(dir, { recursive: true, force: true })
