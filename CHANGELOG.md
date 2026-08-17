@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.42...v0.2.43)
+
+## 🐛 Bug Fixes
+
+- **ci**: ask pantry for a bun range it can actually satisfy ([45dd6f2](https://github.com/stacksjs/bun-query-builder/commit/45dd6f2)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.43 ([9e0ecea](https://github.com/stacksjs/bun-query-builder/commit/9e0ecea)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.41...v0.2.42)
 
 ## 💥 Breaking Changes
