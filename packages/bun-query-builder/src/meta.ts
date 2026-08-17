@@ -24,7 +24,15 @@ export interface SchemaMeta {
     morphToMany?: Record<string, string>
     morphedByMany?: Record<string, string>
   }>
-  scopes?: Record<string, Record<string, (qb: any, value?: any) => any>>
+  /**
+   * Named query scopes, keyed by model then by scope name.
+   *
+   * The builder parameter stays `any`: a scope receives the fully-typed
+   * builder for its own model, which this erased metadata table cannot name
+   * without making every model's scopes mutually unassignable. The value and
+   * the return are `unknown`, so nothing downstream inherits the looseness.
+   */
+  scopes?: Record<string, Record<string, (qb: any, value?: unknown) => unknown>>
   /**
    * Original models record passed to `buildSchemaMeta`, retained so downstream
    * consumers (e.g. the pivot resolver) can read through-model attributes

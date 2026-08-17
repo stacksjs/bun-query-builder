@@ -93,7 +93,7 @@ export function renderWhereTerms(terms: readonly WhereTerm[]): string {
  * happened to come back empty — the same shape of silent, widening-or-narrowing
  * failure as the `IN ()` bug itself.
  */
-export function renderInPredicate(column: string, values: any[], negated: boolean, placeholders: string): string {
+export function renderInPredicate(column: string, values: readonly unknown[], negated: boolean, placeholders: string): string {
   if (values.length === 0)
     return negated ? TRUE_PREDICATE : FALSE_PREDICATE
   return `${column} ${negated ? 'NOT IN' : 'IN'} (${placeholders})`

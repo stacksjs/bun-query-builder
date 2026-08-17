@@ -20,7 +20,7 @@ import type {
   SingleTableEntityMapping,
 } from './drivers/dynamodb'
 import { createDynamoDBDriver } from './drivers/dynamodb'
-import type { DynamoDBQueryBuilderOptions } from './dynamodb-client'
+import type { DynamoDBFilterOperator, DynamoDBQueryBuilderOptions, DynamoDBValue } from './dynamodb-client'
 import { DynamoDBItemBuilder, DynamoDBQueryBuilder } from './dynamodb-client'
 
 /**
@@ -498,7 +498,7 @@ export class SingleTableQueryBuilder<T> {
   /**
    * Add a filter condition
    */
-  where(attribute: string, operator: any, value?: any): this {
+  where(attribute: string, operator: DynamoDBFilterOperator, value?: DynamoDBValue): this {
     this.builder.where(attribute, operator, value)
     return this
   }

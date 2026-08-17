@@ -24,12 +24,57 @@ import type {
 import { createDynamoDBDriver } from './drivers/dynamodb'
 
 /**
+ * A value DynamoDB can store or compare against.
+ *
+ * DynamoDB's type system is small and closed - scalars, binary, lists and
+ * maps - so the attribute surface below says that rather than `any`. A value
+ * outside this set could never have round-tripped through the wire format.
+ */
+export type DynamoDBValue =
+  | string
+  | number
+  | boolean
+  | null
+  | Uint8Array
+  | DynamoDBValue[]
+  | { [key: string]: DynamoDBValue }
+
+/**
+ * The AWS SDK client, described by the one method this package uses.
+ *
+ * `@aws-sdk/client-dynamodb` is not a dependency (callers bring their own),
+ * so the shape is structural: anything with a `send` satisfies it, including
+ * the real `DynamoDBClient` and a test double.
+ */
+export interface DynamoDBClientLike {
+  send: (command: unknown) => Promise<unknown>
+  [key: string]: unknown
+}
+
+/** What DynamoDB reports about the capacity a call consumed. */
+export interface DynamoDBConsumedCapacity {
+  TableName?: string
+  CapacityUnits?: number
+  ReadCapacityUnits?: number
+  WriteCapacityUnits?: number
+  [key: string]: unknown
+}
+
+/** Every operator a DynamoDB filter expression accepts. */
+export type DynamoDBFilterOperator =
+  | DynamoDBComparisonOperator
+  | 'contains'
+  | 'attribute_exists'
+  | 'attribute_not_exists'
+  | 'IN'
+
+/**
  * DynamoDB Query Builder Options
  */
 export interface DynamoDBQueryBuilderOptions {
   config: DynamoDBConfig
   /** Optional DynamoDB client instance (e.g., from @aws-sdk/client-dynamodb) */
-  client?: any
+  client?: DynamoDBClientLike
 }
 
 /**
@@ -41,7 +86,7 @@ export interface DynamoDBResult<T = any> {
   count?: number
   scannedCount?: number
   lastEvaluatedKey?: Record<string, any>
-  consumedCapacity?: any
+  consumedCapacity?: DynamoDBConsumedCapacity
 }
 
 /**
@@ -97,7 +142,7 @@ export class DynamoDBQueryBuilder<T = any> {
    * Add a key condition (for Query operations)
    * Key conditions can only be applied to partition key and sort key
    */
-  whereKey(attribute: string, operator: DynamoDBComparisonOperator, value: any): this {
+  whereKey(attribute: string, operator: DynamoDBComparisonOperator, value: DynamoDBValue): this {
     this.keyConditions.push({ attribute, operator, value })
     return this
   }
@@ -105,14 +150,14 @@ export class DynamoDBQueryBuilder<T = any> {
   /**
    * Shorthand for partition key equals
    */
-  wherePartitionKey(attribute: string, value: any): this {
+  wherePartitionKey(attribute: string, value: DynamoDBValue): this {
     return this.whereKey(attribute, '=', value)
   }
 
   /**
    * Shorthand for sort key equals
    */
-  whereSortKey(attribute: string, value: any): this {
+  whereSortKey(attribute: string, value: DynamoDBValue): this {
     return this.whereKey(attribute, '=', value)
   }
 
@@ -127,7 +172,7 @@ export class DynamoDBQueryBuilder<T = any> {
   /**
    * Sort key between two values
    */
-  whereSortKeyBetween(attribute: string, start: any, end: any): this {
+  whereSortKeyBetween(attribute: string, start: DynamoDBValue, end: DynamoDBValue): this {
     this.keyConditions.push({ attribute, operator: 'BETWEEN', values: [start, end] })
     return this
   }
@@ -135,7 +180,7 @@ export class DynamoDBQueryBuilder<T = any> {
   /**
    * Add a filter condition (applied after Query/Scan)
    */
-  where(attribute: string, operator: DynamoDBComparisonOperator | 'contains' | 'attribute_exists' | 'attribute_not_exists' | 'IN', value?: any): this {
+  where(attribute: string, operator: DynamoDBFilterOperator, value?: DynamoDBValue): this {
     this.filterConditions.push({ attribute, operator, value })
     return this
   }
@@ -143,42 +188,42 @@ export class DynamoDBQueryBuilder<T = any> {
   /**
    * Filter where attribute equals value
    */
-  whereEquals(attribute: string, value: any): this {
+  whereEquals(attribute: string, value: DynamoDBValue): this {
     return this.where(attribute, '=', value)
   }
 
   /**
    * Filter where attribute is less than value
    */
-  whereLessThan(attribute: string, value: any): this {
+  whereLessThan(attribute: string, value: DynamoDBValue): this {
     return this.where(attribute, '<', value)
   }
 
   /**
    * Filter where attribute is less than or equal to value
    */
-  whereLessThanOrEqual(attribute: string, value: any): this {
+  whereLessThanOrEqual(attribute: string, value: DynamoDBValue): this {
     return this.where(attribute, '<=', value)
   }
 
   /**
    * Filter where attribute is greater than value
    */
-  whereGreaterThan(attribute: string, value: any): this {
+  whereGreaterThan(attribute: string, value: DynamoDBValue): this {
     return this.where(attribute, '>', value)
   }
 
   /**
    * Filter where attribute is greater than or equal to value
    */
-  whereGreaterThanOrEqual(attribute: string, value: any): this {
+  whereGreaterThanOrEqual(attribute: string, value: DynamoDBValue): this {
     return this.where(attribute, '>=', value)
   }
 
   /**
    * Filter where attribute is between two values
    */
-  whereBetween(attribute: string, start: any, end: any): this {
+  whereBetween(attribute: string, start: DynamoDBValue, end: DynamoDBValue): this {
     this.filterConditions.push({ attribute, operator: 'BETWEEN', values: [start, end] })
     return this
   }
@@ -194,7 +239,7 @@ export class DynamoDBQueryBuilder<T = any> {
   /**
    * Filter where attribute contains value (for strings and sets)
    */
-  whereContains(attribute: string, value: any): this {
+  whereContains(attribute: string, value: DynamoDBValue): this {
     return this.where(attribute, 'contains', value)
   }
 
@@ -215,7 +260,7 @@ export class DynamoDBQueryBuilder<T = any> {
   /**
    * Filter where attribute is in a list of values
    */
-  whereIn(attribute: string, values: any[]): this {
+  whereIn(attribute: string, values: DynamoDBValue[]): this {
     this.filterConditions.push({ attribute, operator: 'IN', values })
     return this
   }
@@ -633,7 +678,7 @@ export class DynamoDBItemBuilder<T = any> {
   /**
    * Set attribute value (for Update)
    */
-  set(attribute: string, value: any): this {
+  set(attribute: string, value: DynamoDBValue): this {
     if (!this.updateExpressions.set) {
       this.updateExpressions.set = {}
     }
@@ -666,7 +711,7 @@ export class DynamoDBItemBuilder<T = any> {
   /**
    * Add to a number or set (for Update)
    */
-  add(attribute: string, value: any): this {
+  add(attribute: string, value: DynamoDBValue): this {
     if (!this.updateExpressions.add) {
       this.updateExpressions.add = {}
     }
@@ -677,7 +722,7 @@ export class DynamoDBItemBuilder<T = any> {
   /**
    * Delete from a set (for Update)
    */
-  deleteFromSet(attribute: string, values: any): this {
+  deleteFromSet(attribute: string, values: DynamoDBValue): this {
     if (!this.updateExpressions.delete) {
       this.updateExpressions.delete = {}
     }
