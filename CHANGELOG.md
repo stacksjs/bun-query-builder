@@ -1,3 +1,13 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.43...v0.2.44)
+
+## 🐛 Bug Fixes
+
+- **orm**: persist guarded columns set through forceFill() ([5d50d36](https://github.com/stacksjs/bun-query-builder/commit/5d50d36)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.42...v0.2.43)
 
 ## 🐛 Bug Fixes
