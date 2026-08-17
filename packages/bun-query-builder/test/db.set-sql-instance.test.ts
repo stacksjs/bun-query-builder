@@ -15,7 +15,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { config } from '../src/config'
-import { getOrCreateBunSql, resetConnection, setSqlInstance } from '../src/db'
+import { closeConnection, getOrCreateBunSql, resetConnection, setSqlInstance } from '../src/db'
 
 describe('setSqlInstance', () => {
   let snapshot: { dialect: string, database: Record<string, unknown> }
@@ -63,5 +63,35 @@ describe('setSqlInstance', () => {
     setSqlInstance(injected)
     resetConnection()
     expect(getOrCreateBunSql()).not.toBe(injected)
+  })
+
+  it('closes the discarded connection', () => {
+    let closed = false
+    const injected = {
+      close: () => {
+        closed = true
+        return Promise.resolve()
+      },
+    } as any
+
+    setSqlInstance(injected)
+    resetConnection()
+
+    expect(closed).toBeTrue()
+  })
+
+  it('can await a fully closed connection', async () => {
+    let closed = false
+    const injected = {
+      close: async () => {
+        await Promise.resolve()
+        closed = true
+      },
+    } as any
+
+    setSqlInstance(injected)
+    await closeConnection()
+
+    expect(closed).toBeTrue()
   })
 })

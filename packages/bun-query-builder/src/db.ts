@@ -855,10 +855,36 @@ export function getOrCreateBunSql(forceNew = false): SQL {
 
   // If forceNew is true, config changed, or we don't have an instance, create a new one
   if (forceNew || configChanged || !_bunSqlInstance) {
+    if (_bunSqlInstance)
+      resetConnection()
     _bunSqlInstance = getBunSql()
     _currentSignature = signature
   }
   return _bunSqlInstance
+}
+
+function detachCachedConnection(): SQL | null {
+  const connection = _bunSqlInstance
+  _bunSqlInstance = null
+  _currentSignature = null
+  return connection
+}
+
+async function closeSqlConnection(connection: SQL | null): Promise<void> {
+  if (!connection || typeof (connection as any).close !== 'function')
+    return
+
+  await (connection as any).close()
+}
+
+/**
+ * Close and discard the cached connection.
+ *
+ * Use this when the caller needs to know the pool has fully drained before
+ * opening another connection, such as test teardown or a graceful shutdown.
+ */
+export async function closeConnection(): Promise<void> {
+  await closeSqlConnection(detachCachedConnection())
 }
 
 /**
@@ -866,8 +892,10 @@ export function getOrCreateBunSql(forceNew = false): SQL {
  * Call this after changing config via setConfig() to ensure the new config is used.
  */
 export function resetConnection(): void {
-  _bunSqlInstance = null
-  _currentSignature = null
+  const closing = closeSqlConnection(detachCachedConnection())
+  void closing.catch((error) => {
+    console.error(`[query-builder] Failed to close database connection: ${(error as Error).message}`)
+  })
 }
 
 /**
