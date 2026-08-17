@@ -41,7 +41,7 @@
  */
 
 import { createBrowserModel, isBrowser, type BrowserModelDefinition } from './browser'
-import { createModel, type ModelDefinition as OrmModelDefinition } from './orm'
+import { clearLocalModels, createModel, type ModelDefinition as OrmModelDefinition } from './orm'
 
 // Re-export the browser model types for convenience
 export type { BrowserModelDefinition as ModelDefinition }
@@ -119,9 +119,14 @@ export function hasModel(name: string): boolean {
 
 /**
  * Clear all registered models. Primarily useful for testing.
+ *
+ * Also drops the models `createModel` registered internally, and the memoized
+ * relation resolutions derived from them. Leaving either behind lets a stale
+ * resolution from one test file decide a relation's table in the next.
  */
 export function clearModelRegistry(): void {
   modelRegistry.clear()
+  clearLocalModels()
 }
 
 /**
