@@ -14,8 +14,16 @@
 # mysql and postgres are still skipped as unsupported, so their spec is inert
 # today — they are ranges so that being added upstream is a no-op, not an
 # outage.
+#
+# Keep every range satisfiable by the pantry registry, not just well-formed.
+# `bun: ^1.3.14` was well-formed and unsatisfiable: pantry's newest bun.sh is
+# 1.3.11, so the range matched nothing and the install failed outright. It only
+# surfaced intermittently because the action evaluates this spec on its
+# reconcile path and skips it when it takes the `latest` shortcut.
+#
+# `^1.3.11` picks up 1.3.14 on its own once pantry publishes it.
 dependencies:
-  bun: ^1.3.14
+  bun: ^1.3.11
   mysql: ^8.0.45
   postgres: ^18.0.0
   sqlite: ^3.52.0
