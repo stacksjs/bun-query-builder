@@ -5922,7 +5922,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // `where id = $1` with [1] and with [2] would otherwise share one
         // cache entry and the second query would return the first's rows.
         const cacheKey = useCache
-          ? `${String(finalQuery)} ${JSON.stringify(whereParams)}`
+          ? `${String(finalQuery)}\0${JSON.stringify(whereParams)}`
           : ''
         if (useCache) {
           const cached = queryCache.get(cacheKey)
