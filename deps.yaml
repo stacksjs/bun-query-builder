@@ -14,13 +14,8 @@
 # mysql and postgres are still skipped as unsupported, so their spec is inert
 # today — they are ranges so that being added upstream is a no-op, not an
 # outage.
-# `bun` is a floor, not a pin. pantry resolves this against bun.sh's own
-# version list, which trails npm: asking for ^1.3.14 while pantry's newest was
-# 1.3.11 failed every release with "No version of bun.sh satisfies", including
-# releases whose changes had nothing to do with Bun. A minor-level range takes
-# whatever pantry has and still meets the project's stated floor.
 dependencies:
-  bun: ^1.3
+  bun: ^1.3.14
   mysql: ^8.0.45
   postgres: ^18.0.0
   sqlite: ^3.52.0
