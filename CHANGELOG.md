@@ -1,3 +1,22 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.41...v0.2.42)
+
+## 💥 Breaking Changes
+
+- fix(client)!: escape backslashes for the MySQL family in raw fragments ([c889670](https://github.com/stacksjs/bun-query-builder/commit/c889670)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **client**: bind the containment document, not its JSON text (#1091) (#1100) ([7299d05](https://github.com/stacksjs/bun-query-builder/commit/7299d05)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1091](https://github.com/stacksjs/bun-query-builder/issues/1091), [#1100](https://github.com/stacksjs/bun-query-builder/issues/1100), [#1091](https://github.com/stacksjs/bun-query-builder/issues/1091), [#1100](https://github.com/stacksjs/bun-query-builder/issues/1100), [#1026](https://github.com/stacksjs/bun-query-builder/issues/1026))
+
+## 🔧 Chores
+
+- release v0.2.42 ([7cf0902](https://github.com/stacksjs/bun-query-builder/commit/7cf0902)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.40...HEAD)
 
 ## 🐛 Bug Fixes
