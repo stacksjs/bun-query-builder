@@ -2190,6 +2190,17 @@ class ModelQueryBuilder<
     value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
   ): ModelQueryBuilder<TDef, TSelected>
 
+  // Three-arg form with a set operator: .where('column', 'in', [values])
+  // `in` and `not in` take a LIST, not a scalar - without this overload the
+  // general three-arg form below types the value as the column's own type and
+  // rejects the array, even though the runtime handles it (and `whereIn`
+  // itself is implemented as `where(column, 'in', values)`).
+  where<K extends ColumnName<TDef>>(
+    column: K,
+    operator: 'in' | 'not in',
+    value: ReadonlyArray<K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown>
+  ): ModelQueryBuilder<TDef, TSelected>
+
   // Three-arg form: .where('column', operator, value)
   where<K extends ColumnName<TDef>>(
     column: K,
@@ -2219,6 +2230,13 @@ class ModelQueryBuilder<
   ): ModelQueryBuilder<TDef, TSelected>
 
   // Three-arg form: .orWhere('column', operator, value)
+  // Set operators take a list here too.
+  orWhere<K extends ColumnName<TDef>>(
+    column: K,
+    operator: 'in' | 'not in',
+    value: ReadonlyArray<K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown>
+  ): ModelQueryBuilder<TDef, TSelected>
+
   orWhere<K extends ColumnName<TDef>>(
     column: K,
     operator: WhereOperator,
@@ -3101,6 +3119,14 @@ interface StaticWhereOverloads<TDef extends ModelDefinition> {
   where<K extends ColumnName<TDef>>(
     column: K,
     value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown
+  ): ModelQueryBuilder<TDef>
+  // `Model.where('id', 'in', ids)` - the list form, which the scalar overload
+  // below cannot express. This is the one most callers hit, since a static
+  // `Model.where(...)` is how a query starts.
+  where<K extends ColumnName<TDef>>(
+    column: K,
+    operator: 'in' | 'not in',
+    value: ReadonlyArray<K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown>
   ): ModelQueryBuilder<TDef>
   where<K extends ColumnName<TDef>>(
     column: K,
