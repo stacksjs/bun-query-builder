@@ -104,6 +104,18 @@ describe('satisfies', () => {
   it('flags a boolean column holding something else', () => {
     expect(satisfies('boolean', 'varchar')).toBe(false)
   })
+
+  it('accepts SQLite storage affinities for logical model types', () => {
+    expect(satisfies('boolean', 'integer', 'sqlite')).toBe(true)
+    expect(satisfies('date', 'text', 'sqlite')).toBe(true)
+    expect(satisfies('json', 'text', 'sqlite')).toBe(true)
+  })
+
+  it('keeps SQLite affinity exceptions scoped to SQLite', () => {
+    expect(satisfies('boolean', 'integer', 'postgres')).toBe(false)
+    expect(satisfies('date', 'text', 'mysql')).toBe(false)
+    expect(satisfies('json', 'text', 'postgres')).toBe(false)
+  })
 })
 
 describe('familyOfDeclared', () => {

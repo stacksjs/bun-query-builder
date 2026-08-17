@@ -130,9 +130,20 @@ export function familyOfSqlType(sqlType: string): TypeFamily {
  * model asking for `varchar` is content in a `text` column, because nothing is
  * lost. The reverse is exactly the bug this exists to find.
  */
-export function satisfies(declared: TypeFamily, actual: TypeFamily): boolean {
+export function satisfies(declared: TypeFamily, actual: TypeFamily, dialect?: SupportedDialect): boolean {
   if (declared === actual)
     return true
+
+  // SQLite's dynamic type system persists several logical model families by
+  // storage affinity. These are the exact representations emitted by the
+  // SQLite migration driver, so reporting them as drift makes every clean
+  // Stacks database look broken after a fresh replay.
+  if (dialect === 'sqlite') {
+    if (declared === 'boolean' && actual === 'integer')
+      return true
+    if ((declared === 'date' || declared === 'json') && actual === 'text')
+      return true
+  }
 
   // A bounded string fits in an unbounded one.
   if (declared === 'varchar' && actual === 'text')
@@ -193,7 +204,7 @@ export async function auditSchemaDrift(
 
       const actual = familyOfSqlType(liveColumn.sqlType)
 
-      if (!satisfies(declared, actual)) {
+      if (!satisfies(declared, actual, dialect)) {
         typeMismatches.push({
           table: table.table,
           column: column.name,
@@ -204,8 +215,6 @@ export async function auditSchemaDrift(
       }
     }
   }
-
-  void dialect
 
   return {
     missingTables,
