@@ -67,11 +67,9 @@ describe('ORM orWhere grouping (#1083)', () => {
 
     // Was 15: every `alter_*` row came back regardless of batch.
     expect(rows.length).toBe(5)
-    // Number(): `type: 'integer'` currently generates a TEXT column in
-    // createTableFromModel, so this reads back as '1'. Unrelated to #1083 —
-    // coerced rather than asserted on, so this test fails for its own reason
-    // or not at all.
-    expect(rows.every(r => Number(r.get('batch')) === 1)).toBe(true)
+    // `type: 'integer'` produces an INTEGER column since #1094, so this reads
+    // back as a number and can be asserted directly rather than coerced.
+    expect(rows.every(r => r.get('batch') === 1)).toBe(true)
   })
 
   it('brackets a leading OR run against the AND that follows', async () => {
