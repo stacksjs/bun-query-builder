@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.44...v0.2.45)
+
+## ♻️ Code Refactoring
+
+- **types**: stop publishing `any` across the query builder's surface (#1117) ([e33d7b2](https://github.com/stacksjs/bun-query-builder/commit/e33d7b2)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1117](https://github.com/stacksjs/bun-query-builder/issues/1117), [#1117](https://github.com/stacksjs/bun-query-builder/issues/1117), [#1084](https://github.com/stacksjs/bun-query-builder/issues/1084))
+
+## 🔧 Chores
+
+- release v0.2.45 ([4a04987](https://github.com/stacksjs/bun-query-builder/commit/4a04987)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.43...v0.2.44)
 
 ## 🐛 Bug Fixes
