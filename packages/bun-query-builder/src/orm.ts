@@ -936,6 +936,13 @@ class ModelInstance<
 > {
   private _attributes: Record<string, unknown>
   private _original: Record<string, unknown> | null // null = copy-on-write (identical to _attributes)
+  /**
+   * Columns written through `forceFill()`, the documented mass-assignment
+   * bypass. Tracked per column rather than as one instance-wide flag so a
+   * later `fill()` cannot ride in on an earlier force. See save()'s create
+   * branch, which is the only reader.
+   */
+  private _forced: Set<string> = new Set()
   private _definition: TDef
   private _hasSaved = false
   private _relations: Record<string, ModelInstance<any, any>[] | ModelInstance<any, any> | null> = {}
@@ -1160,7 +1167,11 @@ class ModelInstance<
 
   forceFill(data: Partial<InferModelAttributes<TDef>>): this {
     if (this._original === null) this._original = { ...this._attributes }
-    Object.assign(this._attributes, normalizeAttributeKeys(data as Record<string, unknown>))
+    const normalized = normalizeAttributeKeys(data as Record<string, unknown>)
+    Object.assign(this._attributes, normalized)
+    // Remember which columns came in through the bypass, so save()'s create
+    // branch writes them instead of dropping them as mass-assignment risk.
+    for (const col of Object.keys(normalized)) this._forced.add(col)
     return this
   }
 
@@ -1214,7 +1225,12 @@ class ModelInstance<
       // the in-memory instance, desyncing the two and breaking NOT-NULL FKs on
       // Postgres. `guarded` columns stay mass-assignment protected. See #1025.
       for (const [key, attr] of Object.entries(attrs)) {
-        if (attr.guarded) continue
+        // A `guarded` column is dropped from the INSERT unless it was set
+        // through `forceFill()`. Without that exception the documented
+        // escape hatch did not escape: `forceFill({ apiKey })` on a guarded
+        // NOT NULL column threw a constraint error, and on a nullable one it
+        // silently wrote NULL. See #1025 for why guarded is filtered at all.
+        if (attr.guarded && !this._forced.has(toSnakeCase(key))) continue
         // `attrs` keys are whatever casing the model declared them with
         // (commonly camelCase, e.g. `memberCount`) but `_attributes` is
         // always snake_case (see normalizeAttributeKeys) — same casing a
