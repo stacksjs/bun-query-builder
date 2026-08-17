@@ -7115,26 +7115,47 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this
         },
         returning(...cols) {
-          const retText = `${sqlText} RETURNING ${cols.join(', ')}`
-          const q = params.length > 0
-            ? _sql.unsafe(retText, params)
-            : _sql.unsafe(retText)
+          const parent: any = this
+          // Render at execute time, not here.
+          //
+          // This used to freeze the statement text immediately and return an
+          // object whose where/andWhere/orWhere/orderBy/limit/offset were
+          // literally `() => obj` — so every filter applied after returning()
+          // was discarded and the UPDATE ran against the whole table, silently,
+          // while `.executeTakeFirst()` handed back a row it had never filtered
+          // to. `returning()` is typed as SelectQueryBuilder, which declares all
+          // of those, so the broken order type-checks. See #1110.
+          //
+          // Deferring also fixes the aliasing form, where the returning handle
+          // is held while the parent gains a predicate.
+          const retText = () => `${sqlText} RETURNING ${cols.join(', ')}`
+          const build = () => (params.length > 0 ? _sql.unsafe(retText(), params) : _sql.unsafe(retText()))
           const runFirst = async () => {
-            const rows = await runWithHooks<any[]>(q, 'update')
+            const rows = await runWithHooks<any[]>(build(), 'update')
             return Array.isArray(rows) ? rows[0] : rows
           }
+          // Not expressible on this builder. Silently ignoring them is what
+          // made a `.limit(1)` destructive write hit every row.
+          const unsupported = (name: string) => (): never => {
+            throw new TypeError(`[query-builder] updateTable.returning(...).${name}() is not supported — an UPDATE cannot be ordered or limited through this builder. Apply the filter with where() instead.`)
+          }
           const obj: any = {
-            where: () => obj,
-            andWhere: () => obj,
-            orWhere: () => obj,
-            orderBy: () => obj,
-            limit: () => obj,
-            offset: () => obj,
-            toSQL: () => makeExecutableQuery(q, retText) as any,
-            execute: () => runWithHooks<any[]>(q, 'update'),
+            // Delegate to the builder that owns the statement, then keep
+            // chaining from here. Consecutive predicates join with AND, which
+            // is what andWhere means.
+            where: (...args: any[]) => { parent.where(...args); return obj },
+            andWhere: (...args: any[]) => { parent.where(...args); return obj },
+            whereNull: (...args: any[]) => { parent.whereNull(...args); return obj },
+            whereNotNull: (...args: any[]) => { parent.whereNotNull(...args); return obj },
+            orWhere: unsupported('orWhere'),
+            orderBy: unsupported('orderBy'),
+            limit: unsupported('limit'),
+            offset: unsupported('offset'),
+            toSQL: () => makeExecutableQuery(build(), retText()) as any,
+            execute: () => runWithHooks<any[]>(build(), 'update'),
             // returning() is typed as SelectQueryBuilder — expose the
             // row-fetching methods so `.returning('id').first()` works.
-            get: () => runWithHooks<any[]>(q, 'update'),
+            get: () => runWithHooks<any[]>(build(), 'update'),
             first: runFirst,
             executeTakeFirst: runFirst,
             async firstOrFail() {
@@ -7175,19 +7196,20 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return { numUpdatedRows: result }
         },
         returningAll() {
-          const retAllText = `${sqlText} RETURNING *`
-          const q = params.length > 0
-            ? _sql.unsafe(retAllText, params)
-            : _sql.unsafe(retAllText)
+          // Deferred for the same reason as returning(): holding this handle
+          // while the parent gains a predicate must not execute the statement
+          // as it stood beforehand. See #1110.
+          const retAllText = () => `${sqlText} RETURNING *`
+          const build = () => (params.length > 0 ? _sql.unsafe(retAllText(), params) : _sql.unsafe(retAllText()))
           return {
-            toSQL: () => makeExecutableQuery(q, retAllText) as any,
-            execute: () => runWithHooks<any[]>(q, 'update'),
+            toSQL: () => makeExecutableQuery(build(), retAllText()) as any,
+            execute: () => runWithHooks<any[]>(build(), 'update'),
             async executeTakeFirst() {
-              const result = await runWithHooks<any[]>(q, 'update')
+              const result = await runWithHooks<any[]>(build(), 'update')
               return Array.isArray(result) ? result[0] : result
             },
             async executeTakeFirstOrThrow() {
-              const result = await runWithHooks<any[]>(q, 'update')
+              const result = await runWithHooks<any[]>(build(), 'update')
               const first = Array.isArray(result) ? result[0] : result
               if (!first)
                 throw new Error('Update with RETURNING failed')
@@ -7337,25 +7359,46 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this
         },
         returning(...cols) {
-          const retText = `${sqlText} RETURNING ${cols.join(', ')}`
-          const q = delParams.length > 0
-            ? _sql.unsafe(retText, delParams)
-            : _sql.unsafe(retText)
+          const parent: any = this
+          // Rendered at execute time. The frozen-text form, with the no-op
+          // filter stubs below it, meant `.returning('id').where({ id: 1 })`
+          // emptied the table and returned every deleted row as though the
+          // filter had applied. See #1110.
+          const retText = () => `${sqlText} RETURNING ${cols.join(', ')}`
+          const build = () => (delParams.length > 0 ? _sql.unsafe(retText(), delParams) : _sql.unsafe(retText()))
+          // Fire the same delete hooks execute() does. Without this, adding
+          // `.returning(...)` to a delete skipped beforeDelete/afterDelete
+          // entirely, so an application-level delete guard — the usual reason
+          // to implement beforeDelete at all — could be walked straight past.
+          const runDelete = async (): Promise<any[]> => {
+            await activeHooks()?.beforeDelete?.({ table: String(table), where: whereCondition })
+            const rows = await runWithHooks<any[]>(build(), 'delete')
+            try {
+              await activeHooks()?.afterDelete?.({ table: String(table), where: whereCondition, result: rows })
+            }
+            catch {}
+            return rows
+          }
           const runFirst = async () => {
-            const rows = await runWithHooks<any[]>(q, 'delete')
+            const rows = await runDelete()
             return Array.isArray(rows) ? rows[0] : rows
           }
+          const unsupported = (name: string) => (): never => {
+            throw new TypeError(`[query-builder] deleteFrom.returning(...).${name}() is not supported — a DELETE cannot be ordered or limited through this builder. Narrow it with where() instead.`)
+          }
           const obj: any = {
-            where: () => obj,
-            andWhere: () => obj,
-            orWhere: () => obj,
-            orderBy: () => obj,
-            limit: () => obj,
-            offset: () => obj,
-            toSQL: () => makeExecutableQuery(q, retText) as any,
-            execute: () => runWithHooks<any[]>(q, 'delete'),
+            where: (...args: any[]) => { parent.where(...args); return obj },
+            andWhere: (...args: any[]) => { parent.where(...args); return obj },
+            whereNull: (...args: any[]) => { parent.whereNull(...args); return obj },
+            whereNotNull: (...args: any[]) => { parent.whereNotNull(...args); return obj },
+            orWhere: unsupported('orWhere'),
+            orderBy: unsupported('orderBy'),
+            limit: unsupported('limit'),
+            offset: unsupported('offset'),
+            toSQL: () => makeExecutableQuery(build(), retText()) as any,
+            execute: () => runDelete(),
             // returning() is typed as SelectQueryBuilder — expose row fetchers.
-            get: () => runWithHooks<any[]>(q, 'delete'),
+            get: () => runDelete(),
             first: runFirst,
             executeTakeFirst: runFirst,
             async firstOrFail() {
@@ -7404,19 +7447,18 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return { numDeletedRows: result }
         },
         returningAll() {
-          const retAllText = `${sqlText} RETURNING *`
-          const q = delParams.length > 0
-            ? _sql.unsafe(retAllText, delParams)
-            : _sql.unsafe(retAllText)
+          // Deferred, as returning() is — see #1110.
+          const retAllText = () => `${sqlText} RETURNING *`
+          const build = () => (delParams.length > 0 ? _sql.unsafe(retAllText(), delParams) : _sql.unsafe(retAllText()))
           return {
-            toSQL: () => makeExecutableQuery(q, retAllText) as any,
-            execute: () => runWithHooks<any[]>(q, 'delete'),
+            toSQL: () => makeExecutableQuery(build(), retAllText()) as any,
+            execute: () => runWithHooks<any[]>(build(), 'delete'),
             async executeTakeFirst() {
-              const result = await runWithHooks<any[]>(q, 'delete')
+              const result = await runWithHooks<any[]>(build(), 'delete')
               return Array.isArray(result) ? result[0] : result
             },
             async executeTakeFirstOrThrow() {
-              const result = await runWithHooks<any[]>(q, 'delete')
+              const result = await runWithHooks<any[]>(build(), 'delete')
               const first = Array.isArray(result) ? result[0] : result
               if (!first)
                 throw new Error('Delete with RETURNING failed')
