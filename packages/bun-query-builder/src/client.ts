@@ -4944,12 +4944,27 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         const dialect = config.dialect
         const idx = whereParams.length + 1
         if (dialect === 'postgres') {
+          // Bind the document itself, NOT `JSON.stringify(document)`. Bun's
+          // driver already JSON-encodes a value bound to a jsonb parameter, so
+          // stringifying first encoded it twice and Postgres received the jsonb
+          // *string* `"[\"bun\"]"` where the array `["bun"]` was meant. A jsonb
+          // string never `@>`-contains anything, so the predicate was vacuously
+          // false and every call returned zero rows, silently. See #1091.
+          //
+          // That encoding covers objects, arrays and strings. Numbers and
+          // booleans are bound as int4/bool instead, which `@>` has no operator
+          // for (`operator does not exist: jsonb @> integer`), so those are
+          // lifted to a jsonb scalar with to_jsonb().
+          const needsJsonbLift = typeof json === 'number' || typeof json === 'boolean'
+          const operand = needsJsonbLift
+            ? `to_jsonb(${getPlaceholder(idx)})`
+            : getPlaceholder(idx)
           // operator (`@>`, default) or function (`jsonb_contains`) per config.
           if (config.sql?.jsonContainsMode === 'function')
-            pushWhere('AND', `jsonb_contains(${column}, ${getPlaceholder(idx)})`)
+            pushWhere('AND', `jsonb_contains(${column}, ${operand})`)
           else
-            pushWhere('AND', `${column} @> ${getPlaceholder(idx)}`)
-          whereParams.push(JSON.stringify(json))
+            pushWhere('AND', `${column} @> ${operand}`)
+          whereParams.push(json)
         }
         else if (isMysqlLike(dialect)) {
           pushWhere('AND', `JSON_CONTAINS(${column}, ${getPlaceholder(idx)})`)

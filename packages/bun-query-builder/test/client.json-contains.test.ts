@@ -67,4 +67,37 @@ describe('whereJsonContains dialect handling (#1026)', () => {
   // (`whereJsonContains('tags', ['bun'])` against a seeded table returns the
   // matching row); an in-suite execution test is omitted because the shared
   // lazy-connection state across test files makes it flaky.
+
+  /**
+   * #1091. Postgres binds a number as int4 and a boolean as bool, neither of
+   * which `@>` accepts (`operator does not exist: jsonb @> integer`), so a
+   * scalar operand is lifted to a jsonb scalar. Documents are bound directly
+   * and must NOT be lifted — the driver already encodes those as jsonb.
+   *
+   * These assert the SQL shape only. The bug this guards against lived
+   * entirely in the bound parameter, which `toSQL()` does not expose, so the
+   * real guard is the execution test in client.json-contains.pg.test.ts.
+   */
+  it('Postgres: lifts a number or boolean operand with to_jsonb (#1091)', () => {
+    config.dialect = 'postgres' as any
+    config.sql = { ...config.sql, jsonContainsMode: 'operator' }
+    const num = String((qb() as any).selectFrom('posts').whereJsonContains('tags', 1).toSQL())
+    expect(num).toContain('tags @> to_jsonb($1)')
+    const bool = String((qb() as any).selectFrom('posts').whereJsonContains('tags', true).toSQL())
+    expect(bool).toContain('tags @> to_jsonb($1)')
+
+    config.sql = { ...config.sql, jsonContainsMode: 'function' }
+    const fn = String((qb() as any).selectFrom('posts').whereJsonContains('tags', 1).toSQL())
+    expect(fn).toContain('jsonb_contains(tags, to_jsonb($1))')
+  })
+
+  it('Postgres: binds a document operand directly, without to_jsonb (#1091)', () => {
+    config.dialect = 'postgres' as any
+    config.sql = { ...config.sql, jsonContainsMode: 'operator' }
+    for (const operand of [['bun'], { published: true }, 'bun']) {
+      const s = String((qb() as any).selectFrom('posts').whereJsonContains('tags', operand).toSQL())
+      expect(s).toContain('tags @> $1')
+      expect(s).not.toContain('to_jsonb')
+    }
+  })
 })
