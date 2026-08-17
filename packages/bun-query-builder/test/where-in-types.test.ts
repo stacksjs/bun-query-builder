@@ -145,3 +145,30 @@ describe('writing null to a nullable column', () => {
     expect(row?.get('total')).toBe(7)
   })
 })
+
+/**
+ * A required column must still reject null - the widening that allows a
+ * nullable column to be cleared has to stop there, or `NOT NULL` columns
+ * typecheck their way into a database error.
+ */
+describe('required columns still reject null', () => {
+  it('rejects null for a required column', () => {
+    const Required = createModel({
+      name: 'RequiredCol',
+      table: 'test_required_cols',
+      primaryKey: 'id',
+      autoIncrement: true,
+      attributes: {
+        label: { type: 'string', fillable: true, required: true },
+        note: { type: 'string', fillable: true },
+      },
+    } as const)
+
+    // @ts-expect-error a required column does not accept null
+    void (() => Required.create({ label: null }))
+    // ...while an optional one does.
+    void (() => Required.create({ label: 'ok', note: null }))
+
+    expect(typeof Required.create).toBe('function')
+  })
+})

@@ -418,7 +418,18 @@ type FillableKeys<TDef extends ModelDefinition> = {
  * NULL column fails there, as it should.
  */
 type FillableAttributes<TDef extends ModelDefinition> = Partial<Pick<
-  { [K in keyof ModelAttributes<TDef>]: ModelAttributes<TDef>[K] | null },
+  {
+    [K in keyof ModelAttributes<TDef>]:
+    // Already nullable: nothing to add.
+    null extends ModelAttributes<TDef>[K]
+      ? ModelAttributes<TDef>[K]
+      // Optional, so the column is nullable in the database: `null` is how a
+      // write CLEARS it, which is different from omitting the key.
+      : undefined extends ModelAttributes<TDef>[K]
+        ? ModelAttributes<TDef>[K] | null
+        // Required: null stays rejected, as the NOT NULL column would reject it.
+        : ModelAttributes<TDef>[K]
+  },
   FillableKeys<TDef> | SnakeCase<FillableKeys<TDef>> | BelongsToKeys<TDef>
 >>
 
