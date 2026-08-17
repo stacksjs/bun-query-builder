@@ -1,3 +1,14 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.39...HEAD)
+
+## 🐛 Bug Fixes
+
+- **orm**: let a write clear a nullable column ([eee1855](https://github.com/stacksjs/bun-query-builder/commit/eee1855)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **orm**: type where(column, 'in', values) for the list it takes ([da1df38](https://github.com/stacksjs/bun-query-builder/commit/da1df38)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.38...v0.2.39)
 
 ## 🐛 Bug Fixes
