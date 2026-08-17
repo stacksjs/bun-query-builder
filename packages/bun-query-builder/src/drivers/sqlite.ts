@@ -1,15 +1,18 @@
 import type { ColumnPlan, IndexPlan, RebuildTableSpec, TablePlan } from '../migrations'
 import type { DateBucketGrain } from './postgres'
+import { isNumericPlanType, sqliteAffinityFor } from '../column-types'
 import { qualifiedIndexName } from './index-name'
 
 /**
  * Whether a plan type belongs to the numeric family. Used by the `_id`
  * safety net (numeric ids must store as INTEGER on SQLite) — non-numeric
  * declared types must never be coerced by the name heuristic.
+ *
+ * Defined in column-types.ts now, so the ORM's create-table path applies the
+ * same rule from the same source. Re-exported because this is where callers
+ * already import it from.
  */
-export function isNumericPlanType(type: string | undefined): boolean {
-  return type === 'integer' || type === 'bigint' || type === 'float' || type === 'double' || type === 'decimal'
-}
+export { isNumericPlanType }
 
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
@@ -53,27 +56,18 @@ export class SQLiteDriver implements DialectDriver {
       return 'INTEGER'
     }
 
-    switch (column.type) {
-      case 'string': return 'TEXT'
-      case 'text': return 'TEXT'
-      case 'boolean': return 'INTEGER' // SQLite uses INTEGER for booleans (0/1)
-      case 'integer': return 'INTEGER'
-      case 'bigint': return 'INTEGER'
-      case 'float': return 'REAL'
-      case 'double': return 'REAL'
-      case 'decimal': return 'REAL'
-      case 'date': return 'TEXT'
-      case 'datetime': return 'TEXT'
-      case 'timestamptz': return 'TEXT'
-      case 'json': return 'TEXT'
-      case 'enum':
-        if (column.enumValues && column.enumValues.length > 0) {
-          const enumValues = column.enumValues.map(v => `'${v.replace(/'/g, '\'\'')}'`).join(', ')
-          return `TEXT CHECK (${this.quoteIdentifier(column.name)} IN (${enumValues}))`
-        }
-        return 'TEXT'
-      default: return 'TEXT'
+    // An enum is TEXT plus a CHECK, which needs the column name and a quoter,
+    // so it stays here. Every other type comes from the shared mapping — this
+    // path and the ORM's create-table path drifting apart is #1094.
+    if (column.type === 'enum') {
+      if (column.enumValues && column.enumValues.length > 0) {
+        const enumValues = column.enumValues.map(v => `'${v.replace(/'/g, '\'\'')}'`).join(', ')
+        return `TEXT CHECK (${this.quoteIdentifier(column.name)} IN (${enumValues}))`
+      }
+      return 'TEXT'
     }
+
+    return sqliteAffinityFor(column.type)
   }
 
   private getPrimaryKeyType(column: ColumnPlan): string {

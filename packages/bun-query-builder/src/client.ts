@@ -4,7 +4,7 @@
 import type { SchemaMeta } from './meta'
 import type { ResolvedPivot } from './pivot'
 import type { DatabaseSchema } from './schema'
-import type { QueryBuilderOptions, QueryHooks } from './types'
+import type { QueryBuilderOptions, QueryHooks, SupportedDialect} from './types'
 import { config, getPlaceholder, getPlaceholders, isMysqlLike, setConfig } from './config'
 import type { DriverConnection } from './db'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
@@ -338,22 +338,40 @@ function warnOnceBareSqlFragment(context: string): void {
   warnedSqlFragmentContexts.add(context)
   console.warn(
     `[query-builder] ${context}: bare string passed to a *Raw method. `
-    + `Prefer \`sql\`...\`\` tagged-template fragments so values are parameterised `
-    + `instead of concatenated — concatenating request input into SQL is an `
-    + `injection vector. This will become a hard error in a future release.`,
+    + `Prefer the \`raw\`...\`\` tagged template, which escapes interpolated `
+    + `values for the configured dialect — concatenating request input into SQL `
+    + `is an injection vector. This will become a hard error in a future release.`,
   )
 }
 
 /**
  * Format a value for safe interpolation into a relationship-subquery
- * fragment. Strings are SQL-escaped (single-quote doubled per ANSI SQL);
- * numbers / booleans / null pass through; everything else is rejected.
+ * fragment. Numbers / booleans / null pass through; everything else is
+ * rejected.
+ *
+ * **Strings are escaped for the configured dialect, not just for ANSI.**
+ * Doubling the single quote is correct on Postgres and SQLite and is not
+ * sufficient on the MySQL family, where a backslash is itself an escape
+ * character unless NO_BACKSLASH_ESCAPES is set. Doubling alone lets
+ * `x\'; DROP TABLE t; --` through: it becomes `'x\''; DROP TABLE t; --'`,
+ * MySQL reads `\'` as a literal quote inside the string, the next quote closes
+ * it, and the remainder executes as its own statement.
+ *
+ * So on a MySQL-like dialect the backslash is doubled first. Order matters:
+ * escaping quotes first and backslashes second would re-escape the backslash
+ * this function had just introduced.
  */
+export function escapeStringLiteral(value: string, dialect: SupportedDialect = config.dialect): string {
+  return isMysqlLike(dialect)
+    ? value.replace(/\\/g, '\\\\').replace(/'/g, '\'\'')
+    : value.replace(/'/g, '\'\'')
+}
+
 function formatSubqueryValue(val: unknown): string {
   if (val === null) return 'NULL'
   if (typeof val === 'number' && Number.isFinite(val)) return String(val)
   if (typeof val === 'boolean') return val ? '1' : '0'
-  if (typeof val === 'string') return `'${val.replace(/'/g, '\'\'')}'`
+  if (typeof val === 'string') return `'${escapeStringLiteral(val)}'`
   // Dates are common in relation/`with()` constraints — emit an escaped ISO
   // literal rather than rejecting the value.
   if (val instanceof Date) return `'${val.toISOString()}'`
@@ -5904,7 +5922,7 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
         // `where id = $1` with [1] and with [2] would otherwise share one
         // cache entry and the second query would return the first's rows.
         const cacheKey = useCache
-          ? `${String(finalQuery)} ${JSON.stringify(whereParams)}`
+          ? `${String(finalQuery)}\0${JSON.stringify(whereParams)}`
           : ''
         if (useCache) {
           const cached = queryCache.get(cacheKey)
@@ -6657,6 +6675,50 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
       let built: any
       let sqlText = ''
       const params: any[] = []
+      // Set when `values()` is handed an empty batch. There is no statement to
+      // run in that case, so every terminal below answers from here instead of
+      // executing a stand-in query. See #1097.
+      let noRows = false
+
+      /**
+       * What the dialect returns for an insert that affected no rows.
+       *
+       * Postgres gives `[]` for an insert without RETURNING, so an empty batch
+       * is indistinguishable from a real one that inserted nothing — which is
+       * the point. The bun:sqlite wrapper reports `{ changes, lastInsertRowid }`
+       * instead, so it gets zeros.
+       */
+      const emptyInsertResult = (): any => (isPostgres ? [] : { changes: 0, lastInsertRowid: 0 })
+
+      /**
+       * The `.returning(...)` / `.returningAll()` surface for an empty batch.
+       *
+       * Mirrors the real one's method set so `.returning('id').first()` still
+       * resolves rather than throwing "first is not a function". No rows were
+       * inserted, so the row accessors answer empty and the *OrFail pair throws
+       * the same message they throw when a real RETURNING comes back empty.
+       */
+      const emptyReturningBuilder = (): any => {
+        const noRow = async (): Promise<any> => undefined
+        const noRowOrFail = async (): Promise<any> => {
+          throw new Error('Insert with RETURNING returned no rows')
+        }
+        return {
+          where: () => emptyReturningBuilder(),
+          andWhere: () => emptyReturningBuilder(),
+          orWhere: () => emptyReturningBuilder(),
+          orderBy: () => emptyReturningBuilder(),
+          limit: () => emptyReturningBuilder(),
+          offset: () => emptyReturningBuilder(),
+          toSQL: () => makeExecutableQuery(null as any, '') as any,
+          execute: async () => [],
+          get: async () => [],
+          first: noRow,
+          executeTakeFirst: noRow,
+          firstOrFail: noRowOrFail,
+          executeTakeFirstOrThrow: noRowOrFail,
+        }
+      }
       const isPostgres = config.dialect === 'postgres'
 
       // Quote identifier based on dialect. SQLite supports double-quoted
@@ -6683,9 +6745,24 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           const rows = Array.isArray(data) ? data : [data]
           const rowCount = rows.length
           if (rowCount === 0) {
-            built = _sql.unsafe('SELECT 1')
+            // Inserting no rows is a no-op, not a query. This used to run
+            // `SELECT 1` as a stand-in, which meant `.execute()` resolved to a
+            // fabricated row — `[{ '?column?': 1 }]` on Postgres, `[{ '1': 1 }]`
+            // on SQLite — so a caller checking `result.length` saw 1 where the
+            // truth was 0, a query hook fired for an insert that never
+            // happened, and `.returning(...)` appended RETURNING to `SELECT 1`
+            // and died on a syntax error. See #1097.
+            //
+            // `values(rows)` where `rows` came back empty is ordinary calling
+            // code — the seeder scaffold this package generates is written that
+            // way — so this answers empty rather than throwing.
+            noRows = true
+            built = null
+            sqlText = ''
+            params.length = 0
             return this
           }
+          noRows = false
 
           const firstRow = rows[0]
           const keys = Object.keys(firstRow)
@@ -6760,6 +6837,11 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return this
         },
         returning(...cols: (keyof any & string)[]) {
+          // Nothing was inserted, so there is nothing to return. Without this
+          // the RETURNING clause was appended to the `SELECT 1` stand-in and
+          // the statement failed to parse.
+          if (noRows)
+            return emptyReturningBuilder()
           // Append RETURNING clause to the existing SQL
           const returningSql = `${sqlText} RETURNING ${cols.join(', ')}`
           const q = _sql.unsafe(returningSql, params)
@@ -6798,10 +6880,14 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           }
         },
         toSQL() {
+          if (noRows)
+            return makeExecutableQuery(null as any, '') as any
           if (!built) built = _sql.unsafe(sqlText, params)
           return makeExecutableQuery(built, sqlText) as any
         },
         execute() {
+          if (noRows)
+            return Promise.resolve(emptyInsertResult())
           // Ultra-fast path: use _prepareStatement to skip unsafe() and runWithHooks overhead
           const hooks = activeHooks()
           const hasHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hooks.beforeCreate || hooks.afterCreate || hasSlowQueryHook(hooks))
@@ -6816,11 +6902,15 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return runWithHooks(built, 'insert')
         },
         async executeTakeFirst() {
+          if (noRows)
+            return emptyInsertResult()
           if (!built) built = _sql.unsafe(sqlText, params)
           const result = await runWithHooks(built, 'insert')
           return result
         },
         async executeTakeFirstOrThrow() {
+          if (noRows)
+            throw new Error('Insert failed')
           if (!built) built = _sql.unsafe(sqlText, params)
           const result = await runWithHooks(built, 'insert')
           if (!result)
@@ -6828,6 +6918,9 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
           return result
         },
         returningAll() {
+          // As in returning(): no rows inserted, nothing to return.
+          if (noRows)
+            return emptyReturningBuilder()
           const returningSql = `${sqlText} RETURNING *`
           const q = _sql.unsafe(returningSql, params)
           const runFirst = async () => {
