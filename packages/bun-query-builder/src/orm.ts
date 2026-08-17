@@ -404,8 +404,21 @@ type FillableKeys<TDef extends ModelDefinition> = {
  * from `attributes`, so without this every such create was a type error
  * against the one column the relation exists to set.
  */
+/**
+ * What `create` / `update` accept.
+ *
+ * `null` is allowed alongside each column's own type because a write is how a
+ * nullable column gets CLEARED, and that is a different instruction from
+ * leaving the field out. Without it, a caller assembling an update payload -
+ * `{ subject: form.subject ?? null }` is the ordinary shape - had to choose
+ * between a type error and `undefined`, and `undefined` silently means "do not
+ * touch this column", so the field the user cleared stayed as it was.
+ *
+ * The database's own nullability is still the authority: writing null to a NOT
+ * NULL column fails there, as it should.
+ */
 type FillableAttributes<TDef extends ModelDefinition> = Partial<Pick<
-  ModelAttributes<TDef>,
+  { [K in keyof ModelAttributes<TDef>]: ModelAttributes<TDef>[K] | null },
   FillableKeys<TDef> | SnakeCase<FillableKeys<TDef>> | BelongsToKeys<TDef>
 >>
 

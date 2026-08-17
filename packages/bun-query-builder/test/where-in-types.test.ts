@@ -93,3 +93,55 @@ describe('where(column, in, values)', () => {
     expect(rows).toHaveLength(2)
   })
 })
+
+/**
+ * Writing null to a nullable column.
+ *
+ * `create` / `update` typed each column as its own type only, so clearing a
+ * nullable column was a type error: `{ subject: form.subject ?? null }` - the
+ * ordinary shape for an update payload - did not compile, and `undefined`
+ * (the workaround) means "leave this column alone", so the field the user
+ * cleared quietly kept its old value.
+ */
+describe('writing null to a nullable column', () => {
+  // Its own table: the suite above drops its fixture when it finishes.
+  beforeAll(() => {
+    getDatabase().run(`
+      CREATE TABLE IF NOT EXISTS test_where_in_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reference TEXT,
+        total REAL,
+        status TEXT
+      )
+    `)
+  })
+
+  afterAll(() => {
+    getDatabase().run('DROP TABLE IF EXISTS test_where_in_orders')
+  })
+
+  it('accepts null for a fillable column', async () => {
+    const created = await Order.create({ reference: 'A-9', total: 5, status: 'open' })
+    const id = Number(created.get('id'))
+
+    const record = await Order.find(id)
+    record!.fill({ reference: null })
+    await record!.save()
+
+    const row = await Order.find(id)
+    expect(row?.get('reference')).toBeNull()
+  })
+
+  it('still accepts a value, and leaves omitted columns alone', async () => {
+    const created = await Order.create({ reference: 'A-10', total: 7, status: 'open' })
+    const id = Number(created.get('id'))
+
+    const record = await Order.find(id)
+    record!.fill({ reference: 'A-10-renamed' })
+    await record!.save()
+
+    const row = await Order.find(id)
+    expect(row?.get('reference')).toBe('A-10-renamed')
+    expect(row?.get('total')).toBe(7)
+  })
+})
