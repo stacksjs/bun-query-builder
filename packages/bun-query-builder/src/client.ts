@@ -7053,9 +7053,32 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             return this
           }
 
+          // A lone SQL fragment: `where(raw('id = 1'))`, `where(sql\`...\`)`.
+          // The declared signature accepts SqlFragment, so this is an
+          // advertised call — and it matched no branch, fell through to the
+          // bare `return this` below, and left the UPDATE with no WHERE at all.
+          // Every row was rewritten, silently, and the full count was reported
+          // as success. Handled before the object branch because a bound
+          // expression is an object and would otherwise be read as the column
+          // map `{ sql: ... }`. See #1101.
+          if (isRawExpression(expr)) {
+            sqlText = `${sqlText} ${getWhereKeyword()} ${expr.raw}`
+            built = _sql.unsafe(sqlText, params)
+            return this
+          }
+          if (isBoundSqlExpression(expr)) {
+            const rendered = renderBoundSqlExpression(expr, params.length + 1)
+            sqlText = `${sqlText} ${getWhereKeyword()} ${rendered.text}`
+            params.push(...rendered.parameters)
+            built = _sql.unsafe(sqlText, params)
+            return this
+          }
+
           // Handle object format: where({ column: value })
-          if (expr && typeof expr === 'object' && !('raw' in expr)) {
+          if (expr && typeof expr === 'object') {
             const keys = Object.keys(expr)
+            if (keys.length === 0)
+              throw new TypeError('[query-builder] updateTable.where({}): an empty object is not a filter. Pass a condition, or drop the where() call if updating every row is intended.')
             const len = keys.length
             const baseIdx = params.length
             const conditions: string[] = Array.from({ length: len })
@@ -7065,8 +7088,19 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             }
             sqlText = `${sqlText} ${getWhereKeyword()} ${conditions.join(' AND ')}`
             built = _sql.unsafe(sqlText, params)
+            return this
           }
-          return this
+
+          // Nothing above could turn this into a predicate. Refuse it.
+          //
+          // Returning `this` unchanged meant `where(undefined)` and
+          // `where(null)` produced an UPDATE with no WHERE, so a filter the
+          // caller believed they had applied rewrote the whole table without
+          // an error. A write builder is the wrong place to read "I could not
+          // understand your filter" as "match every row". The select builder
+          // dropped this same fall-through in #1083; the write builders kept
+          // it. See #1101.
+          throw new TypeError(`[query-builder] updateTable.where(): expected a condition, got ${expr === null ? 'null' : typeof expr}. Refusing to run an UPDATE with no WHERE — drop the where() call if updating every row is intended.`)
         },
         whereNull(column: string) {
           const keyword = SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
@@ -7246,9 +7280,31 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             built = null
             return this
           }
+          // A lone SQL fragment, handled before the object branch for the same
+          // reason as in updateTable.where: a bound expression is an object and
+          // would otherwise be read as the column map `{ sql: ... }`. Rendering
+          // it here also fixes it — routed through applyWhere() below, a
+          // fragment was interpolated as a bound value, so Postgres rejected
+          // `where(raw('id = 1'))` with "invalid input syntax for type
+          // boolean". The signature accepts SqlFragment, so it has to work.
+          if (isRawExpression(expr)) {
+            sqlText += ` ${getWhereKeyword()} ${expr.raw}`
+            built = null
+            return this
+          }
+          if (isBoundSqlExpression(expr)) {
+            const rendered = renderBoundSqlExpression(expr, delParams.length + 1)
+            sqlText += ` ${getWhereKeyword()} ${rendered.text}`
+            delParams.push(...rendered.parameters)
+            built = null
+            return this
+          }
+
           // Object format: where({ id: 1 })
-          if (expr && typeof expr === 'object' && !('raw' in expr)) {
+          if (expr && typeof expr === 'object') {
             const keys = Object.keys(expr)
+            if (keys.length === 0)
+              throw new TypeError('[query-builder] deleteFrom.where({}): an empty object is not a filter. Pass a condition, or drop the where() call if deleting every row is intended.')
             const conditions: string[] = []
             for (const key of keys) {
               const paramIndex = delParams.length + 1
@@ -7259,8 +7315,16 @@ export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Parti
             built = null
             return this
           }
-          built = applyWhere(({} as any), ensureDelBuilt(), expr)
-          return this
+
+          // Nothing above could turn this into a predicate.
+          //
+          // This previously fell through to applyWhere({}, ..., expr), whose
+          // first line is `if (!expr) return q` — so `where(undefined)` and
+          // `where(null)` appended nothing and the DELETE removed every row,
+          // returning the count as though the filter had been honoured. See
+          // #1101, and #1083 where the select builder lost the same
+          // fall-through.
+          throw new TypeError(`[query-builder] deleteFrom.where(): expected a condition, got ${expr === null ? 'null' : typeof expr}. Refusing to run a DELETE with no WHERE — drop the where() call if deleting every row is intended.`)
         },
         whereNull(column: string) {
           sqlText += ` ${getWhereKeyword()} ${quoteId(String(column))} IS NULL`
