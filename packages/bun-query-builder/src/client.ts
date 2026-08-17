@@ -4,7 +4,7 @@
 import type { SchemaMeta } from './meta'
 import type { ResolvedPivot } from './pivot'
 import type { DatabaseSchema } from './schema'
-import type { QueryBuilderOptions, QueryHooks } from './types'
+import type { QueryBuilderOptions, QueryHooks, SupportedDialect} from './types'
 import { config, getPlaceholder, getPlaceholders, isMysqlLike, setConfig } from './config'
 import type { DriverConnection } from './db'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
@@ -338,22 +338,40 @@ function warnOnceBareSqlFragment(context: string): void {
   warnedSqlFragmentContexts.add(context)
   console.warn(
     `[query-builder] ${context}: bare string passed to a *Raw method. `
-    + `Prefer \`sql\`...\`\` tagged-template fragments so values are parameterised `
-    + `instead of concatenated — concatenating request input into SQL is an `
-    + `injection vector. This will become a hard error in a future release.`,
+    + `Prefer the \`raw\`...\`\` tagged template, which escapes interpolated `
+    + `values for the configured dialect — concatenating request input into SQL `
+    + `is an injection vector. This will become a hard error in a future release.`,
   )
 }
 
 /**
  * Format a value for safe interpolation into a relationship-subquery
- * fragment. Strings are SQL-escaped (single-quote doubled per ANSI SQL);
- * numbers / booleans / null pass through; everything else is rejected.
+ * fragment. Numbers / booleans / null pass through; everything else is
+ * rejected.
+ *
+ * **Strings are escaped for the configured dialect, not just for ANSI.**
+ * Doubling the single quote is correct on Postgres and SQLite and is not
+ * sufficient on the MySQL family, where a backslash is itself an escape
+ * character unless NO_BACKSLASH_ESCAPES is set. Doubling alone lets
+ * `x\'; DROP TABLE t; --` through: it becomes `'x\''; DROP TABLE t; --'`,
+ * MySQL reads `\'` as a literal quote inside the string, the next quote closes
+ * it, and the remainder executes as its own statement.
+ *
+ * So on a MySQL-like dialect the backslash is doubled first. Order matters:
+ * escaping quotes first and backslashes second would re-escape the backslash
+ * this function had just introduced.
  */
+export function escapeStringLiteral(value: string, dialect: SupportedDialect = config.dialect): string {
+  return isMysqlLike(dialect)
+    ? value.replace(/\\/g, '\\\\').replace(/'/g, '\'\'')
+    : value.replace(/'/g, '\'\'')
+}
+
 function formatSubqueryValue(val: unknown): string {
   if (val === null) return 'NULL'
   if (typeof val === 'number' && Number.isFinite(val)) return String(val)
   if (typeof val === 'boolean') return val ? '1' : '0'
-  if (typeof val === 'string') return `'${val.replace(/'/g, '\'\'')}'`
+  if (typeof val === 'string') return `'${escapeStringLiteral(val)}'`
   // Dates are common in relation/`with()` constraints — emit an escaped ISO
   // literal rather than rejecting the value.
   if (val instanceof Date) return `'${val.toISOString()}'`
