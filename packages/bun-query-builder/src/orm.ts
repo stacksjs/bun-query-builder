@@ -28,6 +28,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { FactoryFaker } from './faker-compat'
 import type { SupportedDialect } from './types'
 import type { RelationCardinality } from './type-inference'
+import { isNumericPlanType, normalizeAttributeType, sqliteAffinityFor } from './column-types'
 import { config, isMysqlLike } from './config'
 import type { DriverConnection } from './db'
 import { getOrCreateBunSql } from './db'
@@ -3513,11 +3514,20 @@ export async function createTableFromModel(definition: ModelDefinition): Promise
     const name = toSnakeCase(attrName)
     if (emitted.has(name)) continue
     emitted.add(name)
-    let colType = 'TEXT'
-    if (attr.type === 'number') colType = 'INTEGER'
-    else if (attr.type === 'boolean') colType = 'INTEGER'
-    // Safety net: foreign key columns must always be INTEGER
-    if (name.endsWith('_id')) colType = 'INTEGER'
+    // Same mapping the migration path uses. This understood only `number` and
+    // `boolean` and sent everything else to TEXT, so `type: 'integer'` — the
+    // spelling in this library's own docs — created a TEXT column and integers
+    // read back as strings. See #1094 and column-types.ts.
+    const declaredType = normalizeAttributeType(attr.type)
+    let colType: string = sqliteAffinityFor(declaredType)
+    // Safety net: a numeric foreign-key column stores as INTEGER, so float
+    // storage cannot corrupt an id (11.0 for 11). Conditional on the declared
+    // type, matching SQLiteDriver.getColumnType: external ids are frequently
+    // strings (tickers, wallet addresses, hashes) and a declared text type has
+    // to win over a name heuristic. An attribute that declares no type at all
+    // keeps the old INTEGER default rather than silently changing shape.
+    if (name.endsWith('_id') && (declaredType === undefined || isNumericPlanType(declaredType)))
+      colType = 'INTEGER'
     let colDef = `${name} ${colType}`
     if (attr.unique) colDef += ' UNIQUE'
     // Inline FK constraints for SQLite CREATE TABLE

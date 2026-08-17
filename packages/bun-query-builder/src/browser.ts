@@ -525,11 +525,15 @@ export class BrowserQueryBuilder<T = any> {
   private buildQueryParams(): URLSearchParams {
     const params = new URLSearchParams()
 
+    // As in BrowserModelQueryBuilder: `boolean` is not read, so an `orWhere`
+    // serialises as an AND. Left alone deliberately — see #1096.
     // Add where clauses as query params
     for (const where of this.state.wheres) {
       if (where.operator === '=') {
         params.append(where.column, String(where.value))
       }
+      // `in` only — `not in` falls through to the filter branch, so an
+      // exclusion stays distinguishable from an inclusion (#1096).
       else if (where.operator === 'in' && Array.isArray(where.value)) {
         params.append(`${where.column}[]`, where.value.join(','))
       }
@@ -970,11 +974,22 @@ else {
   private buildQueryParams(): URLSearchParams {
     const params = new URLSearchParams()
 
+    // `where.boolean` is not read here, so an `orWhere` serialises exactly like
+    // a `where` and the server reads it as AND. Representing OR needs a wire
+    // format that this file has no precedent for, so it is left alone rather
+    // than invented — see #1096. BrowserQueryBuilder.buildQueryParams has the
+    // same gap.
     for (const where of this._wheres) {
       if (where.operator === '=') {
         params.append(where.column, String(where.value))
       }
-else if ((where.operator === 'in' || where.operator === 'not in') && Array.isArray(where.value)) {
+      // `in` only. Including `not in` here made an exclusion serialise
+      // byte-identically to an inclusion — `whereNotIn('role', ['banned'])`
+      // and `whereIn('role', ['banned'])` both sent `role[]=banned`, so the
+      // server returned precisely the rows the caller meant to exclude.
+      // Falling through to the filter branch below is what the sibling
+      // BrowserQueryBuilder already does. See #1096.
+      else if (where.operator === 'in' && Array.isArray(where.value)) {
         params.append(`${where.column}[]`, where.value.join(','))
       }
 else if (where.operator === 'is' && where.value === null) {
