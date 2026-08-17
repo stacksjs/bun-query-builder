@@ -41,7 +41,7 @@ export interface ParsedAttribute {
   nullable: boolean
   unique: boolean
   hidden: boolean
-  defaultValue?: any
+  defaultValue?: unknown
   cast?: string
   dynamoDbType: 'S' | 'N' | 'B' | 'BOOL' | 'NULL' | 'M' | 'L' | 'SS' | 'NS' | 'BS'
 }
@@ -109,7 +109,7 @@ export interface StacksModel {
     nullable?: boolean
     unique?: boolean
     hidden?: boolean
-    default?: any
+    default?: unknown
     cast?: string
     validation?: { rule?: string }
   }>
@@ -150,7 +150,7 @@ export function resolveKeyPattern(keyPatterns: KeyPatterns, data: Record<string,
 /**
  * Parse models from configuration (stub implementation)
  */
-export async function parseStacksModels(_config: any): Promise<{ models: Map<string, ParsedModel> }> {
+export async function parseStacksModels(_config: unknown): Promise<{ models: Map<string, ParsedModel> }> {
   // This is a stub - actual implementation would parse model files
   return { models: new Map() }
 }
@@ -186,8 +186,8 @@ export function unmarshallItem(item: Record<string, any>): Record<string, any> {
 // ============================================================================
 // Imports from bun-query-builder (fluent API layer)
 // ============================================================================
-import type { DynamoDBConfig, DynamoDBDriver, SingleTableEntityMapping } from './drivers/dynamodb'
-import type { DynamoDBQueryBuilderOptions } from './dynamodb-client'
+import type { DynamoDBConfig, DynamoDBDriver, DynamoDBTableDefinition, SingleTableEntityMapping } from './drivers/dynamodb'
+import type { DynamoDBClientLike, DynamoDBQueryBuilderOptions } from './dynamodb-client'
 import type { SingleTableConfig, SingleTableEntity } from './dynamodb-single-table'
 import { createDynamoDBDriver } from './drivers/dynamodb'
 import { DynamoDBItemBuilder, DynamoDBQueryBuilder } from './dynamodb-client'
@@ -282,7 +282,7 @@ export class DynamoDBToolingAdapter {
   /**
    * Set the DynamoDB client instance
    */
-  setClient(client: any): this {
+  setClient(client: DynamoDBClientLike): this {
     this.queryBuilderOptions.client = client
     return this
   }
@@ -498,7 +498,7 @@ export class DynamoDBToolingAdapter {
   /**
    * Generate table definition for all registered models
    */
-  generateTableDefinition(): any {
+  generateTableDefinition(): DynamoDBTableDefinition {
     return this.singleTableManager.generateTableDefinition()
   }
 

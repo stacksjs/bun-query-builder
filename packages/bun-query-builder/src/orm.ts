@@ -286,8 +286,8 @@ export interface ModelDefinition {
   readonly attributes: {
     readonly [key: string]: TypedAttribute<unknown>
   }
-  readonly get?: Record<string, (attributes: any) => unknown>
-  readonly set?: Record<string, (attributes: any) => unknown>
+  readonly get?: Record<string, (attributes: Record<string, unknown>) => unknown>
+  readonly set?: Record<string, (attributes: Record<string, unknown>) => unknown>
   readonly scopes?: Record<string, (value: unknown) => unknown>
   readonly indexes?: readonly object[]
   readonly dashboard?: { readonly enabled?: boolean; readonly highlight?: boolean | number }
@@ -617,7 +617,29 @@ function toPostgresPlaceholders(sql: string): string {
  * fallback (which would be 0) — see stacksjs/bun-query-builder#1032. MySQL
  * surfaces `affectedRows` instead.
  */
-export function extractChanges(res: any): number {
+/**
+ * What a driver hands back after a write.
+ *
+ * Each one reports the affected count under its own name - and Postgres
+ * returns an empty array carrying `count`, so the shape is genuinely a union
+ * rather than one thing. Naming the fields beats `any`: a caller reading this
+ * type learns which drivers report what.
+ */
+export interface WriteResultLike {
+  /** MySQL. */
+  affectedRows?: number
+  /** Postgres command tag. */
+  count?: number
+  /** SQLite (bun:sqlite). */
+  changes?: number
+  lastInsertRowid?: number | bigint
+  insertId?: number | bigint
+  command?: string
+  rows?: unknown[]
+  [key: string]: unknown
+}
+
+export function extractChanges(res: WriteResultLike | null | undefined): number {
   if (res == null)
     return 0
   if (typeof res.affectedRows === 'number') // MySQL
@@ -630,7 +652,7 @@ export function extractChanges(res: any): number {
 }
 
 /** Extract a generated primary key from a Bun SQL driver result. */
-export function extractInsertId(res: any): number | bigint | null {
+export function extractInsertId(res: WriteResultLike | null | undefined): number | bigint | null {
   if (res == null || typeof res !== 'object')
     return null
   if ('insertId' in res && res.insertId != null) // MySQL

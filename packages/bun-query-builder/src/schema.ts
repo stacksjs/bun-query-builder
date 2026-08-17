@@ -221,14 +221,23 @@ export interface ModelOptions extends Base {
   morphTo?: MorphTo
   morphToMany?: MorphToMany<ModelNames>
   morphedByMany?: MorphedByMany<ModelNames>
+  /**
+   * Scopes, accessors and mutators a model declares.
+   *
+   * The parameter stays `any` on purpose. A real model writes
+   * `get: { name: (value: string) => value.toUpperCase() }`, and under
+   * `strictFunctionTypes` that is NOT assignable to `(value: unknown) => ...`
+   * - narrowing here would reject every correctly-written model. The RETURN
+   * is `unknown`, so nothing downstream inherits the looseness.
+   */
   scopes?: {
-    [key: string]: (value: any) => any
+    [key: string]: (value: any) => unknown
   }
   get?: {
-    [key: string]: (value: any) => any
+    [key: string]: (value: any) => unknown
   }
   set?: {
-    [key: string]: (value: any) => any
+    [key: string]: (value: any) => unknown
   }
 }
 
@@ -410,6 +419,22 @@ export type InferTableRelations<M, MRecord extends ModelRecord> = {
  * type Schema = DatabaseSchema<typeof models>
  * ```
  */
+/**
+ * Any database schema, described by its shape rather than by `any`.
+ *
+ * Generic constraints throughout the client read `DB extends DatabaseSchema<any>`,
+ * which says "a schema of anything" and drags `any` into every published
+ * signature that mentions one. This says the same thing accurately: a schema
+ * is tables, each with columns, a primary key, and optionally relations.
+ */
+export interface AnySchemaTable {
+  columns: Record<string, unknown>
+  primaryKey?: unknown
+  relations?: Record<string, string> | undefined
+}
+
+export type AnyDatabaseSchema = Record<string, AnySchemaTable>
+
 export type DatabaseSchema<MRecord extends ModelRecord> = {
   [MName in keyof MRecord & string as InferTableName<UnwrapModelDefinition<MRecord[MName]>>]: {
     columns: InferAttributes<UnwrapModelDefinition<MRecord[MName]>>

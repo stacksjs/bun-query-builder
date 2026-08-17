@@ -240,15 +240,34 @@ export interface SqlConfig {
  * Optional lifecycle hooks around query execution. These are invoked for any
  * statement executed through the builder (select/insert/update/delete/raw).
  */
+/** A bound statement parameter: whatever a driver will accept as a value. */
+export type QueryParam = string | number | bigint | boolean | Date | Uint8Array | null
+
+/** The kind of statement a hook is reporting on. */
+export type QueryKind = 'select' | 'insert' | 'update' | 'delete' | 'raw'
+
+/** The row shape a hook sees. Columns are unknown until the caller narrows. */
+export type QueryRecord = Record<string, unknown>
+
+/** A `where` description as the mutation hooks receive it. */
+export type QueryWhere = Record<string, unknown>
+
+/** Common fields on every query lifecycle event. */
+export interface QueryEvent {
+  sql: string
+  params?: QueryParam[]
+  kind?: QueryKind
+}
+
 export interface QueryHooks {
   /** Called right before a query executes. */
-  onQueryStart?: (event: { sql: string, params?: any[], kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
+  onQueryStart?: (event: QueryEvent) => void
   /** Called after a query succeeds. */
-  onQueryEnd?: (event: { sql: string, params?: any[], durationMs: number, rowCount?: number, kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
+  onQueryEnd?: (event: QueryEvent & { durationMs: number, rowCount?: number }) => void
   /** Called after a query fails. */
-  onQueryError?: (event: { sql: string, params?: any[], error: any, durationMs: number, kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
+  onQueryError?: (event: QueryEvent & { error: unknown, durationMs: number }) => void
   /** Optional tracer integration. Return an object with end() to finish a span. */
-  startSpan?: (event: { sql: string, params?: any[], kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => { end: (error?: any) => void }
+  startSpan?: (event: QueryEvent) => { end: (error?: unknown) => void }
   /**
    * When set, a query whose duration meets/exceeds this many milliseconds is
    * reported as slow (via `onSlowQuery`, or a `console.warn` if no handler is
@@ -256,19 +275,19 @@ export interface QueryHooks {
    */
   slowQueryThresholdMs?: number
   /** Called when a query's duration meets/exceeds `slowQueryThresholdMs`. */
-  onSlowQuery?: (event: { sql: string, params?: any[], durationMs: number, kind?: 'select' | 'insert' | 'update' | 'delete' | 'raw' }) => void
+  onSlowQuery?: (event: QueryEvent & { durationMs: number }) => void
   /** Called before creating a record. Can modify data or throw to prevent creation. */
-  beforeCreate?: (event: { table: string, data: any }) => void | Promise<void>
+  beforeCreate?: (event: { table: string, data: QueryRecord }) => void | Promise<void>
   /** Called after creating a record. */
-  afterCreate?: (event: { table: string, data: any, result: any }) => void | Promise<void>
+  afterCreate?: (event: { table: string, data: QueryRecord, result: unknown }) => void | Promise<void>
   /** Called before updating a record. Can modify data or throw to prevent update. */
-  beforeUpdate?: (event: { table: string, data: any, where?: any }) => void | Promise<void>
+  beforeUpdate?: (event: { table: string, data: QueryRecord, where?: QueryWhere }) => void | Promise<void>
   /** Called after updating a record. */
-  afterUpdate?: (event: { table: string, data: any, where?: any, result: any }) => void | Promise<void>
+  afterUpdate?: (event: { table: string, data: QueryRecord, where?: QueryWhere, result: unknown }) => void | Promise<void>
   /** Called before deleting a record. Can throw to prevent deletion. */
-  beforeDelete?: (event: { table: string, where?: any }) => void | Promise<void>
+  beforeDelete?: (event: { table: string, where?: QueryWhere }) => void | Promise<void>
   /** Called after deleting a record. */
-  afterDelete?: (event: { table: string, where?: any, result: any }) => void | Promise<void>
+  afterDelete?: (event: { table: string, where?: QueryWhere, result: unknown }) => void | Promise<void>
 }
 
 /**
@@ -362,7 +381,7 @@ export interface BrowserConfig {
   /** Request timeout in milliseconds (default: 30000) */
   timeout?: number
   /** Transform response data before returning (e.g., unwrap { data: [...] }) */
-  transformResponse?: <T>(response: any) => T
+  transformResponse?: <T>(response: unknown) => T
   /** Transform request data before sending */
   transformRequest?: <T>(data: T) => any
 }
@@ -483,7 +502,7 @@ export interface QueryBuilderConfig {
  *     signature is not a property. `keyof (() => void)` is `never`, so the
  *     hook collapses to an empty object type: no longer callable, and loose
  *     enough to accept `42`. It also erases type parameters, which would turn
- *     `BrowserConfig.transformResponse` (`<T>(response: any) => T`) into a
+ *     `BrowserConfig.transformResponse` (`<T>(response: unknown) => T`) into a
  *     shape with no signature at all. A hook or a token getter is a leaf.
  *
  *  2. ARRAYS SECOND, because the merge replaces them rather than merging them.
@@ -603,7 +622,8 @@ export interface GenerateMigrationResult {
   sql: string
   sqlStatements: string[]
   hasChanges: boolean
-  plan: any
+  /** The diff the SQL was generated from, as `migrations` describes it. */
+  plan: import('./migrations').MigrationPlan
   /**
    * Structured description of each change (drop/rename/modify/rebuild/...), so
    * callers can gate destructive ops and report renames without parsing SQL.

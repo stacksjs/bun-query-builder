@@ -1,4 +1,5 @@
 import type { DatabaseConfig, PoolConfig, SupportedDialect } from './types'
+import type { SQLQueryBindings } from 'bun:sqlite'
 import { SQL } from 'bun'
 
 /**
@@ -6,6 +7,42 @@ import { SQL } from 'bun'
  * Both Bun's native `SQL` query and our `createSQLiteSQL` wrapper satisfy this.
  * See stacksjs/bun-query-builder#1044.
  */
+/**
+ * What a value interpolated into a tagged template can turn out to be.
+ *
+ * Three things arrive here: a plain bind param, a nested query (carries `sql`
+ * plus a `values` ARRAY), and a raw-SQL marker (carries `__raw`/`raw` and no
+ * `values`). Naming the shape is what lets the branches below read properties
+ * without an `any` - and the order of those branches is load-bearing, see
+ * stacksjs/bun-query-builder#1084.
+ */
+export interface EmbeddedValue {
+  sql?: unknown
+  values?: unknown
+  __raw?: unknown
+  raw?: unknown
+  value?: unknown
+}
+
+/**
+ * The one place user values become driver bindings.
+ *
+ * Everything a caller interpolates arrives as `unknown` - that is honest, we
+ * do not know what it is. bun:sqlite accepts a narrower set. The conversion is
+ * unchecked because the driver itself is the validator: it throws a clear
+ * "can't bind" for anything it cannot take, and a check here would only
+ * duplicate that rule and drift from it. Kept as one named function so the
+ * boundary is visible, rather than an `any` at each of the six call sites.
+ */
+export function toBindings(params: readonly unknown[]): SQLQueryBindings[] {
+  return params as SQLQueryBindings[]
+}
+
+/** A template value seen as a possible fragment; null when it is a plain bind param. */
+export function asEmbeddedValue(value: unknown): EmbeddedValue | null {
+  return value !== null && typeof value === 'object' ? value as EmbeddedValue : null
+}
+
 export interface DriverQuery {
   execute: () => Promise<any>
   values?: () => any
@@ -30,11 +67,11 @@ export type AwaitableDriverQuery = DriverQuery & PromiseLike<any>
  */
 export interface DriverConnection {
   /** Tagged-template form: `` sql`SELECT 1` ``. */
-  (strings: TemplateStringsArray, ...values: any[]): DriverQuery
+  (strings: TemplateStringsArray, ...values: unknown[]): DriverQuery
   /** Function form for raw identifiers / value helpers: `sql('col')`. */
   (value: any): any
-  unsafe: (sql: string, values?: any[]) => AwaitableDriverQuery
-  query?: (sql: string, params?: any[]) => any
+  unsafe: (sql: string, values?: unknown[]) => AwaitableDriverQuery
+  query?: (sql: string, params?: unknown[]) => any
   close?: () => Promise<void> | void
   _prepareStatement?: (sql: string) => any
   [key: string]: any
@@ -74,11 +111,11 @@ import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
  * numbered placeholders is returned untouched, so `?` queries and Bun's own
  * tagged-template output are unaffected.
  */
-export function bindNumberedPlaceholders(sql: string, params: any[]): { sql: string, params: any[] } {
+export function bindNumberedPlaceholders<T>(sql: string, params: T[]): { sql: string, params: T[] } {
   if (params.length === 0 || !/\$\d/.test(sql))
     return { sql, params }
 
-  const out: any[] = []
+  const out: T[] = []
   let rewritten = ''
   let highest = 0
 
@@ -185,7 +222,7 @@ class SQLiteWrapper {
    * Execute a query with parameters and return results.
    * This mimics the SQL tagged template literal behavior.
    */
-  query(sql: string, params: any[] = []): any[] {
+  query(sql: string, params: SQLQueryBindings[] = []): any[] {
     const bound = bindNumberedPlaceholders(sql, params)
     const stmt = this.db.prepare(bound.sql)
     return stmt.all(...bound.params)
@@ -194,7 +231,7 @@ class SQLiteWrapper {
   /**
    * Execute a query that doesn't return results (INSERT, UPDATE, DELETE).
    */
-  run(sql: string, params: any[] = []): any {
+  run(sql: string, params: SQLQueryBindings[] = []): any {
     const bound = bindNumberedPlaceholders(sql, params)
     const stmt = this.db.prepare(bound.sql)
     return stmt.run(...bound.params)
@@ -364,10 +401,10 @@ function createSQLiteSQL(filename: string): SQL {
   /**
    * Process a tagged template literal and return a query object
    */
-  function processTaggedTemplate(strings: TemplateStringsArray, ...values: any[]): any {
+  function processTaggedTemplate(strings: TemplateStringsArray, ...values: unknown[]): any {
     // Build the SQL string with placeholders
     let sql = strings[0]
-    const params: any[] = []
+    const params: unknown[] = []
 
     for (let i = 0; i < values.length; i++) {
       const value = values[i]
@@ -396,13 +433,16 @@ function createSQLiteSQL(filename: string): SQL {
       // The discriminator is `values` being an ARRAY: raw markers carry
       // `__raw` and no `values`, and Bun's native query objects expose `values`
       // as a method, so neither is captured here.
-      if (value && typeof value === 'object' && typeof value.sql === 'string' && Array.isArray(value.values)) {
-        sql += value.sql + (strings[i + 1] || '')
-        params.push(...value.values)
+      const embedded = asEmbeddedValue(value)
+
+      if (embedded && typeof embedded.sql === 'string' && Array.isArray(embedded.values)) {
+        sql += embedded.sql + (strings[i + 1] || '')
+        params.push(...embedded.values)
       }
       // Handle raw SQL markers (from sql('identifier') or sql.raw())
-      else if (value && typeof value === 'object' && (value.__raw || value.raw)) {
-        const rawValue = value.__raw ? value.value : (typeof value.raw === 'string' ? value.raw : value.raw())
+      else if (embedded && (embedded.__raw || embedded.raw)) {
+        const raw = embedded.raw
+        const rawValue = embedded.__raw ? embedded.value : (typeof raw === 'string' ? raw : (raw as () => string)())
         sql += rawValue + (strings[i + 1] || '')
       }
       // Handle arrays - expand to placeholders
@@ -432,11 +472,11 @@ function createSQLiteSQL(filename: string): SQL {
           // caller silently loses its data.
           const trimmed = sql.trim().toUpperCase()
           if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA') || /\bRETURNING\b/.test(trimmed)) {
-            const result = wrapper.query(sql, params)
+            const result = wrapper.query(sql, toBindings(params))
             return Promise.resolve(result)
           }
           else {
-            const result = wrapper.run(sql, params)
+            const result = wrapper.run(sql, toBindings(params))
             return Promise.resolve(result)
           }
         }
@@ -455,7 +495,7 @@ function createSQLiteSQL(filename: string): SQL {
    * - Tagged template literals: sql`SELECT * FROM users`
    * - Function calls for raw identifiers: sql('column_name')
    */
-  function sqlFunction(stringsOrValue: TemplateStringsArray | string, ...values: any[]): any {
+  function sqlFunction(stringsOrValue: TemplateStringsArray | string, ...values: unknown[]): any {
     // If called with a template literal (array of strings)
     if (Array.isArray(stringsOrValue) && 'raw' in stringsOrValue) {
       return processTaggedTemplate(stringsOrValue as TemplateStringsArray, ...values)
@@ -475,7 +515,7 @@ function createSQLiteSQL(filename: string): SQL {
   sqlFunction.raw = (str: string) => createRawMarker(str)
 
   // Add .unsafe() method for raw SQL with parameters (like Bun's SQL.unsafe)
-  sqlFunction.unsafe = (sql: string, params: any[] = []) => {
+  sqlFunction.unsafe = (sql: string, params: unknown[] = []) => {
     const execute = (): Promise<any> => {
       try {
         // A RETURNING clause turns an INSERT/UPDATE/DELETE into a row producer;
@@ -483,11 +523,11 @@ function createSQLiteSQL(filename: string): SQL {
         // `.run()`'s { changes, lastInsertRowid }. See the tagged-template path.
         const trimmed = sql.trim().toUpperCase()
         if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA') || /\bRETURNING\b/.test(trimmed)) {
-          const result = wrapper.query(sql, params)
+          const result = wrapper.query(sql, toBindings(params))
           return Promise.resolve(result)
         }
         else {
-          const result = wrapper.run(sql, params)
+          const result = wrapper.run(sql, toBindings(params))
           return Promise.resolve(result)
         }
       }
@@ -522,9 +562,9 @@ function createSQLiteSQL(filename: string): SQL {
   }
 
   // Add .query() method for direct SQL execution
-  sqlFunction.query = (sql: string, params?: any[]) => {
+  sqlFunction.query = (sql: string, params?: unknown[]) => {
     try {
-      const result = wrapper.query(sql, params || [])
+      const result = wrapper.query(sql, toBindings(params || []))
       return Promise.resolve(result)
     }
     catch (error) {
@@ -533,7 +573,7 @@ function createSQLiteSQL(filename: string): SQL {
   }
 
   // Add .file() method for executing SQL from a file
-  sqlFunction.file = async (filePath: string, _params?: any[]) => {
+  sqlFunction.file = async (filePath: string, _params?: unknown[]) => {
     try {
       const { readFileSync } = await import('node:fs')
       const sqlContent = readFileSync(filePath, 'utf-8')

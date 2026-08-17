@@ -1,4 +1,15 @@
 /**
+ * The query builder handed to a seeder.
+ *
+ * A seeder is written against the app's own schema, which this base class
+ * cannot know, so the handle stays `any` deliberately - narrowing it here
+ * would reject every real seeder's typed table access. Named rather than
+ * inline so the reason travels with it.
+ */
+// eslint-disable-next-line ts/no-explicit-any
+export type SeederQueryBuilder = any
+
+/**
  * Base seeder class that all seeders should extend.
  * Provides access to query builder and faker for generating test data.
  */
@@ -9,7 +20,7 @@ export abstract class Seeder {
    *
    * @param qb - The query builder instance to use for database operations
    */
-  abstract run(qb: any): Promise<void>
+  abstract run(qb: SeederQueryBuilder): Promise<void>
 
   /**
    * Optional method to specify the order in which seeders should run.

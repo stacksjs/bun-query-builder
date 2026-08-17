@@ -372,7 +372,9 @@ export class BrowserQueryBuilder<T = any> {
   /**
    * Add a where clause
    */
-  where(column: string, operatorOrValue: WhereOperator | any, value?: any): this {
+  where(column: string, value: unknown): this
+  where(column: string, operator: WhereOperator, value: unknown): this
+  where(column: string, operatorOrValue: unknown, value?: unknown): this {
     if (value === undefined) {
       // where('column', value) shorthand for equality
       this.state.wheres.push({
@@ -397,7 +399,9 @@ export class BrowserQueryBuilder<T = any> {
   /**
    * Add an OR where clause
    */
-  orWhere(column: string, operatorOrValue: WhereOperator | any, value?: any): this {
+  orWhere(column: string, value: unknown): this
+  orWhere(column: string, operator: WhereOperator, value: unknown): this
+  orWhere(column: string, operatorOrValue: unknown, value?: unknown): this {
     if (value === undefined) {
       this.state.wheres.push({
         column,
@@ -420,8 +424,15 @@ export class BrowserQueryBuilder<T = any> {
   /**
    * Add an AND where clause (alias for where)
    */
-  andWhere(column: string, operatorOrValue: WhereOperator | any, value?: any): this {
-    return this.where(column, operatorOrValue, value)
+  andWhere(column: string, value: unknown): this
+  andWhere(column: string, operator: WhereOperator, value: unknown): this
+  andWhere(column: string, operatorOrValue: unknown, value?: unknown): this {
+    // Two args means the second is a value; three means it is an operator -
+    // which is exactly what the overloads above declare, so the dispatch is
+    // split here rather than passing an unknown into the operator position.
+    return value === undefined
+      ? this.where(column, operatorOrValue)
+      : this.where(column, operatorOrValue as WhereOperator, value)
   }
 
   /**
@@ -441,14 +452,14 @@ export class BrowserQueryBuilder<T = any> {
   /**
    * Where column is in array
    */
-  whereIn(column: string, values: any[]): this {
+  whereIn(column: string, values: readonly unknown[]): this {
     return this.where(column, 'in', values)
   }
 
   /**
    * Where column is not in array
    */
-  whereNotIn(column: string, values: any[]): this {
+  whereNotIn(column: string, values: readonly unknown[]): this {
     return this.where(column, 'not in', values)
   }
 

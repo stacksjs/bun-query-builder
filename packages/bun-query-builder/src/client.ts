@@ -3,7 +3,7 @@
 /* eslint-disable no-useless-catch */
 import type { SchemaMeta } from './meta'
 import type { ResolvedPivot } from './pivot'
-import type { DatabaseSchema } from './schema'
+import type { DatabaseSchema, AnyDatabaseSchema } from './schema'
 import type { QueryBuilderOptions, QueryHooks, SupportedDialect} from './types'
 import { config, getPlaceholder, getPlaceholders, isMysqlLike, setConfig } from './config'
 import type { DriverConnection } from './db'
@@ -400,7 +400,7 @@ class QueryCache {
   private cache = new Map<string, CacheEntry>()
   private maxSize = 100
 
-  get(key: string): any | null {
+  get<T = unknown>(key: string): T | null {
     const entry = this.cache.get(key)
     if (!entry)
       return null
@@ -420,7 +420,7 @@ class QueryCache {
     return entry.data
   }
 
-  set(key: string, data: any, ttlMs: number): void {
+  set(key: string, data: unknown, ttlMs: number): void {
     // Re-inserted keys must move to the back or they'd be evicted as if old.
     if (this.cache.has(key))
       this.cache.delete(key)
@@ -526,15 +526,15 @@ export type SortDirection = 'asc' | 'desc'
  *
  * Helper type extracting a string union of column names for a given table.
  */
-export type ColumnName<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> = keyof DB[TTable]['columns'] & string
+export type ColumnName<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> = keyof DB[TTable]['columns'] & string
 // Named row alias to improve IDE hover readability
 export type SelectedRow<
-  DB extends DatabaseSchema<any>,
+  DB extends AnyDatabaseSchema,
   _TTable extends keyof DB & string,
   TSelected,
 > = Readonly<TSelected>
 
-type PrimaryKeyValue<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> =
+type PrimaryKeyValue<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> =
   DB[TTable]['primaryKey'] extends keyof DB[TTable]['columns']
     ? DB[TTable]['columns'][DB[TTable]['primaryKey']]
     : unknown
@@ -545,7 +545,7 @@ type NumericColumnName<Columns> = {
     : Exclude<Columns[K], null | undefined> extends number ? K : never
 }[keyof Columns & string]
 
-type JoinColumn<DB extends DatabaseSchema<any>, TTables extends string> = TTables extends any
+type JoinColumn<DB extends AnyDatabaseSchema, TTables extends string> = TTables extends any
   ? `${TTables}.${keyof DB[TTables]['columns'] & string}`
   : never
 
@@ -559,13 +559,13 @@ type JoinColumn<DB extends DatabaseSchema<any>, TTables extends string> = TTable
  * untyped schemas keep compiling. A table that declares ZERO relations
  * yields `never` — every relation name is rejected.
  */
-export type TableRelationName<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> =
+export type TableRelationName<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> =
   DB[TTable] extends { relations?: infer R }
     ? unknown extends R ? string : keyof NonNullable<R> & string
     : string
 
 type RelatedTableName<
-  DB extends DatabaseSchema<any>,
+  DB extends AnyDatabaseSchema,
   TTable extends keyof DB & string,
   TRelation extends TableRelationName<DB, TTable>,
 > = DB[TTable] extends { relations?: infer Relations }
@@ -575,7 +575,7 @@ type RelatedTableName<
   : keyof DB & string
 
 type RelationQueryBuilder<
-  DB extends DatabaseSchema<any>,
+  DB extends AnyDatabaseSchema,
   TTable extends keyof DB & string,
   TRelation extends TableRelationName<DB, TTable>,
 > = SelectQueryBuilder<
@@ -584,7 +584,7 @@ type RelationQueryBuilder<
   DB[RelatedTableName<DB, TTable, TRelation>]['columns']
 >
 
-type RelationConstraintRecord<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> = {
+type RelationConstraintRecord<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> = {
   [R in TableRelationName<DB, TTable>]: Partial<Record<R, (qb: RelationQueryBuilder<DB, TTable, R>) => unknown>>
 }[TableRelationName<DB, TTable>]
 
@@ -597,7 +597,7 @@ type RelationConstraintRecord<DB extends DatabaseSchema<any>, TTable extends key
  * relations accepts nothing (the bare `Partial<Record<never, ...>>` would be
  * `{}`, which strings are assignable to — hence the explicit never guard).
  */
-export type WithRelationArg<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> =
+export type WithRelationArg<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> =
   [TableRelationName<DB, TTable>] extends [never]
     ? never
     :
@@ -614,7 +614,7 @@ type SnakeToPascal<S extends string> = S extends `${infer H}_${infer T}`
 // thread a phantom TSql string through method signatures so hovers can show the
 // composed SQL at compile-time for common operations.
 type _TypedDynamicWhereMethods<
-  DB extends DatabaseSchema<any>,
+  DB extends AnyDatabaseSchema,
   TTable extends keyof DB & string,
   TSelected,
   TJoined extends string,
@@ -639,7 +639,7 @@ type _TypedDynamicWhereMethods<
 // resolution, silently downgrading `toSQL()` from the composed literal SQL
 // type back to `string` after any dynamic-where call.
 export type TypedSelectQueryBuilder<
-  DB extends DatabaseSchema<any>,
+  DB extends AnyDatabaseSchema,
   TTable extends keyof DB & string,
   TSelected,
   TJoined extends string = TTable,
@@ -685,7 +685,7 @@ export type TypedSelectQueryBuilder<
 }
 
 type DynamicWhereMethods<
-  DB extends DatabaseSchema<any>,
+  DB extends AnyDatabaseSchema,
   TTable extends keyof DB & string,
   TSelected,
   TJoined extends string = TTable,
@@ -698,7 +698,7 @@ type DynamicWhereMethods<
 }
 
 export interface BaseSelectQueryBuilder<
-  DB extends DatabaseSchema<any>,
+  DB extends AnyDatabaseSchema,
   TTable extends keyof DB & string,
   TSelected,
   TJoined extends string = TTable,
@@ -926,7 +926,7 @@ export interface BaseSelectQueryBuilder<
   /** OR-connected counterpart of `whereNotNull`. */
   orWhereNotNull: (column: keyof DB[TTable]['columns'] & string) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /** OR-connected counterpart of `whereBetween`. */
-  orWhereBetween: (column: keyof DB[TTable]['columns'] & string, start: any, end: any) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  orWhereBetween: <K extends keyof DB[TTable]['columns'] & string>(column: K, start: DB[TTable]['columns'][K], end: DB[TTable]['columns'][K]) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /** OR-connected counterpart of `whereExists`. */
   orWhereExists: (subquery: { toSQL: () => any }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
@@ -1906,13 +1906,13 @@ export interface BaseSelectQueryBuilder<
 }
 
 export type SelectQueryBuilder<
-  DB extends DatabaseSchema<any>,
+  DB extends AnyDatabaseSchema,
   TTable extends keyof DB & string,
   TSelected,
   TJoined extends string = TTable,
 > = BaseSelectQueryBuilder<DB, TTable, TSelected, TJoined> & DynamicWhereMethods<DB, TTable, TSelected, TJoined>
 
-export interface InsertQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
+export interface InsertQueryBuilder<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> {
   /**
    * # `values`
    *
@@ -1965,7 +1965,7 @@ export interface InsertQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
   executeTakeFirstOrThrow: () => Promise<DB[TTable]['columns']>
 }
 
-export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
+export interface UpdateQueryBuilder<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> {
   /**
    * # `set`
    *
@@ -2064,7 +2064,7 @@ export interface UpdateQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
   executeTakeFirstOrThrow: () => Promise<{ numUpdatedRows: number }>
 }
 
-export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
+export interface DeleteQueryBuilder<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> {
   /**
    * # `where`
    *
@@ -2144,7 +2144,7 @@ export interface DeleteQueryBuilder<DB extends DatabaseSchema<any>, TTable exten
   executeTakeFirstOrThrow: () => Promise<{ numDeletedRows: number }>
 }
 
-export interface TableQueryBuilder<DB extends DatabaseSchema<any>, TTable extends keyof DB & string> {
+export interface TableQueryBuilder<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> {
   /**
    * # `insert`
    *
@@ -2192,7 +2192,7 @@ export interface TableQueryBuilder<DB extends DatabaseSchema<any>, TTable extend
   select: <K extends keyof DB[TTable]['columns'] & string>(...columns: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
 }
 
-export interface QueryBuilder<DB extends DatabaseSchema<any>> {
+export interface QueryBuilder<DB extends AnyDatabaseSchema> {
   // typed select list (column names or raw aliases)
   /**
    * # `select`
@@ -2660,7 +2660,7 @@ finally { reserved.release() }
 
 // Typed INSERT builder to expose a structured SQL literal in hovers
 export type TypedInsertQueryBuilder<
-  DB extends DatabaseSchema<any>,
+  DB extends AnyDatabaseSchema,
   TTable extends keyof DB & string,
   TSql extends string = `INSERT INTO ${TTable}`,
 > = Omit<InsertQueryBuilder<DB, TTable>, 'toSQL' | 'values' | 'returning'> & {
@@ -2680,9 +2680,10 @@ export type TypedInsertQueryBuilder<
 }
 
 interface InternalState {
-  sql: any
+  /** The driver handle - Bun's `SQL` or our SQLite wrapper, both `DriverConnection`. */
+  sql: DriverConnection
   meta?: SchemaMeta
-  schema?: any
+  schema?: AnyDatabaseSchema
   txDefaults?: TransactionOptions
   /**
    * Lifecycle hooks for this builder specifically.
@@ -2725,11 +2726,11 @@ function isRetriableTxError(err: any): boolean {
 
 type TransactionIsolation = 'read committed' | 'repeatable read' | 'serializable'
 interface TxBackoff { baseMs?: number, maxMs?: number, factor?: number, jitter?: boolean }
-interface TxLoggerEvent { type: 'start' | 'retry' | 'commit' | 'rollback' | 'error', attempt: number, error?: any, durationMs?: number }
+interface TxLoggerEvent { type: 'start' | 'retry' | 'commit' | 'rollback' | 'error', attempt: number, error?: unknown, durationMs?: number }
 export interface TransactionOptions {
   retries?: number
   isolation?: TransactionIsolation
-  onRetry?: (attempt: number, error: any) => void
+  onRetry?: (attempt: number, error: unknown) => void
   afterCommit?: () => void
   sqlStates?: string[]
   backoff?: TxBackoff
@@ -2737,7 +2738,7 @@ export interface TransactionOptions {
   /** When true, executes transaction in read-only mode (where supported). */
   readOnly?: boolean
   /** Called when a transaction is rolled back. */
-  onRollback?: (error: any) => void
+  onRollback?: (error: unknown) => void
   /** Called after rollback completes. */
   afterRollback?: () => void
 }
@@ -2903,7 +2904,7 @@ function computeBackoffMs(attempt: number, cfg?: TxBackoff): number {
 }
 
 // eslint-disable-next-line pickier/no-unused-vars
-export function createQueryBuilder<DB extends DatabaseSchema<any>>(state?: Partial<InternalState>): QueryBuilder<DB> {
+export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial<InternalState>): QueryBuilder<DB> {
   // Single boundary cast: `state.sql` is `any` (allows mock/tx injection) and
   // getOrCreateBunSql() returns Bun's `SQL`; both satisfy DriverConnection. With
   // `_sql` typed, the downstream `.unsafe(...)` calls no longer need casts (#1044).
