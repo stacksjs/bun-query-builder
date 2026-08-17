@@ -99,6 +99,47 @@ function assertValidOrderByColumn(name: unknown, context: string): asserts name 
 // Lazy reference to model registry to avoid circular dependency
 // eslint-disable-next-line pickier/no-unused-vars
 let _getModel: ((name: string) => any) | null = null
+
+/**
+ * Models built by `createModel`, keyed by definition name.
+ *
+ * `defineModel` publishes into model.ts's global registry; `createModel` never
+ * did. So every lookup below missed a `createModel` model, and each caller fell
+ * back to its own guess:
+ *
+ *  - relation resolution guessed the table from the MODEL NAME, ignoring a
+ *    declared `table`. Where no table existed at the guessed name that was a
+ *    "no such table" crash; where one did — a plausible accident, since the
+ *    guess is the conventional name — the relation silently read the WRONG
+ *    TABLE and returned wrong rows.
+ *  - eager-load hydration fell back to the PARENT's definition, so the related
+ *    rows were shaped by the wrong model. An attribute marked `hidden: true` on
+ *    the related model was serialized into a `with()` payload even though a
+ *    direct query on that same model redacts it.
+ *
+ * See stacksjs/bun-query-builder#1093.
+ *
+ * Kept module-local rather than written into the public registry so that
+ * `getAllModels()` / `getModelRegistry()` / `hasModel()` keep reporting exactly
+ * what `defineModel` put there, and so two models sharing a name cannot clobber
+ * each other's public entry.
+ */
+const localModels = new Map<string, any>()
+
+function registerLocalModel(name: string, model: any): void {
+  localModels.set(name, model)
+  // Relation resolution is memoized per model+relation pair. A resolution
+  // computed before this model was registered guessed its table, so the memo
+  // has to go or registration order silently decides the answer.
+  relationCache.clear()
+}
+
+/** Drops the `createModel` models. Paired with `clearModelRegistry()`. */
+export function clearLocalModels(): void {
+  localModels.clear()
+  relationCache.clear()
+}
+
 function getModelFromRegistry(name: string): any {
   if (!_getModel) {
     try {
@@ -108,7 +149,9 @@ function getModelFromRegistry(name: string): any {
       _getModel = () => undefined
     }
   }
-  return _getModel!(name)
+  // The public registry wins, so a `defineModel` facade still shadows the plain
+  // model it wraps.
+  return _getModel!(name) ?? localModels.get(name)
 }
 
 // Binding helper type for SQL queries
@@ -3438,7 +3481,12 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
 
 /** Create a model class from a definition with full type inference. */
 export function createModel<const TDef extends ModelDefinition>(definition: TDef): ModelStatic<TDef> {
-  return createModelInternal(definition)
+  const model = createModelInternal(definition)
+  // Make the model findable by name, so a relation pointing at it reads its
+  // declared `table` instead of guessing one. See #1093 and localModels above.
+  if (definition?.name)
+    registerLocalModel(definition.name, model)
+  return model
 }
 
 export async function createTableFromModel(definition: ModelDefinition): Promise<void> {
