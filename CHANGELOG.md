@@ -1,3 +1,22 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.38...v0.2.39)
+
+## 🐛 Bug Fixes
+
+- **schema**: accept sqlite storage affinities ([1149255](https://github.com/stacksjs/bun-query-builder/commit/1149255)) _(by Chris <chris@stacksjs.com>)_
+- **db**: close cached connections on reset ([9af238a](https://github.com/stacksjs/bun-query-builder/commit/9af238a)) _(by Chris <chris@stacksjs.com>)_
+
+## ✅ Tests
+
+- make database checks reproducible ([8b227d0](https://github.com/stacksjs/bun-query-builder/commit/8b227d0)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.39 ([9ea5288](https://github.com/stacksjs/bun-query-builder/commit/9ea5288)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.37...v0.2.38)
 
 ## 🐛 Bug Fixes
