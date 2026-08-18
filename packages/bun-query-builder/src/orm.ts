@@ -2672,6 +2672,33 @@ class ModelQueryBuilder<
    * the soft-delete predicate. User clauses are parenthesised when both are
    * present so a top-level `OR` can't escape the soft-delete filter.
    */
+  /**
+   * Refuse a destructive statement that carries clauses it will not emit.
+   *
+   * `delete()`, `update()` and `increment()` read none of `_limit`, `_offset`
+   * or `_orderBy`, so `query().where(...).orderBy('id').limit(1).delete()`
+   * quietly deleted every matching row rather than one — the caller's cap was
+   * dropped on the floor. LIMIT on an UPDATE/DELETE is not portable (Postgres
+   * has no such form), so these cannot simply be emitted; being loud is the
+   * honest option. See #1111.
+   */
+  private assertNoUnappliedClauses(method: string): void {
+    const ignored: string[] = []
+    if (this._limit !== undefined)
+      ignored.push('limit()')
+    if (this._offset !== undefined)
+      ignored.push('offset()')
+    if (this._orderBy.length > 0)
+      ignored.push('orderBy()')
+
+    if (ignored.length > 0) {
+      throw new TypeError(
+        `[orm] ${method}() cannot apply ${ignored.join(', ')} — an UPDATE/DELETE takes no ORDER BY or LIMIT on every supported dialect. `
+        + `Previously these were ignored, so the statement affected every matching row. Narrow it with where() instead.`,
+      )
+    }
+  }
+
   private composeWhere(params: unknown[]): string {
     const userClause = this._wheres.length > 0 ? this.buildWhereClauses(params) : ''
     const sd = this.softDeleteClause()
@@ -3020,6 +3047,7 @@ class ModelQueryBuilder<
    */
   async increment<K extends NumericColumns<TDef>>(column: K, amount = 1): Promise<number> {
     assertValidIdentifier(column, 'increment(column)')
+    this.assertNoUnappliedClauses('increment')
     const exec = getExecutor()
     const params: unknown[] = [amount]
 
@@ -3031,9 +3059,11 @@ class ModelQueryBuilder<
       params.push(formatNow())
     }
 
-    if (this._wheres.length > 0) {
-      const clauses = this.buildWhereClauses(params)
-      sql += ` WHERE ${clauses}`
+    // See delete(): composeWhere is the only path that adds the soft-delete
+    // predicate, so a scoped counter bump has to go through it. #1111.
+    const whereBody = this.composeWhere(params)
+    if (whereBody) {
+      sql += ` WHERE ${whereBody}`
     }
 
     return (await exec.run(sql, params)).changes
@@ -3185,18 +3215,26 @@ class ModelQueryBuilder<
   }
 
   async delete(): Promise<number> {
+    this.assertNoUnappliedClauses('delete')
     const exec = getExecutor()
     const params: unknown[] = []
     let sql = `DELETE FROM ${this._definition.table}`
 
-    if (this._wheres.length > 0) {
-      sql += ` WHERE ${this.buildWhereClauses(params)}`
+    // composeWhere, not buildWhereClauses: the soft-delete predicate is added
+    // only by composeWhere, so building the WHERE here meant a scope that
+    // exists purely as that predicate contributed nothing to the statement.
+    // `onlyTrashed().delete()` — purge the trash — emitted a bare DELETE and
+    // removed every row, live ones included. See #1111.
+    const whereBody = this.composeWhere(params)
+    if (whereBody) {
+      sql += ` WHERE ${whereBody}`
     }
 
     return (await exec.run(sql, params)).changes
   }
 
   async update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): Promise<number> {
+    this.assertNoUnappliedClauses('update')
     const exec = getExecutor()
     const entries = Object.entries(data)
     const sets = entries.map(([k]) => `${sqlColumn(k)} = ?`).join(', ')
@@ -3208,8 +3246,11 @@ class ModelQueryBuilder<
 
     let sql = `UPDATE ${this._definition.table} SET ${sets}${timestampsEnabled(this._definition) ? ', updated_at = ?' : ''}`
 
-    if (this._wheres.length > 0) {
-      sql += ` WHERE ${this.buildWhereClauses(params)}`
+    // See delete(): composeWhere is the only path that adds the soft-delete
+    // predicate, so a scoped update has to go through it. #1111.
+    const whereBody = this.composeWhere(params)
+    if (whereBody) {
+      sql += ` WHERE ${whereBody}`
     }
 
     return (await exec.run(sql, params)).changes
