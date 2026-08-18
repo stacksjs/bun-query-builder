@@ -6966,6 +6966,31 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
       let sqlText = `UPDATE ${quoteId(String(table))}`
 
+      /**
+       * Whether this builder has already emitted a predicate — which is the
+       * thing the keyword actually depends on.
+       *
+       * It used to be inferred by testing the whole statement for
+       * `/\bWHERE\b/`, and plenty of text that is not this builder's predicate
+       * satisfies that: a subquery inside `set()`, a table named `where`, a
+       * column named `where`. The first real predicate then came out as `AND`
+       * and fused onto the SET expression:
+       *
+       *     SET "flag" = (SELECT ... WHERE x.id > 3) AND "id" = ?
+       *
+       * which leaves the UPDATE with no WHERE at all. Postgres rejects that
+       * only when the types happen not to line up; where the SET target is
+       * boolean, or on SQLite, it runs against every row and writes the
+       * predicate into the value. See #1113.
+       *
+       * A boolean cannot be fooled by any of that.
+       */
+      let hasPredicate = false
+      const appendPredicate = (predicate: string): void => {
+        sqlText = `${sqlText} ${hasPredicate ? 'AND' : 'WHERE'} ${predicate}`
+        hasPredicate = true
+      }
+
       return {
         set(values) {
           const keys = Object.keys(values)
@@ -6992,9 +7017,6 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           return this
         },
         where(expr: any, op?: string, value?: any) {
-          // Helper to get the correct keyword (WHERE for first condition, AND for subsequent)
-          const getWhereKeyword = () => SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
-
           // Handle 3-arg format: where('column', '=', value)
           if (op !== undefined && (typeof expr === 'string' || isRawExpression(expr) || isBoundSqlExpression(expr))) {
             const safeOperator = assertSafeWhereOperator(op, 'updateTable.where')
@@ -7020,14 +7042,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             if (safeOperator.toLowerCase() === 'in' || safeOperator.toLowerCase() === 'not in') {
               const values = Array.isArray(value) ? value : [value]
               const placeholders = getPlaceholders(values.length, params.length + 1)
-              sqlText = `${sqlText} ${getWhereKeyword()} ${left} ${safeOperator.toUpperCase()} (${placeholders})`
+              appendPredicate(`${left} ${safeOperator.toUpperCase()} (${placeholders})`)
               params.push(...values)
               built = _sql.unsafe(sqlText, params)
               return this
             }
 
             const paramIndex = params.length + 1
-            sqlText = `${sqlText} ${getWhereKeyword()} ${left} ${safeOperator} ${getPlaceholder(paramIndex)}`
+            appendPredicate(`${left} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             params.push(value)
             built = _sql.unsafe(sqlText, params)
             return this
@@ -7041,14 +7063,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             if (safeOperator.toLowerCase() === 'in' || safeOperator.toLowerCase() === 'not in') {
               const values = Array.isArray(val) ? val : [val]
               const placeholders = getPlaceholders(values.length, params.length + 1)
-              sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(String(col))} ${safeOperator.toUpperCase()} (${placeholders})`
+              appendPredicate(`${quoteId(String(col))} ${safeOperator.toUpperCase()} (${placeholders})`)
               params.push(...values)
               built = _sql.unsafe(sqlText, params)
               return this
             }
 
             const paramIndex = params.length + 1
-            sqlText = `${sqlText} ${getWhereKeyword()} ${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`
+            appendPredicate(`${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             params.push(val)
             built = _sql.unsafe(sqlText, params)
             return this
@@ -7063,13 +7085,13 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // expression is an object and would otherwise be read as the column
           // map `{ sql: ... }`. See #1101.
           if (isRawExpression(expr)) {
-            sqlText = `${sqlText} ${getWhereKeyword()} ${expr.raw}`
+            appendPredicate(expr.raw)
             built = _sql.unsafe(sqlText, params)
             return this
           }
           if (isBoundSqlExpression(expr)) {
             const rendered = renderBoundSqlExpression(expr, params.length + 1)
-            sqlText = `${sqlText} ${getWhereKeyword()} ${rendered.text}`
+            appendPredicate(rendered.text)
             params.push(...rendered.parameters)
             built = _sql.unsafe(sqlText, params)
             return this
@@ -7087,7 +7109,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               conditions[i] = `${quoteId(keys[i])} = ${getPlaceholder(baseIdx + i + 1)}`
               params.push((expr as any)[keys[i]])
             }
-            sqlText = `${sqlText} ${getWhereKeyword()} ${conditions.join(' AND ')}`
+            appendPredicate(conditions.join(' AND '))
             built = _sql.unsafe(sqlText, params)
             return this
           }
@@ -7104,14 +7126,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           throw new TypeError(`[query-builder] updateTable.where(): expected a condition, got ${expr === null ? 'null' : typeof expr}. Refusing to run an UPDATE with no WHERE — drop the where() call if updating every row is intended.`)
         },
         whereNull(column: string) {
-          const keyword = SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
-          sqlText = `${sqlText} ${keyword} ${quoteId(String(column))} IS NULL`
+          appendPredicate(`${quoteId(String(column))} IS NULL`)
           built = _sql.unsafe(sqlText, params)
           return this
         },
         whereNotNull(column: string) {
-          const keyword = SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
-          sqlText = `${sqlText} ${keyword} ${quoteId(String(column))} IS NOT NULL`
+          appendPredicate(`${quoteId(String(column))} IS NOT NULL`)
           built = _sql.unsafe(sqlText, params)
           return this
         },
@@ -7237,13 +7257,21 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       const delParams: any[] = []
       let whereCondition: any = null
 
-      // First .where() emits ` WHERE `; subsequent calls emit ` AND `.
+      // First predicate emits ` WHERE `; subsequent ones emit ` AND `.
       // Without this, chained `.where('a', '=', 1).where('b', '=', 2)`
       // compiled to `... WHERE a = ? WHERE b = ?` and SQLite 500'd
-      // with `near "WHERE": syntax error`. Mirrors the same helper in
-      // updateTable() at line ~5454.
+      // with `near "WHERE": syntax error`.
       // See https://github.com/stacksjs/bun-query-builder/issues/1015
-      const getWhereKeyword = () => SQL_PATTERNS.WHERE.test(sqlText) ? 'AND' : 'WHERE'
+      //
+      // Tracked as builder state rather than read back out of the statement:
+      // `DELETE FROM "where"` matches /\bWHERE\b/ too, and inferring it from
+      // the text turned the first predicate into `AND` — `DELETE FROM "where"
+      // AND "id" = ?`. Mirrors updateTable(). See #1113.
+      let hasPredicate = false
+      const appendPredicate = (predicate: string): void => {
+        sqlText += ` ${hasPredicate ? 'AND' : 'WHERE'} ${predicate}`
+        hasPredicate = true
+      }
 
       const ensureDelBuilt = () => {
         if (built === null) {
@@ -7271,14 +7299,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             if (safeOperator.toLowerCase() === 'in' || safeOperator.toLowerCase() === 'not in') {
               const values = Array.isArray(value) ? value : [value]
               const placeholders = getPlaceholders(values.length, delParams.length + 1)
-              sqlText += ` ${getWhereKeyword()} ${quoteId(expr)} ${safeOperator.toUpperCase()} (${placeholders})`
+              appendPredicate(`${quoteId(expr)} ${safeOperator.toUpperCase()} (${placeholders})`)
               delParams.push(...values)
               built = null
               return this
             }
 
             const paramIndex = delParams.length + 1
-            sqlText += ` ${getWhereKeyword()} ${quoteId(expr)} ${safeOperator} ${getPlaceholder(paramIndex)}`
+            appendPredicate(`${quoteId(expr)} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             delParams.push(value)
             built = null
             return this
@@ -7291,14 +7319,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             if (safeOperator.toLowerCase() === 'in' || safeOperator.toLowerCase() === 'not in') {
               const values = Array.isArray(val) ? val : [val]
               const placeholders = getPlaceholders(values.length, delParams.length + 1)
-              sqlText += ` ${getWhereKeyword()} ${quoteId(String(col))} ${safeOperator.toUpperCase()} (${placeholders})`
+              appendPredicate(`${quoteId(String(col))} ${safeOperator.toUpperCase()} (${placeholders})`)
               delParams.push(...values)
               built = null
               return this
             }
 
             const paramIndex = delParams.length + 1
-            sqlText += ` ${getWhereKeyword()} ${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`
+            appendPredicate(`${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             delParams.push(val)
             built = null
             return this
@@ -7311,13 +7339,13 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // `where(raw('id = 1'))` with "invalid input syntax for type
           // boolean". The signature accepts SqlFragment, so it has to work.
           if (isRawExpression(expr)) {
-            sqlText += ` ${getWhereKeyword()} ${expr.raw}`
+            appendPredicate(expr.raw)
             built = null
             return this
           }
           if (isBoundSqlExpression(expr)) {
             const rendered = renderBoundSqlExpression(expr, delParams.length + 1)
-            sqlText += ` ${getWhereKeyword()} ${rendered.text}`
+            appendPredicate(rendered.text)
             delParams.push(...rendered.parameters)
             built = null
             return this
@@ -7334,7 +7362,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               conditions.push(`${quoteId(key)} = ${getPlaceholder(paramIndex)}`)
               delParams.push((expr as any)[key])
             }
-            sqlText += ` ${getWhereKeyword()} ${conditions.join(' AND ')}`
+            appendPredicate(conditions.join(' AND '))
             built = null
             return this
           }
@@ -7350,12 +7378,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           throw new TypeError(`[query-builder] deleteFrom.where(): expected a condition, got ${expr === null ? 'null' : typeof expr}. Refusing to run a DELETE with no WHERE — drop the where() call if deleting every row is intended.`)
         },
         whereNull(column: string) {
-          sqlText += ` ${getWhereKeyword()} ${quoteId(String(column))} IS NULL`
+          appendPredicate(`${quoteId(String(column))} IS NULL`)
           built = null
           return this
         },
         whereNotNull(column: string) {
-          sqlText += ` ${getWhereKeyword()} ${quoteId(String(column))} IS NOT NULL`
+          appendPredicate(`${quoteId(String(column))} IS NOT NULL`)
           built = null
           return this
         },
