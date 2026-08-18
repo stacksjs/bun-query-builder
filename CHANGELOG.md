@@ -1,3 +1,22 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.45...v0.2.46)
+
+## ✨ Features
+
+- **client**: $call, so a conditional clause does not break the chain ([990949e](https://github.com/stacksjs/bun-query-builder/commit/990949e)) _(by Chris <chris@stacksjs.com>)_
+
+## 🐛 Bug Fixes
+
+- **orm**: scope destructive statements the way reads are scoped (#1116) ([9c496fa](https://github.com/stacksjs/bun-query-builder/commit/9c496fa)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1111](https://github.com/stacksjs/bun-query-builder/issues/1111), [#1116](https://github.com/stacksjs/bun-query-builder/issues/1116), [#1116](https://github.com/stacksjs/bun-query-builder/issues/1116))
+
+## 🔧 Chores
+
+- release v0.2.46 ([1d61944](https://github.com/stacksjs/bun-query-builder/commit/1d61944)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.44...v0.2.45)
 
 ## ♻️ Code Refactoring
