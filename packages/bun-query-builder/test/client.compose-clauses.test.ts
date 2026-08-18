@@ -55,6 +55,22 @@ describe('selectFrom compose-aware clauses', () => {
       expect(sql).toMatch(/ORDER BY id ASC, LENGTH\(name\) DESC/i)
     })
 
+    it('$call applies a clause conditionally without breaking the chain', () => {
+      const applied = String((qb() as any).selectFrom('users').$call((q: any) => q.where({ active: true })).toSQL())
+      const skipped = String((qb() as any).selectFrom('users').$call((q: any) => q).toSQL())
+
+      expect(applied).toMatch(/WHERE/i)
+      expect(skipped).not.toMatch(/WHERE/i)
+    })
+
+    it('and a callback that returns nothing still returns the query', () => {
+      // The builder mutates and returns itself, so a callback that forgets to
+      // return would otherwise turn the whole query into `undefined`.
+      const sql = String((qb() as any).selectFrom('users').$call((q: any) => { q.where({ active: true }) }).toSQL())
+
+      expect(sql).toMatch(/WHERE/i)
+    })
+
     it('reorder still wipes any prior ORDER BY (legacy behavior preserved)', () => {
       const sql = String((qb() as any).selectFrom('users').orderBy('id').reorder('name', 'desc').toSQL())
       expect(sql).toMatch(/ORDER BY name DESC$/i)

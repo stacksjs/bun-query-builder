@@ -1309,6 +1309,23 @@ export interface BaseSelectQueryBuilder<
    */
   orderByRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   /**
+   * # `$call`
+   *
+   * Applies a callback to this query and returns the query, so a filter that
+   * only sometimes applies can be written without breaking the chain.
+   *
+   * The callback's return value is ignored: this builder mutates and returns
+   * itself, so returning the query and not returning it mean the same thing.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.selectFrom('users')
+   *   .$call(q => (wanted ? q.where({ active: true }) : q))
+   *   .get()
+   * ```
+   */
+  $call: (callback: (query: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => unknown) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  /**
    * # `union`
    *
    * Unions another query.
@@ -5523,6 +5540,24 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           ? `${text}, ${frag}`
           : `${text} ORDER BY ${frag}`
         built = null
+        return this as any
+      },
+      $call(callback: (query: any) => any) {
+        /*
+         * Conditional chaining, without breaking the chain.
+         *
+         * `query.$call(q => wanted ? q.where(...) : q)` is how a filter that
+         * only sometimes applies is written without assigning the builder to a
+         * variable and losing the fluency - the shape Kysely made standard.
+         *
+         * The callback's return value is ignored on purpose: this builder
+         * mutates and returns itself, so a callback that forgets to return
+         * would otherwise turn the whole query into `undefined`. Taking `this`
+         * back makes the two spellings - returning the query or not - mean the
+         * same thing.
+         */
+        callback(this as any)
+
         return this as any
       },
       union(other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) {
