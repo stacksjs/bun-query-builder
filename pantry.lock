@@ -16,7 +16,7 @@
     },
     "packages/benchmark": {
       "name": "@bun-query-builder/benchmark",
-      "version": "0.2.52",
+      "version": "0.2.53",
       "dependencies": {
         "drizzle-orm": "^0.45.1",
         "kysely": "^0.28.11",
@@ -36,7 +36,7 @@
     },
     "packages/bun-query-builder": {
       "name": "bun-query-builder",
-      "version": "0.2.52",
+      "version": "0.2.53",
       "dependencies": {
         "@stacksjs/ts-validation": "^0.4.9",
         "dynamodb-tooling": "^0.3.2",

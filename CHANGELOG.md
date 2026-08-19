@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.52...v0.2.53)
+
+## ⚡ Performance Improvements
+
+- **build**: share chunks between the four entries ([864f5ce](https://github.com/stacksjs/bun-query-builder/commit/864f5ce)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.53 ([5329052](https://github.com/stacksjs/bun-query-builder/commit/5329052)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.51...v0.2.52)
 
 ## ⚡ Performance Improvements
