@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.46...v0.2.47)
+
+## 🐛 Bug Fixes
+
+- **mysql**: a key over a long column, and $call on a sub-select ([4bdcc47](https://github.com/stacksjs/bun-query-builder/commit/4bdcc47)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.47 ([fff990c](https://github.com/stacksjs/bun-query-builder/commit/fff990c)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.45...v0.2.46)
 
 ## ✨ Features
