@@ -166,9 +166,43 @@ function hasSlowQueryHook(h: any): boolean {
  * fragment are not threaded (the documented use is literal expressions like
  * `count(*) as c`).
  */
+/**
+ * A plain identifier, quoted for MySQL. Anything else is left exactly as written.
+ *
+ * MySQL reserves words this schema uses as ordinary column names - `condition`,
+ * `uses`, `key`, `groups`, `rank` - and an unquoted one is a syntax error at
+ * that point in the statement, not a bad-column error. ReviewOS met it as a
+ * `SELECT` of a workflow job's columns failing 167 times in one run: the
+ * columns are perfectly legal, and only the spelling was wrong.
+ *
+ * Only a bare `name` or a qualified `table.name` is quoted. An expression, an
+ * alias, a `count(*)`, a `*`, anything already quoted: untouched, because
+ * quoting those would break them.
+ *
+ * MySQL only, deliberately. On Postgres a quoted identifier becomes
+ * case-*sensitive*, so quoting `createdAt` would stop it matching the
+ * `createdat` the server actually stored - a fix that breaks a working query.
+ * MySQL's identifiers are case-insensitive on every platform this runs on, so
+ * the quoting changes nothing but the parse.
+ */
+export function quoteColumnForDialect(name: string, dialect = config.dialect): string {
+  if (!isMysqlLike(dialect))
+    return name
+
+  if (/^[A-Z_][\w$]*$/i.test(name))
+    return `\`${name}\``
+
+  const qualified = /^([A-Z_][\w$]*)\.([A-Z_][\w$]*)$/i.exec(name)
+
+  if (qualified)
+    return `\`${qualified[1]}\`.\`${qualified[2]}\``
+
+  return name
+}
+
 function renderSelectColumn(col: unknown): string {
   if (typeof col === 'string')
-    return col
+    return quoteColumnForDialect(col)
   if (isRawExpression(col))
     return col.raw
   if (col && typeof col === 'object') {
@@ -3430,7 +3464,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         if (operator === 'in' || operator === 'not in') {
           const values = Array.isArray(val) ? val : [val]
           const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-          const clause = renderInPredicate(colName, values, operator === 'not in', placeholders)
+          const clause = renderInPredicate(quoteColumnForDialect(colName), values, operator === 'not in', placeholders)
           whereParams.push(...values)
           pushWhere(conn, clause)
         }
@@ -3456,7 +3490,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           const v = (expr as any)[key]
           if (Array.isArray(v)) {
             const placeholders = getPlaceholders(v.length, whereParams.length + 1)
-            conditions.push(renderInPredicate(key, v, false, placeholders))
+            conditions.push(renderInPredicate(quoteColumnForDialect(key), v, false, placeholders))
             whereParams.push(...v)
           }
           else {
@@ -4811,14 +4845,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(value) ? value : [value]
             const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-            const clause = renderInPredicate(String(expr), values, operator === 'not in', placeholders)
+            const clause = renderInPredicate(quoteColumnForDialect(String(expr)), values, operator === 'not in', placeholders)
             whereParams.push(...values)
             pushWhere('AND', clause)
             return this
           }
           const paramIndex = whereParams.length + 1
           whereParams.push(value)
-          pushWhere('AND', `${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
+          pushWhere('AND', `${quoteColumnForDialect(String(expr))} ${String(op)} ${getPlaceholder(paramIndex)}`)
           return this
         }
 
@@ -4832,14 +4866,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           if (operator === 'in' || operator === 'not in') {
             const values = Array.isArray(val) ? val : [val]
             const placeholders = getPlaceholders(values.length, whereParams.length + 1)
-            const clause = renderInPredicate(colName, values, operator === 'not in', placeholders)
+            const clause = renderInPredicate(quoteColumnForDialect(colName), values, operator === 'not in', placeholders)
             whereParams.push(...values)
             pushWhere('AND', clause)
           }
           else {
             const paramIndex = whereParams.length + 1
             whereParams.push(val)
-            pushWhere('AND', `${colName} ${operator} ${getPlaceholder(paramIndex)}`)
+            pushWhere('AND', `${quoteColumnForDialect(colName)} ${operator} ${getPlaceholder(paramIndex)}`)
           }
 
           return this
@@ -4856,12 +4890,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const value = whereObject[key]
             if (Array.isArray(value)) {
               const placeholders = getPlaceholders(value.length, whereParams.length + 1)
-              conditions.push(renderInPredicate(key, value, false, placeholders))
+              conditions.push(renderInPredicate(quoteColumnForDialect(key), value, false, placeholders))
               whereParams.push(...value)
             }
             else {
               const paramIndex = whereParams.length + 1
-              conditions.push(`${key} = ${getPlaceholder(paramIndex)}`)
+              conditions.push(`${quoteColumnForDialect(key)} = ${getPlaceholder(paramIndex)}`)
               whereParams.push(value)
             }
           }
