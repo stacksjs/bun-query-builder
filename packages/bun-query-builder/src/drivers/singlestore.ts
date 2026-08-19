@@ -1,4 +1,4 @@
-import type { IndexPlan, TablePlan } from '../migrations'
+import type { ColumnPlan, IndexPlan, TablePlan } from '../migrations'
 import { MySQLDriver } from './mysql'
 
 /**
@@ -70,7 +70,7 @@ export class SingleStoreDriver extends MySQLDriver {
     return ''
   }
 
-  override createIndex(tableName: string, index: IndexPlan): string {
+  override createIndex(tableName: string, index: IndexPlan, columns?: readonly ColumnPlan[]): string {
     if (index.where) {
       throw new Error(
         `[migrations] Partial indexes (CompositeIndex.where) are not supported on SingleStore. Index '${index.name}' on table '${tableName}' uses WHERE clause: ${index.where}`,
@@ -80,6 +80,6 @@ export class SingleStoreDriver extends MySQLDriver {
     // enforced when they contain the shard key, but we still emit the requested
     // shape and let the engine validate — the same responsibility boundary the
     // MySQL driver keeps. Reuse the MySQL implementation.
-    return super.createIndex(tableName, index)
+    return super.createIndex(tableName, index, columns)
   }
 }

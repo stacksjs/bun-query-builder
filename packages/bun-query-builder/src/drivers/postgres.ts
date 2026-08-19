@@ -4,7 +4,12 @@ import { qualifiedIndexName } from './index-name'
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
   createTable: (table: TablePlan) => string
-  createIndex: (tableName: string, index: IndexPlan) => string
+  /**
+   * `columns` is the table's column plan, which MySQL needs and the others
+   * ignore: a key part over a TEXT column has to name a prefix length there,
+   * and the length is only knowable from the column's type.
+   */
+  createIndex: (tableName: string, index: IndexPlan, columns?: readonly ColumnPlan[]) => string
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string, existingConstraintNames?: string[]) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
   modifyColumn: (tableName: string, column: ColumnPlan) => string

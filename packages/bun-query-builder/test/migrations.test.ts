@@ -202,6 +202,31 @@ describe('migration planner', () => {
     expect(() => generateSql(plan)).toThrow(/Partial indexes.*not supported on MySQL/)
   })
 
+  it('gives a long column a key prefix on MySQL, and leaves short ones whole', () => {
+    // MySQL cannot index a TEXT column at all without a prefix length - it
+    // raises "BLOB/TEXT column used in key specification without a key length" -
+    // and a model whose string is longer than 767 characters becomes TEXT. So a
+    // path column in an index is the ordinary case, not an exotic one.
+    const m = defineModels({
+      Thread: {
+        name: 'Thread',
+        table: 'threads',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} } },
+          pull_request_id: { type: 'integer', validation: { rule: {} } },
+          path: { type: 'text', validation: { rule: {} } },
+        },
+        indexes: [{ name: 'threads_path_index', columns: ['pull_request_id', 'path'] }],
+      },
+    } as const)
+
+    const sql = generateSql(buildMigrationPlan(m as any, { dialect: 'mysql' })).join('\n')
+
+    expect(sql).toContain('`path`(255)')
+    expect(sql).not.toContain('`pull_request_id`(255)')
+  })
+
   it('auto-emits Option A inline pivot tables', () => {
     const m = defineModels({
       Coach: {

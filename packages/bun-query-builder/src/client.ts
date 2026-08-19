@@ -6475,6 +6475,24 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             : `${baseText}, ${frag}`
           return makeSub(newBase, terms, params, tail) as any
         },
+        $call(callback: (query: any) => any) {
+          /*
+           * The same conditional-chaining hook the main builder has, and it has
+           * to be here for the type to be true: `BaseSelectQueryBuilder`
+           * declares `$call`, so a sub-select that lacked it was a builder that
+           * did not implement the interface it claimed - the one thing `tsc`
+           * had to say about this file.
+           *
+           * The callback's return value is used, where the main builder ignores
+           * it, and that is not an inconsistency: this builder is immutable, so
+           * `q.where(...)` yields a *new* sub-select and dropping it would drop
+           * the clause. A callback that forgets to return gets the unchanged
+           * query rather than `undefined`.
+           */
+          const next = callback(this as any)
+
+          return (next ?? this) as any
+        },
         where(expr: any, op?: WhereOperator, value?: any) {
           return withTerm('AND', expr, op, value)
         },

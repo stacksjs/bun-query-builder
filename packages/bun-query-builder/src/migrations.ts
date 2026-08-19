@@ -1259,7 +1259,7 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
     tableStatements.push(createTableStatement)
 
     for (const idx of t.indexes)
-      tableStatements.push(driver.createIndex(t.table, idx))
+      tableStatements.push(driver.createIndex(t.table, idx, t.columns))
 
     // A cyclic graph cannot express every constraint inline because one side
     // necessarily references a table that does not exist yet. Keep those
@@ -1780,7 +1780,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
     tableStatements.push(createTableStatement)
 
     for (const idx of t.indexes) {
-      const createIndexStatement = driver.createIndex(t.table, idx)
+      const createIndexStatement = driver.createIndex(t.table, idx, t.columns)
       tableStatements.push(createIndexStatement)
       operations.push({ kind: 'create_index', table: t.table, column: idx.name, destructive: false, sql: createIndexStatement })
     }
@@ -2074,7 +2074,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
     for (const key of Object.keys(currIdx)) {
       if (!prevIdx[key]) {
         const idx = currIdx[key]
-        const createIndexStatement = driver.createIndex(curr.table, idx)
+        const createIndexStatement = driver.createIndex(curr.table, idx, curr.columns)
         tableChanges.push(createIndexStatement)
         chunks.push(createIndexStatement)
         operations.push({ kind: 'create_index', table: curr.table, column: idx.name, destructive: false, sql: createIndexStatement })

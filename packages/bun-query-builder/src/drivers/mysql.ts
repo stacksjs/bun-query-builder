@@ -5,7 +5,12 @@ import { qualifiedIndexName } from './index-name'
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
   createTable: (table: TablePlan) => string
-  createIndex: (tableName: string, index: IndexPlan) => string
+  /**
+   * `columns` is the table's column plan, which MySQL needs and the others
+   * ignore: a key part over a TEXT column has to name a prefix length there,
+   * and the length is only knowable from the column's type.
+   */
+  createIndex: (tableName: string, index: IndexPlan, columns?: readonly ColumnPlan[]) => string
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string, existingConstraintNames?: string[]) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
   modifyColumn: (tableName: string, column: ColumnPlan) => string
@@ -114,7 +119,42 @@ export class MySQLDriver implements DialectDriver {
     return `CREATE TABLE IF NOT EXISTS ${this.quoteIdentifier(table.table)} (\n  ${columns}\n);`
   }
 
-  createIndex(tableName: string, index: IndexPlan): string {
+  /**
+   * How many leading characters of a long column go into a key.
+   *
+   * 255 characters is 1020 bytes under utf8mb4, so three of them still fit
+   * InnoDB's 3072-byte key limit, and it is long enough that a lookup on a file
+   * path or a URL narrows to a handful of rows before the engine rechecks the
+   * full value. A prefix index answers equality and range the same way a whole
+   * one does; what it cannot do is cover the query or enforce uniqueness over
+   * the untruncated value, which is why this applies to columns that are too
+   * long to index whole rather than to every column.
+   */
+  protected static readonly KEY_PREFIX_CHARACTERS = 255
+
+  /**
+   * Whether this column can only be indexed by a prefix.
+   *
+   * TEXT and BLOB cannot be indexed at all without one - MySQL raises "BLOB/TEXT
+   * column used in key specification without a key length" - and a `varchar`
+   * wider than the key limit fails the same way for a different reason. Both are
+   * the same question: is the value too big to put in a key whole.
+   */
+  protected needsKeyPrefix(column: ColumnPlan): boolean {
+    const rendered = this.getColumnType(column).toLowerCase()
+
+    if (rendered.includes('text') || rendered.includes('blob') || rendered === 'json')
+      return true
+
+    // 768 characters is 3072 bytes at utf8mb4's four bytes per character, which
+    // is the whole budget for one key - so anything at or above it needs a
+    // prefix even before a second column joins the index.
+    const width = rendered.match(/^(?:var)?char\((\d+)\)$/)?.[1]
+
+    return width !== undefined && Number(width) >= 768
+  }
+
+  createIndex(tableName: string, index: IndexPlan, columns?: readonly ColumnPlan[]): string {
     if (index.where) {
       throw new Error(
         `[migrations] Partial indexes (CompositeIndex.where) are not supported on MySQL. Index '${index.name}' on table '${tableName}' uses WHERE clause: ${index.where}`,
@@ -122,9 +162,22 @@ export class MySQLDriver implements DialectDriver {
     }
     const kind = index.type === 'unique' ? 'UNIQUE ' : ''
     const idxName = qualifiedIndexName(tableName, index.name)
-    const columns = index.columns.map(c => this.quoteIdentifier(c)).join(', ')
+    const keyParts = index.columns.map((name) => {
+      const column = columns?.find(one => one.name === name)
+      const quoted = this.quoteIdentifier(name)
+
+      /*
+       * Without the column plan this cannot know a TEXT column from a short
+       * one, and it emits what it was given rather than guessing - a prefix on
+       * a column that does not need one is a narrower key than the author
+       * asked for, and the server's error is at least loud.
+       */
+      return column && this.needsKeyPrefix(column)
+        ? `${quoted}(${MySQLDriver.KEY_PREFIX_CHARACTERS})`
+        : quoted
+    }).join(', ')
     // MySQL doesn't support IF NOT EXISTS for CREATE INDEX, so we use a different approach
-    return `CREATE ${kind}INDEX ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${columns});`
+    return `CREATE ${kind}INDEX ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${keyParts});`
   }
 
   /** Add a foreign key, dropping exact live constraint names when replacing one. */
