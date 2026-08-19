@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.50...v0.2.51)
+
+## 🐛 Bug Fixes
+
+- **migrations**: a managed timestamp defaults to UTC, not to the session ([263b8e8](https://github.com/stacksjs/bun-query-builder/commit/263b8e8)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.51 ([d33c64f](https://github.com/stacksjs/bun-query-builder/commit/d33c64f)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.49...v0.2.50)
 
 ## 🐛 Bug Fixes
