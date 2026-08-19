@@ -8457,23 +8457,54 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
       let sql = `UPDATE ${table} SET ${setClauses.join(',')}`
 
-      // Build WHERE clause
+      // Build WHERE clause.
+      //
+      // Every branch below either appends a predicate or throws. `conditions`
+      // is a required parameter, so there is no shape of it that means "every
+      // row" — passing one is the caller saying they have a filter. Anything
+      // this cannot turn into a predicate used to fall straight through to an
+      // UPDATE with no WHERE, which rewrote the whole table and reported the
+      // full count as success. See #1112, and #1101 for the same defect in
+      // updateTable().
       if (Array.isArray(conditions)) {
-        sql += ` WHERE ${conditions[0]}${conditions[1]}${getPlaceholder(params.length + 1)}`
+        // Separated by spaces: the three parts used to be concatenated bare,
+        // which is fine for `=` and `>=` and produces `namelike?` for every
+        // word operator the allowed set contains.
+        const safeOperator = assertSafeWhereOperator(String(conditions[1]), 'updateMany')
+        sql += ` WHERE ${conditions[0]} ${safeOperator} ${getPlaceholder(params.length + 1)}`
         params.push(conditions[2])
       }
-      else if (conditions && typeof conditions === 'object' && !('raw' in conditions)) {
+      // A fragment is inside the declared `WhereExpression` type (through
+      // `WhereRaw`) and `raw` is a public export, so `updateMany(t, raw('id =
+      // 1'), data)` typechecks and reads like the intended way to express a
+      // condition this signature cannot otherwise carry. It matched no branch.
+      else if (isRawExpression(conditions)) {
+        sql += ` WHERE ${conditions.raw}`
+      }
+      else if (isBoundSqlExpression(conditions)) {
+        const rendered = renderBoundSqlExpression(conditions, params.length + 1)
+        sql += ` WHERE ${rendered.text}`
+        params.push(...rendered.parameters)
+      }
+      else if (conditions && typeof conditions === 'object' && Object.keys(conditions).length > 0) {
         const condKeys = Object.keys(conditions)
         const condLen = condKeys.length
-        if (condLen > 0) {
-          const baseIdx = params.length
-          const whereClauses: string[] = Array.from({ length: condLen })
-          for (let i = 0; i < condLen; i++) {
-            whereClauses[i] = `${condKeys[i]}=${getPlaceholder(baseIdx + i + 1)}`
-            params.push((conditions as any)[condKeys[i]])
-          }
-          sql += ` WHERE ${whereClauses.join(' AND ')}`
+        const baseIdx = params.length
+        const whereClauses: string[] = Array.from({ length: condLen })
+        for (let i = 0; i < condLen; i++) {
+          whereClauses[i] = `${condKeys[i]}=${getPlaceholder(baseIdx + i + 1)}`
+          params.push((conditions as any)[condKeys[i]])
         }
+        sql += ` WHERE ${whereClauses.join(' AND ')}`
+      }
+      // The empty object is the one that bites in production: `conditions` is
+      // usually built from request input, and `updateMany(t, buildFilter(req.query), data)`
+      // rewrote every row the moment the filter came back empty.
+      else if (conditions && typeof conditions === 'object') {
+        throw new TypeError('[query-builder] updateMany(): an empty object is not a filter. Pass a condition, or use updateTable(table).set(data).execute() if updating every row is intended.')
+      }
+      else {
+        throw new TypeError(`[query-builder] updateMany(): expected a condition, got ${conditions === null ? 'null' : typeof conditions}. Refusing to run an UPDATE with no WHERE — use updateTable(table).set(data).execute() if updating every row is intended.`)
       }
 
       return _sql.unsafe(sql, params).execute()
