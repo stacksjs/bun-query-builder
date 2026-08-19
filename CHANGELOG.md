@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.51...v0.2.52)
+
+## ⚡ Performance Improvements
+
+- **build**: minify the published bundles ([08b6ca1](https://github.com/stacksjs/bun-query-builder/commit/08b6ca1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.52 ([619e64b](https://github.com/stacksjs/bun-query-builder/commit/619e64b)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.50...v0.2.51)
 
 ## 🐛 Bug Fixes
