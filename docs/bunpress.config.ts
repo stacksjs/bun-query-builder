@@ -1,7 +1,7 @@
-import type { BunPressConfig } from 'bunpress'
+import type { BunPressConfig } from '@stacksjs/bunpress'
 
 export default {
-  name: 'bun-query-builder',
+  title: 'bun-query-builder',
   description: 'Fully-typed, model-driven Query Builder for Bun',
   themeConfig: {
     nav: [

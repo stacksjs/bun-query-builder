@@ -78,6 +78,7 @@
     "@stacksjs/ts-validation": "^0.5.3"
   },
   "devDependencies": {
+    "@stacksjs/bunpress": "^0.2.11",
     "@stacksjs/launchpad": "^0.6.4",
     "@stacksjs/ts-faker": "^0.1.8",
     "better-dx": "^0.2.22",
