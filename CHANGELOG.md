@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.54...v0.2.55)
+
+## 🐛 Bug Fixes
+
+- **mysql**: quote a plain column, so a reserved word parses ([acb9c20](https://github.com/stacksjs/bun-query-builder/commit/acb9c20)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.55 ([c0c6305](https://github.com/stacksjs/bun-query-builder/commit/c0c6305)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.53...v0.2.54)
 
 ## ✨ Features
