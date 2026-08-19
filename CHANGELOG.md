@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.47...v0.2.48)
+
+## 🐛 Bug Fixes
+
+- **mysql**: a schema with the foreign keys and the charset it says it has ([5bc37eb](https://github.com/stacksjs/bun-query-builder/commit/5bc37eb)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.48 ([1b65016](https://github.com/stacksjs/bun-query-builder/commit/1b65016)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.46...v0.2.47)
 
 ## 🐛 Bug Fixes
