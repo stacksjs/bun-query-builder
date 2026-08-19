@@ -11,6 +11,7 @@ import { dts } from 'bun-plugin-dtsx'
 // top-level await is the only way to await at all.
 // eslint-disable-next-line ts/no-top-level-await
 const result = await Bun.build({
+  minify: true,
   entrypoints: ['src/index.ts', 'src/browser.ts', 'src/dynamodb/index.ts', 'bin/cli.ts'],
   outdir: './dist',
   target: 'bun',
