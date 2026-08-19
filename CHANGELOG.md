@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.55...v0.2.56)
+
+## 🐛 Bug Fixes
+
+- **mysql**: quote the alias too, which is the same reserved word ([3525a0f](https://github.com/stacksjs/bun-query-builder/commit/3525a0f)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.56 ([19c80fa](https://github.com/stacksjs/bun-query-builder/commit/19c80fa)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.54...v0.2.55)
 
 ## 🐛 Bug Fixes
