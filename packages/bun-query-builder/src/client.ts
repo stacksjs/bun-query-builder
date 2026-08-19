@@ -6729,6 +6729,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       let built: any
       let sqlText = ''
       const params: any[] = []
+      /** The `id` of each row handed to `values()`, where the caller set one. */
+      let insertedKeys: unknown[] = []
       // Set when `values()` is handed an empty batch. There is no statement to
       // run in that case, so every terminal below answers from here instead of
       // executing a stand-in query. See #1097.
@@ -6775,6 +6777,81 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       }
       const isPostgres = config.dialect === 'postgres'
 
+      /**
+       * `.returning(...)` on MySQL, which has no RETURNING clause.
+       *
+       * The insert runs as written; the rows come back from a second statement
+       * keyed on what the server assigned. `LAST_INSERT_ID()` is scoped to this
+       * connection and reports the *first* id a multi-row insert generated, and
+       * InnoDB allocates that statement's ids consecutively - so `affectedRows`
+       * gives the range. That is documented behaviour under the default
+       * `innodb_autoinc_lock_mode`, and it is the same assumption every MySQL
+       * ORM makes for this.
+       *
+       * An insert that supplied its own keys gets `0` back, since nothing was
+       * generated. Those rows are read by the keys they were given instead,
+       * which is exact.
+       */
+      const mysqlReturningBuilder = (cols: string[]): any => {
+        const key = 'id'
+        const wanted = cols.length > 0 && !cols.includes('*') ? cols.map(column => quoteId(column)).join(', ') : '*'
+
+        const run = async (): Promise<any[]> => {
+          const inserted = await runWithHooks<any>(_sql.unsafe(sqlText, params), 'insert')
+          const first = Number((inserted as any)?.lastInsertRowid ?? 0)
+          const affected = Math.max(1, Number((inserted as any)?.affectedRows ?? 1))
+
+          const given = insertedKeys.filter(value => value !== undefined && value !== null)
+
+          const read = first > 0
+            ? _sql.unsafe(
+                `SELECT ${wanted} FROM ${quoteId(String(table))} WHERE ${quoteId(key)} >= ? AND ${quoteId(key)} < ? ORDER BY ${quoteId(key)} ASC`,
+                [first, first + affected],
+              )
+            : given.length > 0
+              ? _sql.unsafe(
+                  `SELECT ${wanted} FROM ${quoteId(String(table))} WHERE ${quoteId(key)} IN (${given.map(() => '?').join(', ')}) ORDER BY ${quoteId(key)} ASC`,
+                  given,
+                )
+              : null
+
+          if (!read)
+            return []
+
+          const rows = await read.execute()
+
+          return Array.isArray(rows) ? rows : []
+        }
+
+        const runFirst = async (): Promise<any> => (await run())[0]
+
+        return {
+          where: () => this,
+          andWhere: () => this,
+          orWhere: () => this,
+          orderBy: () => this,
+          limit: () => this,
+          offset: () => this,
+          toSQL: () => makeExecutableQuery(_sql.unsafe(sqlText, params), sqlText) as any,
+          execute: run,
+          get: run,
+          first: runFirst,
+          executeTakeFirst: runFirst,
+          async firstOrFail() {
+            const row = await runFirst()
+            if (!row)
+              throw new Error('Insert with RETURNING returned no rows')
+            return row
+          },
+          async executeTakeFirstOrThrow() {
+            const row = await runFirst()
+            if (!row)
+              throw new Error('Insert with RETURNING returned no rows')
+            return row
+          },
+        }
+      }
+
       // Quote identifier based on dialect. SQLite supports double-quoted
       // identifiers per the SQL standard; emitting them (with internal
       // quote-doubling) closes a SQL-injection vector that existed when
@@ -6798,6 +6875,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         values(data: Partial<any> | Partial<any>[]) {
           const rows = Array.isArray(data) ? data : [data]
           const rowCount = rows.length
+
+          // Kept for MySQL's `.returning(...)`, which reads the rows back: an
+          // insert that supplied its own keys generates nothing, so
+          // `LAST_INSERT_ID()` is 0 and these are what identify the rows.
+          insertedKeys = rows.map(row => (row as any)?.id)
           if (rowCount === 0) {
             // Inserting no rows is a no-op, not a query. This used to run
             // `SELECT 1` as a stand-in, which meant `.execute()` resolved to a
@@ -6896,6 +6978,25 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // the statement failed to parse.
           if (noRows)
             return emptyReturningBuilder()
+
+          /*
+           * MySQL has no RETURNING, so the read is a second statement.
+           *
+           * Postgres and SQLite both take `INSERT ... RETURNING`; MySQL does
+           * not, and emitted there it is a syntax error at the end of an
+           * otherwise valid insert - "check the manual ... near 'RETURNING id'".
+           * The application cannot avoid it either: an insert whose id nothing
+           * can read is an insert whose row nothing can reference, so every
+           * create path in a codebase uses it.
+           *
+           * So on MySQL the insert runs as written and the row is read back by
+           * the key the server just assigned. `LAST_INSERT_ID()` is per
+           * connection and per statement, which is what makes this safe under
+           * concurrency: another session's insert cannot be seen here.
+           */
+          if (isMysqlLike(config.dialect))
+            return mysqlReturningBuilder(cols)
+
           // Append RETURNING clause to the existing SQL
           const returningSql = `${sqlText} RETURNING ${cols.join(', ')}`
           const q = _sql.unsafe(returningSql, params)
