@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.48...v0.2.49)
+
+## 🐛 Bug Fixes
+
+- **mysql**: budget a composite key against the byte limit, not per column ([0a40d51](https://github.com/stacksjs/bun-query-builder/commit/0a40d51)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.49 ([43d2b44](https://github.com/stacksjs/bun-query-builder/commit/43d2b44)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.47...v0.2.48)
 
 ## 🐛 Bug Fixes
