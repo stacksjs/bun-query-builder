@@ -189,15 +189,21 @@ export function quoteColumnForDialect(name: string, dialect = config.dialect): s
   if (!isMysqlLike(dialect))
     return name
 
-  if (/^[A-Z_][\w$]*$/i.test(name))
-    return `\`${name}\``
+  /*
+   * `column`, `table.column`, and either of those with an `AS alias`. The alias
+   * is quoted too: `... AS condition` is the same reserved word in the same
+   * statement, and a select list of `t.condition as condition` was the second
+   * shape of this bug, found after the first fix went out.
+   */
+  const parsed = /^([A-Z_][\w$]*)(?:\.([A-Z_][\w$]*))?(?:\s+as\s+([A-Z_][\w$]*))?$/i.exec(name.trim())
 
-  const qualified = /^([A-Z_][\w$]*)\.([A-Z_][\w$]*)$/i.exec(name)
+  if (!parsed)
+    return name
 
-  if (qualified)
-    return `\`${qualified[1]}\`.\`${qualified[2]}\``
+  const [, first, second, alias] = parsed
+  const column = second ? `\`${first}\`.\`${second}\`` : `\`${first}\``
 
-  return name
+  return alias ? `${column} AS \`${alias}\`` : column
 }
 
 function renderSelectColumn(col: unknown): string {

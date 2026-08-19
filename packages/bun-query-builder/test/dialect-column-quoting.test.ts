@@ -20,9 +20,18 @@ describe('quoting a column for the dialect', () => {
     expect(quoteColumnForDialect('jobs.condition', 'mysql')).toBe('`jobs`.`condition`')
   })
 
+  test('quotes an alias too, since it is the same reserved word', () => {
+    // The second shape of this bug, found after the first fix shipped: a select
+    // list of `t.condition as condition` still stopped the parser, on the
+    // alias.
+    expect(quoteColumnForDialect('workflow_version_steps.condition as condition', 'mysql'))
+      .toBe('`workflow_version_steps`.`condition` AS `condition`')
+    expect(quoteColumnForDialect('name as n', 'mysql')).toBe('`name` AS `n`')
+  })
+
   test('leaves anything that is not a plain identifier exactly as written', () => {
     // Quoting these would break them, which is why the rule is narrow.
-    for (const expression of ['*', 'count(*)', 'count(*) as n', 'a.*', '`already`', 'MAX(created_at)']) {
+    for (const expression of ['*', 'count(*)', 'count(*) as n', 'a.*', '`already`', 'MAX(created_at)', 'MAX(x) as m']) {
       expect(quoteColumnForDialect(expression, 'mysql')).toBe(expression)
     }
   })
