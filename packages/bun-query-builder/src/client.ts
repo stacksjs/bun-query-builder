@@ -29,6 +29,35 @@ interface BoundSqlExpression {
   parameters?: readonly unknown[]
 }
 
+/**
+ * Render one `{ column: value }` entry of an object-form where() as a
+ * predicate, appending its bound parameters to `params`.
+ *
+ * An array value means IN. The select builder has read it that way since
+ * #1013/#1083; the write builders bound the whole array to a single
+ * placeholder, so `where({ id: [3, 2] })` selected two rows on a SELECT and
+ * matched nothing on an UPDATE or a DELETE — silently, reporting success. The
+ * bulk delete of a set of ids is exactly the call people write it for.
+ *
+ * An empty array renders as `1 = 0` rather than disappearing, which is what
+ * the select builder does and the only safe reading on a write: a filter the
+ * caller supplied must never widen to "every row".
+ *
+ * Shared by all three write paths so they cannot drift apart again — the
+ * divergence, not any one branch, is what kept producing these. See #1114.
+ */
+function renderColumnCondition(column: string, value: unknown, params: unknown[]): string {
+  if (Array.isArray(value)) {
+    const placeholders = getPlaceholders(value.length, params.length + 1)
+    const clause = renderInPredicate(column, value, false, placeholders)
+    params.push(...value)
+    return clause
+  }
+  const clause = `${column} = ${getPlaceholder(params.length + 1)}`
+  params.push(value)
+  return clause
+}
+
 function isBoundSqlExpression(expr: unknown): expr is BoundSqlExpression {
   return typeof expr === 'object'
     && expr !== null
@@ -7427,13 +7456,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const keys = Object.keys(expr)
             if (keys.length === 0)
               throw new TypeError('[query-builder] updateTable.where({}): an empty object is not a filter. Pass a condition, or drop the where() call if updating every row is intended.')
-            const len = keys.length
-            const baseIdx = params.length
-            const conditions: string[] = Array.from({ length: len })
-            for (let i = 0; i < len; i++) {
-              conditions[i] = `${quoteId(keys[i])} = ${getPlaceholder(baseIdx + i + 1)}`
-              params.push((expr as any)[keys[i]])
-            }
+            const conditions = keys.map(key => renderColumnCondition(quoteId(key), (expr as any)[key], params))
             appendPredicate(conditions.join(' AND '))
             built = _sql.unsafe(sqlText, params)
             return this
@@ -7731,12 +7754,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const keys = Object.keys(expr)
             if (keys.length === 0)
               throw new TypeError('[query-builder] deleteFrom.where({}): an empty object is not a filter. Pass a condition, or drop the where() call if deleting every row is intended.')
-            const conditions: string[] = []
-            for (const key of keys) {
-              const paramIndex = delParams.length + 1
-              conditions.push(`${quoteId(key)} = ${getPlaceholder(paramIndex)}`)
-              delParams.push((expr as any)[key])
-            }
+            const conditions = keys.map(key => renderColumnCondition(quoteId(key), (expr as any)[key], delParams))
             appendPredicate(conditions.join(' AND '))
             built = null
             return this
@@ -8530,14 +8548,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         params.push(...rendered.parameters)
       }
       else if (conditions && typeof conditions === 'object' && Object.keys(conditions).length > 0) {
-        const condKeys = Object.keys(conditions)
-        const condLen = condKeys.length
-        const baseIdx = params.length
-        const whereClauses: string[] = Array.from({ length: condLen })
-        for (let i = 0; i < condLen; i++) {
-          whereClauses[i] = `${condKeys[i]}=${getPlaceholder(baseIdx + i + 1)}`
-          params.push((conditions as any)[condKeys[i]])
-        }
+        const whereClauses = Object.keys(conditions).map(key =>
+          renderColumnCondition(key, (conditions as any)[key], params))
         sql += ` WHERE ${whereClauses.join(' AND ')}`
       }
       // The empty object is the one that bites in production: `conditions` is
