@@ -40,6 +40,22 @@ export interface SchemaMeta {
    * shape decoupled from the model definition type.
    */
   models?: ModelRecord
+  /**
+   * Per table, the columns that hold a date or a time.
+   *
+   * MySQL cannot parse the ISO-8601 an application naturally produces:
+   * `new Date().toISOString()` is `2026-08-19T04:37:11.396Z` and the server
+   * answers "Incorrect datetime value" - the `T`, the fraction and the `Z` are
+   * all outside what a `DATETIME` literal may contain. Postgres takes it, so
+   * the code that writes it looks correct until the day the engine changes.
+   *
+   * Knowing which columns those are is what lets a value be reshaped on the way
+   * in rather than the application spelling it per dialect at every call site.
+   * Only columns whose model declares a temporal `type` are listed: a
+   * `varchar(40)` holding an ISO string is a string, and reformatting it would
+   * quietly rewrite data.
+   */
+  temporalColumns?: Record<string, string[]>
 }
 
 export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
@@ -48,6 +64,7 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
   const primaryKeys: Record<string, string> = {}
   const relations: Required<SchemaMeta>['relations'] = {}
   const scopesByTable: Required<SchemaMeta>['scopes'] = {}
+  const temporalColumns: Record<string, string[]> = {}
 
   for (const name of Object.keys(models)) {
     // Support both direct model definitions and wrapped models from defineModel()
@@ -58,6 +75,25 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
     modelToTable[name] = table
     tableToModel[table] = name
     primaryKeys[table] = m.primaryKey ?? 'id'
+
+    // The columns a value has to be reshaped for on MySQL. Declared types only;
+    // see `temporalColumns` on the interface for why an inferred one is not
+    // enough to justify rewriting a value.
+    const temporal: string[] = []
+
+    for (const [column, attribute] of Object.entries((m.attributes ?? {}) as Record<string, any>)) {
+      if (/^(?:datetime|timestamp|timestamptz|date)$/i.test(String(attribute?.type ?? '')))
+        temporal.push(column)
+    }
+
+    // `useTimestamps` adds two more that no attribute declares.
+    const traits = (m.traits ?? {}) as Record<string, unknown>
+
+    if (traits.useTimestamps ?? traits.timestampable)
+      temporal.push('created_at', 'updated_at')
+
+    if (temporal.length > 0)
+      temporalColumns[table] = [...new Set(temporal)]
 
     // Normalize relations to name->ModelName mapping. Entries may be plain
     // model-name strings or object form `{ model, foreignKey?, onDelete? }`
@@ -135,5 +171,5 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
     }
   }
 
-  return { modelToTable, tableToModel, primaryKeys, relations, scopes: scopesByTable, models }
+  return { modelToTable, tableToModel, primaryKeys, relations, scopes: scopesByTable, models, temporalColumns }
 }

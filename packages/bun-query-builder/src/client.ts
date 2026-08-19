@@ -206,6 +206,47 @@ export function quoteColumnForDialect(name: string, dialect = config.dialect): s
   return alias ? `${column} AS \`${alias}\`` : column
 }
 
+/**
+ * A date, in the literal shape the dialect will accept.
+ *
+ * `new Date().toISOString()` is `2026-08-19T04:37:11.396Z`, which Postgres
+ * takes and MySQL refuses outright - "Incorrect datetime value" - because the
+ * `T`, the fraction and the `Z` are all outside what a `DATETIME` literal may
+ * contain. So an application that writes the obvious thing is correct until the
+ * engine changes under it, and then it is not, at the point of the write.
+ *
+ * Naive UTC, deliberately: a `DATETIME` stores no zone, and reading one back as
+ * though it were local is the other half of the same bug.
+ */
+export function temporalLiteral(value: unknown, dialect = config.dialect): unknown {
+  if (!isMysqlLike(dialect) || value === null || value === undefined)
+    return value
+
+  /*
+   * A string is reshaped as text, never through `new Date()`. Parsing
+   * `2026-08-19T04:37:11` - an ISO string with no zone - reads it as *local*
+   * time, and `toISOString()` then shifts the digits by the host's offset: the
+   * value arrives seven hours out on a machine seven hours behind UTC, having
+   * been "fixed". The digits are what a naive column stores, so the digits are
+   * what is kept.
+   */
+  if (typeof value === 'string') {
+    const iso = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/.exec(value)
+
+    if (!iso)
+      return value
+
+    const [, day, time] = iso
+
+    return `${day} ${time!.length === 5 ? `${time}:00` : time}`
+  }
+
+  if (!(value instanceof Date) || Number.isNaN(value.getTime()))
+    return value
+
+  return value.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '')
+}
+
 function renderSelectColumn(col: unknown): string {
   if (typeof col === 'string')
     return quoteColumnForDialect(col)
@@ -2992,6 +3033,40 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
   const schema = state?.schema
 
   /**
+   * A row's date columns, in the shape the dialect accepts.
+   *
+   * Applied once, where a row enters the builder, rather than at each of the
+   * several places a parameter is bound: an insert has four code paths (single
+   * row, multi row, Postgres, the rest) and an update has its own, and a rule
+   * that has to be remembered in five places is a rule that will be missed in
+   * one. A no-op on Postgres, which takes ISO-8601 as written.
+   */
+  const reshapeTemporal = <T extends Record<string, any>>(table: string, rows: readonly T[]): T[] => {
+    const columns = meta?.temporalColumns?.[table]
+
+    if (!columns || columns.length === 0 || !isMysqlLike(config.dialect))
+      return rows as T[]
+
+    return rows.map((row) => {
+      let copy: T | null = null
+
+      for (const column of columns) {
+        if (!(column in row))
+          continue
+
+        const shaped = temporalLiteral(row[column])
+
+        if (shaped !== row[column]) {
+          copy = copy ?? { ...row }
+          ;(copy as Record<string, unknown>)[column] = shaped
+        }
+      }
+
+      return copy ?? row
+    })
+  }
+
+  /**
    * The 32-bit key Postgres advisory locks take, derived from a string name.
    *
    * Extracted because lock, try-lock and unlock each carried their own copy:
@@ -5324,9 +5399,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // produced `ORDER BY a ASC ORDER BY b ASC` and SQLite/MySQL/Postgres
         // all rejected it.
         const dir = direction === 'asc' ? 'ASC' : 'DESC'
+        // Quoted for the same reason a select list is: `ORDER BY key ASC` is a
+        // syntax error on MySQL, `key` being reserved there.
+        const ordered = quoteColumnForDialect(String(column))
         text = SQL_PATTERNS.ORDER_BY.test(text)
-          ? `${text}, ${column} ${dir}`
-          : `${text} ORDER BY ${column} ${dir}`
+          ? `${text}, ${ordered} ${dir}`
+          : `${text} ORDER BY ${ordered} ${dir}`
         built = null
         return this
       },
@@ -5519,8 +5597,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // Compose with any existing GROUP BY so chained calls add columns
           // instead of emitting a second clause.
           text = SQL_PATTERNS.GROUP_BY.test(text)
-            ? `${text}, ${cols.join(', ')}`
-            : `${text} GROUP BY ${cols.join(', ')}`
+            ? `${text}, ${cols.map(one => quoteColumnForDialect(String(one))).join(', ')}`
+            : `${text} GROUP BY ${cols.map(one => quoteColumnForDialect(String(one))).join(', ')}`
           built = null
         }
         return this as any
@@ -6834,7 +6912,16 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
        */
       const mysqlReturningBuilder = (cols: string[]): any => {
         const key = 'id'
-        const wanted = cols.length > 0 && !cols.includes('*') ? cols.map(column => quoteId(column)).join(', ') : '*'
+        /*
+         * Flattened, because `.returning(['id', 'uuid'])` arrives as one array
+         * argument rather than as two. The Postgres path joins straight into
+         * the statement, where an array-of-array flattens to the same text by
+         * accident; quoting each name does not, and produced the single
+         * identifier `id,uuid,kind` - "Unknown column" naming all of them at
+         * once.
+         */
+        const names = (cols as unknown[]).flat(2).map(String).filter(Boolean)
+        const wanted = names.length > 0 && !names.includes('*') ? names.map(column => quoteId(column)).join(', ') : '*'
 
         const run = async (): Promise<any[]> => {
           const inserted = await runWithHooks<any>(_sql.unsafe(sqlText, params), 'insert')
@@ -6913,7 +7000,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
       return {
         values(data: Partial<any> | Partial<any>[]) {
-          const rows = Array.isArray(data) ? data : [data]
+          const rows = reshapeTemporal(String(table), Array.isArray(data) ? data : [data])
           const rowCount = rows.length
 
           // Kept for MySQL's `.returning(...)`, which reads the rows back: an
@@ -7162,12 +7249,13 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
       return {
         set(values) {
-          const keys = Object.keys(values)
+          const shaped = reshapeTemporal(String(table), [values as Record<string, unknown>])[0] as typeof values
+          const keys = Object.keys(shaped)
           const len = keys.length
           const setClauses: string[] = Array.from({ length: len })
           for (let i = 0; i < len; i++) {
             const key = keys[i]
-            const value = (values as any)[key]
+            const value = (shaped as any)[key]
             if (isRawExpression(value)) {
               setClauses[i] = `${quoteId(key)} = ${value.raw}`
             }
@@ -7325,8 +7413,58 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // is held while the parent gains a predicate.
           const retText = () => `${sqlText} RETURNING ${cols.join(', ')}`
           const build = () => (params.length > 0 ? _sql.unsafe(retText(), params) : _sql.unsafe(retText()))
+
+          /*
+           * MySQL has no RETURNING on an UPDATE either, so the rows are read
+           * after the write, by the predicate the write used.
+           *
+           * The predicate has to still select them - an update that changes a
+           * column the WHERE tests would return nothing here - which is the one
+           * shape this cannot serve and Postgres can. It is also a shape almost
+           * nobody writes: the predicate is nearly always a key.
+           */
+          const runMysql = async (): Promise<any[]> => {
+            const hasWhere = /\sWHERE\s/i.test(sqlText)
+            const where = hasWhere ? sqlText.slice(sqlText.search(/\sWHERE\s/i) + 1) : ''
+            // The SET clause's parameters come first in `params`; the predicate
+            // only needs its own, so the SET's are dropped from the front.
+            const predicateParams = params.slice(params.length - (where.match(/\?|\$\d+/g)?.length ?? 0))
+            const key = quoteId('id')
+
+            /*
+             * The rows are identified *before* the update, not after.
+             *
+             * Reading afterwards with the same predicate looks equivalent and
+             * is not: an update whose predicate tests a column it is about to
+             * change matches nothing the second time. `spendRecoveryCode` is
+             * exactly that shape - `SET used_at = now() ... WHERE used_at IS
+             * NULL`, whose whole purpose is that it can only match once - and
+             * it silently reported that no code had been spent, which reads as
+             * a wrong recovery code to whoever typed it.
+             */
+            const found = await (predicateParams.length > 0
+              ? _sql.unsafe(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`, predicateParams)
+              : _sql.unsafe(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`)).execute().catch(() => [])
+
+            const ids = (Array.isArray(found) ? found : []).map((row: any) => row?.id).filter((id: unknown) => id !== undefined && id !== null)
+
+            await runWithHooks<any>(params.length > 0 ? _sql.unsafe(sqlText, params) : _sql.unsafe(sqlText), 'update')
+
+            if (ids.length === 0)
+              return []
+
+            const selected = `SELECT ${cols.join(', ')} FROM ${quoteId(String(table))} WHERE ${key} IN (${ids.map(() => '?').join(', ')})`
+            const rows = await _sql.unsafe(selected, ids).execute()
+
+            return Array.isArray(rows) ? rows : []
+          }
+
+          const run = (): Promise<any[]> => (isMysqlLike(config.dialect)
+            ? runMysql()
+            : runWithHooks<any[]>(build(), 'update'))
+
           const runFirst = async () => {
-            const rows = await runWithHooks<any[]>(build(), 'update')
+            const rows = await run()
             return Array.isArray(rows) ? rows[0] : rows
           }
           // Not expressible on this builder. Silently ignoring them is what
@@ -7347,10 +7485,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             limit: unsupported('limit'),
             offset: unsupported('offset'),
             toSQL: () => makeExecutableQuery(build(), retText()) as any,
-            execute: () => runWithHooks<any[]>(build(), 'update'),
+            execute: run,
             // returning() is typed as SelectQueryBuilder — expose the
             // row-fetching methods so `.returning('id').first()` works.
-            get: () => runWithHooks<any[]>(build(), 'update'),
+            get: run,
             first: runFirst,
             executeTakeFirst: runFirst,
             async firstOrFail() {
@@ -7567,7 +7705,25 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // to implement beforeDelete at all — could be walked straight past.
           const runDelete = async (): Promise<any[]> => {
             await activeHooks()?.beforeDelete?.({ table: String(table), where: whereCondition })
-            const rows = await runWithHooks<any[]>(build(), 'delete')
+
+            /*
+             * MySQL has no RETURNING on a DELETE, so the rows are read *before*
+             * the write - the only order that can work, since afterwards they
+             * are gone. Both statements carry the same predicate and the same
+             * parameters, so what is returned is what was removed.
+             */
+            const rows = isMysqlLike(config.dialect)
+              ? await (async (): Promise<any[]> => {
+                  const from = sqlText.slice(sqlText.search(/\sFROM\s/i) + 1)
+                  const selected = `SELECT ${cols.join(', ')} ${from}`
+                  const found = await (delParams.length > 0 ? _sql.unsafe(selected, delParams) : _sql.unsafe(selected)).execute()
+
+                  await runWithHooks<any>(delParams.length > 0 ? _sql.unsafe(sqlText, delParams) : _sql.unsafe(sqlText), 'delete')
+
+                  return Array.isArray(found) ? found : []
+                })()
+              : await runWithHooks<any[]>(build(), 'delete')
+
             try {
               await activeHooks()?.afterDelete?.({ table: String(table), where: whereCondition, result: rows })
             }
