@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.53...v0.2.54)
+
+## ✨ Features
+
+- **mysql**: .returning() works, by reading back what the insert assigned ([daf4372](https://github.com/stacksjs/bun-query-builder/commit/daf4372)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.54 ([eaa4112](https://github.com/stacksjs/bun-query-builder/commit/eaa4112)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.52...v0.2.53)
 
 ## ⚡ Performance Improvements
