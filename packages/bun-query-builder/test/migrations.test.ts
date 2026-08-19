@@ -202,6 +202,49 @@ describe('migration planner', () => {
     expect(() => generateSql(plan)).toThrow(/Partial indexes.*not supported on MySQL/)
   })
 
+  it('names utf8mb4 rather than inheriting whatever the server defaults to', () => {
+    const m = defineModels({
+      User: { name: 'User', table: 'users', primaryKey: 'id', attributes: { id: { validation: { rule: {} } } } },
+    } as const)
+
+    const sql = generateSql(buildMigrationPlan(m as any, { dialect: 'mysql' })).join('\n')
+
+    // A server still defaulting to latin1 - MySQL 5.7's default, and what many
+    // a my.cnf still says - would otherwise reject the first four-byte
+    // character years after the schema was created.
+    expect(sql).toContain(') DEFAULT CHARSET=utf8mb4;')
+
+    // The collation is the server's: naming MySQL 8's would make this DDL
+    // unusable on MariaDB.
+    expect(sql).not.toContain('COLLATE')
+  })
+
+  it('puts foreign keys in the table body on MySQL, where they take effect', () => {
+    // MySQL parses a column-level REFERENCES clause and discards it, so the
+    // inline form creates a column that looks constrained and is not - a whole
+    // schema's worth of referential integrity, silently absent.
+    const m = defineModels({
+      User: {
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } } },
+      },
+      Post: {
+        name: 'Post',
+        table: 'posts',
+        primaryKey: 'id',
+        attributes: { id: { validation: { rule: {} } } },
+        belongsTo: { user: { model: 'User', onDelete: 'cascade' } },
+      },
+    } as const)
+
+    const sql = generateSql(buildMigrationPlan(m as any, { dialect: 'mysql' })).join('\n')
+
+    expect(sql).toContain('CONSTRAINT `posts_user_id_fk` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE')
+    expect(sql).not.toMatch(/`user_id` bigint[^,\n]*REFERENCES/)
+  })
+
   it('gives a long column a key prefix on MySQL, and leaves short ones whole', () => {
     // MySQL cannot index a TEXT column at all without a prefix length - it
     // raises "BLOB/TEXT column used in key specification without a key length" -

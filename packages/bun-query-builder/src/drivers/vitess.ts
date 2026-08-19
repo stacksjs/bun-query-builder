@@ -66,6 +66,16 @@ export class VitessDriver extends MySQLDriver {
     return super.renderColumn(withoutReference as ColumnPlan)
   }
 
+  /**
+   * None, on a sharded keyspace, for the reason `addForeignKey` is a no-op
+   * there: a constraint cannot be enforced across shards. The column-level
+   * suppression above stopped mattering once MySQL's driver moved foreign keys
+   * into the table body, so the suppression has to happen here too.
+   */
+  protected override foreignKeyClauses(table: TablePlan): string[] {
+    return this.sharded ? [] : super.foreignKeyClauses(table)
+  }
+
   override createTable(table: TablePlan): string {
     // Deliberately the MySQL shape: the shard key lives in the VSchema, not in
     // the CREATE TABLE. The column-level suppressions above are what make this

@@ -114,9 +114,63 @@ export class MySQLDriver implements DialectDriver {
     return ''
   }
 
+  /**
+   * The table's foreign keys, as table-level constraints.
+   *
+   * Separated from the column so it can be suppressed by the engines that have
+   * no foreign keys (SingleStore, a sharded Vitess keyspace) without them
+   * having to reimplement the column renderer.
+   */
+  protected foreignKeyClauses(table: TablePlan): string[] {
+    return table.columns.filter(column => column.references).map((column) => {
+      const reference = column.references!
+      const name = `${table.table}_${column.name}_fk`
+      let clause = `CONSTRAINT ${this.quoteIdentifier(name)} FOREIGN KEY (${this.quoteIdentifier(column.name)}) REFERENCES ${this.quoteIdentifier(reference.table)}(${this.quoteIdentifier(reference.column)})`
+
+      if (reference.onDelete)
+        clause += ` ON DELETE ${reference.onDelete.toUpperCase()}`
+      if (reference.onUpdate)
+        clause += ` ON UPDATE ${reference.onUpdate.toUpperCase()}`
+
+      return clause
+    })
+  }
+
   createTable(table: TablePlan): string {
-    const columns = table.columns.map(c => this.renderColumn(c)).join(',\n  ')
-    return `CREATE TABLE IF NOT EXISTS ${this.quoteIdentifier(table.table)} (\n  ${columns}\n);`
+    /*
+     * Foreign keys go in the table body, not on the column, and this is the
+     * difference between a schema that has them and one that does not.
+     *
+     * MySQL parses a column-level `REFERENCES` clause and then throws it away -
+     * its own manual says so - accepting the DDL and creating no constraint. So
+     * a corpus written the Postgres way applied cleanly, reported success, and
+     * left a database with no referential integrity anywhere in it: 123 of them
+     * in ReviewOS, none of which existed. The only spelling InnoDB acts on is
+     * the table-level one below.
+     */
+    const parts = [
+      ...table.columns.map(c => this.renderColumn(c)),
+      ...this.foreignKeyClauses(table),
+    ]
+
+    /*
+     * The character set is named rather than inherited.
+     *
+     * MySQL 8 defaults to utf8mb4, so on a stock server this changes nothing -
+     * and that is the point: the schema should not depend on how the operator's
+     * server was configured. A server whose default is `latin1` (MySQL 5.7's,
+     * and what a great many `my.cnf` files still say) silently creates latin1
+     * tables, and the first four-byte character - an emoji in a comment, a name
+     * outside the BMP - is rejected on insert or mangled on read, years after
+     * the schema was created.
+     *
+     * The collation is deliberately left to the server: it decides comparison
+     * and ordering rather than what can be stored, and naming MySQL 8's
+     * `utf8mb4_0900_ai_ci` here would make this DDL unusable on MariaDB, which
+     * does not have it. Tables on one server still agree with each other, which
+     * is what a join needs.
+     */
+    return `CREATE TABLE IF NOT EXISTS ${this.quoteIdentifier(table.table)} (\n  ${parts.join(',\n  ')}\n) DEFAULT CHARSET=utf8mb4;`
   }
 
   /**
@@ -335,14 +389,8 @@ export class MySQLDriver implements DialectDriver {
       parts.push(defaultValue)
     }
 
-    if (column.references) {
-      let reference = `REFERENCES ${this.quoteIdentifier(column.references.table)}(${this.quoteIdentifier(column.references.column)})`
-      if (column.references.onDelete)
-        reference += ` ON DELETE ${column.references.onDelete.toUpperCase()}`
-      if (column.references.onUpdate)
-        reference += ` ON UPDATE ${column.references.onUpdate.toUpperCase()}`
-      parts.push(reference)
-    }
+    // No `REFERENCES` here: see `createTable`. MySQL ignores the inline form,
+    // so writing it produces a column that looks constrained and is not.
 
     return parts.join(' ')
   }
