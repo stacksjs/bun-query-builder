@@ -1,6 +1,6 @@
 import type { MigrationPlan, NormalizedColumnType } from '../migrations'
 import type { SupportedDialect } from '../types'
-import { config } from '../config'
+import { config, isMysqlLike } from '../config'
 import { introspectDatabase } from './introspect-db'
 
 /**
@@ -144,6 +144,16 @@ export function satisfies(declared: TypeFamily, actual: TypeFamily, dialect?: Su
     if ((declared === 'date' || declared === 'json') && actual === 'text')
       return true
   }
+
+  /*
+   * MySQL has no boolean type: `BOOLEAN` is a spelling of `TINYINT(1)`, and
+   * information_schema reports what it stored, `tinyint`. So every boolean
+   * column on a perfectly correct MySQL schema read as drift - 51 of them on
+   * ReviewOS's first migrate - and a drift report that fires on a clean
+   * database is a report people learn to scroll past.
+   */
+  if (isMysqlLike(dialect) && declared === 'boolean' && actual === 'integer')
+    return true
 
   // A bounded string fits in an unbounded one.
   if (declared === 'varchar' && actual === 'text')

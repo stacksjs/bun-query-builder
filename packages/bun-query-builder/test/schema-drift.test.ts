@@ -89,6 +89,18 @@ describe('satisfies', () => {
     expect(satisfies('integer', 'fractional')).toBe(true)
   })
 
+  it('accepts a boolean stored as tinyint on the MySQL family', () => {
+    // MySQL has no boolean type - BOOLEAN is a spelling of TINYINT(1) - so a
+    // perfectly correct schema reported every boolean column as drift, and a
+    // report that fires on a clean database is one people learn to scroll past.
+    expect(satisfies('boolean', 'integer', 'mysql')).toBe(true)
+    expect(satisfies('boolean', 'integer', 'vitess')).toBe(true)
+    expect(satisfies('boolean', 'integer', 'singlestore')).toBe(true)
+
+    // Postgres does have one, so there it is still a real mismatch.
+    expect(satisfies('boolean', 'integer', 'postgres')).toBe(false)
+  })
+
   it('accepts an exact match', () => {
     for (const family of ['text', 'varchar', 'integer', 'fractional', 'boolean', 'date', 'json'] as const)
       expect(satisfies(family, family)).toBe(true)
