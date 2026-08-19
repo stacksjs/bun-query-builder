@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.58...v0.2.59)
+
+## 🐛 Bug Fixes
+
+- **mysql**: a foreign key that is already there is not a failed migration ([0f5d95b](https://github.com/stacksjs/bun-query-builder/commit/0f5d95b)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.59 ([c97f71f](https://github.com/stacksjs/bun-query-builder/commit/c97f71f)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.57...v0.2.58)
 
 ## 🐛 Bug Fixes
