@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.56...v0.2.57)
+
+## 🐛 Bug Fixes
+
+- **mysql**: RETURNING on update and delete, temporal literals, ORDER BY ([fa1d90d](https://github.com/stacksjs/bun-query-builder/commit/fa1d90d)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.57 ([c26037c](https://github.com/stacksjs/bun-query-builder/commit/c26037c)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.55...v0.2.56)
 
 ## 🐛 Bug Fixes
