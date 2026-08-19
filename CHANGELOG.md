@@ -1,3 +1,21 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.57...v0.2.58)
+
+## 🐛 Bug Fixes
+
+- **client**: an array in object-form where() means IN on writes too (#1127) ([c917d29](https://github.com/stacksjs/bun-query-builder/commit/c917d29)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1114](https://github.com/stacksjs/bun-query-builder/issues/1114), [#1127](https://github.com/stacksjs/bun-query-builder/issues/1127), [#1127](https://github.com/stacksjs/bun-query-builder/issues/1127), [#1013](https://github.com/stacksjs/bun-query-builder/issues/1013), [#1083](https://github.com/stacksjs/bun-query-builder/issues/1083), [#1101](https://github.com/stacksjs/bun-query-builder/issues/1101))
+- **client**: pick the select builder's keywords from state, not from text (#1126) ([d4b2138](https://github.com/stacksjs/bun-query-builder/commit/d4b2138)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1120](https://github.com/stacksjs/bun-query-builder/issues/1120), [#1122](https://github.com/stacksjs/bun-query-builder/issues/1122), [#1126](https://github.com/stacksjs/bun-query-builder/issues/1126), [#1126](https://github.com/stacksjs/bun-query-builder/issues/1126), [#1113](https://github.com/stacksjs/bun-query-builder/issues/1113), [#1120](https://github.com/stacksjs/bun-query-builder/issues/1120), [#1122](https://github.com/stacksjs/bun-query-builder/issues/1122), [#1015](https://github.com/stacksjs/bun-query-builder/issues/1015), [#1034](https://github.com/stacksjs/bun-query-builder/issues/1034))
+- **client**: updateMany runs with the caller's predicate, or not at all (#1119) ([a5594db](https://github.com/stacksjs/bun-query-builder/commit/a5594db)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1112](https://github.com/stacksjs/bun-query-builder/issues/1112), [#1119](https://github.com/stacksjs/bun-query-builder/issues/1119), [#1119](https://github.com/stacksjs/bun-query-builder/issues/1119), [#1101](https://github.com/stacksjs/bun-query-builder/issues/1101))
+- **client**: choose WHERE vs AND from builder state, not a text search (#1118) ([f5ad5cf](https://github.com/stacksjs/bun-query-builder/commit/f5ad5cf)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1113](https://github.com/stacksjs/bun-query-builder/issues/1113), [#1118](https://github.com/stacksjs/bun-query-builder/issues/1118), [#1118](https://github.com/stacksjs/bun-query-builder/issues/1118), [#1015](https://github.com/stacksjs/bun-query-builder/issues/1015))
+
+## 🔧 Chores
+
+- release v0.2.58 ([35df80f](https://github.com/stacksjs/bun-query-builder/commit/35df80f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.56...v0.2.57)
 
 ## 🐛 Bug Fixes
