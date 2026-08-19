@@ -896,7 +896,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           isUnique: false,
           isNullable: false,
           hasDefault: true,
-          defaultValue: 'CURRENT_TIMESTAMP' as any,
+          defaultValue: UTC_CLOCK_DEFAULT as any,
         })
       }
       // Add updated_at column if not already present
@@ -1000,7 +1000,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           { name: 'id', type: 'bigint', isPrimaryKey: true, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'user_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'users', column: 'id' } },
           { name: fk, type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: modelTable, column: 'id' } },
-          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: UTC_CLOCK_DEFAULT as any },
           { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
         ],
         indexes: [{ name: `${likeTable}_user_target_unique`, columns: ['user_id', fk], type: 'unique' }],
@@ -1023,7 +1023,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           { name: 'is_active', type: 'boolean', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: true as any },
           { name: 'taggable_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
           { name: 'taggable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
-          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: UTC_CLOCK_DEFAULT as any },
           { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
         ],
         indexes: [
@@ -1038,7 +1038,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           { name: 'tag_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'taggables', column: 'id' } },
           { name: 'taggable_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'taggable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
-          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: UTC_CLOCK_DEFAULT as any },
           { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
         ],
         indexes: [
@@ -1059,7 +1059,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           { name: 'description', type: 'text', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
           { name: 'is_active', type: 'boolean', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: true as any },
           { name: 'categorizable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
-          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: UTC_CLOCK_DEFAULT as any },
           { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
         ],
         indexes: [{ name: 'categorizables_type_slug_unique', columns: ['categorizable_type', 'slug'], type: 'unique' }],
@@ -1071,7 +1071,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           { name: 'category_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false, references: { table: 'categorizables', column: 'id' } },
           { name: 'categorizable_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
           { name: 'categorizable_type', type: 'string', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false },
-          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any },
+          { name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: UTC_CLOCK_DEFAULT as any },
           { name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false },
         ],
         indexes: [
@@ -1150,7 +1150,7 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         }
       }
       if (pivotCfg.timestamps) {
-        cols.push({ name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: 'CURRENT_TIMESTAMP' as any })
+        cols.push({ name: 'created_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: true, defaultValue: UTC_CLOCK_DEFAULT as any })
         cols.push({ name: 'updated_at', type: 'datetime', isPrimaryKey: false, isUnique: false, isNullable: true, hasDefault: false })
       }
 
@@ -1457,11 +1457,30 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
 }
 
 /**
+ * The database's own clock, in UTC, as a default.
+ *
+ * A managed `created_at` used to default to `CURRENT_TIMESTAMP`, which is the
+ * *session's local* wall clock on both Postgres and MySQL. On a host set to
+ * anything but UTC that writes digits that never happened in UTC, and every
+ * reader is out by the offset - it surfaced in ReviewOS as "7 hours ago" on a
+ * row written seconds earlier. The column type is not the bug and is unchanged:
+ * naive UTC is the convention, because MySQL has nothing equivalent to
+ * `timestamptz`.
+ *
+ * This is the marker, not the SQL. Each driver renders it in its own spelling,
+ * because there is no portable one: Postgres wants `(now() AT TIME ZONE 'utc')`,
+ * MySQL takes `UTC_TIMESTAMP` only inside brackets, and SQLite's
+ * `CURRENT_TIMESTAMP` is already UTC and is the only dialect that was right by
+ * accident.
+ */
+export const UTC_CLOCK_DEFAULT = 'UTC_TIMESTAMP'
+
+/**
  * Canonical string form of a column default, so equivalent defaults expressed
  * differently by a live DB vs a model (quoting, casts, `now()` vs
  * `CURRENT_TIMESTAMP`, `0` vs `'0'`) compare equal.
  */
-export function canonicalizeDefault(col: ColumnPlan): string | undefined {
+export function canonicalizeDefault(col: ColumnPlan, dialect?: SupportedDialect): string | undefined {
   if (!col.hasDefault || col.defaultValue === undefined)
     return undefined
 
@@ -1481,6 +1500,41 @@ export function canonicalizeDefault(col: ColumnPlan): string | undefined {
     s = s.slice(1, -1)
 
   const upper = s.toUpperCase()
+
+  /*
+   * Every way an engine spells "my own clock, in UTC" collapses to the marker.
+   * Postgres reports the default it stored, which it rewrites as
+   * `timezone('utc'::text, now())`, and MySQL reports `utc_timestamp()`; a
+   * model that asked for one and a database that has the other are the same
+   * thing, and comparing them literally would regenerate an ALTER for every
+   * timestamp column on every run.
+   *
+   * It stays distinct from `CURRENT_TIMESTAMP`, which is the local clock. Those
+   * two really are different, and the difference is the bug.
+   */
+  const utcSpellings = [
+    'UTC_TIMESTAMP',
+    'UTC_TIMESTAMP()',
+    '(UTC_TIMESTAMP)',
+    '(UTC_TIMESTAMP())',
+    'TIMEZONE(\'UTC\', NOW())',
+    'TIMEZONE(\'UTC\'::TEXT, NOW())',
+    '(NOW() AT TIME ZONE \'UTC\')',
+    'NOW() AT TIME ZONE \'UTC\'',
+  ]
+  if (utcSpellings.includes(upper.replace(/\s+/g, ' ')))
+    return UTC_CLOCK_DEFAULT
+
+  /*
+   * On SQLite the two are one value. It has no local-clock function at all -
+   * `CURRENT_TIMESTAMP` is UTC there, which is why it was the only dialect this
+   * bug never touched - so a model asking for the UTC clock and a database
+   * reporting `CURRENT_TIMESTAMP` agree, and keeping them distinct would
+   * regenerate an ALTER for every timestamp column on every run.
+   */
+  if (dialect === 'sqlite' && upper === 'CURRENT_TIMESTAMP')
+    return UTC_CLOCK_DEFAULT
+
   const sqlFns = ['CURRENT_TIMESTAMP', 'NOW()', 'CURRENT_DATE', 'CURRENT_TIME', 'NULL', 'TRUE', 'FALSE']
   if (sqlFns.includes(upper))
     return upper === 'NOW()' ? 'CURRENT_TIMESTAMP' : upper
@@ -1508,7 +1562,7 @@ function columnsAreDifferent(col1: ColumnPlan, col2: ColumnPlan, dialect: Suppor
     return true
   if (col1.hasDefault !== col2.hasDefault)
     return true
-  if (canonicalizeDefault(col1) !== canonicalizeDefault(col2))
+  if (canonicalizeDefault(col1, dialect) !== canonicalizeDefault(col2, dialect))
     return true
   if (col1.isUnique !== col2.isUnique)
     return true
@@ -1536,7 +1590,7 @@ function columnSignature(col: ColumnPlan, dialect: SupportedDialect): string {
     col.isUnique,
     col.isNullable,
     col.hasDefault,
-    canonicalizeDefault(col) ?? null,
+    canonicalizeDefault(col, dialect) ?? null,
     (col.enumValues ?? []).slice().sort(),
     col.references
       ? [col.references.table, col.references.column, col.references.onDelete ?? null, col.references.onUpdate ?? null]

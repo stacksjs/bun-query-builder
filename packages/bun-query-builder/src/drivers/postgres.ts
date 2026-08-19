@@ -144,8 +144,15 @@ export class PostgresDriver implements DialectDriver {
     const dv = column.defaultValue
     if (typeof dv === 'string') {
       // Check for raw SQL expressions that should not be quoted
-      const rawSqlExpressions = ['CURRENT_TIMESTAMP', 'NOW()', 'NULL', 'CURRENT_DATE', 'CURRENT_TIME']
       const upperDv = dv.toUpperCase()
+
+      // The database's own clock in UTC. `CURRENT_TIMESTAMP` is the session's
+      // local one, which is a different value on any host not set to UTC and is
+      // the bug this spelling exists to avoid.
+      if (upperDv === 'UTC_TIMESTAMP')
+        return `default (now() AT TIME ZONE 'utc')`
+
+      const rawSqlExpressions = ['CURRENT_TIMESTAMP', 'NOW()', 'NULL', 'CURRENT_DATE', 'CURRENT_TIME']
       if (rawSqlExpressions.includes(upperDv)) {
         return `default ${upperDv}`
       }

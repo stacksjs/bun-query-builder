@@ -83,8 +83,17 @@ export class MySQLDriver implements DialectDriver {
     const dv = column.defaultValue
     if (typeof dv === 'string') {
       // Check for raw SQL expressions that should not be quoted
-      const rawSqlExpressions = ['CURRENT_TIMESTAMP', 'NOW()', 'NULL', 'CURRENT_DATE', 'CURRENT_TIME']
       const upperDv = dv.toUpperCase()
+
+      // Bracketed, and not for tidiness: MySQL takes exactly one function
+      // unparenthesized in a column default, `CURRENT_TIMESTAMP`, and any other
+      // expression only in the `DEFAULT (expr)` form it gained in 8.0.13.
+      // `CURRENT_TIMESTAMP` itself is the session's local clock, which is what
+      // makes it the wrong default rather than the convenient one.
+      if (upperDv === 'UTC_TIMESTAMP')
+        return `default (UTC_TIMESTAMP)`
+
+      const rawSqlExpressions = ['CURRENT_TIMESTAMP', 'NOW()', 'NULL', 'CURRENT_DATE', 'CURRENT_TIME']
       if (rawSqlExpressions.includes(upperDv)) {
         return `default ${upperDv}`
       }

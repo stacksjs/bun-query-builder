@@ -202,6 +202,35 @@ describe('migration planner', () => {
     expect(() => generateSql(plan)).toThrow(/Partial indexes.*not supported on MySQL/)
   })
 
+  it('defaults a managed timestamp to the database clock in UTC, per dialect', () => {
+    // `CURRENT_TIMESTAMP` is the session's *local* clock on both Postgres and
+    // MySQL, so on any host not set to UTC it writes digits that never happened
+    // and every reader is out by the offset. The marker is one thing; its
+    // spelling is three, because there is no portable one.
+    const m = defineModels({
+      User: {
+        name: 'User',
+        table: 'users',
+        primaryKey: 'id',
+        traits: { useTimestamps: true },
+        attributes: { id: { validation: { rule: {} } } },
+      },
+    } as const)
+
+    const mysql = generateSql(buildMigrationPlan(m as any, { dialect: 'mysql' })).join('\n')
+    const postgres = generateSql(buildMigrationPlan(m as any, { dialect: 'postgres' })).join('\n')
+    const sqlite = generateSql(buildMigrationPlan(m as any, { dialect: 'sqlite' })).join('\n')
+
+    // MySQL takes no bare function but CURRENT_TIMESTAMP in a default.
+    expect(mysql).toContain('default (UTC_TIMESTAMP)')
+    expect(postgres).toContain(`default (now() AT TIME ZONE 'utc')`)
+
+    // SQLite's CURRENT_TIMESTAMP is already UTC - the one dialect that was
+    // right by accident.
+    expect(sqlite).toContain('default CURRENT_TIMESTAMP')
+    expect(sqlite).not.toContain('UTC_TIMESTAMP')
+  })
+
   it('names utf8mb4 rather than inheriting whatever the server defaults to', () => {
     const m = defineModels({
       User: { name: 'User', table: 'users', primaryKey: 'id', attributes: { id: { validation: { rule: {} } } } },

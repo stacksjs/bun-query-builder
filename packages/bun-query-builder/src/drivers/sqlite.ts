@@ -94,6 +94,11 @@ export class SQLiteDriver implements DialectDriver {
     const dv = column.defaultValue
     if (typeof dv === 'string') {
       // Handle SQL functions like CURRENT_TIMESTAMP - don't quote them
+      // SQLite's CURRENT_TIMESTAMP is already UTC: the one dialect that was
+      // right by accident, so the marker renders as itself.
+      if (dv.toUpperCase() === 'UTC_TIMESTAMP')
+        return `default CURRENT_TIMESTAMP`
+
       const sqlFunctions = ['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME', 'NOW()', 'NULL', 'TRUE', 'FALSE']
       if (sqlFunctions.includes(dv.toUpperCase())) {
         return `default ${dv.toUpperCase()}`
