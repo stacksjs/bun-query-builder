@@ -176,36 +176,114 @@ export class MySQLDriver implements DialectDriver {
   /**
    * How many leading characters of a long column go into a key.
    *
-   * 255 characters is 1020 bytes under utf8mb4, so three of them still fit
-   * InnoDB's 3072-byte key limit, and it is long enough that a lookup on a file
-   * path or a URL narrows to a handful of rows before the engine rechecks the
-   * full value. A prefix index answers equality and range the same way a whole
-   * one does; what it cannot do is cover the query or enforce uniqueness over
-   * the untruncated value, which is why this applies to columns that are too
-   * long to index whole rather than to every column.
+   * 255 characters is 1020 bytes under utf8mb4, and it is long enough that a
+   * lookup on a file path or a URL narrows to a handful of rows before the
+   * engine rechecks the full value. A prefix answers equality and range the way
+   * a whole key does; what it cannot do is cover the query, and on a UNIQUE
+   * index it enforces uniqueness over the truncated value - which is why the
+   * rules below narrow as little as they can get away with.
    */
   protected static readonly KEY_PREFIX_CHARACTERS = 255
 
   /**
-   * Whether this column can only be indexed by a prefix.
-   *
-   * TEXT and BLOB cannot be indexed at all without one - MySQL raises "BLOB/TEXT
-   * column used in key specification without a key length" - and a `varchar`
-   * wider than the key limit fails the same way for a different reason. Both are
-   * the same question: is the value too big to put in a key whole.
+   * InnoDB's limit on a whole key, in bytes, under the DYNAMIC row format that
+   * has been the default since MySQL 5.7.9.
    */
-  protected needsKeyPrefix(column: ColumnPlan): boolean {
+  protected static readonly MAX_KEY_BYTES = 3072
+
+  /** utf8mb4, the charset `createTable` names, is four bytes per character. */
+  protected static readonly BYTES_PER_CHARACTER = 4
+
+  /**
+   * How wide this column is in a key, in bytes, and whether it can be indexed
+   * whole at all.
+   *
+   * TEXT and BLOB cannot: MySQL raises "BLOB/TEXT column used in key
+   * specification without a key length" for any key part over one. Everything
+   * else has a width, and the widths are what the budget below is spent on.
+   */
+  protected keyPartWidth(column: ColumnPlan): { bytes: number, indexableWhole: boolean } {
     const rendered = this.getColumnType(column).toLowerCase()
 
     if (rendered.includes('text') || rendered.includes('blob') || rendered === 'json')
-      return true
+      return { bytes: Number.POSITIVE_INFINITY, indexableWhole: false }
 
-    // 768 characters is 3072 bytes at utf8mb4's four bytes per character, which
-    // is the whole budget for one key - so anything at or above it needs a
-    // prefix even before a second column joins the index.
-    const width = rendered.match(/^(?:var)?char\((\d+)\)$/)?.[1]
+    const characters = rendered.match(/^(?:var)?char\((\d+)\)$/)?.[1]
 
-    return width !== undefined && Number(width) >= 768
+    if (characters !== undefined)
+      return { bytes: Number(characters) * MySQLDriver.BYTES_PER_CHARACTER, indexableWhole: true }
+
+    // Everything else is a fixed-width scalar. Eight bytes covers the widest of
+    // them (bigint, double, datetime with fractional seconds) and the exact
+    // figure does not matter: these never approach the limit, and overstating
+    // them only makes the budget below more cautious.
+    return { bytes: 8, indexableWhole: true }
+  }
+
+  /**
+   * The key parts of an index, prefixed only as far as MySQL forces.
+   *
+   * Two separate rules, and it is worth keeping them apart:
+   *
+   * - A TEXT or BLOB column cannot go in a key at all without a prefix, so it
+   *   always gets one. This is the common case - a model string longer than 767
+   *   characters becomes TEXT - and it is what stopped ReviewOS's corpus on its
+   *   first MySQL run, on a review thread indexed by file path.
+   * - A *composite* key can exceed 3072 bytes with no single column anywhere
+   *   near it: `(bigint, varchar(500), varchar(500))` is 4008. So the total is
+   *   checked, and the widest string parts are narrowed one at a time until it
+   *   fits, rather than narrowing everything on principle. On a UNIQUE index a
+   *   prefix enforces uniqueness over the truncated value, so every character
+   *   kept is a distinction preserved.
+   *
+   * If it still does not fit, this says so. The alternative is DDL that the
+   * server rejects at apply time, halfway through a corpus.
+   */
+  protected keyParts(tableName: string, index: IndexPlan, columns?: readonly ColumnPlan[]): string[] {
+    const parts = index.columns.map((name) => {
+      const column = columns?.find(one => one.name === name)
+
+      /*
+       * Without the column plan this cannot tell a TEXT column from a short
+       * one, so it emits the name as written rather than guessing: a prefix
+       * nobody asked for is a narrower key than the author wrote, and the
+       * server's complaint is at least loud.
+       */
+      const width = column ? this.keyPartWidth(column) : { bytes: 0, indexableWhole: true }
+      const prefixed = !width.indexableWhole
+
+      return {
+        name,
+        prefixed,
+        bytes: prefixed ? MySQLDriver.KEY_PREFIX_CHARACTERS * MySQLDriver.BYTES_PER_CHARACTER : width.bytes,
+        // Only a string can be prefixed; narrowing an integer is not a thing.
+        narrowable: !width.indexableWhole || width.bytes > MySQLDriver.KEY_PREFIX_CHARACTERS * MySQLDriver.BYTES_PER_CHARACTER,
+      }
+    })
+
+    const total = (): number => parts.reduce((sum, part) => sum + part.bytes, 0)
+
+    while (total() > MySQLDriver.MAX_KEY_BYTES) {
+      // Widest first, and ties keep declaration order, so the same index always
+      // renders the same way.
+      const widest = parts
+        .filter(part => part.narrowable && !part.prefixed)
+        .sort((a, b) => b.bytes - a.bytes)[0]
+
+      if (!widest) {
+        throw new Error(
+          `[migrations] Index '${index.name}' on table '${tableName}' needs ${total()} bytes of key, over MySQL's ${MySQLDriver.MAX_KEY_BYTES}. `
+          + `Every column in it is already at its ${MySQLDriver.KEY_PREFIX_CHARACTERS}-character prefix, so shorten a column or drop one from the index.`,
+        )
+      }
+
+      widest.prefixed = true
+      widest.bytes = MySQLDriver.KEY_PREFIX_CHARACTERS * MySQLDriver.BYTES_PER_CHARACTER
+    }
+
+    return parts.map(part => part.prefixed
+      ? `${this.quoteIdentifier(part.name)}(${MySQLDriver.KEY_PREFIX_CHARACTERS})`
+      : this.quoteIdentifier(part.name))
   }
 
   createIndex(tableName: string, index: IndexPlan, columns?: readonly ColumnPlan[]): string {
@@ -216,20 +294,7 @@ export class MySQLDriver implements DialectDriver {
     }
     const kind = index.type === 'unique' ? 'UNIQUE ' : ''
     const idxName = qualifiedIndexName(tableName, index.name)
-    const keyParts = index.columns.map((name) => {
-      const column = columns?.find(one => one.name === name)
-      const quoted = this.quoteIdentifier(name)
-
-      /*
-       * Without the column plan this cannot know a TEXT column from a short
-       * one, and it emits what it was given rather than guessing - a prefix on
-       * a column that does not need one is a narrower key than the author
-       * asked for, and the server's error is at least loud.
-       */
-      return column && this.needsKeyPrefix(column)
-        ? `${quoted}(${MySQLDriver.KEY_PREFIX_CHARACTERS})`
-        : quoted
-    }).join(', ')
+    const keyParts = this.keyParts(tableName, index, columns).join(', ')
     // MySQL doesn't support IF NOT EXISTS for CREATE INDEX, so we use a different approach
     return `CREATE ${kind}INDEX ${this.quoteIdentifier(idxName)} ON ${this.quoteIdentifier(tableName)} (${keyParts});`
   }

@@ -219,6 +219,31 @@ describe('migration planner', () => {
     expect(sql).not.toContain('COLLATE')
   })
 
+  it('narrows a composite key that overruns the byte limit, and only as far as it must', () => {
+    // (bigint, varchar(500), varchar(500)) is 4008 bytes at utf8mb4 - over
+    // InnoDB's 3072 - with no single column anywhere near the limit. Narrowing
+    // one of the two strings is enough, and on a UNIQUE index every character
+    // kept is a distinction preserved, so the other stays whole.
+    const m = defineModels({
+      ManagedTest: {
+        name: 'ManagedTest',
+        table: 'managed_tests',
+        primaryKey: 'id',
+        attributes: {
+          id: { validation: { rule: {} } },
+          test_suite_id: { type: 'bigint', validation: { rule: {} } },
+          scope: { validation: { rule: { validate: (): boolean => true, name: 'string', rules: [{ name: 'max', params: { max: 500 } }] } } },
+          name: { validation: { rule: { validate: (): boolean => true, name: 'string', rules: [{ name: 'max', params: { max: 500 } }] } } },
+        },
+        indexes: [{ name: 'managed_tests_identity_index', columns: ['test_suite_id', 'scope', 'name'], unique: true }],
+      },
+    } as const)
+
+    const sql = generateSql(buildMigrationPlan(m as any, { dialect: 'mysql' })).join('\n')
+
+    expect(sql).toContain('(`test_suite_id`, `scope`(255), `name`)')
+  })
+
   it('puts foreign keys in the table body on MySQL, where they take effect', () => {
     // MySQL parses a column-level REFERENCES clause and discards it, so the
     // inline form creates a column that looks constrained and is not - a whole
