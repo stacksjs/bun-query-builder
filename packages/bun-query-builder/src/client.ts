@@ -3413,6 +3413,28 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     // UNION/INTERSECT/EXCEPT belong to the RIGHT-hand SELECT and must render at
     // the end of `text`, or their params would bind in the wrong order.
     let whereTail = false
+    /**
+     * Whether the operand a tail predicate would attach to already carries one.
+     *
+     * Only consulted once `whereTail` is set. It used to be inferred by testing
+     * the WHOLE statement for `/\bWHERE\b/`, but by then `text` holds the LEFT
+     * select — WHERE and all — so a predicate on the left was read as one on
+     * the right and the right side's first predicate came out as `AND`:
+     *
+     *     SELECT * FROM a WHERE y = $1 UNION SELECT * FROM b AND x = $2
+     *
+     * which does not parse. Set from the right-hand operand alone. See #1120.
+     */
+    let tailHasPredicate = false
+    /**
+     * Whether this builder has emitted its HAVING.
+     *
+     * Same defect as #1113, different keyword: scanning `text` for
+     * `/\bHAVING\b/` also matches a raw select fragment that merely contains
+     * the word, so the first real HAVING was emitted as `AND` and fused onto
+     * the GROUP BY list. See #1122.
+     */
+    let hasHaving = false
 
     // Lazy building: don't prepare statement until execution
     // built is initialized lazily to avoid expensive template tag calls on every query
@@ -3479,7 +3501,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       if (!body)
         return text
       if (whereTail) {
-        const kw = SQL_PATTERNS.WHERE.test(text) ? 'AND' : 'WHERE'
+        const kw = tailHasPredicate ? 'AND' : 'WHERE'
         return `${text} ${kw} ${body}`
       }
       const cut = firstTailIndex(text)
@@ -3600,7 +3622,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     // the other side's bound params and renumbering its `$n` placeholders past
     // ours on Postgres — previously the set-op appended text only, dropping the
     // right side's params and colliding `$1`. See stacksjs/bun-query-builder#1029.
-    const appendSetOp = (op: string, other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] } }) => {
+    const appendSetOp = (op: string, other: { toSQL: () => any, __rawState?: () => { sql: string, params: unknown[] }, __hasPredicate?: () => boolean }) => {
       // Params are one flat array in push order, so the WHERE text has to
       // precede the set operator's params in the emitted string. Materialize it
       // into `text` now; terms added after this point belong to the RIGHT-hand
@@ -3618,10 +3640,17 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           : st.sql
         text += ` ${op} ${otherSql}`
         whereParams.push(...st.params)
+        // A predicate added after this point attaches to the RIGHT operand, so
+        // the keyword depends on that operand alone — not on the statement,
+        // which by now also holds the left side's WHERE. Ask the builder; only
+        // scan when it is a foreign one that cannot answer. See #1120.
+        tailHasPredicate = other.__hasPredicate?.() ?? SQL_PATTERNS.WHERE.test(otherSql)
       }
       else {
         // Foreign builder without __rawState — fall back to text-only (no param merge).
-        text += ` ${op} ${String(other.toSQL())}`
+        const otherSql = String(other.toSQL())
+        text += ` ${op} ${otherSql}`
+        tailHasPredicate = other.__hasPredicate?.() ?? SQL_PATTERNS.WHERE.test(otherSql)
       }
       built = null
     }
@@ -5614,12 +5643,15 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       having(expr: any) {
         // Chained having() calls join with AND, not a second HAVING keyword
         // (`HAVING a HAVING b` is invalid). See stacksjs/bun-query-builder#1034.
-        const kw = /\bHAVING\b/i.test(text) ? 'AND' : 'HAVING'
+        // Read from builder state, not from `text` — a raw select fragment that
+        // merely contains the word made the first HAVING emit as AND. See #1122.
+        const kw = hasHaving ? 'AND' : 'HAVING'
         // Handle array format: ['COUNT(id)', '>', 3]
         if (Array.isArray(expr)) {
           const paramIdx = whereParams.length + 1
           text = `${text} ${kw} ${expr[0]} ${expr[1]} ${getPlaceholder(paramIdx)}`
           whereParams.push(expr[2])
+          hasHaving = true
           built = null
         }
         // Handle object format
@@ -5635,20 +5667,23 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               whereParams.push(expr[key])
             }
             text = `${text} ${kw} ${conditions.join(' AND ')}`
+            hasHaving = true
             built = null
           }
         }
         // Handle raw expressions
         else if (expr && typeof (expr as any).raw !== 'undefined') {
           text += ` ${kw} ${(expr as any).raw}`
+          hasHaving = true
           built = null
         }
         return this as any
       },
       havingRaw(fragment: any) {
         const frag = renderRawFragment(fragment, 'havingRaw(fragment)')
-        const kw = /\bHAVING\b/i.test(text) ? 'AND' : 'HAVING'
+        const kw = hasHaving ? 'AND' : 'HAVING'
         text += ` ${kw} ${frag}`
+        hasHaving = true
         built = null
         return this as any
       },
@@ -6329,6 +6364,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       // placeholders. See stacksjs/bun-query-builder#1029.
       __rawState() {
         return { sql: reorderSelectClauses(currentSql()), params: [...whereParams] }
+      },
+      // Internal: does this builder's SQL already carry a predicate that a
+      // further where() would have to join with AND? Used by appendSetOp on
+      // the other side, so it can answer that about the right-hand operand
+      // instead of scanning a statement that also contains the left one.
+      // See stacksjs/bun-query-builder#1120.
+      __hasPredicate() {
+        return whereTerms.length > 0 || tailHasPredicate
       },
       raw() {
         return (ensureBuilt() as any).raw()
