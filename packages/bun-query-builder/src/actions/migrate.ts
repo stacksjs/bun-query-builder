@@ -73,6 +73,12 @@ function isAlreadyAppliedError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
   return /duplicate column name/i.test(message)
     || /duplicate key name/i.test(message)
+    // MySQL for "that foreign key is already there". It has no
+    // `ADD CONSTRAINT IF NOT EXISTS`, and a constraint created inline by a
+    // `CREATE TABLE` is invisible to a snapshot written before this generator
+    // emitted them that way - so a regeneration re-adds one that exists, and
+    // the corpus stops on a change that is already made.
+    || /duplicate foreign key constraint name/i.test(message)
     || /\balready exists\b/i.test(message)
 }
 
