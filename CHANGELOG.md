@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.49...v0.2.50)
+
+## 🐛 Bug Fixes
+
+- **drift**: a boolean is a tinyint on MySQL, and that is not drift ([5dfcef3](https://github.com/stacksjs/bun-query-builder/commit/5dfcef3)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.50 ([67c6123](https://github.com/stacksjs/bun-query-builder/commit/67c6123)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.48...v0.2.49)
 
 ## 🐛 Bug Fixes

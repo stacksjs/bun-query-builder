@@ -1,7 +1,7 @@
 {
   "name": "@bun-query-builder/benchmark",
   "type": "module",
-  "version": "0.2.49",
+  "version": "0.2.50",
   "private": true,
   "description": "Performance benchmarks for bun-query-builder vs popular query builders",
   "scripts": {
