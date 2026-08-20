@@ -108,6 +108,12 @@ jobs:
           echo "Waiting for PostgreSQL to be ready..."
           timeout 60 bash -c 'until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done'
           echo "PostgreSQL is ready!"
+      # public-surface-types.test.ts reads dist/*.d.ts. Without this it found no
+      # dist/, returned early, and checked nothing on every CI run — which is
+      # how an `any` reached client.d.ts after #1117 took that file to zero.
+      - name: Build
+        run: bun run build
+
       - name: Unit Tests
         run: bun run test
 
