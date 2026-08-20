@@ -26,6 +26,7 @@
 
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { FactoryFaker } from './faker-compat'
+import type { PaginateOptions } from './client'
 import type { SupportedDialect } from './types'
 import type { RelationCardinality } from './type-inference'
 import { isNumericPlanType, normalizeAttributeType, sqliteAffinityFor } from './column-types'
@@ -3116,7 +3117,7 @@ class ModelQueryBuilder<
     }
   }
 
-  async paginate(page = 1, perPage = 15): Promise<{
+  async paginate(page: number | PaginateOptions = 1, perPage = 15): Promise<{
     data: ModelInstance<TDef, TSelected>[]
     total: number
     page: number
@@ -3126,7 +3127,17 @@ class ModelQueryBuilder<
     isEmpty: boolean
     from: number | null
     to: number | null
+    meta: { perPage: number, page: number, total: number, lastPage: number }
   }> {
+    // Options form: `paginate({ page, perPage })`. This API is (page, perPage)
+    // and the query builder's is (perPage, page); both arguments are numbers,
+    // so transposing them returns a different page rather than raising
+    // anything. Naming them cannot be got wrong. See #1092.
+    if (typeof page === 'object' && page !== null) {
+      const options = page
+      perPage = options.perPage ?? 15
+      page = options.page ?? 1
+    }
     const total = await this.count()
     const lastPage = Math.ceil(total / perPage)
     this._limit = perPage
@@ -3142,6 +3153,12 @@ class ModelQueryBuilder<
       isEmpty: data.length === 0,
       from: data.length > 0 ? (page - 1) * perPage + 1 : null,
       to: data.length > 0 ? (page - 1) * perPage + data.length : null,
+      // Mirrors the query builder's result, which nests under `meta`. The flat
+      // fields above stay exactly as they were, so this is additive: code
+      // written against either shape now works against both, and a helper that
+      // reads `result.meta.total` stops depending on which API produced it.
+      // See #1092.
+      meta: { perPage, page, total, lastPage },
     }
   }
 
@@ -3319,7 +3336,7 @@ export type ModelStatic<TDef extends ModelDefinition> = StaticWhereOverloads<TDe
   count: () => Promise<number>
   exists: () => Promise<boolean>
   doesntExist: () => Promise<boolean>
-  paginate: (page?: number, perPage?: number) => Promise<{
+  paginate: (page?: number | PaginateOptions, perPage?: number) => Promise<{
     data: ModelRecord<TDef>[]
     total: number
     page: number
@@ -3457,7 +3474,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
     count: () => new ModelQueryBuilder<TDef>(definition).count(),
     exists: () => new ModelQueryBuilder<TDef>(definition).exists(),
     doesntExist: () => new ModelQueryBuilder<TDef>(definition).doesntExist(),
-    paginate: (page?: number, perPage?: number) => new ModelQueryBuilder<TDef>(definition).paginate(page, perPage),
+    paginate: (page?: number | PaginateOptions, perPage?: number) => new ModelQueryBuilder<TDef>(definition).paginate(page as any, perPage),
 
     whereBetween<K extends Cols>(column: K, range: [min: K extends keyof Attrs ? Attrs[K] : unknown, max: K extends keyof Attrs ? Attrs[K] : unknown]) {
       return new ModelQueryBuilder<TDef>(definition).whereBetween(column, range as any)

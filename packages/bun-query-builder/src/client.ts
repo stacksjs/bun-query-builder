@@ -622,6 +622,28 @@ export type WhereExpression<TableColumns> =
   | { [K in keyof TableColumns & string]: [key: K, op: WhereOperator, value: WhereValue<TableColumns[K]>] }[keyof TableColumns & string]
   | WhereRaw
 
+/**
+ * # `PaginateOptions`
+ *
+ * The unambiguous spelling of a paginate() call.
+ *
+ * `db.selectFrom(t).paginate(perPage, page)` and `Model.query().paginate(page,
+ * perPage)` take the same two numbers in opposite orders, and both parameters
+ * are `number` — so transposing them is not a type error, it just returns a
+ * different page. Passing this object instead says which is which.
+ *
+ * Both APIs accept it and both keep their positional forms, so this adds a
+ * safe spelling without moving anyone's existing call. See #1092.
+ */
+export interface PaginateOptions {
+  /** Rows per page. Defaults to each API's existing default. */
+  perPage?: number
+  /** 1-based page number. Defaults to 1. */
+  page?: number
+  /** Run the count and the page query inside this transaction — see #1051. */
+  tx?: { unsafe: (sql: string, params?: any[]) => any }
+}
+
 export type QueryResult = unknown
 
 /**
@@ -1930,7 +1952,7 @@ export interface BaseSelectQueryBuilder<
    * const res2 = await db.selectFrom('users').where({ active: true }).paginate(25)
    * ```
    */
-  paginate: (perPage: number, page?: number, opts?: { tx?: { unsafe: (sql: string, params?: unknown[]) => unknown } }) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>
+  paginate: ((perPage: number, page?: number, opts?: { tx?: { unsafe: (sql: string, params?: unknown[]) => unknown } }) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>) & ((options: PaginateOptions) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>)
   /**
    * # `simplePaginate`
    *
@@ -5823,7 +5845,18 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const e = await (this as any).exists()
         return !e
       },
-      async paginate(perPage: number, page = 1, opts: { tx?: { unsafe: (sql: string, params?: any[]) => any } } = {}) {
+      async paginate(perPage: number | PaginateOptions, page = 1, opts: { tx?: { unsafe: (sql: string, params?: any[]) => any } } = {}) {
+        // Options form: `paginate({ perPage, page })`. The two paginate APIs in
+        // this library take the same two numbers in opposite orders — this one
+        // is (perPage, page), the ORM's is (page, perPage) — and both arguments
+        // are numbers, so getting it backwards is silent: you simply receive a
+        // different page. Naming them cannot be got wrong. See #1092.
+        if (typeof perPage === 'object' && perPage !== null) {
+          const options = perPage
+          page = options.page ?? 1
+          opts = options.tx ? { tx: options.tx } : {}
+          perPage = options.perPage ?? 10
+        }
         if (!Number.isFinite(perPage) || perPage <= 0 || !Number.isInteger(perPage))
           throw new TypeError(`[query-builder] paginate(perPage): expected positive integer, got ${perPage}`)
         if (!Number.isFinite(page) || page < 1 || !Number.isInteger(page))
