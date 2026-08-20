@@ -640,8 +640,14 @@ export interface PaginateOptions {
   perPage?: number
   /** 1-based page number. Defaults to 1. */
   page?: number
-  /** Run the count and the page query inside this transaction — see #1051. */
-  tx?: { unsafe: (sql: string, params?: any[]) => any }
+  /**
+   * Run the count and the page query inside this transaction — see #1051.
+   *
+   * `unknown` rather than `any`, matching the positional overload's declared
+   * `opts.tx`. An `any` here is published in `client.d.ts`, which is the type
+   * an app touches on every query — #1117 took that file to zero and pinned it.
+   */
+  tx?: { unsafe: (sql: string, params?: unknown[]) => unknown }
 }
 
 export type QueryResult = unknown
@@ -5854,7 +5860,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         if (typeof perPage === 'object' && perPage !== null) {
           const options = perPage
           page = options.page ?? 1
-          opts = options.tx ? { tx: options.tx } : {}
+          opts = options.tx ? { tx: options.tx as { unsafe: (sql: string, params?: any[]) => any } } : {}
           perPage = options.perPage ?? 10
         }
         if (!Number.isFinite(perPage) || perPage <= 0 || !Number.isInteger(perPage))
