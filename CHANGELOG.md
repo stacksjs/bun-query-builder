@@ -1,3 +1,29 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.59...v0.2.60)
+
+## 💥 Breaking Changes
+
+- fix(browser)!: refuse orWhere rather than sending it as an AND (#1131) ([e651721](https://github.com/stacksjs/bun-query-builder/commit/e651721)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1096](https://github.com/stacksjs/bun-query-builder/issues/1096), [#1131](https://github.com/stacksjs/bun-query-builder/issues/1131), [#1131](https://github.com/stacksjs/bun-query-builder/issues/1131), [#1096](https://github.com/stacksjs/bun-query-builder/issues/1096), [#1108](https://github.com/stacksjs/bun-query-builder/issues/1108))
+
+## ✨ Features
+
+- **paginate**: add a spelling that cannot be transposed (#1130) ([2289e10](https://github.com/stacksjs/bun-query-builder/commit/2289e10)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1092](https://github.com/stacksjs/bun-query-builder/issues/1092), [#1130](https://github.com/stacksjs/bun-query-builder/issues/1130), [#1130](https://github.com/stacksjs/bun-query-builder/issues/1130))
+
+## 🐛 Bug Fixes
+
+- **mysql**: MODIFY COLUMN keeps auto_increment on a primary key ([9bbe60e](https://github.com/stacksjs/bun-query-builder/commit/9bbe60e)) _(by Chris <chris@stacksjs.com>)_
+- **client**: keep client.d.ts free of `any`, and make the guard that says so run (#1132) ([5f6cbd7](https://github.com/stacksjs/bun-query-builder/commit/5f6cbd7)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1132](https://github.com/stacksjs/bun-query-builder/issues/1132), [#1132](https://github.com/stacksjs/bun-query-builder/issues/1132), [#1130](https://github.com/stacksjs/bun-query-builder/issues/1130), [#1117](https://github.com/stacksjs/bun-query-builder/issues/1117), [#1117](https://github.com/stacksjs/bun-query-builder/issues/1117))
+- **client**: place clauses by statement structure, not by text search (#1129) ([7c7b1fc](https://github.com/stacksjs/bun-query-builder/commit/7c7b1fc)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1121](https://github.com/stacksjs/bun-query-builder/issues/1121), [#1129](https://github.com/stacksjs/bun-query-builder/issues/1129), [#1129](https://github.com/stacksjs/bun-query-builder/issues/1129))
+- **docs**: use the config keys bunpress actually has ([b9e4309](https://github.com/stacksjs/bun-query-builder/commit/b9e4309)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.60 ([06edeac](https://github.com/stacksjs/bun-query-builder/commit/06edeac)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.58...v0.2.59)
 
 ## 🐛 Bug Fixes
