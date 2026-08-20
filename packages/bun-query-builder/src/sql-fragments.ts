@@ -188,3 +188,151 @@ function closingQuote(sql: string, start: number, quote: string): number {
 
   return sql.length
 }
+
+/**
+ * A top-level keyword found by {@link scanTopLevelKeywords}.
+ */
+export interface TopLevelKeyword {
+  /** The caller's label for the pattern that matched. */
+  key: string
+  /** Index in the source SQL where the keyword starts. */
+  start: number
+  /** Length of the matched text. */
+  length: number
+}
+
+/**
+ * Find clause keywords in `sql` that are genuinely clause keywords.
+ *
+ * Three separate scanners used to answer this question, each with its own idea
+ * of what SQL is, and a raw fragment is arbitrary caller text:
+ *
+ *     firstTailIndex          paren-depth only
+ *     insertJoin              paren-depth only
+ *     computeReorderedClauses paren-depth + string literals
+ *
+ * So `selectRaw(raw("'a limit 3 b' as t"))` put the word `limit` where the
+ * first two would read it as a LIMIT clause, and the WHERE was spliced into
+ * the middle of a string literal — leaving a statement that is still valid,
+ * has no WHERE, and returns every row. The JOIN splice had the same hole, and
+ * the third scanner missed comments. See stacksjs/bun-query-builder#1121.
+ *
+ * This skips everything that is not executable statement structure:
+ *
+ *  - parenthesised sub-expressions, so a subquery's own ORDER BY is not ours
+ *  - `'…'`, `"…"` and `` `…` `` runs, where doubling escapes the delimiter
+ *  - `-- …` line comments and `/* … *\/` block comments, which nest
+ *  - `$$…$$` / `$tag$…$tag$` dollar-quoted strings, without mistaking a `$1`
+ *    placeholder for the start of one
+ *
+ * Backslash escapes inside a literal are deliberately NOT honoured. Whether
+ * `'a\'` ends the string depends on the dialect and, on Postgres, on a server
+ * setting — so this matches the standard (and what the previous literal-aware
+ * scanner did) rather than inventing a rule that would be wrong somewhere.
+ *
+ * A keyword must be preceded by a non-word character, and never matches at
+ * index 0: a statement that opens with a clause keyword has nothing before it
+ * for the clause to attach to.
+ *
+ * @param sql the statement to scan
+ * @param keywords patterns to look for. Each MUST carry the sticky (`y`) flag;
+ *   they are matched at a position rather than against a slice, and are tried
+ *   in the order given — so longer keywords must come before any single-word
+ *   prefix of them (`ORDER BY` before a hypothetical `ORDER`).
+ * @param limit stop after this many hits. Callers that only want the first
+ *   clause boundary pass 1 rather than scanning the rest of the statement.
+ */
+export function scanTopLevelKeywords(
+  sql: string,
+  keywords: ReadonlyArray<{ key: string, pattern: RegExp }>,
+  limit = Number.POSITIVE_INFINITY,
+): TopLevelKeyword[] {
+  const hits: TopLevelKeyword[] = []
+  let depth = 0
+
+  // charCode comparisons rather than single-character strings and regexes:
+  // this walks every character of every statement the builder emits, and
+  // `sql[i]` allocates. See the note on the lead-letter check below.
+  const isWordCode = (c: number): boolean =>
+    (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95
+
+  for (let i = 0; i < sql.length; i++) {
+    const code = sql.charCodeAt(i)
+
+    // -- line comment: everything to the newline is prose.
+    if (code === 45 && sql.charCodeAt(i + 1) === 45) {
+      const newline = sql.indexOf('\n', i + 2)
+      if (newline === -1)
+        return hits
+      i = newline
+      continue
+    }
+
+    // /* block comment */ — Postgres nests these, so a naive indexOf('*\/')
+    // would stop at the inner terminator and resume scanning inside prose.
+    if (code === 47 && sql.charCodeAt(i + 1) === 42) {
+      let nesting = 1
+      let j = i + 2
+      while (j < sql.length && nesting > 0) {
+        if (sql[j] === '/' && sql[j + 1] === '*') { nesting++; j += 2 }
+        else if (sql[j] === '*' && sql[j + 1] === '/') { nesting--; j += 2 }
+        else j++
+      }
+      i = j - 1
+      continue
+    }
+
+    // Quoted run. A doubled delimiter is an escaped one and stays inside.
+    if (code === 39 || code === 34 || code === 96) {
+      let j = i + 1
+      while (j < sql.length) {
+        if (sql.charCodeAt(j) === code) {
+          // A doubled delimiter is an escaped one and stays inside.
+          if (sql.charCodeAt(j + 1) === code) { j += 2; continue }
+          break
+        }
+        j++
+      }
+      i = j
+      continue
+    }
+
+    // Dollar-quoted string. The tag is empty or an identifier, which is what
+    // separates `$$…$$` from the `$1` placeholders Postgres binds with.
+    if (code === 36) {
+      const opening = /^\$(?:[A-Z_][A-Z0-9_]*)?\$/i.exec(sql.slice(i))
+      if (opening) {
+        const closing = sql.indexOf(opening[0], i + opening[0].length)
+        i = closing === -1 ? sql.length : closing + opening[0].length - 1
+        continue
+      }
+    }
+
+    if (code === 40) { depth++; continue }
+    if (code === 41) { depth = Math.max(0, depth - 1); continue }
+    if (depth !== 0) continue
+    if (i === 0) continue
+
+    // Every clause keyword starts with a letter, so this rejects the large
+    // majority of positions before any regex runs. The scan replaced three
+    // separate ones, two of which jumped between matches of a single
+    // alternation regex — without this it walks characters they skipped.
+    const upper = code & ~32
+    if (upper < 65 || upper > 90) continue
+    if (isWordCode(sql.charCodeAt(i - 1))) continue
+
+    for (const { key, pattern } of keywords) {
+      pattern.lastIndex = i
+      const match = pattern.exec(sql)
+      if (!match) continue
+      hits.push({ key, start: i, length: match[0].length })
+      if (hits.length >= limit)
+        return hits
+      // Advance past it, so a multi-word keyword is not re-detected mid-match.
+      i += match[0].length - 1
+      break
+    }
+  }
+
+  return hits
+}

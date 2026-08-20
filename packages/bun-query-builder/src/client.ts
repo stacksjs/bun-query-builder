@@ -11,7 +11,7 @@ import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
 import type { WhereTerm } from './sql-fragments'
-import { FALSE_PREDICATE, renderInPredicate, renderWhereTerms } from './sql-fragments'
+import { FALSE_PREDICATE, renderInPredicate, renderWhereTerms, scanTopLevelKeywords } from './sql-fragments'
 
 export { resetConnection }
 
@@ -2925,6 +2925,49 @@ function sleep(ms: number): Promise<void> {
 const reorderCache = new Map<string, string>()
 const REORDER_CACHE_MAX = 500
 
+/**
+ * Clause keywords, as one table per scan site, hoisted to module scope.
+ *
+ * A regex literal is constructed each time its expression is evaluated, so
+ * building these inside the builder cost ~19 allocations per query. They hold
+ * no state between calls: `scanTopLevelKeywords` sets `lastIndex` before every
+ * exec, which is the only thing the sticky flag carries.
+ */
+const REORDER_KEYWORDS = [
+    { key: 'GROUP_BY', pattern: /GROUP\s+BY\b/iy },
+    { key: 'ORDER_BY', pattern: /ORDER\s+BY\b/iy },
+    { key: 'HAVING', pattern: /HAVING\b/iy },
+    { key: 'OFFSET', pattern: /OFFSET\b/iy },
+    { key: 'LIMIT', pattern: /LIMIT\b/iy },
+    { key: 'WHERE', pattern: /WHERE\b/iy },
+  ]
+
+const TAIL_CLAUSE = [
+  { key: 'tail', pattern: /GROUP\s+BY\b/iy },
+  { key: 'tail', pattern: /ORDER\s+BY\b/iy },
+  { key: 'tail', pattern: /HAVING\b/iy },
+  { key: 'tail', pattern: /LIMIT\b/iy },
+  { key: 'tail', pattern: /OFFSET\b/iy },
+  { key: 'tail', pattern: /WINDOW\b/iy },
+  { key: 'tail', pattern: /UNION\b/iy },
+  { key: 'tail', pattern: /INTERSECT\b/iy },
+  { key: 'tail', pattern: /EXCEPT\b/iy },
+  { key: 'tail', pattern: /FOR\s+UPDATE\b/iy },
+  { key: 'tail', pattern: /FOR\s+SHARE\b/iy },
+  { key: 'tail', pattern: /LOCK\s+IN\s+SHARE\s+MODE\b/iy },
+]
+
+const JOIN_CUT = [
+  { key: 'cut', pattern: /GROUP\s+BY\b/iy },
+  { key: 'cut', pattern: /ORDER\s+BY\b/iy },
+  { key: 'cut', pattern: /WHERE\b/iy },
+  { key: 'cut', pattern: /HAVING\b/iy },
+  { key: 'cut', pattern: /LIMIT\b/iy },
+  { key: 'cut', pattern: /OFFSET\b/iy },
+  { key: 'cut', pattern: /UNION\b/iy },
+]
+
+
 function reorderSelectClauses(sql: string): string {
   const hit = reorderCache.get(sql)
   if (hit !== undefined) return hit
@@ -2940,56 +2983,13 @@ function computeReorderedClauses(sql: string): string {
   // must be checked before single-word prefixes that would
   // otherwise short-circuit them (e.g. "ORDER" alone isn't a clause
   // start; "ORDER BY" is).
-  const KEYWORDS: Array<{ key: 'WHERE' | 'GROUP_BY' | 'HAVING' | 'ORDER_BY' | 'LIMIT' | 'OFFSET', tokens: RegExp }> = [
-    { key: 'GROUP_BY', tokens: /^GROUP\s+BY\b/i },
-    { key: 'ORDER_BY', tokens: /^ORDER\s+BY\b/i },
-    { key: 'HAVING', tokens: /^HAVING\b/i },
-    { key: 'OFFSET', tokens: /^OFFSET\b/i },
-    { key: 'LIMIT', tokens: /^LIMIT\b/i },
-    { key: 'WHERE', tokens: /^WHERE\b/i },
-  ]
 
-  const positions: Array<{ key: string, start: number }> = []
-  let depth = 0
-  let inString = false
-  let stringChar = ''
-
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i]
-    if (inString) {
-      if (ch === stringChar) {
-        // SQL escapes a quote by doubling it ('it''s'). Skip the pair.
-        if (sql[i + 1] === stringChar) { i++; continue }
-        inString = false
-      }
-      continue
-    }
-    if (ch === '\'' || ch === '"' || ch === '`') {
-      inString = true
-      stringChar = ch
-      continue
-    }
-    if (ch === '(') { depth++; continue }
-    if (ch === ')') { depth--; continue }
-    if (depth !== 0) continue
-    // Keyword must be word-boundary-led — i.e. preceded by whitespace
-    // (or start of string, which never matches a clause).
-    if (i === 0 || !/\s/.test(sql[i - 1])) continue
-    // Cheap pre-filter: every clause keyword starts with G/O/H/L/W. Skip the
-    // slice + regex battery (the hot part of this scan) for any other char.
-    const lead = sql.charCodeAt(i) & ~32 // ASCII uppercase
-    if (lead !== 71 && lead !== 79 && lead !== 72 && lead !== 76 && lead !== 87) continue
-    const rest = sql.slice(i)
-    for (const { key, tokens } of KEYWORDS) {
-      const m = rest.match(tokens)
-      if (!m) continue
-      positions.push({ key, start: i })
-      // Advance past the matched keyword so we don't re-detect it on
-      // the next iteration of the outer loop.
-      i += m[0].length - 1
-      break
-    }
-  }
+  // Shared with the WHERE and JOIN splices, so all three agree on what counts
+  // as statement structure rather than caller text. This one already skipped
+  // string literals; it did not skip comments, so `orderByRaw(raw('id desc /*
+  // where clause */'))` had the comment's `where` promoted to a clause and the
+  // statement cut at it. See #1121.
+  const positions = scanTopLevelKeywords(sql, REORDER_KEYWORDS)
 
   // Nothing to reorder if zero or one clause: zero clauses means the
   // SQL is just SELECT…FROM, and a single clause is already in
@@ -3493,19 +3493,15 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     }
 
     // Index of the first TOP-LEVEL clause that must follow WHERE, or -1.
-    // Paren-depth scan so a subquery's own ORDER BY/LIMIT doesn't match.
-    const TAIL_CLAUSE = /\(|\)|\b(?:GROUP\s+BY|HAVING|ORDER\s+BY|LIMIT|OFFSET|WINDOW|UNION|INTERSECT|EXCEPT|FOR\s+UPDATE|FOR\s+SHARE|LOCK\s+IN\s+SHARE\s+MODE)\b/gi
+    //
+    // Shared scanner: paren depth alone was not enough, because a raw fragment
+    // is caller text. `selectRaw(raw("'a limit 3 b' as t"))` put `limit` inside
+    // a string literal, the WHERE was spliced into the middle of it, and the
+    // statement stayed valid with no WHERE at all — returning every row. See
+    // #1121.
     const firstTailIndex = (s: string): number => {
-      TAIL_CLAUSE.lastIndex = 0
-      let depth = 0
-      let m: RegExpExecArray | null
-      // eslint-disable-next-line no-cond-assign
-      while ((m = TAIL_CLAUSE.exec(s))) {
-        if (m[0] === '(') { depth++ }
-        else if (m[0] === ')') { depth = Math.max(0, depth - 1) }
-        else if (depth === 0) { return m.index }
-      }
-      return -1
+      const hits = scanTopLevelKeywords(s, TAIL_CLAUSE, 1)
+      return hits.length > 0 ? hits[0].start : -1
     }
 
     /**
@@ -3690,17 +3686,15 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     // end of `text`, so `.where(...).join(...)` emitted `... WHERE ... JOIN ...`
     // (invalid on every dialect). Also invalidates `built`. Paren-depth scan so
     // a subquery's inner WHERE doesn't get matched. See #1030.
+    // Where the JOIN goes: before the first top-level trailing clause.
+    //
+    // Same shared scanner, and the same reason. This one also spelled its
+    // multi-word keywords with a single literal space, so `GROUP\n  BY` in a
+    // fragment was missed entirely — the patterns below take any whitespace.
+    // See #1121.
     const insertJoin = (joinClause: string) => {
-      const re = /\(|\)|\b(?:WHERE|GROUP BY|HAVING|ORDER BY|LIMIT|OFFSET|UNION)\b/gi
-      let depth = 0
-      let cut = -1
-      let mm: RegExpExecArray | null
-      // eslint-disable-next-line no-cond-assign
-      while ((mm = re.exec(text))) {
-        if (mm[0] === '(') { depth++ }
-        else if (mm[0] === ')') { depth = Math.max(0, depth - 1) }
-        else if (depth === 0) { cut = mm.index; break }
-      }
+      const hits = scanTopLevelKeywords(text, JOIN_CUT, 1)
+      const cut = hits.length > 0 ? hits[0].start : -1
       text = cut >= 0
         ? `${text.slice(0, cut)}${joinClause} ${text.slice(cut)}`
         : `${text} ${joinClause}`
