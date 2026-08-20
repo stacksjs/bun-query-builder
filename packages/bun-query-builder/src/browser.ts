@@ -401,23 +401,19 @@ export class BrowserQueryBuilder<T = any> {
    */
   orWhere(column: string, value: unknown): this
   orWhere(column: string, operator: WhereOperator, value: unknown): this
-  orWhere(column: string, operatorOrValue: unknown, value?: unknown): this {
-    if (value === undefined) {
-      this.state.wheres.push({
-        column,
-        operator: '=',
-        value: operatorOrValue,
-        boolean: 'or',
-      })
-    }
-    else {
-      this.state.wheres.push({
-        column,
-        operator: operatorOrValue as WhereOperator,
-        value,
-        boolean: 'or',
-      })
-    }
+  orWhere(_column: string, _operatorOrValue: unknown, _value?: unknown): this {
+    // Refused rather than recorded. `boolean: 'or'` was pushed onto the where
+    // list and buildQueryParams never read it, so the term went out as a plain
+    // filter and any receiving API read the whole set as a conjunction:
+    //
+    //     .where('role', 'admin').orWhere('role', 'moderator')
+    //     -> role=admin&role=moderator          (AND, not OR)
+    //
+    // That is a superset of the intended rows, returned without complaint. A
+    // wire spelling for OR would have to be agreed with whatever serves these
+    // requests, and inventing one here would ship a format nothing reads —
+    // the same silent failure, one layer further away. See #1096.
+    throw new TypeError('[browser] orWhere() is not supported by this client. The query-param format it builds has no spelling for a disjunction, so the term would be sent as a plain filter and the server would read it as AND \u2014 silently returning a superset of the rows you asked for. Express the alternatives as a single filter (whereIn), or issue one request per branch and merge the results.')
     return this
   }
 
@@ -536,8 +532,8 @@ export class BrowserQueryBuilder<T = any> {
   private buildQueryParams(): URLSearchParams {
     const params = new URLSearchParams()
 
-    // As in BrowserModelQueryBuilder: `boolean` is not read, so an `orWhere`
-    // serialises as an AND. Left alone deliberately — see #1096.
+    // Every recorded where is a conjunct: orWhere() now throws rather than
+    // recording a disjunction this format cannot express. See #1096.
     // Add where clauses as query params
     for (const where of this.state.wheres) {
       if (where.operator === '=') {
@@ -887,17 +883,13 @@ else {
   }
 
   orWhere<K extends BrowserColumnName<TDef>>(
-    column: K,
-    operatorOrValue: WhereOperator | (K extends keyof BrowserModelAttributes<TDef> ? BrowserModelAttributes<TDef>[K] : unknown),
-    value?: K extends keyof BrowserModelAttributes<TDef> ? BrowserModelAttributes<TDef>[K] : unknown
+    _column: K,
+    _operatorOrValue: WhereOperator | (K extends keyof BrowserModelAttributes<TDef> ? BrowserModelAttributes<TDef>[K] : unknown),
+    _value?: K extends keyof BrowserModelAttributes<TDef> ? BrowserModelAttributes<TDef>[K] : unknown
   ): BrowserModelQueryBuilder<TDef, TSelected> {
-    if (value === undefined) {
-      this._wheres.push({ column: column as string, operator: '=', value: operatorOrValue, boolean: 'or' })
-    }
-else {
-      this._wheres.push({ column: column as string, operator: operatorOrValue as WhereOperator, value, boolean: 'or' })
-    }
-    return this
+    // See BrowserQueryBuilder.orWhere: the recorded `boolean` was never read,
+    // so a disjunction was transmitted as a conjunction. #1096.
+    throw new TypeError('[browser] orWhere() is not supported by this client. The query-param format it builds has no spelling for a disjunction, so the term would be sent as a plain filter and the server would read it as AND \u2014 silently returning a superset of the rows you asked for. Express the alternatives as a single filter (whereIn), or issue one request per branch and merge the results.')
   }
 
   whereIn<K extends BrowserColumnName<TDef>>(
@@ -985,11 +977,9 @@ else {
   private buildQueryParams(): URLSearchParams {
     const params = new URLSearchParams()
 
-    // `where.boolean` is not read here, so an `orWhere` serialises exactly like
-    // a `where` and the server reads it as AND. Representing OR needs a wire
-    // format that this file has no precedent for, so it is left alone rather
-    // than invented — see #1096. BrowserQueryBuilder.buildQueryParams has the
-    // same gap.
+    // Every recorded where is a conjunct, which is what this format can say.
+    // orWhere() throws rather than recording a disjunction that would be
+    // transmitted — and read by the server — as one more AND term. See #1096.
     for (const where of this._wheres) {
       if (where.operator === '=') {
         params.append(where.column, String(where.value))
