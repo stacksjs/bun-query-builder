@@ -352,6 +352,26 @@ export class MySQLDriver implements DialectDriver {
       parts.push(defaultValue)
     }
 
+    /*
+     * The auto-increment clause has to be repeated, because MySQL's MODIFY
+     * COLUMN replaces the whole definition rather than amending it.
+     *
+     * Leaving it off silently drops AUTO_INCREMENT from the key: the table
+     * keeps its primary key, keeps its type, and stops generating ids, so the
+     * next insert that omits one fails with "Field 'id' doesn't have a default
+     * value". A generated `MODIFY COLUMN id bigint` - which is what a drift
+     * repair on a primary key looks like - was enough to disable password
+     * resets on an application whose schema was otherwise correct, and the
+     * migration that did it reported success.
+     *
+     * `renderColumn` above has always emitted this at create time. The two are
+     * the same statement about the same column and had different answers.
+     */
+    const autoIncrement = this.getAutoIncrementClause(column)
+    if (autoIncrement) {
+      parts.push(autoIncrement)
+    }
+
     // MySQL uses MODIFY COLUMN to change column definition
     return `ALTER TABLE ${this.quoteIdentifier(tableName)} MODIFY COLUMN ${parts.join(' ')};`
   }
