@@ -75,15 +75,15 @@
     "typecheck": "bun --bun tsc"
   },
   "dependencies": {
-    "@stacksjs/ts-validation": "^0.5.3"
+    "@stacksjs/ts-validation": "^0.5.5"
   },
   "devDependencies": {
-    "@stacksjs/bunpress": "^0.2.11",
+    "@stacksjs/bunpress": "^0.2.13",
     "@stacksjs/launchpad": "^0.6.4",
     "@stacksjs/ts-faker": "^0.1.8",
-    "better-dx": "^0.2.22",
-    "pickier": "^0.1.56",
-    "ts-pantry": "^0.11.29"
+    "better-dx": "^0.2.25",
+    "pickier": "^0.1.62",
+    "ts-pantry": "^0.11.39"
   },
   "workspaces": [
     "packages/*"
