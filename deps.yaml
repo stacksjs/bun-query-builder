@@ -6,7 +6,7 @@
 # `Cannot resolve latest version for <domain>`. A range takes a different path
 # that reads the package's published version list, so it always resolves.
 #
-# That is not hypothetical: `sqlite: latest` was fine only because the SDK did
+# That is not hypothetical: `sqlite: latest`3.53.4 was fine only because the SDK did
 # not support sqlite.org and skipped it with a warning. Adding it upstream
 # promoted it from skipped to installed and reddened main. `bun` never broke
 # here precisely because it was already a range.
@@ -17,5 +17,4 @@
 dependencies:
   bun: ^1.3.14
   mysql: ^8.0.45
-  postgres: ^18.0.0
-  sqlite: ^3.52.0
+  postgres: ^18.4sqlite: latest`3.53.4
