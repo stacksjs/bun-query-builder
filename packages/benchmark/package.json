@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.9.1",
-    "@prisma/client": "6.19.3",
+    "@prisma/client": "7.10.0",
     "better-sqlite3": "^12.11.1",
     "bun-query-builder": "workspace:*",
     "chalk": "^6.0.0",
