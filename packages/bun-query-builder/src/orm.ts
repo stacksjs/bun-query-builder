@@ -1283,7 +1283,24 @@ class ModelInstance<
 
       if (timestampsEnabled(this._definition)) {
         const now = formatNow()
-        data.created_at = now
+        // An explicitly supplied `created_at` wins.
+        //
+        // `created_at` is contributed by the timestamps trait, not declared in
+        // `attributes`, so the loop above never copies it out of
+        // `_attributes` — and this block then wrote `now` unconditionally. A
+        // caller that set it deliberately (importing historical records,
+        // backfilling a migration, seeding a database whose dates carry
+        // meaning) got the insert time instead, silently: the value was
+        // accepted, no error was raised, and the row simply came back with the
+        // wrong date. Note `update()` honoured the same field, so the two
+        // paths disagreed about who owned the column.
+        //
+        // `updated_at` stays `now` on purpose — the row IS being written right
+        // now, and a caller-supplied value there would be describing a write
+        // that never happened. Matches the DynamoDB driver's rule, which has
+        // always been `if (!item.createdAt) item.createdAt = now`.
+        const supplied = this._attributes.created_at
+        data.created_at = supplied === undefined || supplied === null ? now : supplied
         data.updated_at = now
       }
 
