@@ -742,6 +742,12 @@ class DriverExecutor implements OrmExecutor {
 // the (postgres) default dialect.
 let globalDb: Database | null = null
 
+/**
+ * Whether `globalDb` is a handle this module opened, rather than one a caller
+ * supplied. Only the former is ours to close in {@link releaseOrm}.
+ */
+let globalDbOwned = false
+
 let _executor: OrmExecutor | null = null
 let _executorForDb: Database | null = null
 let _executorDialect: string | null = null
@@ -752,9 +758,11 @@ export function configureOrm(options: { database?: string | Database; verbose?: 
     // Caller-supplied connection: bring-your-own Database means
     // bring-your-own pragmas — never override their settings.
     globalDb = options.database
+    globalDbOwned = false
   }
   else {
     globalDb = new Database(options.database || ':memory:', { create: true })
+    globalDbOwned = true
     // This connection is what every Model.create()/save()/delete() writes
     // through — without the bootstrap it runs with foreign_keys OFF (orphan
     // rows insert silently) no matter what the query-builder connection was
@@ -764,6 +772,46 @@ export function configureOrm(options: { database?: string | Database; verbose?: 
   // Force the executor to rebind to the newly-supplied database.
   _executor = null
   _executorForDb = null
+}
+
+/**
+ * Hand back the `configureOrm({ database })` override.
+ *
+ * `globalDb` outranks `setConfig()` in {@link getExecutor} and, until now, for
+ * the rest of the process: `configureOrm` could repoint it but nothing could
+ * remove it. In a runner that shares one process across many files - `bun test`
+ * does - the last file to configure the ORM left every later one pinned to a
+ * database it owned, and typically deleted in its own teardown. Everything
+ * afterwards got `RangeError: Cannot use a closed database` from a connection
+ * it never asked for (stacksjs/stacks#2415).
+ *
+ * After this call, resolution falls back to the dialect and database from
+ * `setConfig()`, exactly as if `configureOrm` had never run.
+ *
+ * A handle opened from a path is closed, since this module opened it and
+ * nothing else can. One passed in as a `Database` is left alone: bring your own
+ * connection, keep your own lifetime.
+ */
+export function releaseOrm(): void {
+  const owned = globalDbOwned
+  const previous = globalDb
+
+  globalDb = null
+  globalDbOwned = false
+  _executor = null
+  _executorForDb = null
+  _executorDialect = null
+  _executorDatabase = null
+
+  if (owned && previous) {
+    try {
+      previous.close()
+    }
+    catch {
+      // Already closed, or closed underneath us. Releasing is the point; the
+      // handle being gone early is not a failure worth propagating.
+    }
+  }
 }
 
 /**
