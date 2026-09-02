@@ -14,19 +14,26 @@
 # mysql and postgres were skipped as unsupported when this was written, so the
 # spec was inert — ranges so that being added upstream would be a no-op rather
 # than an outage. Postgres has since been added upstream, and the no-op did not
-# hold: `^18.0.0` resolves to the newest 18.x, and the registry publishes an
-# artifact for exactly one of them.
+# hold: every spec tried resolves to a version the registry has no
+# linux/x86-64 artifact for, `18.0.0` and `^18.0.0` alike.
 #
-#   18.6 .. 18.1   404 on linux/x86-64 AND darwin/aarch64
-#   18.0.0         200 on both
-#   17.0.0         200, but 17.6 is 404, so `^17` has the same problem
+#   Required system package postgres@18.0.0 failed to install: Cannot install
+#   postgresql.org@18.0.0: no built-in resolver, and the registry publishes no
+#   linux-x86-64 artifact for that version
 #
-# So a caret here selects a version that cannot be installed, and Setup Pantry
-# fails before any job runs — it took down both CI and Releaser, and v0.2.61
-# was tagged but never published. Pinned exactly, the way `bun` is, until the
-# registry publishes the rest of the 18 series.
+# `Setup Pantry` runs before every job, so this took down CI and Releaser
+# together and v0.2.61 was tagged but never published.
+#
+# Dropped rather than pinned. Nothing here needs a postgres BINARY: it was
+# skipped for the whole life of this file and CI was green throughout, so
+# requesting it only ever asked for something the build does not use. The
+# postgres integration test spawns its own subprocess against a running server
+# and skips without one, exactly as before.
+#
+# mysql is the same bet still outstanding — inert only while pantry skips it.
+# If it is added upstream and its spec cannot resolve, this is the file, and
+# the fix is the same one.
 dependencies:
   bun: ^1.3.14
   mysql: ^8.0.45
-  postgres: 18.0.0
   sqlite: ^3.52.0
