@@ -895,8 +895,24 @@ export function getOrCreateBunSql(forceNew = false): SQL {
 
   // If forceNew is true, config changed, or we don't have an instance, create a new one
   if (forceNew || configChanged || !_bunSqlInstance) {
-    if (_bunSqlInstance)
-      resetConnection()
+    /*
+     * Detach the old instance; do NOT close it.
+     *
+     * This used to call `resetConnection()`, which closes. But the connection
+     * being replaced is not necessarily finished with: callers hold query
+     * builders that captured it, and closing it here pulled the handle out from
+     * under them. A builder cached by the caller stays non-null and perfectly
+     * usable-looking while every query through it throws
+     * `RangeError: Cannot use a closed database` - from a config change
+     * somewhere else entirely, with nothing linking the two
+     * (stacksjs/stacks#2415).
+     *
+     * Replacing the cache is this function's job; deciding that nobody holds
+     * the old connection any more is not something it can know. `closeConnection()`
+     * and `resetConnection()` stay exactly as they were for callers who DO know
+     * - that is what they are for, and their docs already say so.
+     */
+    detachCachedConnection()
     _bunSqlInstance = getBunSql()
     _currentSignature = signature
   }
