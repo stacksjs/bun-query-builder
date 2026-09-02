@@ -1,3 +1,25 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.60...v0.2.61)
+
+## ✨ Features
+
+- **orm**: let a caller release the configureOrm override ([7e173a6](https://github.com/stacksjs/bun-query-builder/commit/7e173a6)) _(by Chris <chris@stacksjs.com>)_ ([#2415](https://github.com/stacksjs/bun-query-builder/issues/2415))
+
+## 🐛 Bug Fixes
+
+- **orm**: honour an explicitly supplied created_at on insert ([ef2013f](https://github.com/stacksjs/bun-query-builder/commit/ef2013f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.2.61 ([d20c6b7](https://github.com/stacksjs/bun-query-builder/commit/d20c6b7)) _(by Chris <chris@stacksjs.com>)_
+
+## 🎉 Miscellaneous
+
+- Merge fix/insert-honours-explicit-created-at: keep a caller-supplied created_at on insert ([89e6d8f](https://github.com/stacksjs/bun-query-builder/commit/89e6d8f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.59...v0.2.60)
 
 ## 💥 Breaking Changes
