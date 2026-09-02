@@ -13,27 +13,16 @@
 #
 # mysql and postgres were skipped as unsupported when this was written, so the
 # spec was inert — ranges so that being added upstream would be a no-op rather
-# than an outage. Postgres has since been added upstream, and the no-op did not
-# hold: every spec tried resolves to a version the registry has no
-# linux/x86-64 artifact for, `18.0.0` and `^18.0.0` alike.
+# than an outage. Postgres was added upstream and the no-op did not hold: the
+# recipe existed, but no 18.x artifact had ever been BUILT for linux/x86-64, so
+# `Setup Pantry` failed before any job ran and took CI and Releaser down
+# together (v0.2.61 was tagged but never published).
 #
-#   Required system package postgres@18.0.0 failed to install: Cannot install
-#   postgresql.org@18.0.0: no built-in resolver, and the registry publishes no
-#   linux-x86-64 artifact for that version
-#
-# `Setup Pantry` runs before every job, so this took down CI and Releaser
-# together and v0.2.61 was tagged but never published.
-#
-# Dropped rather than pinned. Nothing here needs a postgres BINARY: it was
-# skipped for the whole life of this file and CI was green throughout, so
-# requesting it only ever asked for something the build does not use. The
-# postgres integration test spawns its own subprocess against a running server
-# and skips without one, exactly as before.
-#
-# mysql is the same bet still outstanding — inert only while pantry skips it.
-# If it is added upstream and its spec cannot resolve, this is the file, and
-# the fix is the same one.
+# Fixed where it was actually broken - pantry-pm/pantry now publishes
+# postgresql.org@18.6 for linux-x86-64 - rather than by dropping the dependency
+# here, which only hid it.
 dependencies:
   bun: ^1.3.14
   mysql: ^8.0.45
+  postgres: ^18.0.0
   sqlite: ^3.52.0
