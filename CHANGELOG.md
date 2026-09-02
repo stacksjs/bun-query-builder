@@ -1,3 +1,20 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.61...v0.2.62)
+
+## 🐛 Bug Fixes
+
+- **db**: stop closing a connection that callers may still hold ([99e99d2](https://github.com/stacksjs/bun-query-builder/commit/99e99d2)) _(by Chris <chris@stacksjs.com>)_ ([#2415](https://github.com/stacksjs/bun-query-builder/issues/2415))
+- **ci**: restore postgres, now that the registry publishes it ([17f06e5](https://github.com/stacksjs/bun-query-builder/commit/17f06e5)) _(by Chris <chris@stacksjs.com>)_
+- **ci**: stop requesting a postgres pantry cannot install ([e5dc431](https://github.com/stacksjs/bun-query-builder/commit/e5dc431)) _(by Chris <chris@stacksjs.com>)_
+- **ci**: ask pantry for the one postgres 18 it actually publishes ([9ccca60](https://github.com/stacksjs/bun-query-builder/commit/9ccca60)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.62 ([20a8dbe](https://github.com/stacksjs/bun-query-builder/commit/20a8dbe)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.60...v0.2.61)
 
 ## ✨ Features
