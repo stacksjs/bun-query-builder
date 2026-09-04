@@ -78,7 +78,7 @@ import { Database } from 'bun:sqlite'
 import { setConfig, executeMigration } from ${JSON.stringify(SRC)}
 
 setConfig({ dialect: 'sqlite', database: { database: './t.sqlite' }, verbose: false })
-try { await executeMigration(process.cwd()) } catch {}
+try { await executeMigration() } catch {}
 
 const db = new Database('./t.sqlite')
 // Explicit names, not a LIKE: 'mig_%' also matches the 'migrations' ledger.
@@ -121,7 +121,7 @@ import { setConfig, executeMigration } from ${JSON.stringify(SRC)}
 
 setConfig({ dialect: 'sqlite', database: { database: './t.sqlite' }, verbose: false })
 let error = ''
-try { await executeMigration(process.cwd()) } catch (e) { error = e instanceof Error ? e.message : String(e) }
+try { await executeMigration() } catch (e) { error = e instanceof Error ? e.message : String(e) }
 
 const db = new Database('./t.sqlite')
 const type = db.query("SELECT type FROM pragma_table_info('rebuilt') WHERE name = 'qty'").get()
@@ -165,7 +165,7 @@ describe.skipIf(!pgAvailable)('migration locking (#1067)', () => {
     writeFileSync(join(dir, 'worker.ts'), `
 import { setConfig, executeMigration } from ${JSON.stringify(SRC)}
 setConfig({ dialect: 'postgres', database: { url: ${JSON.stringify(PG_URL)} }, verbose: false })
-await executeMigration(process.cwd())
+await executeMigration()
 `)
 
     const result = run(dir, 'probe.ts', `

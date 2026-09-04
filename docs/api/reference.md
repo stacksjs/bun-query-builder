@@ -231,12 +231,22 @@ const migration = await generateMigration('./models', {
 
 ### executeMigration
 
-Execute a migration.
+Run every pending migration file in the corpus and record each one.
 
 ```typescript
 import { executeMigration } from 'bun-query-builder'
 
-await executeMigration(migration)
+// The configured `migrationDir`.
+await executeMigration()
+
+// A corpus assembled from several directories — the application's own
+// migrations plus the ones each installed package ships. Files from every
+// directory are ordered together by file name, so names must be unique
+// across the whole run.
+await executeMigration([
+  './database/migrations',
+  './node_modules/loghq/database/migrations',
+])
 ```
 
 ## Seeders
