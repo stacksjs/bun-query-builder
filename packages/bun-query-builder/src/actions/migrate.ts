@@ -2,7 +2,7 @@ import type { MigrationPlan } from '@/migrations'
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import process from 'node:process'
 import { config, getConfig } from '@/config'
 import { withFreshConnection } from '@/db'
@@ -51,9 +51,9 @@ async function settleAppliedFiles(qb: any, dialect: SupportedDialect, files: str
  * guessing from the name is how the runner used to delete their file. An
  * unreadable file counts as authored, which is the cautious reading.
  */
-function isGeneratedMigration(sqlDir: string, file: string): boolean {
+function isGeneratedMigration(filePath: string): boolean {
   try {
-    return isGeneratedMigrationSql(readFileSync(join(sqlDir, file), 'utf8'))
+    return isGeneratedMigrationSql(readFileSync(filePath, 'utf8'))
   }
   catch {
     return false
@@ -387,8 +387,71 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   return { sql, sqlStatements, hasChanges, plan, operations }
 }
 
-// `dir` is the models directory. This function runs the SQL corpus, which it
-// finds from the workspace root, so it has no use for it — the parameter stays
+/**
+ * The directories `executeMigration` should enumerate, in the order given.
+ *
+ * Omitting the argument means the configured corpus, and creates it when it is
+ * missing — a fresh project has no `database/migrations` until something writes
+ * one. Naming directories means exactly those: they are not created, and one
+ * that does not exist is a caller error rather than an empty corpus, because
+ * the alternative is a run that silently applies nothing and reports success.
+ *
+ * Relative paths resolve against the workspace root, the same root
+ * `config.migrationDir` resolves against, so a caller does not have to know
+ * which directory the process happens to have been started from.
+ */
+function resolveMigrationDirs(dirs: string | string[] | undefined, workspaceRoot: string): string[] {
+  if (dirs === undefined)
+    return [ensureSqlDirectory(workspaceRoot)]
+
+  const named = Array.isArray(dirs) ? dirs : [dirs]
+
+  // An empty list is refused rather than read as "the configured corpus" or as
+  // "no corpus". Both readings are silent: the first ignores what the caller
+  // asked for, the second skips every migration and exits zero. A caller that
+  // means the configured default omits the argument.
+  if (named.length === 0)
+    throw new Error('executeMigration was given an empty list of directories. Pass at least one directory, or omit the argument to use the configured migrationDir.')
+
+  return named.map(dir => (isAbsolute(dir) ? dir : join(workspaceRoot, dir)))
+}
+
+/**
+ * The `.sql` corpus across every directory, in run order.
+ *
+ * Sorted globally by basename rather than per directory, because the basename
+ * IS the ordinal: a package's tables carry foreign keys into the application's
+ * and never the reverse, so sorting each directory separately and running them
+ * back to back puts `REFERENCES "users"` before `users` exists. Postgres and
+ * MySQL reject that; SQLite does not, so per-directory ordering fails on deploy
+ * having passed locally.
+ *
+ * The ledger keys on the bare basename, so a basename cannot repeat across
+ * directories. Left alone, the second file would look already-executed and be
+ * skipped — a migration that never ran, on a run that reported success. It is
+ * refused here instead, naming both paths.
+ */
+function collectMigrationFiles(dirs: string[]): Array<{ name: string, path: string }> {
+  const byName = new Map<string, string>()
+
+  for (const dir of dirs) {
+    if (!existsSync(dir))
+      throw new Error(`Migration directory not found: ${dir}`)
+
+    for (const name of readdirSync(dir).filter(file => file.endsWith('.sql'))) {
+      const claimed = byName.get(name)
+      if (claimed !== undefined)
+        throw new Error(`Duplicate migration file name across directories: "${name}" appears in both ${claimed} and ${join(dir, name)}. Migrations are recorded by file name, so names must be unique across every directory in a run.`)
+
+      byName.set(name, join(dir, name))
+    }
+  }
+
+  return [...byName]
+    .map(([name, path]) => ({ name, path }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}
+
 /**
  * The advisory-lock name every migrate run contends on.
  *
@@ -479,9 +542,25 @@ async function withMigrationLock<T>(dialect: SupportedDialect, fn: () => Promise
   }
 }
 
-// because it is public API and every caller passes it.
-// eslint-disable-next-line pickier/no-unused-vars
-export async function executeMigration(dir?: string): Promise<boolean> {
+/**
+ * Run every pending migration file, in order, and record each one.
+ *
+ * `dirs` is the corpus to run. Omit it for the configured `migrationDir`,
+ * which is what the CLI and every caller inside this package do. Pass a
+ * directory, or a list of them, to run a corpus assembled from more than one
+ * place — an application's own migrations plus those shipped by each installed
+ * package, say. Files from every directory are ordered together by file name,
+ * so a package's migration can be placed before or after the application's
+ * deliberately; see {@link collectMigrationFiles} for why that has to be one
+ * global ordering and why file names must be unique across the whole run.
+ *
+ * The argument used to be declared and then ignored, so a caller passing the
+ * wrong directory got the configured one anyway and never found out. It is
+ * honoured now, which means a caller that was passing something other than a
+ * migrations directory — the models directory was the common one — will see
+ * that directory enumerated instead.
+ */
+export async function executeMigration(dirs?: string | string[]): Promise<boolean> {
   // Load the config file before anything reads `snapshotDir`.
   //
   // `config` is a synchronous singleton of defaults plus whatever `setConfig`
@@ -494,11 +573,9 @@ export async function executeMigration(dir?: string): Promise<boolean> {
   await getConfig()
 
   const workspaceRoot = getWorkspaceRoot()
-  const sqlDir = ensureSqlDirectory(workspaceRoot)
   const dialect = config.dialect || 'postgres'
 
-  const files = readdirSync(sqlDir)
-  const scriptFiles = files.filter(file => file.endsWith('.sql')).sort()
+  const scriptFiles = collectMigrationFiles(resolveMigrationDirs(dirs, workspaceRoot))
 
   if (scriptFiles.length === 0) {
     info('-- No migration files found to execute')
@@ -542,7 +619,7 @@ export async function executeMigration(dir?: string): Promise<boolean> {
        * corpus already contains), so there is nothing left for replay to fix,
        * and everything to lose by deleting the evidence.
        */
-      const pending = scriptFiles.filter(file => !executedMigrations.includes(file))
+      const pending = scriptFiles.filter(file => !executedMigrations.includes(file.name))
 
       if (pending.length === 0) {
         info('-- No pending migrations to execute')
@@ -551,8 +628,7 @@ export async function executeMigration(dir?: string): Promise<boolean> {
 
       info(`-- Executing ${pending.length} migration${pending.length === 1 ? '' : 's'}`)
 
-      for (const file of pending) {
-        const filePath = join(sqlDir, file)
+      for (const { name: file, path: filePath } of pending) {
         info(`-- Executing: ${file}`)
 
         try {
@@ -589,7 +665,7 @@ export async function executeMigration(dir?: string): Promise<boolean> {
           // never recorded it at all. Record it and carry on — the schema is
           // where the file says it should be. Anything else, including every
           // authored migration, fails loudly.
-          if (isGeneratedMigration(sqlDir, file) && isAlreadyAppliedError(err)) {
+          if (isGeneratedMigration(filePath) && isAlreadyAppliedError(err)) {
             await recordMigration(qb, file, dialect)
             info(`-- ✓ Migration ${file} was already applied; recorded it (${err instanceof Error ? err.message : String(err)})`)
             continue
@@ -833,7 +909,7 @@ function removeGeneratedMigrationFiles(sqlDir: string): void {
   const kept: string[] = []
 
   for (const file of readdirSync(sqlDir).filter(f => f.endsWith('.sql'))) {
-    if (!isGeneratedMigration(sqlDir, file)) {
+    if (!isGeneratedMigration(join(sqlDir, file))) {
       kept.push(file)
       continue
     }

@@ -211,7 +211,7 @@ describe('the runner tells authored migrations from generated ones', () => {
     const authored = join(migrationsDir(), '9000000001-alter-farms-table.sql')
     writeFileSync(authored, 'ALTER TABLE farms ADD COLUMN steward TEXT;\n')
 
-    await executeMigration(modelsDir)
+    await executeMigration()
 
     expect(existsSync(authored)).toBe(true)
     expect(columnsOf('farms')).toContain('steward')
@@ -221,7 +221,7 @@ describe('the runner tells authored migrations from generated ones', () => {
   it('does not replay it on the next run, so it cannot fail as a duplicate', async () => {
     // Recorded means run-once. Replaying an ADD COLUMN is the `duplicate
     // column name` failure that takes a whole migrate run down with it.
-    await executeMigration(modelsDir)
+    await executeMigration()
 
     expect(existsSync(join(migrationsDir(), '9000000001-alter-farms-table.sql'))).toBe(true)
     expect(columnsOf('farms')).toContain('steward')
@@ -234,7 +234,7 @@ describe('the runner tells authored migrations from generated ones', () => {
     const generated = join(migrationsDir(), '9000000002-alter-farms-table.sql')
     writeFileSync(generated, `${GENERATED_MARKER}\nALTER TABLE farms ADD COLUMN drainage TEXT;\n`)
 
-    await executeMigration(modelsDir)
+    await executeMigration()
 
     expect(existsSync(generated)).toBe(true)
     expect(columnsOf('farms')).toContain('drainage')

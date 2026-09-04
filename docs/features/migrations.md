@@ -22,16 +22,38 @@ The migration system automatically generates SQL DDL statements from your model 
 ```ts
 import { generateMigration, executeMigration } from 'bun-query-builder'
 
-// Generate migration from models directory
-const migration = await generateMigration('./models', {
+// Generate migration files from the models directory
+await generateMigration('./models', {
   dialect: 'postgres',
-  apply: true,
   full: true
 })
 
-// Execute the migration
-await executeMigration(migration)
+// Run every pending file in the configured `migrationDir`
+await executeMigration()
 ```
+
+### Run a Corpus Spread Across Directories
+
+`executeMigration` takes the directory, or the list of directories, to run.
+Omit it and it uses the configured `migrationDir`.
+
+```ts
+// The application's own migrations, plus the ones each installed package ships
+await executeMigration([
+  './database/migrations',
+  './node_modules/loghq/database/migrations',
+])
+```
+
+Files from every directory are ordered together by file name, not one directory
+at a time — the file name is the ordinal, and a package's tables routinely carry
+foreign keys into the application's. So a package migration can be placed before
+or after an application one deliberately.
+
+Because migrations are recorded in the ledger by their bare file name, a name
+cannot repeat across directories; a repeat is refused rather than recorded once
+and silently skipped. A directory that does not exist is refused too, rather
+than read as an empty corpus.
 
 ### Migration Options
 
@@ -200,12 +222,11 @@ const models = defineModels({
 
 ```ts
 try {
-  const migration = await generateMigration('./models', {
-    dialect: 'postgres',
-    apply: true
+  await generateMigration('./models', {
+    dialect: 'postgres'
   })
 
-  await executeMigration(migration)
+  await executeMigration()
 } catch (err) {
   console.error('Migration failed:', err)
   // Handle rollback or retry logic
@@ -270,7 +291,7 @@ beforeAll(async () => {
   })
 
   if (result.sqlStatements.length > 0) {
-    await executeMigration(result)
+    await executeMigration()
   }
 })
 ```
@@ -302,13 +323,15 @@ function generateMigration(
 
 ```ts
 function executeMigration(
-  migration: GenerateMigrationResult
+  dirs?: string | string[]
 ): Promise<boolean>
 ```
 
 **Parameters:**
 
-- `migration`: Result from generateMigration
+- `dirs`: Directory, or list of directories, holding the `.sql` corpus to run.
+  Defaults to the configured `migrationDir`. Relative paths resolve against the
+  workspace root. File names must be unique across every directory in a run.
 
 **Returns:**
 

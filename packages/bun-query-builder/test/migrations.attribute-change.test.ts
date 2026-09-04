@@ -97,7 +97,7 @@ describe('an attribute added after the table was migrated', () => {
     useOriginalDatabase()
     writeModel(`name: { validation: { rule: {} } }`)
     await generateMigration(modelsDir, { dialect: 'sqlite' })
-    await executeMigration(modelsDir)
+    await executeMigration()
   })
 
   it('writes a migration for the change', async () => {
@@ -111,7 +111,7 @@ describe('an attribute added after the table was migrated', () => {
   })
 
   it('applies it to the database it was generated on', async () => {
-    await executeMigration(modelsDir)
+    await executeMigration()
     expect(columnsOf(dbFile, 'widgets')).toContain('colour')
   })
 
@@ -126,7 +126,7 @@ describe('an attribute added after the table was migrated', () => {
     // The point of the whole corpus: a teammate clones, migrates, and gets the
     // same table. If the ALTER is not in the files, they get yesterday's table.
     const fresh = useFreshDatabase()
-    await executeMigration(modelsDir)
+    await executeMigration()
     useOriginalDatabase()
 
     expect(columnsOf(fresh, 'widgets')).toContain('name')
@@ -135,7 +135,7 @@ describe('an attribute added after the table was migrated', () => {
 
   it('does not re-run on the machine that already applied it', async () => {
     const before = migrationFiles()
-    await executeMigration(modelsDir)
+    await executeMigration()
 
     // Recorded, so it is not replayed — replaying an ADD COLUMN is the
     // `duplicate column name` failure that takes the whole run down.
@@ -157,16 +157,16 @@ describe('a series of changes, each landing its own migration', () => {
 
     writeModel(`name: { validation: { rule: {} } }, colour: { validation: { rule: {} } }, size: { validation: { rule: {} } }`)
     await generateMigration(modelsDir, { dialect: 'sqlite' })
-    await executeMigration(modelsDir)
+    await executeMigration()
 
     writeModel(`name: { validation: { rule: {} } }, colour: { validation: { rule: {} } }, size: { validation: { rule: {} } }, weight: { validation: { rule: {} } }`)
     await generateMigration(modelsDir, { dialect: 'sqlite' })
-    await executeMigration(modelsDir)
+    await executeMigration()
 
     expect(migrationFiles().length).toBe(start + 2)
 
     const fresh = useFreshDatabase()
-    await executeMigration(modelsDir)
+    await executeMigration()
     useOriginalDatabase()
 
     const columns = columnsOf(fresh, 'widgets')
@@ -196,12 +196,12 @@ describe('two changes migrated inside the same second', () => {
   })
 
   it('runs both, on this machine and on a fresh one', async () => {
-    await executeMigration(modelsDir)
+    await executeMigration()
     expect(columnsOf(dbFile, 'widgets')).toContain('finish')
     expect(columnsOf(dbFile, 'widgets')).toContain('grade')
 
     const fresh = useFreshDatabase()
-    await executeMigration(modelsDir)
+    await executeMigration()
     useOriginalDatabase()
 
     const columns = columnsOf(fresh, 'widgets')
@@ -230,7 +230,7 @@ describe('a migration applied but never recorded', () => {
     writeFileSync(orphan, `-- qb:generated\nALTER TABLE widgets ADD COLUMN colour TEXT;\n`)
 
     // `colour` is already on the table, so this SQL cannot succeed.
-    await executeMigration(modelsDir)
+    await executeMigration()
 
     expect(existsSync(orphan)).toBe(true)
     expect(columnsOf(dbFile, 'widgets')).toContain('colour')
@@ -244,7 +244,7 @@ describe('a migration applied but never recorded', () => {
     // recorded away. Only an unambiguous "already exists" is forgiven, and
     // only for a migration the generator wrote.
     let threw = false
-    try { await executeMigration(modelsDir) }
+    try { await executeMigration() }
     catch { threw = true }
     finally { rmSync(broken, { force: true }) }
 
@@ -267,11 +267,11 @@ describe('the snapshot going missing does not duplicate work', () => {
   })
 
   it('leaves the database untouched and still replayable afterwards', async () => {
-    await executeMigration(modelsDir)
+    await executeMigration()
     expect(columnsOf(dbFile, 'widgets')).toContain('weight')
 
     const fresh = useFreshDatabase()
-    await executeMigration(modelsDir)
+    await executeMigration()
     useOriginalDatabase()
     expect(columnsOf(fresh, 'widgets')).toContain('weight')
   })
