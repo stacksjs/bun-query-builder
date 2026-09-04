@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.62...v0.2.63)
+
+## 💥 Breaking Changes
+
+- fix(migrate)!: run the directories executeMigration was given (#1138) ([86b9a0b](https://github.com/stacksjs/bun-query-builder/commit/86b9a0b)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1137](https://github.com/stacksjs/bun-query-builder/issues/1137), [#1138](https://github.com/stacksjs/bun-query-builder/issues/1138), [#1138](https://github.com/stacksjs/bun-query-builder/issues/1138))
+
+## 🔧 Chores
+
+- release v0.2.63 ([e8c6487](https://github.com/stacksjs/bun-query-builder/commit/e8c6487)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.61...v0.2.62)
 
 ## 🐛 Bug Fixes
