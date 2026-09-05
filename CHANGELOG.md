@@ -1,3 +1,9 @@
+## v0.2.67
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.66...v0.2.67)
+
+- Reuse bounded single-row insert SQL shapes while binding fresh values and preserving column order and dialect-specific quoting.
+
 ## v0.2.66
 
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.65...v0.2.66)
