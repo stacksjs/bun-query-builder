@@ -3089,6 +3089,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
   const meta = state?.meta
   const schema = state?.schema
 
+  // Cache SQL text only, never values or driver statements. A small per-builder
+  // map lets application inserts and query-log inserts reuse their own shapes.
+  let singleRowInsertShapes: Map<string, {
+    columns: string[]
+    quoteStyle: 'postgres' | 'mysql' | 'sqlite'
+    sql: string
+  }> | undefined
+
   /**
    * A row's date columns, in the shape the dialect accepts.
    *
@@ -7098,6 +7106,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           ? (id: string): string => `\`${String(id).replace(/`/g, '``')}\``
           : (id: string): string => `"${String(id).replace(/"/g, '""')}"`
 
+      const quoteStyle = isPostgres ? 'postgres' : isMysqlLike(config.dialect) ? 'mysql' : 'sqlite'
+
       // Get placeholder based on dialect
       const getPlaceholder = isPostgres
         ? (index: number): string => `$${index + 1}`
@@ -7140,7 +7150,24 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           const totalParams = rowCount * colCount
           params.length = totalParams
 
-          if (rowCount === 1) {
+          const cacheableShape = rowCount === 1 && colCount > 0 && typeof table === 'string'
+          const cachedShape = cacheableShape ? singleRowInsertShapes?.get(table) : undefined
+          let sameShape = cachedShape?.quoteStyle === quoteStyle && cachedShape.columns.length === colCount
+          if (sameShape) {
+            for (let c = 0; c < colCount; c++) {
+              if (cachedShape!.columns[c] !== keys[c]) {
+                sameShape = false
+                break
+              }
+            }
+          }
+
+          if (sameShape) {
+            sqlText = cachedShape!.sql
+            for (let c = 0; c < colCount; c++)
+              params[c] = firstRow[keys[c]]
+          }
+          else if (rowCount === 1) {
             // Ultra-fast path for single row - build SQL in one shot
             if (!isPostgres) {
               // SQLite/MySQL: `?` placeholders. Quote the table + column
@@ -7192,6 +7219,18 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               }
             }
             sqlText += ')'
+          }
+
+          // Bound both the number of tables and each retained SQL shape. Column
+          // names are included in SQL, so this also bounds the retained keys.
+          if (cacheableShape && !sameShape && sqlText.length <= 8192) {
+            singleRowInsertShapes ??= new Map()
+            if (singleRowInsertShapes.size >= 32 && !singleRowInsertShapes.has(table)) {
+              const oldest = singleRowInsertShapes.keys().next().value
+              if (oldest !== undefined)
+                singleRowInsertShapes.delete(oldest)
+            }
+            singleRowInsertShapes.set(table, { columns: keys, quoteStyle, sql: sqlText })
           }
 
           // Defer unsafe() call - execute() will use _prepareStatement if available
