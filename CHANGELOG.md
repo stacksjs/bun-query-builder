@@ -1,3 +1,9 @@
+## v0.2.65
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.64...v0.2.65)
+
+- Reuse SQLite query and mutation statements with no parameters, preserving fresh preparation for PRAGMAs, DDL, and omitted bindings.
+
 ## v0.2.64
 
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.63...v0.2.64)
