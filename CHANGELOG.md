@@ -1,3 +1,9 @@
+## v0.2.64
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.63...v0.2.64)
+
+- Reuse cached SQLite statements for explicit bindings while preserving fresh statements for omitted parameters.
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.62...v0.2.63)
 
 ## 💥 Breaking Changes
