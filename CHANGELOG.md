@@ -1,3 +1,9 @@
+## v0.2.66
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.65...v0.2.66)
+
+- Avoid building unused column lists during inserts while preserving SQL and identifier quoting across dialects.
+
 ## v0.2.65
 
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.64...v0.2.65)
