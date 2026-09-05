@@ -224,7 +224,9 @@ class SQLiteWrapper {
    */
   query(sql: string, params: SQLQueryBindings[] = []): any[] {
     const bound = bindNumberedPlaceholders(sql, params)
-    const stmt = this.db.prepare(bound.sql)
+    // Bun caches statements in query(). With no arguments, a cached statement
+    // retains its previous bindings, so use a fresh one for omitted parameters.
+    const stmt = bound.params.length > 0 ? this.db.query(bound.sql) : this.db.prepare(bound.sql)
     return stmt.all(...bound.params)
   }
 
@@ -233,7 +235,7 @@ class SQLiteWrapper {
    */
   run(sql: string, params: SQLQueryBindings[] = []): any {
     const bound = bindNumberedPlaceholders(sql, params)
-    const stmt = this.db.prepare(bound.sql)
+    const stmt = bound.params.length > 0 ? this.db.query(bound.sql) : this.db.prepare(bound.sql)
     return stmt.run(...bound.params)
   }
 
