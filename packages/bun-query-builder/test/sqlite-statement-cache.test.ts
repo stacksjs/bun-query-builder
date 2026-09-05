@@ -39,6 +39,51 @@ describe('SQLite statement reuse', () => {
     expect(await sql.unsafe('SELECT ? AS value', ['second'])).toEqual([{ value: 'second' }])
   })
 
+  it('reuses statements without parameters, including placeholder characters in literals', async () => {
+    const sql = getOrCreateBunSql()
+    const query = "SELECT '? $1 @name :name' AS value"
+    const prepare = spyOn(Database.prototype, 'prepare')
+    try {
+      expect(await sql.unsafe(query)).toEqual([{ value: '? $1 @name :name' }])
+      expect(await sql.unsafe(query)).toEqual([{ value: '? $1 @name :name' }])
+      expect(prepare.mock.calls.filter(([text]) => text === query).length).toBeLessThan(2)
+    }
+    finally {
+      prepare.mockRestore()
+    }
+  })
+
+  it('reuses writes without parameters while executing each write', async () => {
+    const sql = getOrCreateBunSql()
+    await sql.unsafe('CREATE TABLE counters (id INTEGER PRIMARY KEY)')
+    const query = 'INSERT INTO counters DEFAULT VALUES'
+    const prepare = spyOn(Database.prototype, 'prepare')
+    try {
+      await sql.unsafe(query)
+      await sql.unsafe(query)
+      expect(await sql.unsafe('SELECT id FROM counters ORDER BY id')).toEqual([{ id: 1 }, { id: 2 }])
+      expect(prepare.mock.calls.filter(([text]) => text === query).length).toBeLessThan(2)
+    }
+    finally {
+      prepare.mockRestore()
+    }
+  })
+
+  it('freshly prepares repeated PRAGMA assignments', async () => {
+    const sql = getOrCreateBunSql()
+    const prepare = spyOn(Database.prototype, 'prepare')
+    try {
+      for (const enabled of [true, false, true]) {
+        await sql.unsafe(`PRAGMA foreign_keys = ${enabled ? 'ON' : 'OFF'}`)
+        expect(await sql.unsafe('PRAGMA foreign_keys')).toEqual([{ foreign_keys: enabled ? 1 : 0 }])
+      }
+      expect(prepare.mock.calls.filter(([text]) => text.startsWith('PRAGMA foreign_keys = ')).length).toBe(3)
+    }
+    finally {
+      prepare.mockRestore()
+    }
+  })
+
   it('does not reuse old bindings when a later write omits its parameters', async () => {
     const sql = getOrCreateBunSql()
     await sql.unsafe('CREATE TABLE values_seen (value TEXT)')

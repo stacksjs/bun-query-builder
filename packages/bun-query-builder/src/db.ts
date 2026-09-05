@@ -194,6 +194,10 @@ function skipQuoted(sql: string, start: number, quote: string): number {
   return sql.length
 }
 
+// Only ordinary queries and mutations opt into parameter-free reuse. PRAGMAs
+// can apply settings during preparation, so they must still be prepared fresh.
+const CACHEABLE_SQLITE_STATEMENT = /^\s*(?:SELECT|WITH|INSERT|UPDATE|DELETE|REPLACE)\b/i
+
 class SQLiteWrapper {
   private db: Database
 
@@ -224,9 +228,12 @@ class SQLiteWrapper {
    */
   query(sql: string, params: SQLQueryBindings[] = []): any[] {
     const bound = bindNumberedPlaceholders(sql, params)
-    // Bun caches statements in query(). With no arguments, a cached statement
-    // retains its previous bindings, so use a fresh one for omitted parameters.
-    const stmt = bound.params.length > 0 ? this.db.query(bound.sql) : this.db.prepare(bound.sql)
+    // Statements with no parameter slots are safe to reuse without arguments.
+    // A parameterized statement retains old bindings, so omitted arguments
+    // still need a fresh statement. Let SQLite identify actual placeholders.
+    const cacheable = bound.params.length > 0 || CACHEABLE_SQLITE_STATEMENT.test(bound.sql)
+    const prepared = cacheable ? this.db.query(bound.sql) : this.db.prepare(bound.sql)
+    const stmt = cacheable && bound.params.length === 0 && prepared.paramsCount > 0 ? this.db.prepare(bound.sql) : prepared
     return stmt.all(...bound.params)
   }
 
@@ -235,7 +242,9 @@ class SQLiteWrapper {
    */
   run(sql: string, params: SQLQueryBindings[] = []): any {
     const bound = bindNumberedPlaceholders(sql, params)
-    const stmt = bound.params.length > 0 ? this.db.query(bound.sql) : this.db.prepare(bound.sql)
+    const cacheable = bound.params.length > 0 || CACHEABLE_SQLITE_STATEMENT.test(bound.sql)
+    const prepared = cacheable ? this.db.query(bound.sql) : this.db.prepare(bound.sql)
+    const stmt = cacheable && bound.params.length === 0 && prepared.paramsCount > 0 ? this.db.prepare(bound.sql) : prepared
     return stmt.run(...bound.params)
   }
 
