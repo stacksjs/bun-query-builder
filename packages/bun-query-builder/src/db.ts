@@ -45,6 +45,8 @@ export function asEmbeddedValue(value: unknown): EmbeddedValue | null {
 
 export interface DriverQuery {
   execute: () => Promise<any>
+  /** Native synchronous execution, when the driver supports it. */
+  executeSync?: () => any
   values?: () => any
   raw?: () => any
   toString: () => string
@@ -409,6 +411,14 @@ export function splitSqlStatements(sql: string): string[] {
 function createSQLiteSQL(filename: string): SQL {
   const wrapper = new SQLiteWrapper(filename)
 
+  function executeStatement(sql: string, params: unknown[]): any {
+    const trimmed = sql.trim().toUpperCase()
+    // RETURNING statements produce rows, just like SELECT and PRAGMA.
+    if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA') || /\bRETURNING\b/.test(trimmed))
+      return wrapper.query(sql, toBindings(params))
+    return wrapper.run(sql, toBindings(params))
+  }
+
   /**
    * Process a tagged template literal and return a query object
    */
@@ -469,27 +479,17 @@ function createSQLiteSQL(filename: string): SQL {
       }
     }
 
-    // Return an object with execute() that returns a Promise
+    // Both interfaces execute the same statement exactly once. The native
+    // interface lets query hooks observe completion before a reset or raw
+    // transaction boundary can run in the caller's next synchronous step.
+    const executeSync = () => executeStatement(sql, params)
     return {
       sql,
       values: params,
+      executeSync,
       execute: () => {
         try {
-          // Rows come back from a SELECT/PRAGMA, and also from any
-          // INSERT/UPDATE/DELETE that carries a RETURNING clause. SQLite
-          // supports RETURNING, but `.run()` only surfaces
-          // { changes, lastInsertRowid } and discards the returned rows, so a
-          // RETURNING statement must go through the row-returning path or the
-          // caller silently loses its data.
-          const trimmed = sql.trim().toUpperCase()
-          if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA') || /\bRETURNING\b/.test(trimmed)) {
-            const result = wrapper.query(sql, toBindings(params))
-            return Promise.resolve(result)
-          }
-          else {
-            const result = wrapper.run(sql, toBindings(params))
-            return Promise.resolve(result)
-          }
+          return Promise.resolve(executeSync())
         }
         catch (error) {
           return Promise.reject(error)
@@ -527,20 +527,10 @@ function createSQLiteSQL(filename: string): SQL {
 
   // Add .unsafe() method for raw SQL with parameters (like Bun's SQL.unsafe)
   sqlFunction.unsafe = (sql: string, params: unknown[] = []) => {
+    const executeSync = () => executeStatement(sql, params)
     const execute = (): Promise<any> => {
       try {
-        // A RETURNING clause turns an INSERT/UPDATE/DELETE into a row producer;
-        // route it through the row-returning path so its output is not lost to
-        // `.run()`'s { changes, lastInsertRowid }. See the tagged-template path.
-        const trimmed = sql.trim().toUpperCase()
-        if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA') || /\bRETURNING\b/.test(trimmed)) {
-          const result = wrapper.query(sql, toBindings(params))
-          return Promise.resolve(result)
-        }
-        else {
-          const result = wrapper.run(sql, toBindings(params))
-          return Promise.resolve(result)
-        }
+        return Promise.resolve(executeSync())
       }
       catch (error) {
         return Promise.reject(error)
@@ -559,6 +549,7 @@ function createSQLiteSQL(filename: string): SQL {
       sql,
       values: params,
       execute,
+      executeSync,
       then: (onFulfilled: (rows: any) => any, onRejected?: (err: any) => any) => execute().then(onFulfilled, onRejected),
       raw: () => sql,
       toString: () => sql,

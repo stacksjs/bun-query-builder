@@ -59,4 +59,79 @@ describe('query hooks: slow-query + params (#1045)', () => {
     await (createQueryBuilder() as any).selectFrom('items').get()
     expect(slow.length).toBe(0)
   })
+
+  it('delivers native completion before the connection can be reset', async () => {
+    const ends: string[] = []
+    config.hooks = { onQueryEnd: event => ends.push(event.sql) }
+    const pending = (createQueryBuilder() as any).selectFrom('items').where({ id: 1 }).execute()
+    // SQLite has already executed at this point. Diagnostic consumers must
+    // see completion before a synchronous lifecycle boundary can close it.
+    expect(ends).toHaveLength(1)
+    resetConnection()
+    expect(await pending).toHaveLength(1)
+    expect(ends).toHaveLength(1)
+  })
+
+  it('delivers native errors once while preserving promise rejection', async () => {
+    const errors: unknown[] = []
+    config.hooks = { onQueryError: event => errors.push(event.error) }
+    const pending = (createQueryBuilder() as any).selectFrom('missing_hook_table').execute()
+    const observed = errors.slice()
+    await expect(pending).rejects.toThrow('missing_hook_table')
+    expect(observed).toHaveLength(1)
+    expect(errors).toHaveLength(1)
+  })
+
+  it('keeps undefined synchronous driver failures as rejections', async () => {
+    const errors: unknown[] = []
+    const completed: unknown[] = []
+    config.hooks = {
+      onQueryEnd: event => completed.push(event),
+      onQueryError: event => errors.push(event.error),
+    }
+    const query = {
+      execute: () => Promise.reject(undefined),
+      executeSync: () => { throw undefined },
+      toString: () => 'SELECT id FROM items',
+    }
+    const connection = Object.assign(() => query, { unsafe: () => query })
+    const pending = (createQueryBuilder({ sql: connection as any }) as any).selectFrom('items').execute()
+    const outcome = await pending.then(() => 'resolved', (error: unknown) => ({ error }))
+    expect(outcome).toEqual({ error: undefined })
+    expect(errors).toEqual([undefined])
+    expect(completed).toHaveLength(0)
+  })
+
+  it('reports an already-aborted native query once through a rejected Promise', async () => {
+    const errors: unknown[] = []
+    const completed: unknown[] = []
+    config.hooks = {
+      onQueryEnd: event => completed.push(event),
+      onQueryError: event => errors.push(event.error),
+    }
+    const controller = new AbortController()
+    controller.abort()
+    const pending = (createQueryBuilder() as any).selectFrom('items').abort(controller.signal).execute()
+    expect(pending).toBeInstanceOf(Promise)
+    const observed = errors.slice()
+    await expect(pending).rejects.toMatchObject({ code: 'EBQBABORT' })
+    expect(observed).toHaveLength(1)
+    expect(errors).toHaveLength(1)
+    expect(completed).toHaveLength(0)
+  })
+
+  it('completes native queries with a timeout and reports hooks once', async () => {
+    const completed: unknown[] = []
+    const errors: unknown[] = []
+    config.hooks = {
+      onQueryEnd: event => completed.push(event),
+      onQueryError: event => errors.push(event.error),
+    }
+    const pending = (createQueryBuilder() as any).selectFrom('items').withTimeout(1000).execute()
+    expect(pending).toBeInstanceOf(Promise)
+    expect(completed).toHaveLength(1)
+    expect(await pending).toHaveLength(2)
+    expect(completed).toHaveLength(1)
+    expect(errors).toHaveLength(0)
+  })
 })

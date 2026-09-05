@@ -3320,13 +3320,13 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     catch {}
 
     let finished = false
-    const finish = (err?: any, rowCount?: number) => {
+    const finish = (err?: any, rowCount?: number, failed = Boolean(err)) => {
       if (finished)
         return
       finished = true
       const durationMs = Date.now() - startAt
       try {
-        if (err) {
+        if (failed) {
           hooks?.onQueryError?.({ sql: text, params, error: err, durationMs, kind })
         }
         else {
@@ -3345,6 +3345,37 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         span?.end(err)
       }
       catch {}
+    }
+
+    if (typeof q.executeSync === 'function') {
+      let rows: any
+      let error: unknown
+      let failed = false
+      try {
+        rows = q.executeSync()
+      }
+      catch (err) {
+        error = err
+        failed = true
+      }
+      // Match the async path's post-execution abort check. A timeout cannot
+      // interrupt native synchronous work; that path also starts its timer
+      // only after execute() has returned an already-settled promise.
+      if (opts?.signal?.aborted) {
+        try {
+          q.cancel?.()
+        }
+        catch {}
+        error = Object.assign(new Error('Query aborted'), { code: 'EBQBABORT' })
+        failed = true
+      }
+      if (failed) {
+        finish(error, undefined, true)
+        return Promise.reject(error)
+      }
+      const rowCount = Array.isArray(rows) ? rows.length : (typeof rows === 'number' ? rows : undefined)
+      finish(undefined, rowCount)
+      return Promise.resolve(rows)
     }
 
     const execPromise = (q as any).execute()
