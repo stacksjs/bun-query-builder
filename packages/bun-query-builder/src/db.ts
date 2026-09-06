@@ -1,5 +1,6 @@
 import type { DatabaseConfig, PoolConfig, SupportedDialect } from './types'
 import type { SQLQueryBindings } from 'bun:sqlite'
+import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { SQL } from 'bun'
 
 /**
@@ -75,6 +76,8 @@ export interface DriverConnection {
   unsafe: (sql: string, values?: unknown[]) => AwaitableDriverQuery
   query?: (sql: string, params?: unknown[]) => any
   close?: () => Promise<void> | void
+  deferInsert?: DeferredInsert
+  flushDeferredInserts?: () => void
   _prepareStatement?: (sql: string) => any
   [key: string]: any
 }
@@ -84,6 +87,7 @@ import { dirname } from 'node:path'
 import process from 'node:process'
 import { config } from './config'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
+import { SQLiteDeferredInserts } from './sqlite-deferred-inserts'
 
 /**
  * SQLite wrapper that provides a SQL-like tagged template literal interface
@@ -202,6 +206,8 @@ const CACHEABLE_SQLITE_STATEMENT = /^\s*(?:SELECT|WITH|INSERT|UPDATE|DELETE|REPL
 
 class SQLiteWrapper {
   private db: Database
+  private deferredInserts: SQLiteDeferredInserts | undefined
+  private closed = false
 
   constructor(filename: string) {
     // bun:sqlite throws if the parent directory doesn't exist yet — a real
@@ -222,6 +228,36 @@ class SQLiteWrapper {
     // be bootstrapped (see DEFAULT_SQLITE_PRAGMAS; configurable via
     // `config.sqlite.pragmas`).
     applySqliteBootstrapPragmas(this.db)
+  }
+
+  deferInsert: DeferredInsert = (table, record) => {
+    if (this.closed)
+      return Promise.reject(new Error('Deferred insert connection is closed'))
+    if (!this.deferredInserts) {
+      const queue = this.deferredInserts = new SQLiteDeferredInserts(this.db)
+      const query = this.query.bind(this)
+      const run = this.run.bind(this)
+      const beforeStatement = (sql: string) => {
+        if (queue.hasPending && !CACHEABLE_SQLITE_STATEMENT.test(sql))
+          queue.flush()
+        queue.assertUsable()
+      }
+      // Install barriers only when this connection opts into deferred writes.
+      // Ordinary connections keep their existing execution path unchanged.
+      this.query = (sql, params) => {
+        beforeStatement(sql)
+        return query(sql, params)
+      }
+      this.run = (sql, params) => {
+        beforeStatement(sql)
+        return run(sql, params)
+      }
+    }
+    return this.deferredInserts.append(table, record)
+  }
+
+  flushDeferredInserts(): void {
+    this.deferredInserts?.flush()
   }
 
   /**
@@ -254,6 +290,8 @@ class SQLiteWrapper {
    * Close the database connection.
    */
   close(): void {
+    this.closed = true
+    this.deferredInserts?.close()
     this.db.close()
   }
 
@@ -556,6 +594,10 @@ function createSQLiteSQL(filename: string): SQL {
       cancel: () => {},
     }
   }
+
+  // Raw deferred INSERTs share this connection's transaction/lifecycle barriers.
+  sqlFunction.deferInsert = wrapper.deferInsert
+  sqlFunction.flushDeferredInserts = () => wrapper.flushDeferredInserts()
 
   // Add .close() method
   sqlFunction.close = () => {
@@ -923,6 +965,7 @@ export function getOrCreateBunSql(forceNew = false): SQL {
 
 function detachCachedConnection(): SQL | null {
   const connection = _bunSqlInstance
+  ;(connection as unknown as DriverConnection | null)?.flushDeferredInserts?.()
   _bunSqlInstance = null
   _currentSignature = null
   return connection
@@ -966,6 +1009,7 @@ export function resetConnection(): void {
  * invalidates the injected instance, which is the point of the signature.
  */
 export function setSqlInstance(sql: SQL): void {
+  detachCachedConnection()
   _bunSqlInstance = sql
   _currentSignature = connectionSignature()
 }

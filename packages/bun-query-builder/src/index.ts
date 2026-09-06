@@ -19,6 +19,7 @@ export * from './orm'
 export * from './schema'
 export * from './seeder'
 export * from './sqlite-pragmas'
+export type { DeferredInsert } from './sqlite-deferred-inserts'
 export * from './type-inference'
 export * from './types'
 

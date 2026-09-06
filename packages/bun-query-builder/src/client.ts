@@ -7,6 +7,7 @@ import type { DatabaseSchema, AnyDatabaseSchema } from './schema'
 import type { QueryBuilderOptions, QueryHooks, SupportedDialect} from './types'
 import { config, getPlaceholder, getPlaceholders, isMysqlLike, setConfig } from './config'
 import type { DriverConnection } from './db'
+import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
@@ -2488,6 +2489,10 @@ export interface QueryBuilder<DB extends AnyDatabaseSchema> {
    * ```
    */
   unsafe: <TRow extends Record<string, unknown> = Record<string, unknown>>(query: string, params?: unknown[]) => Promise<TRow[]>
+  /** Raw SQLite-only inserts, deferred outside transactions. Bypasses query hooks. */
+  deferInsert?: DeferredInsert
+  /** Synchronously drain this SQLite connection's deferred inserts. */
+  flushDeferredInserts?: () => void
   /**
    * # `file`
    *
@@ -8101,6 +8106,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       // (and makes row locks such as `FOR UPDATE` ineffective).
       return (_sql as any).unsafe(query, params)
     },
+    /** SQLite-only raw INSERT queue. Like unsafe(), this bypasses query hooks. */
+    deferInsert: _sql.deferInsert?.bind(_sql),
+    /** Persist this connection's queued INSERTs before returning. SQLite only. */
+    flushDeferredInserts: _sql.flushDeferredInserts?.bind(_sql),
     file(path: string, params?: any[]) {
       return (_sql as any).file(path, params)
     },

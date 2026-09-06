@@ -364,3 +364,49 @@ query-builder file ./migrations/seed.sql
 query-builder explain "SELECT * FROM users WHERE active = true"
 
 ```
+
+## Deferred SQLite INSERTs
+
+For independent append-only records, SQLite builders expose `deferInsert` and
+`flushDeferredInserts`. These optional methods are absent on other drivers.
+Like `unsafe()`, they are raw operations and bypass query-builder hooks,
+timestamps, validation, and model behavior.
+
+```ts
+const db = createQueryBuilder()
+if (db.deferInsert) {
+  await Promise.all([
+    db.deferInsert('events', { message: 'first' }),
+    db.deferInsert('events', { message: 'second' }),
+  ])
+}
+```
+
+`deferInsert` captures the table, ordered columns, and bound values immediately.
+Table and column names are quoted as literal identifiers; values must be SQLite
+bindings, not SQL expressions. Missing columns retain their database defaults;
+explicit `undefined` binds `NULL`. Mutable binary bindings are copied.
+
+Outside a transaction, contiguous records with identical column shapes can share
+an INSERT and native transaction on the next event-loop turn. The queue retains
+at most 32 rows or approximately 256 KiB of payload and metadata. Reaching either
+limit drains existing work synchronously; an oversized record executes immediately.
+Each promise settles after persistence or failure. A failed batch is rolled back
+before individual retries, isolating rejected records without duplicating a
+successful prefix. Trigger side effects in a failed retry are rolled back too.
+Triggers with non-database side effects are not suitable for retryable inserts.
+If native rollback fails, the connection is invalidated and closed; remaining
+and future work rejects instead of entering an uncertain transaction.
+
+Inside a raw or managed application transaction, inserts execute immediately and
+their promises do not wait for commit. Ordinary transaction and INSERT semantics
+apply, including rollback by the caller. Transaction controls, schema changes,
+PRAGMAs, connection replacement, and close flush previously queued records first.
+Configuration replacement preserves captured old builders; pending work stays on
+its original connection. Reset and close reject subsequent deferred writes.
+
+Ordinary SELECT/INSERT/UPDATE/DELETE statements do not implicitly flush the queue.
+Await the insert promise, or call `db.flushDeferredInserts?.()` synchronously,
+before reading or modifying data that depends on it. Deferred insertion is not a
+replacement for an ordered sequence of ordinary writes. SQLite durability and
+checkpoint settings are unchanged.
