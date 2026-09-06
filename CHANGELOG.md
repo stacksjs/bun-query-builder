@@ -1,3 +1,9 @@
+## v0.2.68
+
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.67...v0.2.68)
+
+- Deliver SQLite query completion and error hooks before synchronous connection resets and transaction boundaries, preserving Promise-based execution and abort handling.
+
 ## v0.2.67
 
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.66...v0.2.67)
