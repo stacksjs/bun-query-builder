@@ -8,9 +8,10 @@
  *
  * The same silence covered every relation kind the resolver does not implement.
  * `ModelDefinition` accepts `morphOne`, `morphMany`, `morphTo`, `morphToMany`,
- * `morphedByMany`, `hasOneThrough` and `hasManyThrough`; `resolveRelation`
- * handles four kinds — `hasMany`, `hasOne`, `belongsTo`, `belongsToMany`.
- * Declaring any of the others type-checks, autocompletes, and does nothing.
+ * `morphedByMany`, `hasOneThrough` and `hasManyThrough`. `resolveRelation` now
+ * handles six — `hasMany`, `hasOne`, `belongsTo`, `belongsToMany`, and since
+ * polymorphic eager loading landed, `morphMany` and `morphOne`. Declaring any
+ * of the rest type-checks, autocompletes, and does nothing.
  *
  * Both now throw, and they say different things: one is the caller's typo, the
  * other is a gap in this library that staring at the model will never explain.
@@ -25,8 +26,9 @@ const Author = createModel({
   primaryKey: 'id',
   autoIncrement: true,
   hasMany: { books: 'RelBook' },
-  // Accepted by the types, never resolved by the loader.
-  morphMany: { annotations: 'RelNote' },
+  // `morphMany` resolves now, so the still-unsupported kind this file needs is
+  // one of the others. `morphToMany` needs a pivot the loader does not build.
+  morphToMany: { annotations: 'RelNote' },
   attributes: { name: { type: 'string', fillable: true } },
 } as const)
 
@@ -83,12 +85,12 @@ describe('unknown eager-load relations (#1068)', () => {
   })
 
   it('distinguishes a declared-but-unsupported kind from a typo', async () => {
-    // `annotations` IS declared — as morphMany, which the loader cannot resolve.
-    // Telling the user "no such relation" here would send them looking for a
-    // misspelling that isn't there.
+    // `annotations` IS declared — as morphToMany, which the loader cannot
+    // resolve. Telling the user "no such relation" here would send them looking
+    // for a misspelling that isn't there.
     const err = await Author.with('annotations').get().catch((e: Error) => e)
     expect(err).toBeInstanceOf(Error)
-    expect((err as Error).message).toMatch(/declares 'annotations' as morphMany/)
+    expect((err as Error).message).toMatch(/declares 'annotations' as morphToMany/)
     expect((err as Error).message).toMatch(/does not support yet/)
     expect((err as Error).message).not.toMatch(/no relation/)
   })

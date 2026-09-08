@@ -1616,7 +1616,7 @@ function toTableName(modelName: string): string {
  * populated only for `belongsToMany` relations.
  */
 interface ResolvedRelation {
-  type: 'hasMany' | 'hasOne' | 'belongsTo' | 'belongsToMany' | 'hasManyThrough' | 'hasOneThrough'
+  type: 'hasMany' | 'hasOne' | 'belongsTo' | 'belongsToMany' | 'hasManyThrough' | 'hasOneThrough' | 'morphMany' | 'morphOne'
   relatedModelName: string
   relatedTable: string
   foreignKey: string
@@ -1635,6 +1635,19 @@ interface ResolvedRelation {
   pivotFkParent?: string
   /** FK on pivot pointing at the related model (belongsToMany only). */
   pivotFkRelated?: string
+  /**
+   * The `<morphName>_type` column, and what the parent writes into it
+   * (morph* only).
+   *
+   * A polymorphic child is a `hasMany` whose foreign key is shared with other
+   * parent tables, so the type column is what keeps one parent's rows from
+   * being handed to another's. The VALUE is the parent's TABLE name, which is
+   * the convention the framework's own polymorphic traits already write -
+   * `taggable_type: tableName` - so a model can be related to rows those traits
+   * created.
+   */
+  morphTypeColumn?: string
+  morphTypeValue?: string
   /** Declared pivot column names — excludes the two FKs (belongsToMany only). */
   pivotColumns?: string[]
   /** Pivot model name when declared via `through:` (Option B). */
@@ -1650,7 +1663,7 @@ interface ResolvedRelation {
  * below: a `morphMany` is accepted by the types, encouraged by autocomplete,
  * and then does nothing at all.
  */
-const RESOLVABLE_RELATION_KINDS = ['hasMany', 'hasOne', 'belongsTo', 'belongsToMany'] as const
+const RESOLVABLE_RELATION_KINDS = ['hasMany', 'hasOne', 'belongsTo', 'belongsToMany', 'morphMany', 'morphOne'] as const
 const DECLARABLE_RELATION_KINDS = [
   ...RESOLVABLE_RELATION_KINDS,
   'hasOneThrough',
@@ -1804,6 +1817,67 @@ function resolveRelation(definition: ModelDefinition, relationName: string): Res
       }
     }
     return null
+  }
+
+  /**
+   * The morph name a polymorphic relation writes its columns under.
+   *
+   * Declared explicitly (`{ model: 'Comment', morphName: 'commentable' }`), or
+   * derived from the relation name the way Laravel does - the relation IS the
+   * morph name for a record-form declaration like
+   * `morphMany: { commentable: 'Comment' }`.
+   */
+  function findMorphEntry(kind: 'morphMany' | 'morphOne'): { model: string, morphName: string } | null {
+    const rel = (definition as unknown as Record<string, unknown>)[kind]
+    if (!rel)
+      return null
+
+    const lower = relationName.toLowerCase()
+
+    if (Array.isArray(rel)) {
+      for (const item of rel) {
+        const model = typeof item === 'string' ? item : String((item as any)?.model ?? '')
+        if (!model || model.toLowerCase() !== lower)
+          continue
+        const declared = typeof item === 'object' ? (item as any)?.morphName : undefined
+        // No declared name: fall back to the parent's own morph name, which is
+        // what a single-parent polymorphic table is usually keyed by.
+        return { model, morphName: String(declared ?? `${toSnakeCase(parentName)}able`) }
+      }
+      return null
+    }
+
+    if (typeof rel === 'object') {
+      for (const [key, value] of Object.entries(rel as Record<string, unknown>)) {
+        const model = typeof value === 'string' ? value : String((value as any)?.model ?? '')
+        if (key.toLowerCase() !== lower && model.toLowerCase() !== lower)
+          continue
+        const declared = typeof value === 'object' ? (value as any)?.morphName : undefined
+        return { model, morphName: String(declared ?? key) }
+      }
+    }
+
+    return null
+  }
+
+  for (const kind of ['morphMany', 'morphOne'] as const) {
+    const entry = findMorphEntry(kind)
+    if (!entry)
+      continue
+
+    const relatedModel = getModelFromRegistry(entry.model)
+    const relatedTable = relatedModel?.getTable?.() || toTableName(entry.model)
+
+    return {
+      type: kind,
+      relatedModelName: entry.model,
+      relatedTable,
+      foreignKey: `${entry.morphName}_id`,
+      localKey: parentPk,
+      morphTypeColumn: `${entry.morphName}_type`,
+      // The parent's TABLE, matching what the polymorphic traits write.
+      morphTypeValue: parentTable,
+    }
   }
 
   // Check hasMany
@@ -2836,22 +2910,27 @@ class ModelQueryBuilder<
     if (!rel)
       throw new Error(unresolvedRelationMessage(this._definition as ModelDefinition, relationName))
 
-    if (rel.type === 'hasMany' || rel.type === 'hasOne') {
+    const single = rel.type === 'hasOne' || rel.type === 'morphOne'
+    if (rel.type === 'hasMany' || rel.type === 'hasOne' || rel.type === 'morphMany' || rel.type === 'morphOne') {
       // Get parent IDs
       const parentIds = distinctParentIds(instances, pk)
       if (parentIds.length === 0) return
 
       const placeholders = parentIds.map(() => '?').join(', ')
+      // A polymorphic child shares its foreign key with every other parent
+      // table, so the type column is the only thing keeping one parent's rows
+      // out of another's relation.
+      const morphFilter = rel.morphTypeColumn ? ` AND ${rel.morphTypeColumn} = ?` : ''
       const rows = await exec.all(
-        `SELECT * FROM ${rel.relatedTable} WHERE ${rel.foreignKey} IN (${placeholders})`,
-        parentIds,
+        `SELECT * FROM ${rel.relatedTable} WHERE ${rel.foreignKey} IN (${placeholders})${morphFilter}`,
+        rel.morphTypeColumn ? [...parentIds, rel.morphTypeValue] : parentIds,
       )
 
       // Try to get the related model's definition for proper instances
       const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
       const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
 
-      if (rel.type === 'hasMany') {
+      if (!single) {
         // Group by foreign key
         const grouped = new Map<unknown, Record<string, unknown>[]>()
         for (const row of rows) {
@@ -2865,7 +2944,7 @@ class ModelQueryBuilder<
         }
       }
       else {
-        // hasOne - single record per parent. First row wins: the rows arrive
+        // hasOne / morphOne - single record per parent. First row wins: the rows arrive
         // in the database's order, and overwriting on each hit handed back the
         // LAST match, which is the opposite of what `hasOne` means when a
         // parent has stray duplicates.
