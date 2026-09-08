@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.68...v0.2.69)
+
+## ✨ Features
+
+- **orm**: eager-load morphMany and morphOne ([1b3cd7e](https://github.com/stacksjs/bun-query-builder/commit/1b3cd7e)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#1068](https://github.com/stacksjs/bun-query-builder/issues/1068))
+- **sqlite**: add connection-owned deferred inserts ([965d7ce](https://github.com/stacksjs/bun-query-builder/commit/965d7ce)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.2.69 ([e7524ea](https://github.com/stacksjs/bun-query-builder/commit/e7524ea)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 ## v0.2.68
 
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.67...v0.2.68)
