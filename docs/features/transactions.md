@@ -167,6 +167,11 @@ const createWithRetry = db.transactional(async (tx) => { /* ... */ }, { retries:
 
 Use `onRetry` and `logger` to observe transaction lifecycle.
 
+`afterCommit` may return a promise and is awaited after the driver commits.
+If it throws or rejects, that error propagates to the caller, but the writes
+remain committed. It does not trigger transaction retries or rollback callbacks.
+Retry the failed follow-up separately, not the already-committed transaction.
+
 ```ts
 await db.transaction(async (tx) => { /* ... */ }, {
   logger: (e) => {

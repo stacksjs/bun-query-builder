@@ -2913,6 +2913,7 @@ export interface TransactionOptions {
   retries?: number
   isolation?: TransactionIsolation
   onRetry?: (attempt: number, error: unknown) => void
+  /** Returned promises are awaited; the callback's result is ignored. */
   afterCommit?: () => void
   sqlStates?: string[]
   backoff?: TxBackoff
@@ -8260,12 +8261,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       }
       const retries = Math.max(0, opts?.retries ?? 0)
       let attempt = 0
+      let out: Awaited<ReturnType<typeof fn>>
       // Retry on common serialization/deadlock errors
       for (;;) {
         try {
-          const out = await runWith(attempt + 1)
-          opts?.afterCommit?.()
-          return out
+          out = await runWith(attempt + 1)
+          break
         }
         catch (err: any) {
           const retriable = isRetriableTxError(err) || matchesSqlState(err, opts.sqlStates)
@@ -8288,6 +8289,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           throw err
         }
       }
+      // The driver has committed. A callback failure must propagate without
+      // replaying committed writes or falsely reporting that they rolled back.
+      await opts.afterCommit?.()
+      return out
     },
     async savepoint(fn) {
       // The guard is `inTransaction` — the flag `transaction()` sets on the
