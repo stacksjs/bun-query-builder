@@ -1,6 +1,8 @@
 /* eslint-disable regexp/no-super-linear-backtracking */
 
 /* eslint-disable no-useless-catch */
+import { Buffer } from 'node:buffer'
+import { serialize } from 'node:v8'
 import type { SchemaMeta } from './meta'
 import type { ResolvedPivot } from './pivot'
 import type { DatabaseSchema, AnyDatabaseSchema } from './schema'
@@ -582,6 +584,26 @@ class QueryCache {
 }
 
 const queryCache = new QueryCache()
+// Retain the global LRU bound without retaining connections themselves.
+const queryCacheConnections = new WeakMap<DriverConnection, number>()
+let nextQueryCacheConnection = 0
+
+function queryCacheKey(connection: DriverConnection, text: string, params: unknown[]): string {
+  let id = queryCacheConnections.get(connection)
+  if (id === undefined) {
+    id = ++nextQueryCacheConnection
+    queryCacheConnections.set(connection, id)
+  }
+  // Preserve binding types (including bigint, Date and binary values). JSON
+  // both rejects valid bigint bindings and conflates distinct driver values.
+  const bindings = params.map(value => ArrayBuffer.isView(value)
+    // Bun's serializer includes bytes OUTSIDE a view. Besides false misses,
+    // that can retain a large backing allocation for a tiny binary binding.
+    ? ['view', Buffer.isBuffer(value) ? 'Buffer' : Object.prototype.toString.call(value),
+        Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('base64')]
+    : ['value', serialize(value).toString('base64')])
+  return `${id}\0${text}\0${JSON.stringify(bindings)}`
+}
 
 // Where condition helpers
 type Primitive = string | number | boolean | bigint | Date | null | undefined
@@ -6203,14 +6225,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           }
         }
 
-        // Check cache if enabled. The key must include the BOUND PARAMS:
-        // `String(query)` is only the SQL text with placeholders, so
-        // `where id = $1` with [1] and with [2] would otherwise share one
-        // cache entry and the second query would return the first's rows.
-        const cacheKey = useCache
-          ? `${String(finalQuery)}\0${JSON.stringify(whereParams)}`
+        // Transaction reads must see their own writes and must never publish
+        // uncommitted rows into the process cache. Native query objects also
+        // stringify identically, so use the builder's final SQL, not String(q).
+        const cacheable = useCache && !state?.inTransaction
+        const cacheKey = cacheable
+          ? queryCacheKey(_sql, currentSql(), whereParams)
           : ''
-        if (useCache) {
+        if (cacheable) {
           const cached = queryCache.get(cacheKey)
           if (cached)
             return cached
@@ -6219,7 +6241,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const result = await runWithHooks<any[]>(finalQuery, 'select', { signal: abortSignal, timeoutMs })
 
         // Store in cache if enabled
-        if (useCache)
+        if (cacheable)
           queryCache.set(cacheKey, result, cacheTtl)
 
         return hydratePivotRows(result)

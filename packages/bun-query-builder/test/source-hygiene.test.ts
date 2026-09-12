@@ -77,6 +77,6 @@ describe('source hygiene', () => {
    */
   it('the query cache key still separates SQL from params with a NUL', () => {
     const client = readFileSync(join(SRC_DIR, 'client.ts'), 'utf8')
-    expect(client).toContain('`${String(finalQuery)}\\0${JSON.stringify(whereParams)}`')
+    expect(client).toContain('`${id}\\0${text}\\0${JSON.stringify(bindings)}`')
   })
 })

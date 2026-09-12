@@ -97,6 +97,8 @@ jobs:
       # TLS is needed for MySQL's password-authenticated fixture connection.
       QUERY_HOOK_MYSQL_URL: mysql://query_hooks:query_hooks@127.0.0.1:3306/test_db?ssl=true
       QUERY_HOOK_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      QUERY_CACHE_MYSQL_URL: mysql://query_hooks:query_hooks@127.0.0.1:3306/test_db?ssl=true
+      QUERY_CACHE_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/test_db
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
       POSTGRES_HOST: localhost
       POSTGRES_PORT: 5432

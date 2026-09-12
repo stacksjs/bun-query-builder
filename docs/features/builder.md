@@ -542,6 +542,13 @@ Configure alias formats via `config.aliasing.relationColumnAliasFormat`.
 
 The query builder includes a built-in LRU cache with TTL support for frequently-run queries:
 
+Entries are isolated by connection identity, final SQL and typed bound values.
+Builders sharing the same connection can share entries; independent connections
+cannot. Inside `transaction()` or `savepoint()`, `.cache()` is bypassed so reads
+see their own writes and rolled-back rows never enter the shared cache. Outside
+transactions, writes do not invalidate cached results automatically. Use
+`clearQueryCache()` when you need fresh results before the TTL expires.
+
 ```ts
 // Cache results for 60 seconds (default TTL)
 const users = await db.selectFrom('users')
