@@ -6,7 +6,7 @@ import type { ResolvedPivot } from './pivot'
 import type { DatabaseSchema, AnyDatabaseSchema } from './schema'
 import type { QueryBuilderOptions, QueryHooks, SupportedDialect} from './types'
 import { config, getPlaceholder, getPlaceholders, isMysqlLike, setConfig } from './config'
-import type { DriverConnection } from './db'
+import type { DriverConnection, DriverQuery } from './db'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
@@ -3094,6 +3094,21 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
   const meta = state?.meta
   const schema = state?.schema
 
+  // Native Bun SQL queries stringify to "[object Promise]" (#1142). Keep the
+  // inputs at construction rather than attempting to recover them at execution.
+  // The query itself stays untouched, including its native cancellation and
+  // transaction ownership. Weak keys do not retain completed driver queries.
+  let queryMetadata: WeakMap<DriverQuery, { sql: string, params?: unknown[] }> | undefined
+  function prepareQuery(text: string, params?: unknown[]) {
+    const query = _sql.unsafe(text, params)
+    // SQLite already owns this metadata. Keep its hot path allocation-free.
+    if (typeof query.sql !== 'string') {
+      queryMetadata ??= new WeakMap()
+      queryMetadata.set(query, { sql: text, params: params?.slice() })
+    }
+    return query
+  }
+
   // Cache SQL text only, never values or driver statements. A small per-builder
   // map lets application inserts and query-log inserts reuse their own shapes.
   let singleRowInsertShapes: Map<string, {
@@ -3193,17 +3208,17 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         case 'in':
           if (Array.isArray(val)) {
             const placeholders = getPlaceholders(val.length)
-            return _sql.unsafe(`${colName} IN (${placeholders})`, val)
+            return prepareQuery(`${colName} IN (${placeholders})`, val)
           }
-          return _sql.unsafe(`${colName} IN (${getPlaceholder(1)})`, [val])
+          return prepareQuery(`${colName} IN (${getPlaceholder(1)})`, [val])
         case 'not in':
           if (Array.isArray(val)) {
             const placeholders = getPlaceholders(val.length)
-            return _sql.unsafe(`${colName} NOT IN (${placeholders})`, val)
+            return prepareQuery(`${colName} NOT IN (${placeholders})`, val)
           }
-          return _sql.unsafe(`${colName} NOT IN (${getPlaceholder(1)})`, [val])
+          return prepareQuery(`${colName} NOT IN (${getPlaceholder(1)})`, [val])
         case 'like':
-          return _sql.unsafe(`${colName} LIKE ${getPlaceholder(1)}`, [val])
+          return prepareQuery(`${colName} LIKE ${getPlaceholder(1)}`, [val])
         case 'is':
         case 'is not': {
           // `is` / `is not` is `IS NULL` / `IS NOT NULL` only. The
@@ -3215,16 +3230,16 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           if (val !== null && val !== undefined) {
             throw new TypeError(`[query-builder] where(..., '${op}', ?): operator '${op}' only accepts NULL/undefined as value, got ${typeof val} (${String(val)})`)
           }
-          return _sql.unsafe(`${colName} IS ${op === 'is not' ? 'NOT ' : ''}NULL`)
+          return prepareQuery(`${colName} IS ${op === 'is not' ? 'NOT ' : ''}NULL`)
         }
         case '!=':
-          return _sql.unsafe(`${colName} <> ${getPlaceholder(1)}`, [val])
+          return prepareQuery(`${colName} <> ${getPlaceholder(1)}`, [val])
         case '<':
         case '>':
         case '<=':
         case '>=':
         case '=':
-          return _sql.unsafe(`${colName} ${op} ${getPlaceholder(1)}`, [val])
+          return prepareQuery(`${colName} ${op} ${getPlaceholder(1)}`, [val])
         default:
           throw new TypeError(`[query-builder] where(..., '${String(op)}', ?): unsupported operator. Allowed: =, !=, <>, <, <=, >, >=, like, in, not in, is, is not`)
       }
@@ -3235,7 +3250,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     // Object notation: {name: 'Alice', age: 25}
     const keys = Object.keys(expr)
     if (keys.length === 0)
-      return _sql.unsafe('')
+      return prepareQuery('')
 
     const conditions: string[] = []
     const allParams: any[] = []
@@ -3260,7 +3275,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       }
     }
 
-    return _sql.unsafe(conditions.join(' AND '), allParams)
+    return prepareQuery(conditions.join(' AND '), allParams)
   }
 
   // eslint-disable-next-line pickier/no-unused-vars
@@ -3272,6 +3287,9 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
   }
 
   function computeSqlText(q: any): string {
+    const metadata = queryMetadata?.get(q)
+    if (metadata)
+      return metadata.sql
     const prev = config.debug?.captureText
     if (config.debug)
       config.debug.captureText = true
@@ -3282,12 +3300,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
   }
 
   /**
-   * Best-effort extraction of a query's bound parameters for the hook events
-   * (#1045). The bun:sqlite wrapper exposes them as a `.values` array; Bun's
-   * native query exposes `.values` as a method (skipped). Returns undefined
-   * when not cheaply available.
+   * Use captured native bindings first (#1142), then the arrays exposed by
+   * SQLite or an injected driver (#1045). A native `.values` method is not a
+   * metadata accessor and must not be invoked here.
    */
   function computeParams(q: any): any[] | undefined {
+    const metadata = queryMetadata?.get(q)
+    if (metadata)
+      return metadata.params
     if (!q || typeof q !== 'object')
       return undefined
     if (Array.isArray(q.values))
@@ -3544,11 +3564,16 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       if (built === null) {
         const finalText = reorderSelectClauses(currentSql())
         built = whereParams.length > 0
-          ? _sql.unsafe(finalText, whereParams)
-          : _sql.unsafe(finalText)
+          ? prepareQuery(finalText, whereParams)
+          : prepareQuery(finalText)
       }
       return built
     }
+
+    // Compose from the same text and bindings as ensureBuilt(), not an opaque
+    // native template result. Execution and diagnostics now share one input.
+    const prepareSelect = (prefix = '', suffix = '', extraParams: unknown[] = []) =>
+      prepareQuery(`${prefix}${reorderSelectClauses(currentSql())}${suffix}`, [...whereParams, ...extraParams])
 
     /** Record one WHERE predicate. The connector is the caller's intent, not a
      *  position — renderWhereTerms() decides what the first term emits. */
@@ -3873,13 +3898,13 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       const currentSelect = String(ensureBuilt())
       if (SQL_PATTERNS.SELECT_STAR.test(currentSelect)) {
         const newSql = currentSelect.replace(SQL_PATTERNS.SELECT_STAR, `SELECT *, ${columnsToAdd}`)
-        built = _sql.unsafe(newSql)
+        built = prepareQuery(newSql)
       }
       else if (SQL_PATTERNS.SELECT.test(currentSelect)) {
         const selectPart = SQL_PATTERNS.SELECT_FROM.exec(currentSelect)
         if (selectPart) {
           const newSql = currentSelect.replace(SQL_PATTERNS.SELECT_FROM, `SELECT $1, ${columnsToAdd} FROM`)
-          built = _sql.unsafe(newSql)
+          built = prepareQuery(newSql)
         }
       }
     }
@@ -5857,7 +5882,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         } as any
       },
       async value(column: string) {
-        const q = sql`${ensureBuilt()} LIMIT 1`
+        const q = prepareSelect('', ' LIMIT 1')
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row?.[column]
@@ -5886,7 +5911,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return rows.map((r: any) => r?.[column])
       },
       async exists() {
-        const q = sql`SELECT EXISTS (${ensureBuilt()}) as e`
+        const q = prepareSelect('SELECT EXISTS (', ') as e')
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Boolean(row?.e)
@@ -5943,20 +5968,20 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // See stacksjs/stacks#1862 #12 — a future major version
         // should accept a `tx` parameter so the caller can choose
         // their isolation level.
-        const countQ = sql`SELECT COUNT(*) as c FROM (${ensureBuilt()}) as sub`
+        const countQ = prepareSelect('SELECT COUNT(*) as c FROM (', ') as sub')
         const cRows = await runWithHooks<any[]>(countQ, 'select', { signal: abortSignal, timeoutMs })
         const [cRow] = cRows
         const total = Number(cRow?.c ?? 0)
         const lastPage = Math.max(1, Math.ceil(total / perPage))
         const p = Math.max(1, Math.min(page, lastPage))
         const offset = (p - 1) * perPage
-        const data = await runWithHooks<any[]>(sql`${ensureBuilt()} LIMIT ${perPage} OFFSET ${offset}`, 'select', { signal: abortSignal, timeoutMs })
+        const data = await runWithHooks<any[]>(prepareSelect('', ` LIMIT ${getPlaceholder(whereParams.length + 1)} OFFSET ${getPlaceholder(whereParams.length + 2)}`, [perPage, offset]), 'select', { signal: abortSignal, timeoutMs })
         return { data, meta: { perPage, page: p, total, lastPage } }
       },
       async simplePaginate(perPage: number, page = 1) {
         const p = Math.max(1, page)
         const offset = (p - 1) * perPage
-        const data = await runWithHooks<any[]>(sql`${ensureBuilt()} LIMIT ${perPage + 1} OFFSET ${offset}`, 'select', { signal: abortSignal, timeoutMs })
+        const data = await runWithHooks<any[]>(prepareSelect('', ` LIMIT ${getPlaceholder(whereParams.length + 1)} OFFSET ${getPlaceholder(whereParams.length + 2)}`, [perPage + 1, offset]), 'select', { signal: abortSignal, timeoutMs })
         const hasMore = data.length > perPage
         return { data: hasMore ? data.slice(0, perPage) : data, meta: { perPage, page: p, hasMore } }
       },
@@ -6011,8 +6036,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           )
         }
         const q = params.length > 0
-          ? _sql.unsafe(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`, params)
-          : _sql.unsafe(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`)
+          ? prepareQuery(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`, params)
+          : prepareQuery(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         // We fetch perPage+1 rows to detect whether more exist; the extra row
         // is only a "has more?" probe and is NOT delivered. The next cursor
@@ -6080,44 +6105,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       onlyTrashed() {
         includeTrashed = true
         onlyTrashed = true
-
         const softDeleteColumn = config.softDeletes?.column || 'deleted_at'
-
-        // Find the OUTERMOST `WHERE` (paren depth 0). The previous
-        // implementation used `replace(/WHERE/, ...)` which matched
-        // the first `WHERE` anywhere in the SQL — including inside a
-        // subquery's WHERE clause. So a join like
-        // `SELECT * FROM posts INNER JOIN (SELECT … WHERE x = 1) AS s
-        //  WHERE posts.id = ?` got the soft-delete predicate spliced
-        // into the SUBQUERY's WHERE instead of the outer one,
-        // silently corrupting the SQL. See stacksjs/stacks#1862 #19.
-        const splice = (raw: string, predicate: string): string => {
-          const upper = raw.toUpperCase()
-          let depth = 0
-          for (let i = 0; i < raw.length; i++) {
-            const c = raw[i]
-            if (c === '(') depth++
-            else if (c === ')') depth--
-            else if (
-              depth === 0
-              && upper.substring(i, i + 5) === 'WHERE'
-              && (i === 0 || /\s/.test(raw[i - 1] ?? ''))
-              && /\s/.test(raw[i + 5] ?? '')
-            ) {
-              return `${raw.substring(0, i)}WHERE ${predicate} AND ${raw.substring(i + 6)}`
-            }
-          }
-          // No outer WHERE — append one.
-          return `${raw} WHERE ${predicate}`
-        }
-
-        const predicate = `${table}.${softDeleteColumn} IS NOT NULL`
-
-        text = splice(text, predicate)
-
-        const currentSql = String(ensureBuilt())
-        built = sql([splice(currentSql, predicate)] as any)
-
+        // Keep the predicate in the same state as other WHERE terms. Building
+        // a native sql([text]) helper here loses both execution and metadata.
+        pushWhere('AND', `${table}.${softDeleteColumn} IS NOT NULL`)
         return this as any
       },
       scope(name: string, value?: any) {
@@ -6153,7 +6144,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       async explain() {
-        const q = sql`EXPLAIN ${ensureBuilt()}`
+        const q = prepareSelect('EXPLAIN ')
         return await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
       },
       simple() {
@@ -6178,8 +6169,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // Build query at execution time (statement will be cached by db-clients.ts)
         const getText = currentSql()
         built = whereParams.length > 0
-          ? _sql.unsafe(getText, whereParams)
-          : _sql.unsafe(getText)
+          ? prepareQuery(getText, whereParams)
+          : prepareQuery(getText)
 
         // Fast path: no soft-deletes, no cache, no timeout, no signal, no hooks
         if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
@@ -6257,7 +6248,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             return hydratePivotRow(rows[0]) as any
           }
         }
-        const rows = await runWithHooks<any[]>(sql`${ensureBuilt()} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
+        const rows = await runWithHooks<any[]>(prepareSelect('', ' LIMIT 1'), 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return hydratePivotRow(row) as any
       },
@@ -6269,7 +6260,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       },
       async find(id: any) {
         const pk = meta?.primaryKeys[String(table)] ?? 'id'
-        const rows = await runWithHooks<any[]>(sql`${ensureBuilt()} WHERE ${sql(pk)} = ${id} LIMIT 1`, 'select', { signal: abortSignal, timeoutMs })
+        const rows = await runWithHooks<any[]>(prepareSelect('', ` WHERE ${quoteInsertIdent(pk)} = ${getPlaceholder(whereParams.length + 1)} LIMIT 1`, [id]), 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row as any
       },
@@ -6281,7 +6272,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       },
       async findMany(ids: any[]) {
         const pk = meta?.primaryKeys[String(table)] ?? 'id'
-        const rows = await runWithHooks<any[]>(sql`${ensureBuilt()} WHERE ${sql(String(pk))} IN ${sql(ids as any)}`, 'select', { signal: abortSignal, timeoutMs })
+        const rows = await runWithHooks<any[]>(prepareSelect('', ` WHERE ${renderInPredicate(quoteInsertIdent(String(pk)), ids, false, getPlaceholders(ids.length, whereParams.length + 1))}`, ids), 'select', { signal: abortSignal, timeoutMs })
         return rows as any
       },
       async* lazy() {
@@ -6356,8 +6347,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         }
 
         const q = whereParams.length > 0
-          ? _sql.unsafe(countText, whereParams)
-          : _sql.unsafe(countText)
+          ? prepareQuery(countText, whereParams)
+          : prepareQuery(countText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.c ?? 0)
@@ -6383,8 +6374,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         }
 
         const q = whereParams.length > 0
-          ? _sql.unsafe(avgText, whereParams)
-          : _sql.unsafe(avgText)
+          ? prepareQuery(avgText, whereParams)
+          : prepareQuery(avgText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.a ?? 0)
@@ -6396,8 +6387,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           ? `SELECT SUM(${column}) as s${src.substring(fromIdx)}`
           : `SELECT SUM(${column}) as s FROM ${table}`
         const q = whereParams.length > 0
-          ? _sql.unsafe(sumText, whereParams)
-          : _sql.unsafe(sumText)
+          ? prepareQuery(sumText, whereParams)
+          : prepareQuery(sumText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return Number(row?.s ?? 0)
@@ -6409,8 +6400,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           ? `SELECT MAX(${column}) as m${src.substring(fromIdx)}`
           : `SELECT MAX(${column}) as m FROM ${table}`
         const q = whereParams.length > 0
-          ? _sql.unsafe(maxText, whereParams)
-          : _sql.unsafe(maxText)
+          ? prepareQuery(maxText, whereParams)
+          : prepareQuery(maxText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row?.m
@@ -6422,8 +6413,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           ? `SELECT MIN(${column}) as m${src.substring(fromIdx)}`
           : `SELECT MIN(${column}) as m FROM ${table}`
         const q = whereParams.length > 0
-          ? _sql.unsafe(minText, whereParams)
-          : _sql.unsafe(minText)
+          ? prepareQuery(minText, whereParams)
+          : prepareQuery(minText)
         const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
         const [row] = rows
         return row?.m
@@ -6690,7 +6681,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       function makeSub(baseText: string, terms: WhereTerm[], params: any[], tail = ''): BaseSelectQueryBuilder<DB, any, any, any> {
         const body = renderWhereTerms(terms)
         const text = body ? `${baseText} WHERE ${body}${tail}` : `${baseText}${tail}`
-        const build = (): any => params.length > 0 ? _sql.unsafe(text, params) : _sql.unsafe(text)
+        const build = (): any => params.length > 0 ? prepareQuery(text, params) : prepareQuery(text)
         const withTerm = (conn: 'AND' | 'OR', expr: any, op: WhereOperator | undefined, value: any) => {
           const r = appendWhere(params, expr, op, value)
           return r.clause === null
@@ -6837,15 +6828,15 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         },
         async count() {
           const q = params.length > 0
-            ? _sql.unsafe(`SELECT COUNT(*) as c FROM (${text}) as sub`, params)
-            : _sql.unsafe(`SELECT COUNT(*) as c FROM (${text}) as sub`)
+            ? prepareQuery(`SELECT COUNT(*) as c FROM (${text}) as sub`, params)
+            : prepareQuery(`SELECT COUNT(*) as c FROM (${text}) as sub`)
           const rows = await runWithHooks<any[]>(q, 'select')
           return Number(rows?.[0]?.c ?? 0)
         },
         async exists() {
           const q = params.length > 0
-            ? _sql.unsafe(`SELECT EXISTS(${text}) as e`, params)
-            : _sql.unsafe(`SELECT EXISTS(${text}) as e`)
+            ? prepareQuery(`SELECT EXISTS(${text}) as e`, params)
+            : prepareQuery(`SELECT EXISTS(${text}) as e`)
           const result = await runWithHooks<any[]>(q, 'select')
           return Boolean(result?.[0]?.e)
         },
@@ -7073,19 +7064,19 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const wanted = names.length > 0 && !names.includes('*') ? names.map(column => quoteId(column)).join(', ') : '*'
 
         const run = async (): Promise<any[]> => {
-          const inserted = await runWithHooks<any>(_sql.unsafe(sqlText, params), 'insert')
+          const inserted = await runWithHooks<any>(prepareQuery(sqlText, params), 'insert')
           const first = Number((inserted as any)?.lastInsertRowid ?? 0)
           const affected = Math.max(1, Number((inserted as any)?.affectedRows ?? 1))
 
           const given = insertedKeys.filter(value => value !== undefined && value !== null)
 
           const read = first > 0
-            ? _sql.unsafe(
+            ? prepareQuery(
                 `SELECT ${wanted} FROM ${quoteId(String(table))} WHERE ${quoteId(key)} >= ? AND ${quoteId(key)} < ? ORDER BY ${quoteId(key)} ASC`,
                 [first, first + affected],
               )
             : given.length > 0
-              ? _sql.unsafe(
+              ? prepareQuery(
                   `SELECT ${wanted} FROM ${quoteId(String(table))} WHERE ${quoteId(key)} IN (${given.map(() => '?').join(', ')}) ORDER BY ${quoteId(key)} ASC`,
                   given,
                 )
@@ -7108,7 +7099,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           orderBy: () => this,
           limit: () => this,
           offset: () => this,
-          toSQL: () => makeExecutableQuery(_sql.unsafe(sqlText, params), sqlText) as any,
+          toSQL: () => makeExecutableQuery(prepareQuery(sqlText, params), sqlText) as any,
           execute: run,
           get: run,
           first: runFirst,
@@ -7271,7 +7262,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
           // Defer unsafe() call - execute() will use _prepareStatement if available
           if (!_sql._prepareStatement) {
-            built = _sql.unsafe(sqlText, params)
+            built = prepareQuery(sqlText, params)
           }
           return this
         },
@@ -7302,7 +7293,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
           // Append RETURNING clause to the existing SQL
           const returningSql = `${sqlText} RETURNING ${cols.join(', ')}`
-          const q = _sql.unsafe(returningSql, params)
+          const q = prepareQuery(returningSql, params)
           // The return type is SelectQueryBuilder, so the row-fetching methods
           // (get/first/firstOrFail/executeTakeFirst) must exist at runtime —
           // previously only execute()/toSQL() did, so the typed
@@ -7340,7 +7331,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         toSQL() {
           if (noRows)
             return makeExecutableQuery(null as any, '') as any
-          if (!built) built = _sql.unsafe(sqlText, params)
+          if (!built) built = prepareQuery(sqlText, params)
           return makeExecutableQuery(built, sqlText) as any
         },
         execute() {
@@ -7356,20 +7347,20 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               return params.length > 0 ? stmt.run(...params) : stmt.run()
             }
           }
-          if (!built) built = _sql.unsafe(sqlText, params)
+          if (!built) built = prepareQuery(sqlText, params)
           return runWithHooks(built, 'insert')
         },
         async executeTakeFirst() {
           if (noRows)
             return emptyInsertResult()
-          if (!built) built = _sql.unsafe(sqlText, params)
+          if (!built) built = prepareQuery(sqlText, params)
           const result = await runWithHooks(built, 'insert')
           return result
         },
         async executeTakeFirstOrThrow() {
           if (noRows)
             throw new Error('Insert failed')
-          if (!built) built = _sql.unsafe(sqlText, params)
+          if (!built) built = prepareQuery(sqlText, params)
           const result = await runWithHooks(built, 'insert')
           if (!result)
             throw new Error('Insert failed')
@@ -7380,7 +7371,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           if (noRows)
             return emptyReturningBuilder()
           const returningSql = `${sqlText} RETURNING *`
-          const q = _sql.unsafe(returningSql, params)
+          const q = prepareQuery(returningSql, params)
           const runFirst = async () => {
             const result = await runWithHooks<any[]>(q, 'insert')
             return Array.isArray(result) ? result[0] : result
@@ -7471,7 +7462,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             }
           }
           sqlText = `${sqlText} SET ${setClauses.join(', ')}`
-          built = _sql.unsafe(sqlText, params)
+          built = prepareQuery(sqlText, params)
           return this
         },
         where(expr: any, op?: string, value?: any) {
@@ -7502,14 +7493,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               const placeholders = getPlaceholders(values.length, params.length + 1)
               appendPredicate(`${left} ${safeOperator.toUpperCase()} (${placeholders})`)
               params.push(...values)
-              built = _sql.unsafe(sqlText, params)
+              built = prepareQuery(sqlText, params)
               return this
             }
 
             const paramIndex = params.length + 1
             appendPredicate(`${left} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             params.push(value)
-            built = _sql.unsafe(sqlText, params)
+            built = prepareQuery(sqlText, params)
             return this
           }
 
@@ -7523,14 +7514,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               const placeholders = getPlaceholders(values.length, params.length + 1)
               appendPredicate(`${quoteId(String(col))} ${safeOperator.toUpperCase()} (${placeholders})`)
               params.push(...values)
-              built = _sql.unsafe(sqlText, params)
+              built = prepareQuery(sqlText, params)
               return this
             }
 
             const paramIndex = params.length + 1
             appendPredicate(`${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             params.push(val)
-            built = _sql.unsafe(sqlText, params)
+            built = prepareQuery(sqlText, params)
             return this
           }
 
@@ -7544,14 +7535,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // map `{ sql: ... }`. See #1101.
           if (isRawExpression(expr)) {
             appendPredicate(expr.raw)
-            built = _sql.unsafe(sqlText, params)
+            built = prepareQuery(sqlText, params)
             return this
           }
           if (isBoundSqlExpression(expr)) {
             const rendered = renderBoundSqlExpression(expr, params.length + 1)
             appendPredicate(rendered.text)
             params.push(...rendered.parameters)
-            built = _sql.unsafe(sqlText, params)
+            built = prepareQuery(sqlText, params)
             return this
           }
 
@@ -7562,7 +7553,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               throw new TypeError('[query-builder] updateTable.where({}): an empty object is not a filter. Pass a condition, or drop the where() call if updating every row is intended.')
             const conditions = keys.map(key => renderColumnCondition(quoteId(key), (expr as any)[key], params))
             appendPredicate(conditions.join(' AND '))
-            built = _sql.unsafe(sqlText, params)
+            built = prepareQuery(sqlText, params)
             return this
           }
 
@@ -7579,12 +7570,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         },
         whereNull(column: string) {
           appendPredicate(`${quoteId(String(column))} IS NULL`)
-          built = _sql.unsafe(sqlText, params)
+          built = prepareQuery(sqlText, params)
           return this
         },
         whereNotNull(column: string) {
           appendPredicate(`${quoteId(String(column))} IS NOT NULL`)
-          built = _sql.unsafe(sqlText, params)
+          built = prepareQuery(sqlText, params)
           return this
         },
         returning(...cols) {
@@ -7602,7 +7593,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // Deferring also fixes the aliasing form, where the returning handle
           // is held while the parent gains a predicate.
           const retText = () => `${sqlText} RETURNING ${cols.join(', ')}`
-          const build = () => (params.length > 0 ? _sql.unsafe(retText(), params) : _sql.unsafe(retText()))
+          const build = () => (params.length > 0 ? prepareQuery(retText(), params) : prepareQuery(retText()))
 
           /*
            * MySQL has no RETURNING on an UPDATE either, so the rows are read
@@ -7633,18 +7624,18 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
              * a wrong recovery code to whoever typed it.
              */
             const found = await (predicateParams.length > 0
-              ? _sql.unsafe(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`, predicateParams)
-              : _sql.unsafe(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`)).execute().catch(() => [])
+              ? prepareQuery(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`, predicateParams)
+              : prepareQuery(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`)).execute().catch(() => [])
 
             const ids = (Array.isArray(found) ? found : []).map((row: any) => row?.id).filter((id: unknown) => id !== undefined && id !== null)
 
-            await runWithHooks<any>(params.length > 0 ? _sql.unsafe(sqlText, params) : _sql.unsafe(sqlText), 'update')
+            await runWithHooks<any>(params.length > 0 ? prepareQuery(sqlText, params) : prepareQuery(sqlText), 'update')
 
             if (ids.length === 0)
               return []
 
             const selected = `SELECT ${cols.join(', ')} FROM ${quoteId(String(table))} WHERE ${key} IN (${ids.map(() => '?').join(', ')})`
-            const rows = await _sql.unsafe(selected, ids).execute()
+            const rows = await prepareQuery(selected, ids).execute()
 
             return Array.isArray(rows) ? rows : []
           }
@@ -7699,8 +7690,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         toSQL() {
           if (!built) {
             built = params.length > 0
-              ? _sql.unsafe(sqlText, params)
-              : _sql.unsafe(sqlText)
+              ? prepareQuery(sqlText, params)
+              : prepareQuery(sqlText)
           }
           return makeExecutableQuery(built, sqlText) as any
         },
@@ -7723,7 +7714,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // while the parent gains a predicate must not execute the statement
           // as it stood beforehand. See #1110.
           const retAllText = () => `${sqlText} RETURNING *`
-          const build = () => (params.length > 0 ? _sql.unsafe(retAllText(), params) : _sql.unsafe(retAllText()))
+          const build = () => (params.length > 0 ? prepareQuery(retAllText(), params) : prepareQuery(retAllText()))
           return {
             toSQL: () => makeExecutableQuery(build(), retAllText()) as any,
             execute: () => runWithHooks<any[]>(build(), 'update'),
@@ -7778,8 +7769,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       const ensureDelBuilt = () => {
         if (built === null) {
           built = delParams.length > 0
-            ? _sql.unsafe(sqlText, delParams)
-            : _sql.unsafe(sqlText)
+            ? prepareQuery(sqlText, delParams)
+            : prepareQuery(sqlText)
         }
         return built
       }
@@ -7891,7 +7882,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // emptied the table and returned every deleted row as though the
           // filter had applied. See #1110.
           const retText = () => `${sqlText} RETURNING ${cols.join(', ')}`
-          const build = () => (delParams.length > 0 ? _sql.unsafe(retText(), delParams) : _sql.unsafe(retText()))
+          const build = () => (delParams.length > 0 ? prepareQuery(retText(), delParams) : prepareQuery(retText()))
           // Fire the same delete hooks execute() does. Without this, adding
           // `.returning(...)` to a delete skipped beforeDelete/afterDelete
           // entirely, so an application-level delete guard — the usual reason
@@ -7909,9 +7900,9 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               ? await (async (): Promise<any[]> => {
                   const from = sqlText.slice(sqlText.search(/\sFROM\s/i) + 1)
                   const selected = `SELECT ${cols.join(', ')} ${from}`
-                  const found = await (delParams.length > 0 ? _sql.unsafe(selected, delParams) : _sql.unsafe(selected)).execute()
+                  const found = await (delParams.length > 0 ? prepareQuery(selected, delParams) : prepareQuery(selected)).execute()
 
-                  await runWithHooks<any>(delParams.length > 0 ? _sql.unsafe(sqlText, delParams) : _sql.unsafe(sqlText), 'delete')
+                  await runWithHooks<any>(delParams.length > 0 ? prepareQuery(sqlText, delParams) : prepareQuery(sqlText), 'delete')
 
                   return Array.isArray(found) ? found : []
                 })()
@@ -7993,7 +7984,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         returningAll() {
           // Deferred, as returning() is — see #1110.
           const retAllText = () => `${sqlText} RETURNING *`
-          const build = () => (delParams.length > 0 ? _sql.unsafe(retAllText(), delParams) : _sql.unsafe(retAllText()))
+          const build = () => (delParams.length > 0 ? prepareQuery(retAllText(), delParams) : prepareQuery(retAllText()))
           return {
             toSQL: () => makeExecutableQuery(build(), retAllText()) as any,
             execute: () => runWithHooks<any[]>(build(), 'delete'),
@@ -8042,7 +8033,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     async advisoryLock(key: number | string): Promise<void> {
       if (config.dialect === 'postgres') {
         const k = advisoryLockKey(key)
-        const q = _sql`SELECT pg_advisory_lock(${k})`
+        const q = prepareQuery('SELECT pg_advisory_lock($1)', [k])
         await runWithHooks<any[]>(q, 'raw')
         return
       }
@@ -8050,7 +8041,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // MySQL has `GET_LOCK(name, timeout)`. Wait indefinitely
         // (timeout=-1) to match Postgres `pg_advisory_lock` semantics.
         const lockName = `bqb:${String(key)}`
-        const q = _sql`SELECT GET_LOCK(${lockName}, -1) AS ok`
+        const q = prepareQuery('SELECT GET_LOCK(?, -1) AS ok', [lockName])
         await runWithHooks<any[]>(q, 'raw')
         return
       }
@@ -8063,7 +8054,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     async tryAdvisoryLock(key: number | string): Promise<boolean> {
       if (config.dialect === 'postgres') {
         const k = advisoryLockKey(key)
-        const q = _sql`SELECT pg_try_advisory_lock(${k}) as ok`
+        const q = prepareQuery('SELECT pg_try_advisory_lock($1) as ok', [k])
         const rows = await runWithHooks<any[]>(q, 'raw')
         return Boolean(rows?.[0]?.ok)
       }
@@ -8071,7 +8062,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // MySQL `GET_LOCK(name, 0)` returns 1 immediately if free, 0
         // if held by another connection.
         const lockName = `bqb:${String(key)}`
-        const q = _sql`SELECT GET_LOCK(${lockName}, 0) AS ok`
+        const q = prepareQuery('SELECT GET_LOCK(?, 0) AS ok', [lockName])
         const rows = await runWithHooks<any[]>(q, 'raw')
         return Number(rows?.[0]?.ok) === 1
       }
@@ -8086,13 +8077,13 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       // and hence the requirement that callers hold a reserved builder.
       if (config.dialect === 'postgres') {
         const k = advisoryLockKey(key)
-        const q = _sql`SELECT pg_advisory_unlock(${k}) as ok`
+        const q = prepareQuery('SELECT pg_advisory_unlock($1) as ok', [k])
         const rows = await runWithHooks<any[]>(q, 'raw')
         return Boolean(rows?.[0]?.ok)
       }
       if (isMysqlLike(config.dialect)) {
         const lockName = `bqb:${String(key)}`
-        const q = _sql`SELECT RELEASE_LOCK(${lockName}) AS ok`
+        const q = prepareQuery('SELECT RELEASE_LOCK(?) AS ok', [lockName])
         const rows = await runWithHooks<any[]>(q, 'raw')
         return Number(rows?.[0]?.ok) === 1
       }
@@ -8146,7 +8137,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     },
     async ping() {
       try {
-        const q = _sql`SELECT 1`
+        const q = prepareQuery('SELECT 1')
         await runWithHooks<any[]>(q, 'select')
         return true
       }
@@ -8330,28 +8321,28 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       const sqlText = isMysqlLike(config.dialect)
         ? `INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
         : `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} ON CONFLICT DO NOTHING`
-      return (_sql.unsafe(sqlText, params) as any).execute()
+      return (prepareQuery(sqlText, params) as any).execute()
     },
     async insertGetId(table, values, idColumn = 'id' as any) {
       const { colsSql, valuesSql, params } = buildInsertClause([values as Record<string, any>])
       const tbl = quoteInsertIdent(String(table))
       if (isMysqlLike(config.dialect)) {
         // MySQL has no RETURNING — insert then read LAST_INSERT_ID().
-        await (_sql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
-        const [row] = await (_sql.unsafe(`SELECT LAST_INSERT_ID() as id`) as any).execute()
+        await (prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+        const [row] = await (prepareQuery(`SELECT LAST_INSERT_ID() as id`) as any).execute()
         return row?.id
       }
       if (config.dialect === 'sqlite') {
         // The bun:sqlite wrapper returns { changes, lastInsertRowid } rather
         // than RETURNING rows, so read the rowid directly.
-        const res = await (_sql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+        const res = await (prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
         if (res?.lastInsertRowid != null)
           return res.lastInsertRowid
-        const [row] = await (_sql.unsafe(`SELECT last_insert_rowid() as id`) as any).execute()
+        const [row] = await (prepareQuery(`SELECT last_insert_rowid() as id`) as any).execute()
         return row?.id
       }
       // Postgres supports RETURNING.
-      const [row] = await (_sql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} RETURNING ${quoteInsertIdent(String(idColumn))} as id`, params) as any).execute()
+      const [row] = await (prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} RETURNING ${quoteInsertIdent(String(idColumn))} as id`, params) as any).execute()
       return row?.id
     },
     async updateOrInsert(table, match, values) {
@@ -8360,18 +8351,18 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       let idx = 1
       const whereSql = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(idx++)}`).join(' AND ')
       const whereParams = matchKeys.map(k => (match as any)[k])
-      const existsRows = await (_sql.unsafe(`SELECT 1 FROM ${tbl} WHERE ${whereSql} LIMIT 1`, whereParams) as any).execute()
+      const existsRows = await (prepareQuery(`SELECT 1 FROM ${tbl} WHERE ${whereSql} LIMIT 1`, whereParams) as any).execute()
       if ((existsRows as any[]).length) {
         const setKeys = Object.keys(values)
         let i = 1
         const setSql = setKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(', ')
         const whereSql2 = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(' AND ')
         const params = [...setKeys.map(k => (values as any)[k]), ...matchKeys.map(k => (match as any)[k])]
-        await (_sql.unsafe(`UPDATE ${tbl} SET ${setSql} WHERE ${whereSql2}`, params) as any).execute()
+        await (prepareQuery(`UPDATE ${tbl} SET ${setSql} WHERE ${whereSql2}`, params) as any).execute()
         return true
       }
       const { colsSql, valuesSql, params } = buildInsertClause([{ ...match, ...values } as Record<string, any>])
-      await (_sql.unsafe(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+      await (prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
       return true
     },
     async upsert(table, rows, conflictColumns, mergeColumns) {
@@ -8389,16 +8380,16 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       // "do nothing" form (an empty SET is a syntax error). See #1035, #1052.
       if (isMysqlLike(config.dialect)) {
         if (setCols.length === 0)
-          return (_sql.unsafe(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
+          return (prepareQuery(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
         const updateList = setCols.map(c => `${quoteInsertIdent(c)} = VALUES(${quoteInsertIdent(c)})`).join(', ')
-        return (_sql.unsafe(`${insert} ON DUPLICATE KEY UPDATE ${updateList}`, params) as any).execute()
+        return (prepareQuery(`${insert} ON DUPLICATE KEY UPDATE ${updateList}`, params) as any).execute()
       }
 
       const targets = targetCols.map(quoteInsertIdent).join(', ')
       if (setCols.length === 0)
-        return (_sql.unsafe(`${insert} ON CONFLICT (${targets}) DO NOTHING`, params) as any).execute()
+        return (prepareQuery(`${insert} ON CONFLICT (${targets}) DO NOTHING`, params) as any).execute()
       const updateList = setCols.map(c => `${quoteInsertIdent(c)} = EXCLUDED.${quoteInsertIdent(c)}`).join(', ')
-      return (_sql.unsafe(`${insert} ON CONFLICT (${targets}) DO UPDATE SET ${updateList}`, params) as any).execute()
+      return (prepareQuery(`${insert} ON CONFLICT (${targets}) DO UPDATE SET ${updateList}`, params) as any).execute()
     },
     async save(table, values) {
       const pk = meta?.primaryKeys[String(table)] ?? 'id'
@@ -8552,7 +8543,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         sql += ')'
       }
 
-      return _sql.unsafe(sql, params).execute()
+      return prepareQuery(sql, params).execute()
     },
     async insertMany(table, rows) {
       if (!rows?.length)
@@ -8593,7 +8584,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           }
         }
         // Join with commas between row templates
-        return _sql.unsafe(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
+        return prepareQuery(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
       }
 
       // Postgres path: positional placeholders
@@ -8606,7 +8597,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         }
         sqlParts[r + 1] = `(${placeholders.join(',')})`
       }
-      return _sql.unsafe(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
+      return prepareQuery(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
     },
     async updateMany(table, conditions, data) {
       // Ultra-optimized direct SQL construction
@@ -8670,7 +8661,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         throw new TypeError(`[query-builder] updateMany(): expected a condition, got ${conditions === null ? 'null' : typeof conditions}. Refusing to run an UPDATE with no WHERE — use updateTable(table).set(data).execute() if updating every row is intended.`)
       }
 
-      return _sql.unsafe(sql, params).execute()
+      return prepareQuery(sql, params).execute()
     },
     async deleteMany(table, ids) {
       if (!Array.isArray(ids) || ids.length === 0)
@@ -8682,12 +8673,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       if (config.dialect === 'postgres') {
         const placeholders = new Array(len)
         for (let i = 0; i < len; i++) placeholders[i] = `$${i + 1}`
-        return _sql.unsafe(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
+        return prepareQuery(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
       }
       // SQLite/MySQL: use ? placeholders
       const placeholders = new Array(len)
       for (let i = 0; i < len; i++) placeholders[i] = '?'
-      return _sql.unsafe(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
+      return prepareQuery(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
     },
     async firstOrCreate(table, match, defaults) {
       const existing = await (this as any).selectFrom(table).where(match as any).first()

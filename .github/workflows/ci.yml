@@ -64,6 +64,20 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test_db
+          MYSQL_USER: query_hooks
+          MYSQL_PASSWORD: query_hooks
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -proot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 3306:3306
       postgres:
         image: postgres:17
         env:
@@ -79,6 +93,10 @@ jobs:
           - 5432:5432
 
     env:
+      # Required (not reachability-gated) native-driver hook regressions.
+      # TLS is needed for MySQL's password-authenticated fixture connection.
+      QUERY_HOOK_MYSQL_URL: mysql://query_hooks:query_hooks@127.0.0.1:3306/test_db?ssl=true
+      QUERY_HOOK_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/test_db
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
       POSTGRES_HOST: localhost
       POSTGRES_PORT: 5432
