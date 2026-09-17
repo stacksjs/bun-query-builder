@@ -35,6 +35,7 @@ import type { SelectQueryBuilder, TableRelationName, TypedSelectQueryBuilder } f
 import type { DatabaseSchema } from '../schema'
 import { raw } from '../client'
 import { createModel, type ModelDefinition } from '../orm'
+import { defineModel } from '../model'
 
 // ---------------------------------------------------------------------------
 // 1. Type-assertion helpers
@@ -1222,3 +1223,57 @@ type F3 = Expect<Equal<LedgerFill['currency'], string | undefined>>
 // eslint-disable-next-line pickier/no-unused-vars
 type F4 = Expect<Equal<LedgerFill['memo'], string>>
 const _ledgerInsert: LedgerFill = { memo: 'x', amountCents: 100 }
+
+// ---------------------------------------------------------------------------
+// 9. defineModel() is typed as the ORM model it returns on the server
+// ---------------------------------------------------------------------------
+
+const Trail = defineModel({
+  name: 'Trail',
+  table: 'trails',
+  primaryKey: 'id',
+  traits: { useTimestamps: true },
+  attributes: {
+    name: { type: 'string', fillable: true },
+    distance: { type: 'number', fillable: true },
+  },
+})
+
+// eslint-disable-next-line pickier/no-unused-vars
+async function _defineModelUsage() {
+  // ORM builder methods that worked at runtime but were typed off the browser model
+  Trail.query().whereRaw('LOWER(name) = ?', ['ada']).orWhereRaw('distance > ?', 5)
+  Trail.query().whereGroup(q => q.where('name', 'Ada').orWhere('distance', 5))
+  Trail.query().where('distance', '>', 1).increment('distance')
+  const longest: number | null = await Trail.max('distance')
+  void longest
+
+  // Browser-model methods that were typed but missing on the server now exist there
+  const one = await Trail.query().where('distance', '>', 1).find(1)
+  if (one) one.get('name')
+  await Trail.query().findOrFail(1)
+  Trail.query().latest().oldest('distance')
+  await Trail.update(1, { name: 'Ridge' })
+  const deleted: boolean = await Trail.delete(1)
+  void deleted
+
+  // Column names stay narrow
+  // @ts-expect-error — unknown column
+  Trail.where('altitude', 1)
+  // @ts-expect-error — unknown column
+  Trail.query().orderBy('altitude')
+
+  // Build-tool introspection survives
+  const table: string = Trail.getTable()
+  const name: 'Trail' = Trail.getName()
+  const def: 'trails' = Trail.definition.table
+  void [table, name, def]
+}
+
+// The package root names the ORM builder; DynamoDB's keeps an explicit alias.
+type RootBuilder = import('../index').ModelQueryBuilder<typeof MemberDef>
+type OrmBuilder = import('../orm').ModelQueryBuilder<typeof MemberDef>
+// eslint-disable-next-line pickier/no-unused-vars
+type RB1 = Expect<Equal<RootBuilder, OrmBuilder>>
+// eslint-disable-next-line pickier/no-unused-vars
+type RB2 = Expect<Equal<import('../index').DynamoDBModelQueryBuilder<any>, import('../dynamodb').ModelQueryBuilder<any>>>
