@@ -184,17 +184,58 @@ const modified = await db
 
 ### whereRaw
 
-For complex conditions:
+For complex conditions. On `db.selectFrom(...)`, `whereRaw` takes a single SQL
+fragment and no bindings. Build the fragment with the `raw` tagged template,
+which inlines each interpolated value as an escaped literal:
 
 ```typescript
+import { raw } from 'bun-query-builder'
+
+const email = 'john@example.com'
 const result = await db
   .selectFrom('users')
-  .whereRaw('LOWER(email) = ?', ['john@example.com'])
+  .whereRaw(raw`LOWER(email) = ${email}`)
   .get()
 
-const recent = await db
+const live = await db
   .selectFrom('orders')
-  .whereRaw('created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)')
+  .whereRaw(raw('deleted_at IS NULL'))
+  .get()
+```
+
+Passing values after the fragment throws, rather than sending an unbound `?`.
+So does `raw('...', value)`: the plain-string form takes no values. Values are
+inlined, not bound, so prefer `where()` for request input.
+
+Model queries do bind `?` placeholders. `Model.query().whereRaw()` and
+`orWhereRaw()` take the bindings either as separate arguments or as one array,
+and the two spellings build the same query:
+
+```typescript
+const active = await User.query()
+  .whereRaw('LOWER(email) = ?', 'john@example.com')
+  .where('active', true)
+  .get()
+
+const same = await User.query()
+  .whereRaw('LOWER(email) = ?', ['john@example.com'])
+  .where('active', true)
+  .get()
+```
+
+A lone array is always the bindings list, and each of its values is bound just
+as if it had been passed separately. Two consequences on Postgres:
+
+- Bun's driver sends an array bound to a `json`/`jsonb` parameter as JSON, so
+  wrap an array you mean as one value. Unwrapped,
+  `whereRaw('tags @> ?', ['bun'])` binds the string `'bun'`, not the array.
+- A number or boolean compared with text needs a string or a cast, e.g.
+  `whereRaw("meta->>'id' = ?", [String(id)])`.
+
+```typescript
+// tags @> '["bun"]'
+const tagged = await Post.query()
+  .whereRaw('tags @> ?', [['bun']])
   .get()
 ```
 

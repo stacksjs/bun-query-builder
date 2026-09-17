@@ -67,7 +67,7 @@ const meta = buildSchemaMeta(models)
 | `whereNull(col)` | WHERE IS NULL | `.whereNull('deleted_at')` |
 | `whereNotNull(col)` | WHERE IS NOT NULL | `.whereNotNull('email')` |
 | `whereColumn(a, op, b)` | Compare columns | `.whereColumn('a', '=', 'b')` |
-| `whereRaw(sql)` | Raw WHERE clause | `.whereRaw('LOWER(name) = ?', ['john'])` |
+| `whereRaw(fragment)` | Raw WHERE clause (one fragment, no bindings) | ``.whereRaw(raw`LOWER(name) = ${name}`)`` |
 
 ### JOIN Operations
 
