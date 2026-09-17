@@ -10,7 +10,7 @@
  * the simple cases and corrupts a query the day somebody stores a question mark.
  */
 import { describe, expect, it } from 'bun:test'
-import { toDialectPlaceholders } from '../src/sql-fragments'
+import { countPlaceholders, mapPlaceholders, toDialectPlaceholders } from '../src/sql-fragments'
 
 describe('toDialectPlaceholders', () => {
   it('numbers placeholders in order for postgres', () => {
@@ -80,5 +80,40 @@ describe('toDialectPlaceholders', () => {
 
   it('returns an empty string unchanged', () => {
     expect(toDialectPlaceholders('', 'postgres')).toBe('')
+  })
+
+  it('leaves a question mark in a line comment alone', () => {
+    expect(toDialectPlaceholders('SELECT ? -- why?\n, ?', 'postgres'))
+      .toBe('SELECT $1 -- why?\n, $2')
+  })
+
+  it('leaves a question mark in a block comment alone, including nested ones', () => {
+    expect(toDialectPlaceholders('SELECT /* a? /* b? */ c? */ ?', 'postgres'))
+      .toBe('SELECT /* a? /* b? */ c? */ $1')
+  })
+
+  it('leaves a backtick-quoted run alone', () => {
+    expect(toDialectPlaceholders('SELECT `a?b`, ?', 'postgres')).toBe('SELECT `a?b`, $1')
+  })
+
+  it('survives an unterminated comment', () => {
+    expect(toDialectPlaceholders('SELECT ? /* open ?', 'postgres')).toBe('SELECT $1 /* open ?')
+  })
+})
+
+describe('countPlaceholders', () => {
+  it('counts only unquoted placeholders', () => {
+    expect(countPlaceholders('a = ? AND b = ?')).toBe(2)
+    expect(countPlaceholders("label = '?' /* ? */ -- ?")).toBe(0)
+    expect(countPlaceholders('$$ ? $$ "?" ?')).toBe(1)
+    expect(countPlaceholders('')).toBe(0)
+  })
+})
+
+describe('mapPlaceholders', () => {
+  it('replaces only the placeholders the callback answers for', () => {
+    const { text, count } = mapPlaceholders("'?' ? ? ?", ordinal => ordinal === 2 ? '$9' : undefined)
+    expect(text).toBe("'?' ? $9 ?")
+    expect(count).toBe(3)
   })
 })
