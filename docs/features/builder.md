@@ -48,6 +48,8 @@ const recentOrders = await db
 ## Selecting Data
 
 ```ts
+import { raw } from 'bun-query-builder'
+
 // Select all columns from projects
 const allProjects = await db
   .selectFrom('projects')
@@ -64,7 +66,7 @@ const userInfo = await db
 const userStats = await db
   .selectFrom('users')
   .select('users', 'id', 'name')
-  .selectRaw(db.sql`COUNT(posts.id) as post_count`)
+  .selectRaw(raw`COUNT(posts.id) as post_count`)
   .leftJoin('posts', 'posts.user_id', '=', 'users.id')
   .groupBy('users.id', 'users.name')
   .execute()
@@ -74,7 +76,7 @@ const userProfiles = await db
   .selectFrom('users')
   .innerJoin('profiles', 'profiles.user_id', '=', 'users.id')
   .select('users', 'id', 'name')
-  .selectRaw(db.sql`profiles.bio, profiles.avatar_url`)
+  .selectRaw(raw`profiles.bio, profiles.avatar_url`)
   .where({ 'users.active': true })
   .execute()
 ```
@@ -82,7 +84,7 @@ const userProfiles = await db
 ### Aliases and Expressions
 
 - Use `"column as alias"` syntax in `select(table, ...)` for simple aliases
-- Use `selectRaw(db.sql\`...\`)` for complex expressions, functions, and computed columns
+- Use ``selectRaw(raw`...`)`` (the `raw` helper exported by `bun-query-builder`) for complex expressions, functions, and computed columns
 - Combine `select()` and `selectRaw()` calls to build comprehensive column lists
 - Always prefix column names with table names when joining to avoid ambiguity
 
@@ -375,9 +377,9 @@ Use raw sparingly for complex cases not covered by helpers.
 ```ts
 await db
   .selectFrom('users')
-  .whereRaw(db.sql`coalesce(age, 0) > 0`)
-  .groupByRaw(db.sql`country`)
-  .havingRaw(db.sql`count(_) > 10`)
+  .whereRaw(raw`coalesce(age, 0) > 0`)
+  .groupByRaw(raw`country`)
+  .havingRaw(raw`count(*) > 10`)
   .execute()
 ```
 
@@ -684,7 +686,7 @@ await db
 // Update with complex conditions
 await db
   .updateTable('users')
-  .set({ last_login: new Date(), login_count: db.sql`login_count + 1` })
+  .set({ last_login: new Date(), login_count: db.raw('login_count + 1') })
   .where({ email: 'chris@example.com' })
   .andWhere(['active', '=', true])
   .execute()
@@ -869,7 +871,7 @@ const users = await db
 // Avoid: Excessive raw SQL
 const users = await db
   .selectFrom('users')
-  .whereRaw(db.sql`active = true ${includeAdmin ? 'OR role = "admin"' : ''}`)
+  .whereRaw(raw(`active = true${includeAdmin ? " OR role = 'admin'" : ''}`))
   .execute()
 ```
 
@@ -917,7 +919,7 @@ const user = await db
 // Dangerous: String interpolation
 const user = await db
   .selectFrom('users')
-  .whereRaw(db.sql`email = '${userInput.email}'`) // DON'T DO THIS
+  .whereRaw(raw(`email = '${userInput.email}'`)) // DON'T DO THIS: the string is built before raw() sees it
 ```
 
 ### Error Handling and Monitoring
@@ -1071,14 +1073,14 @@ const searchQuery = 'TypeScript'
 const articleResults = db
   .selectFrom('articles')
   .select('articles', 'id', 'title', 'created_at')
-  .selectRaw(db.sql`'article' as content_type`)
+  .selectRaw(raw`'article' as content_type`)
   .where(['title', 'like', `%${searchQuery}%`])
   .orWhere(['content', 'like', `%${searchQuery}%`])
 
 const projectResults = db
   .selectFrom('projects')
   .select('projects', 'id', 'name as title', 'created_at')
-  .selectRaw(db.sql`'project' as content_type`)
+  .selectRaw(raw`'project' as content_type`)
   .where(['name', 'like', `%${searchQuery}%`])
   .orWhere(['description', 'like', `%${searchQuery}%`])
 
@@ -1099,7 +1101,7 @@ const userStats = await db
   .withCount('posts', 'total_posts')
   .withCount('posts', 'published_posts', ['published', '=', true])
   .withCount('comments', 'total_comments')
-  .selectRaw(db.sql`
+  .selectRaw(raw`
     CASE
       WHEN COUNT(posts.id) > 10 THEN 'high'
       WHEN COUNT(posts.id) > 5 THEN 'medium'
@@ -1114,13 +1116,13 @@ const userStats = await db
 // Monthly user registration trends
 const registrationTrends = await db
   .selectFrom('users')
-  .selectRaw(db.sql`
+  .selectRaw(raw`
     DATE_TRUNC('month', created_at) as month,
-    COUNT(_) as new_users,
+    COUNT(*) as new_users,
     COUNT(CASE WHEN role = 'admin' THEN 1 END) as new_admins
   `)
   .where(['created_at', '>=', new Date('2024-01-01')])
-  .groupBy(db.sql`DATE_TRUNC('month', created_at)`)
+  .groupByRaw(raw`DATE_TRUNC('month', created_at)`)
   .orderBy('month', 'desc')
   .execute()
 ```
@@ -1144,7 +1146,7 @@ const chrisTeamWithStats = await db
 const projectsWithCollaborators = await db
   .selectFrom('projects')
   .select('projects', 'id', 'name', 'description')
-  .selectRaw(db.sql`
+  .selectRaw(raw`
     STRING_AGG(users.name, ', ') as collaborators,
     COUNT(DISTINCT project_users.user_id) as collaborator_count
   `)
@@ -1226,7 +1228,7 @@ Use `whereColumn(left, op, right)`.
 
 ### How do I add arbitrary fragments
 
-Use `selectRaw`, `whereRaw`, `groupByRaw`, or `havingRaw` and pass a Bun `sql` fragment.
+Use `selectRaw`, `whereRaw`, `orderByRaw`, `groupByRaw`, or `havingRaw` and pass one fragment built with the exported `raw` helper: ``raw`count(*) as c` `` or `raw('age > 18')`. These methods take no bindings, and values interpolated into ``raw`...` `` are inlined as escaped literals. To bind values, pass `db.raw('name = ?', [value])` or `{ sql, parameters }` to `where()` or `set()`. A Bun ``db.sql`...` `` query is not a fragment: it throws on Postgres and MySQL.
 
 ---
 

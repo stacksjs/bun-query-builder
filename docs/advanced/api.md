@@ -27,7 +27,7 @@ import {
 } from 'bun-query-builder'
 
 // Example: Chris's team setup
-import { buildDatabaseSchema, buildSchemaMeta, config, createQueryBuilder } from 'bun-query-builder'
+import { buildDatabaseSchema, buildSchemaMeta, config, createQueryBuilder, raw } from 'bun-query-builder'
 import { userModels } from './models'
 
 // Configure for PostgreSQL production environment
@@ -87,9 +87,10 @@ setConfig({ transactionDefaults: { retries: 5 } })
 - updateTable(table)
 - deleteFrom(table)
 - sql: passthrough to Bun’s `sql`
-- raw(strings, ...values)
+- raw(sql, bindings?): bound `{ sql, parameters }` fragment for `set()` / `where()` (not a query; awaiting it rejects)
+- ``raw`...` `` (tagged template): passthrough to Bun’s `sql`
 - simple(strings, ...values)
-- unsafe(query, params?)
+- unsafe(query, params?): run SQL and return rows
 - file(path, params?)
 - reserve(): Promise<QueryBuilder & { release() }>
 - close(opts?)
@@ -234,7 +235,7 @@ setConfig({ transactionDefaults: { retries: 5 } })
 const userAnalytics = await db
   .selectFrom('users')
   .select('users', 'id', 'name', 'email', 'created_at')
-  .selectRaw(db.sql`COUNT(posts.id) as post_count`)
+  .selectRaw(raw`COUNT(posts.id) as post_count`)
   .with('Profile', 'Team')
   .leftJoin('posts', 'posts.author_id', '=', 'users.id')
   .where({ 'users.active': true })

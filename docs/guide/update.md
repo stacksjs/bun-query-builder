@@ -151,8 +151,8 @@ await db.transaction(async (trx) => {
 await db
   .updateTable('users')
   .set({
-    login_count: sql`login_count + 1`,
-    last_login: sql`NOW()`
+    login_count: db.raw('login_count + 1'),
+    last_login: db.raw('CURRENT_TIMESTAMP')
   })
   .where({ id: userId })
   .execute()
@@ -165,7 +165,7 @@ await db
 await db
   .updateTable('users')
   .set({
-    preferences: sql`JSON_SET(preferences, '$.theme', 'dark')`
+    preferences: db.raw("JSON_SET(preferences, '$.theme', 'dark')")
   })
   .where({ id: userId })
   .execute()

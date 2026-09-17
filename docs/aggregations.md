@@ -159,6 +159,7 @@ const highValueCustomers = await db
 Use raw SQL for complex aggregations:
 
 ```typescript
+import { raw } from 'bun-query-builder'
 
 // Custom aggregation
 const results = await db
@@ -173,12 +174,12 @@ const results = await db
 // Group by with raw expressions
 const weeklyStats = await db
   .selectFrom('orders')
-  .selectRaw(`
+  .selectRaw(raw`
     strftime('%Y-%W', created_at) AS week,
-    COUNT(_) AS orders,
+    COUNT(*) AS orders,
     SUM(amount) AS revenue
   `)
-  .groupByRaw("strftime('%Y-%W', created_at)")
+  .groupByRaw(raw`strftime('%Y-%W', created_at)`)
   .get()
 
 ```
@@ -237,7 +238,7 @@ const authorStats = await db
 
 ```typescript
 
-import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta } from 'bun-query-builder'
+import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta, raw } from 'bun-query-builder'
 
 // Setup
 const models = {
@@ -315,12 +316,12 @@ async function getAnalytics() {
   // Monthly revenue trend
   const monthlyRevenue = await db
     .selectFrom('orders')
-    .selectRaw(`
+    .selectRaw(raw`
       strftime('%Y-%m', created_at) AS month,
-      COUNT(_) AS orders,
+      COUNT(*) AS orders,
       SUM(amount) AS revenue
     `)
-    .groupByRaw("strftime('%Y-%m', created_at)")
+    .groupByRaw(raw`strftime('%Y-%m', created_at)`)
     .orderBy('month')
     .get()
 

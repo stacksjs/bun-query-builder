@@ -93,7 +93,7 @@ const user = await db
   .onConflict('email')
   .doUpdate({
     name: 'John Doe',
-    login_count: sql`login_count + 1`
+    login_count: db.raw('login_count + 1')
   })
   .execute()
 ```

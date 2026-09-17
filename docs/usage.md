@@ -7,7 +7,7 @@ There are two ways to use bun-query-builder: as a library and via the CLI. This 
 ### Quick Start
 
 ```ts
-import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder } from 'bun-query-builder'
+import { buildDatabaseSchema, buildSchemaMeta, createQueryBuilder, raw } from 'bun-query-builder'
 
 // Define your models with relationships
 const models = {
@@ -86,7 +86,7 @@ const featuredProducts = await db
 // Buddy's analytics: User engagement metrics
 const userStats = await db
   .selectFrom('users')
-  .selectRaw(db.sql`
+  .selectRaw(raw`
     COUNT(posts.id) as post_count,
     AVG(posts.engagement_score) as avg_engagement
   `)
@@ -233,7 +233,7 @@ async function processOrderTransaction(orderData: any) {
 
       await tx
         .updateTable('products')
-        .set({ stock_quantity: db.sql`stock_quantity - ${item.quantity}` })
+        .set({ stock_quantity: db.raw('stock_quantity - ?', [item.quantity]) })
         .where({ id: item.product_id })
         .execute()
     }

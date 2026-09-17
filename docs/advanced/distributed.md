@@ -107,7 +107,7 @@ async function processOrder(orderData: {
       // Reserve inventory for each item
       for (const item of orderData.items) {
         await tx.updateTable('products')
-          .set({ reserved_stock: db.sql`reserved_stock + ${item.quantity}` })
+          .set({ reserved_stock: db.raw('reserved_stock + ?', [item.quantity]) })
           .where({ id: item.productId })
           .execute()
 

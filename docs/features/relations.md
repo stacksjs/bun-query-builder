@@ -462,11 +462,13 @@ the model layer's eager loading.
 Example:
 
 ```ts
+import { raw } from 'bun-query-builder'
+
 await db
   .selectFrom('users')
   .with('Project')
   .select('users', 'id', 'email')
-  .selectRaw(db.sql`projects.name as projects_name`)
+  .selectRaw(raw`projects.name as projects_name`)
   .execute()
 ```
 
@@ -508,8 +510,8 @@ await db
   .selectFrom('users')
   .with('Project')
   .select('users', 'id', 'email')
-  .selectRaw(db.sql`projects.id as projects_id`)
-  .selectRaw(db.sql`projects.name as projects_name`)
+  .selectRaw(raw`projects.id as projects_id`)
+  .selectRaw(raw`projects.name as projects_name`)
   .execute()
 ```
 
@@ -520,7 +522,7 @@ await db
   .selectFrom('users')
   .with('Project')
   .groupBy('users.id')
-  .selectRaw(db.sql`COUNT(projects.id) as projects_count`)
+  .selectRaw(raw`COUNT(projects.id) as projects_count`)
   .execute()
 ```
 
@@ -568,7 +570,7 @@ const teamData = await db
   .selectFrom('users')
   .with('Project')
   .select('users', 'id', 'name', 'role')
-  .selectRaw(db.sql`projects.id as project_id, projects.name as project_name`)
+  .selectRaw(raw`projects.id as project_id, projects.name as project_name`)
   .where({ 'users.team': 'Engineering' })
   .execute()
 ```
@@ -671,7 +673,7 @@ await db
   .with('Project')
   .whereHas('Project', ['status', '=', 'active'])
   .groupBy('users.id')
-  .havingRaw(db.sql`COUNT(CASE WHEN projects.status = 'inactive' THEN 1 END) = 0`)
+  .havingRaw(raw`COUNT(CASE WHEN projects.status = 'inactive' THEN 1 END) = 0`)
   .execute()
 ```
 
@@ -682,7 +684,7 @@ await db
   .selectFrom('users')
   .with('Project')
   .groupBy('users.id')
-  .selectRaw(db.sql`COUNT(projects.id) as projects_count`)
+  .selectRaw(raw`COUNT(projects.id) as projects_count`)
   .orderByDesc('projects_count' as any)
   .limit(10)
   .execute()
@@ -696,7 +698,7 @@ await db
   .selectFrom('users')
   .with('Project')
   .groupBy('users.id')
-  .havingRaw(db.sql`COUNT(projects.id) >= ${db.sql(String(N))}`)
+  .havingRaw(raw`COUNT(projects.id) >= ${N}`)
   .execute()
 ```
 
@@ -740,7 +742,7 @@ await db
   .selectFrom('users')
   .join('projects', 'projects.ownerId' as any, '=', 'users.uid' as any)
   .select('users', 'uid as id', 'email')
-  .selectRaw(db.sql`projects.title as projects_title`)
+  .selectRaw(raw`projects.title as projects_title`)
   .execute()
 ```
 
@@ -782,8 +784,8 @@ await db
   .selectFrom('users')
   .with('Project')
   .select('users', 'id', 'email')
-  .selectRaw(db.sql`projects.id as projects_id`)
-  .selectRaw(db.sql`projects.status as projects_status`)
+  .selectRaw(raw`projects.id as projects_id`)
+  .selectRaw(raw`projects.status as projects_status`)
   .execute()
 ```
 
@@ -794,8 +796,8 @@ await db
   .selectFrom('users')
   .with('Project')
   .groupBy('users.id')
-  .selectRaw(db.sql`COUNT(projects.id) as projects_count`)
-  .selectRaw(db.sql`SUM(CASE WHEN projects.status = 'active' THEN 1 ELSE 0 END) as active_count`)
+  .selectRaw(raw`COUNT(projects.id) as projects_count`)
+  .selectRaw(raw`SUM(CASE WHEN projects.status = 'active' THEN 1 ELSE 0 END) as active_count`)
   .execute()
 ```
 
