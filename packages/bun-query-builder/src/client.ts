@@ -30,6 +30,17 @@ function isRawExpression(expr: unknown): expr is RawExpression {
 interface BoundSqlExpression {
   sql: string
   parameters?: readonly unknown[]
+  /** What the SQLite driver's `sql` tagged template carries its bindings in. */
+  values?: unknown
+}
+
+/**
+ * A fragment with bound values, as `db.raw('stock - ?', [n])` builds it.
+ * `set()` and `where()` render it at its position and bind its values.
+ */
+export interface BoundSqlFragment {
+  readonly sql: string
+  readonly parameters: readonly unknown[]
 }
 
 /**
@@ -70,6 +81,66 @@ function isBoundSqlExpression(expr: unknown): expr is BoundSqlExpression {
 }
 
 /**
+ * `db.raw(sql, bindings)`: a `{ sql, parameters }` fragment.
+ *
+ * `db.raw` was a tagged-template passthrough only. Called the way the docs
+ * called it, `db.raw('stock - ?', [quantity])`, it returned the SQLite driver's
+ * identifier marker with the values dropped — `set()` then changed no rows — and
+ * threw `Query not called as a tagged template literal` on Postgres.
+ *
+ * Awaiting the fragment rejects, because `await db.raw(sql, [..])` reads like a
+ * query and would otherwise resolve to this object; `db.unsafe` runs SQL.
+ */
+function boundFragment(sql: string, args: readonly unknown[]): BoundSqlFragment {
+  const [bindings, ...rest] = args
+  if (rest.length > 0 || (bindings !== undefined && !Array.isArray(bindings))) {
+    throw new TypeError(
+      '[query-builder] db.raw(sql, bindings): pass the bindings as one array, db.raw(\'a = ? AND b = ?\', [a, b]).',
+    )
+  }
+  const fragment = { sql, parameters: [...(bindings ?? [])] }
+  Object.defineProperty(fragment, 'then', {
+    enumerable: false,
+    value: (_onFulfilled: unknown, onRejected?: (reason: unknown) => unknown) => {
+      const error = new TypeError(
+        '[query-builder] db.raw(sql, bindings) builds a fragment for set() or where(), not a query. '
+        + 'Run SQL with db.unsafe(sql, params).',
+      )
+      if (typeof onRejected === 'function')
+        return onRejected(error)
+      throw error
+    },
+  })
+  return fragment
+}
+
+/**
+ * A query object from Bun's network driver (`db.sql` on Postgres and MySQL).
+ * It is a Promise subclass that exposes no SQL text, so it cannot be spliced
+ * into a statement; see {@link refuseNativeQuery}.
+ */
+function isNativeDriverQuery(value: unknown): boolean {
+  return value instanceof Promise
+    && typeof (value as { execute?: unknown }).execute === 'function'
+    && typeof (value as { cancel?: unknown }).cancel === 'function'
+}
+
+/**
+ * Throw for a Bun network-driver query used as a fragment.
+ *
+ * `where(db.sql\`name = ${v}\`)` on Postgres read the query object as an empty
+ * column map, added no condition, and returned every row. In `set()` the
+ * driver rejected it with `Unknown object is not a valid PostgreSQL type`.
+ */
+function refuseNativeQuery(context: string): never {
+  throw new TypeError(
+    `[query-builder] ${context}: a Bun \`sql\`...\`\` query cannot be used as a fragment, because its SQL text `
+    + `is not readable. Bind values with db.raw('name = ?', [value]) or { sql, parameters }, or use the `
+    + `exported \`raw\` tagged template.`,
+  )
+}
+
+/**
  * Render a parameterized SQL expression at its current position in a query.
  *
  * SQLite and MySQL use `?` placeholders as emitted. PostgreSQL placeholders
@@ -77,7 +148,9 @@ function isBoundSqlExpression(expr: unknown): expr is BoundSqlExpression {
  * parameters and start after the query parameters already collected.
  */
 function renderBoundSqlExpression(expression: BoundSqlExpression, startIndex: number): { text: string, parameters: readonly unknown[] } {
-  const parameters = expression.parameters ?? []
+  // The SQLite driver's `db.sql` tagged template keeps its bindings in `values`.
+  // Reading only `parameters` sent `n = n + ?` with nothing bound.
+  const parameters = expression.parameters ?? (Array.isArray(expression.values) ? expression.values : [])
   if (config.dialect !== 'postgres' || parameters.length === 0)
     return { text: expression.sql, parameters }
 
@@ -459,7 +532,12 @@ function validateQualifiedIdentifier(value: unknown, context: string): void {
  * execution. That now throws here instead. See stacksjs/bun-query-builder#1146.
  */
 function renderRawFragment(fragment: unknown, context: string, extra: readonly unknown[] = []): string {
-  if (dropsTrailingArguments(fragment, extra)) {
+  const carried = typeof fragment === 'object' && fragment !== null
+    ? ((fragment as BoundSqlExpression).parameters ?? (fragment as BoundSqlExpression).values)
+    : undefined
+  // A `db.sql\`name = ${v}\`` or `db.raw('name = ?', [v])` fragment carries its
+  // values with it, and rendering only its text dropped them just the same.
+  if (dropsTrailingArguments(fragment, extra) || (Array.isArray(carried) && carried.length > 0)) {
     // The advice differs by clause: where()/orWhere() and the model builder's
     // bound whereRaw/orWhereRaw can stand in for a WHERE fragment. Nothing typed
     // stands in for the others — having()'s type only takes selected columns,
@@ -679,19 +757,21 @@ export interface WhereRaw {
 }
 
 /**
- * Brand for SQL fragments produced by Bun's `sql\`...\`` tagged-template
- * (or any equivalent helper). Typed as `object` so the *Raw methods
- * (`whereRaw`, `selectRaw`, `groupByRaw`, `havingRaw`, `orderByRaw`)
- * refuse to compile when passed a bare string — concatenated user
- * input (`whereRaw(\`status = '${req.body.s}'\`)`) was the canonical
- * SQL-injection vector flagged by the audit as Q-3.
+ * Brand for SQL fragments, such as the exported `raw` helper builds. Typed as
+ * `object` so the *Raw methods (`whereRaw`, `selectRaw`, `groupByRaw`,
+ * `havingRaw`, `orderByRaw`) refuse to compile when passed a bare string —
+ * concatenated user input (`whereRaw(\`status = '${req.body.s}'\`)`) was the
+ * canonical SQL-injection vector flagged by the audit as Q-3.
  *
- * Callers who legitimately need raw SQL use `sql\`...\`` which
- * separates the SQL fragment from parameter values:
+ * Callers who need raw SQL use `raw`, which escapes interpolated values, or
+ * bind them with `db.raw('...', [values])` in `where()` and `set()`. A Bun
+ * `sql\`...\`` query is not a fragment: on Postgres and MySQL its text cannot be
+ * read back, and the *Raw methods take no bindings.
  *
  * ```ts
- * import { sql } from 'bun'
- * db.selectFrom('users').whereRaw(sql\`lower(name) = lower(${input})\`)
+ * import { raw } from 'bun-query-builder'
+ * db.selectFrom('users').whereRaw(raw\`lower(name) = lower(${input})\`)
+ * db.selectFrom('users').where(db.raw('lower(name) = lower(?)', [input]))
  * ```
  *
  * The runtime guard in each *Raw method also rejects bare strings as
@@ -879,7 +959,7 @@ export type TypedSelectQueryBuilder<
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${K} = ?`>) & (<K extends keyof DB[TTable]['columns'] & string, OP extends WhereOperator>(
     expr: [K, OP, WhereValue<DB[TTable]['columns'][K]>],
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${K} ${Uppercase<OP>} ${OP extends 'in' | 'not in' ? '(?)' : '?'}`>) & ((
-    expr: WhereExpression<DB[TTable]['columns']> | string,
+    expr: WhereExpression<DB[TTable]['columns']> | string | BoundSqlFragment,
     op?: WhereOperator,
     value?: WhereValue<DB[TTable]['columns'][keyof DB[TTable]['columns'] & string]>,
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} WHERE ${string}`>)
@@ -888,7 +968,7 @@ export type TypedSelectQueryBuilder<
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${K} = ?`>) & (<K extends keyof DB[TTable]['columns'] & string, OP extends WhereOperator>(
     expr: [K, OP, WhereValue<DB[TTable]['columns'][K]>],
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${K} ${Uppercase<OP>} ${OP extends 'in' | 'not in' ? '(?)' : '?'}`>) & ((
-    expr: WhereExpression<DB[TTable]['columns']> | string,
+    expr: WhereExpression<DB[TTable]['columns']> | string | BoundSqlFragment,
     op?: WhereOperator,
     value?: WhereValue<DB[TTable]['columns'][keyof DB[TTable]['columns'] & string]>,
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} AND ${string}`>)
@@ -897,7 +977,7 @@ export type TypedSelectQueryBuilder<
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${K} = ?`>) & (<K extends keyof DB[TTable]['columns'] & string, OP extends WhereOperator>(
     expr: [K, OP, WhereValue<DB[TTable]['columns'][K]>],
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${K} ${Uppercase<OP>} ${OP extends 'in' | 'not in' ? '(?)' : '?'}`>) & ((
-    expr: WhereExpression<DB[TTable]['columns']> | string,
+    expr: WhereExpression<DB[TTable]['columns']> | string | BoundSqlFragment,
     op?: WhereOperator,
     value?: WhereValue<DB[TTable]['columns'][keyof DB[TTable]['columns'] & string]>,
   ) => TypedSelectQueryBuilder<DB, TTable, TSelected, TJoined, `${TSql} OR ${string}`>)
@@ -959,8 +1039,8 @@ export interface BaseSelectQueryBuilder<
    *
    * @example
    * ```ts
-   * const rows = await db.selectFrom('users').selectRaw(sql`count(*) as c`).get()
-   * const sqlText = db.selectFrom('users').selectRaw(sql`now() as ts`).toSQL()
+   * const rows = await db.selectFrom('users').selectRaw(raw`count(*) as c`).get()
+   * const sqlText = db.selectFrom('users').selectRaw(raw`now() as ts`).toSQL()
    * ```
    */
   selectRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -977,7 +1057,7 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   where: <K extends keyof DB[TTable]['columns'] & string>(
-    expr: WhereExpression<DB[TTable]['columns']> | K,
+    expr: WhereExpression<DB[TTable]['columns']> | K | BoundSqlFragment,
     op?: WhereOperator,
     value?: WhereValue<DB[TTable]['columns'][K]>,
   ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -988,8 +1068,8 @@ export interface BaseSelectQueryBuilder<
    *
    * @example
    * ```ts
-   * const rows = await db.selectFrom('users').whereRaw(sql`lower(name) = lower(${ 'Alice' })`).get()
-   * const sqlText = db.selectFrom('users').whereRaw(sql`custom_condition`).toSQL()
+   * const rows = await db.selectFrom('users').whereRaw(raw`lower(name) = lower(${'Alice'})`).get()
+   * const sqlText = db.selectFrom('users').whereRaw(raw`custom_condition`).toSQL()
    * ```
    */
   whereRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -1025,7 +1105,7 @@ export interface BaseSelectQueryBuilder<
    * @example
    * ```ts
    * const rows = await db.selectFrom('users').whereIn('id', [1, 2, 3]).get()
-   * const sqlText = db.selectFrom('users').whereIn('id', db.selectFrom('admins').selectRaw(sql`id`)).toSQL()
+   * const sqlText = db.selectFrom('users').whereIn('id', db.selectFrom('admins').selectRaw(raw`id`)).toSQL()
    * ```
    */
   whereIn: <K extends keyof DB[TTable]['columns'] & string>(column: K, values: DB[TTable]['columns'][K][] | { toSQL: () => string }) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -1286,7 +1366,7 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   andWhere: <K extends keyof DB[TTable]['columns'] & string>(
-    expr: WhereExpression<DB[TTable]['columns']> | K,
+    expr: WhereExpression<DB[TTable]['columns']> | K | BoundSqlFragment,
     op?: WhereOperator,
     value?: WhereValue<DB[TTable]['columns'][K]>,
   ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -1302,7 +1382,7 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   orWhere: <K extends keyof DB[TTable]['columns'] & string>(
-    expr: WhereExpression<DB[TTable]['columns']> | K,
+    expr: WhereExpression<DB[TTable]['columns']> | K | BoundSqlFragment,
     op?: WhereOperator,
     value?: WhereValue<DB[TTable]['columns'][K]>,
   ) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -1466,8 +1546,8 @@ export interface BaseSelectQueryBuilder<
    *
    * @example
    * ```ts
-   * const sql = db.selectFrom('users').groupByRaw(sql`date_trunc('day', created_at)`).toSQL()
-   * const rows = await db.selectFrom('users').groupByRaw(sql`1`).get()
+   * const sql = db.selectFrom('users').groupByRaw(raw`date_trunc('day', created_at)`).toSQL()
+   * const rows = await db.selectFrom('users').groupByRaw(raw`1`).get()
    * ```
    */
   groupByRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -1490,8 +1570,8 @@ export interface BaseSelectQueryBuilder<
    *
    * @example
    * ```ts
-   * const sql = db.selectFrom('users').groupBy('role').havingRaw(sql`count(*) > 10`).toSQL()
-   * const rows = await db.selectFrom('users').havingRaw(sql`count(*) > 0`).get()
+   * const sql = db.selectFrom('users').groupBy('role').havingRaw(raw`count(*) > 10`).toSQL()
+   * const rows = await db.selectFrom('users').havingRaw(raw`count(*) > 0`).get()
    * ```
    */
   havingRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -1527,8 +1607,8 @@ export interface BaseSelectQueryBuilder<
    *
    * @example
    * ```ts
-   * const sql = db.selectFrom('users').orderByRaw(sql`random()`).toSQL()
-   * const rows = await db.selectFrom('users').orderByRaw(sql`1`).get()
+   * const sql = db.selectFrom('users').orderByRaw(raw`random()`).toSQL()
+   * const rows = await db.selectFrom('users').orderByRaw(raw`1`).get()
    * ```
    */
   orderByRaw: (fragment: SqlFragment) => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -2324,7 +2404,7 @@ export interface DeleteQueryBuilder<DB extends AnyDatabaseSchema, TTable extends
    * an injected operator is unrecoverable.
    */
   where: <K extends keyof DB[TTable]['columns'] & string>(
-    expr: WhereExpression<DB[TTable]['columns']> | K,
+    expr: WhereExpression<DB[TTable]['columns']> | K | BoundSqlFragment,
     op?: WhereOperator,
     value?: WhereValue<DB[TTable]['columns'][K]>,
   ) => DeleteQueryBuilder<DB, TTable>
@@ -2544,14 +2624,20 @@ export interface QueryBuilder<DB extends AnyDatabaseSchema> {
   /**
    * # `raw`
    *
-   * Tagged template passthrough to Bun.sql.
+   * Called with a string, builds a bound fragment for `set()` and `where()`:
+   * each `?` binds the matching value, on every dialect. It is not a query —
+   * run one with `db.unsafe(sql, params)`.
+   *
+   * As a tagged template it passes through to the driver's `sql` tag.
    *
    * @example
    * ```ts
+   * await db.updateTable('products').set({ stock: db.raw('stock - ?', [quantity]) }).where('id', '=', id).execute()
    * const q = db.raw`SELECT ${1} as one`
    * ```
    */
-  raw: (strings: TemplateStringsArray, ...values: unknown[]) => SqlFragment
+  // eslint-disable-next-line pickier/no-unused-vars
+  raw: ((sql: string, bindings?: readonly unknown[]) => BoundSqlFragment) & ((strings: TemplateStringsArray, ...values: unknown[]) => SqlFragment)
   /**
    * # `simple`
    *
@@ -3790,6 +3876,16 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       // Callback: a parenthesised group, same as where(callback)/whereGroup().
       if (typeof expr === 'function') {
         addWhereGroup(conn, expr)
+        return self
+      }
+
+      // A bound fragment, handled before the object branch as in where().
+      if (isNativeDriverQuery(expr))
+        refuseNativeQuery(`${label}(expr)`)
+      if (isBoundSqlExpression(expr)) {
+        const rendered = renderBoundSqlExpression(expr, whereParams.length + 1)
+        whereParams.push(...rendered.parameters)
+        pushWhere(conn, rendered.text)
         return self
       }
 
@@ -5192,6 +5288,19 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             pushWhere('AND', `${quoteColumnForDialect(colName)} ${operator} ${getPlaceholder(paramIndex)}`)
           }
 
+          return this
+        }
+
+        // A bound fragment — db.raw('name = ?', [v]), { sql, parameters }, or the
+        // SQLite driver's db.sql`...` — is an object too. Read as a column map it
+        // became `sql = ?` on SQLite, and a Postgres query object has no keys, so
+        // it added no condition and every row came back.
+        if (isNativeDriverQuery(expr))
+          refuseNativeQuery('where(expr)')
+        if (isBoundSqlExpression(expr)) {
+          const rendered = renderBoundSqlExpression(expr, whereParams.length + 1)
+          whereParams.push(...rendered.parameters)
+          pushWhere('AND', rendered.text)
           return this
         }
 
@@ -7534,6 +7643,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           for (let i = 0; i < len; i++) {
             const key = keys[i]
             const value = (shaped as any)[key]
+            if (isNativeDriverQuery(value))
+              refuseNativeQuery(`set(${key})`)
             if (isRawExpression(value)) {
               setClauses[i] = `${quoteId(key)} = ${value.raw}`
             }
@@ -7619,6 +7730,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // as success. Handled before the object branch because a bound
           // expression is an object and would otherwise be read as the column
           // map `{ sql: ... }`. See #1101.
+          if (isNativeDriverQuery(expr))
+            refuseNativeQuery('updateTable.where(expr)')
           if (isRawExpression(expr)) {
             appendPredicate(expr.raw)
             built = prepareQuery(sqlText, params)
@@ -7917,6 +8030,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // fragment was interpolated as a bound value, so Postgres rejected
           // `where(raw('id = 1'))` with "invalid input syntax for type
           // boolean". The signature accepts SqlFragment, so it has to work.
+          if (isNativeDriverQuery(expr))
+            refuseNativeQuery('deleteFrom.where(expr)')
           if (isRawExpression(expr)) {
             appendPredicate(expr.raw)
             built = null
@@ -8110,7 +8225,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       }
     },
     sql: _sql,
-    raw(strings: TemplateStringsArray, ...values: any[]) {
+    // One implementation behind the two call signatures declared on QueryBuilder.
+    raw(strings: TemplateStringsArray | string, ...values: any[]): any {
+      if (typeof strings === 'string')
+        return boundFragment(strings, values)
       return _sql(strings, ...values)
     },
     simple(strings: TemplateStringsArray, ...values: any[]) {

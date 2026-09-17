@@ -350,13 +350,15 @@ function optimizeForSQLite() {
 - **Migration Strategy**: Plan for potential dialect changes
 
 ```ts
+import { raw } from 'bun-query-builder'
+
 // Feature detection pattern
 function getRandomOrderQuery() {
   const randomFunction = config.sql.randomFunction || 'RANDOM()'
 
   return db
     .selectFrom('quotes')
-    .orderByRaw(db.sql`${randomFunction}`)
+    .orderByRaw(raw(randomFunction))
     .limit(1)
 }
 

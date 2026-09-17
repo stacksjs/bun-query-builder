@@ -49,7 +49,7 @@ const meta = buildSchemaMeta(models)
 |--------|-------------|---------|
 | `selectFrom(table)` | Start a SELECT query | `db.selectFrom('users')` |
 | `select(columns)` | Select specific columns | `.select(['id', 'name'])` |
-| `selectRaw(sql)` | Select with raw SQL | `.selectRaw('COUNT(*) as count')` |
+| `selectRaw(fragment)` | Select with raw SQL (one fragment, no bindings) | ``.selectRaw(raw`COUNT(*) as count`)`` |
 | `distinct()` | Add DISTINCT modifier | `.distinct()` |
 | `distinctOn(columns)` | DISTINCT ON (PostgreSQL) | `.distinctOn('email')` |
 

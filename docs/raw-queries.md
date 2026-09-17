@@ -16,47 +16,54 @@ import { createQueryBuilder } from 'bun-query-builder'
 
 const db = createQueryBuilder<typeof schema>({ schema, meta })
 
-// Raw query with parameters
-const users = await db.raw(
+// Raw query with parameters (SQLite and MySQL use `?` placeholders)
+const users = await db.unsafe(
   'SELECT * FROM users WHERE active = ? AND age > ?',
   [true, 18]
 )
 
-// Using named parameters
-const posts = await db.raw(
-  'SELECT * FROM posts WHERE user_id = $userId AND published = $published',
-  { userId: 1, published: true }
+// Postgres uses numbered placeholders
+const posts = await db.unsafe(
+  'SELECT * FROM posts WHERE user_id = $1 AND published = $2',
+  [1, true]
 )
 ```
+
+`db.unsafe(sql, params)` runs the statement and resolves to its rows. `db.raw(sql, bindings)`
+does not run anything: it builds a fragment for `set()` and `where()` (see
+[Bound Fragments](#bound-fragments-in-set-and-where)), and awaiting it rejects.
 
 ## Raw Expressions in Queries
 
 Use raw expressions within the query builder:
 
 ```typescript
+import { raw } from 'bun-query-builder'
+
 // Raw in select
 const results = await db
   .selectFrom('users')
-  .selectRaw('COUNT(*) AS total, AVG(age) AS avg_age')
+  .selectRaw(raw`COUNT(*) AS total, AVG(age) AS avg_age`)
   .get()
 
-// Raw in where
+// Raw in where (the interpolated Date is inlined as an escaped literal)
+const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 const recentUsers = await db
   .selectFrom('users')
-  .whereRaw('DATE(created_at) > DATE_SUB(NOW(), INTERVAL 30 DAY)')
+  .whereRaw(raw`created_at > ${since}`)
   .get()
 
 // Raw in order by
 const sorted = await db
   .selectFrom('products')
-  .orderByRaw('price * quantity DESC')
+  .orderByRaw(raw`price * quantity DESC`)
   .get()
 
 // Raw in group by
 const grouped = await db
   .selectFrom('orders')
   .select(['SUM(amount) AS total'])
-  .groupByRaw("strftime('%Y-%m', created_at)")
+  .groupByRaw(raw`strftime('%Y-%m', created_at)`)
   .get()
 
 // Raw in having
@@ -64,7 +71,7 @@ const filtered = await db
   .selectFrom('orders')
   .select(['user_id', 'SUM(amount) AS total'])
   .groupBy('user_id')
-  .havingRaw('SUM(amount) > 1000')
+  .havingRaw(raw`SUM(amount) > 1000`)
   .get()
 
 ```
@@ -123,13 +130,48 @@ await db.selectFrom('users').orderByRaw(raw`created_at desc`).get()
 await db.selectFrom('orders').whereRaw(raw`status = ${userStatus}`).get()
 ```
 
-> **Do not pass a Bun `sql\`...\`` query to the `*Raw` methods.** A Bun query
-> object cannot be converted back to SQL text (it stringifies to
-> `"[object Promise]"`), so it would corrupt the generated SQL. The builder
-> now throws a clear error if you do. `raw` returns a `{ raw }` fragment that
-> renders correctly and satisfies the `SqlFragment` type (so it still passes
-> the bare-string injection guard). For user input that must be
-> parameterised, prefer the typed `where(...)` methods over `raw`.
+The `*Raw` methods take exactly one fragment and no bindings. Passing extra
+arguments, or a fragment that carries bound values (`db.raw('x = ?', [v])`),
+throws instead of silently dropping the values. Bare strings still work at
+runtime but log a deprecation warning and are a TypeScript error.
+
+> **Do not pass a Bun ``sql`...` `` query to builder methods.** A Bun query
+> object cannot be converted back to SQL text, so on Postgres and MySQL the
+> builder throws a clear error if you pass one to a `*Raw` method, `where()`,
+> or `set()`. `raw` returns a `{ raw }` fragment that renders correctly and
+> satisfies the `SqlFragment` type. Values interpolated into ``raw`...` `` are
+> inlined as escaped literals, not bound; for user input that must be
+> parameterised, use `where(...)` or a bound fragment (below).
+
+## Bound Fragments in `set()` and `where()`
+
+To bind values inside a SQL expression, build a fragment with
+`db.raw(sql, bindings)`. Each `?` binds the matching array element, on every
+dialect (the builder renumbers them to `$n` on Postgres). A plain
+`{ sql, parameters }` object works the same way.
+
+```typescript
+// Expression in set()
+await db
+  .updateTable('products')
+  .set({ stock: db.raw('stock - ?', [quantity]) })
+  .where({ id: productId })
+  .execute()
+
+// Condition in where() / orWhere(), on select, update and delete builders
+const matches = await db
+  .selectFrom('users')
+  .where(db.raw('LOWER(email) = ?', [email.toLowerCase()]))
+  .get()
+
+await db
+  .deleteFrom('sessions')
+  .where({ sql: 'expires_at < ?', parameters: [new Date().toISOString()] })
+  .execute()
+```
+
+`db.raw(sql, bindings)` is not a query: `await db.raw('SELECT ...', [..])`
+rejects with a `TypeError`. Use `db.unsafe(sql, params)` to run SQL.
 
 ## Raw with Bun Tagged Templates
 
@@ -176,7 +218,7 @@ interface UserStats {
   avg_age: number
 }
 
-const stats = await db.raw<UserStats[]>(`
+const stats = await db.unsafe<UserStats>(`
   SELECT
     country,
     COUNT(*) AS count,
@@ -220,7 +262,7 @@ Execute raw queries within transactions:
 
 await db.transaction(async (trx) => {
   // Raw insert
-  await trx.raw(
+  await trx.unsafe(
     'INSERT INTO audit_log (action, user_id) VALUES (?, ?)',
     ['login', userId]
   )
@@ -229,7 +271,7 @@ await db.transaction(async (trx) => {
   await trx.updateTable('users').set({ last_login: new Date() }).where({ id: userId })
 
   // Raw update
-  await trx.raw(
+  await trx.unsafe(
     'UPDATE statistics SET login_count = login_count + 1 WHERE user_id = ?',
     [userId]
   )
@@ -256,7 +298,7 @@ console.log(explain)
 
 ```typescript
 
-import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta } from 'bun-query-builder'
+import { createQueryBuilder, buildDatabaseSchema, buildSchemaMeta, raw } from 'bun-query-builder'
 
 const models = {
   User: {
@@ -288,7 +330,7 @@ async function getComplexAnalytics() {
     total_active: number
   }
 
-  const stats = await db.raw<MonthlyStats[]>(`
+  const stats = await db.unsafe<MonthlyStats>(`
     WITH monthly_users AS (
       SELECT
         strftime('%Y-%m', created_at) AS month,
@@ -310,15 +352,15 @@ async function getComplexAnalytics() {
   // Combine with query builder
   const basicStats = await db
     .selectFrom('users')
-    .selectRaw(`
+    .selectRaw(raw`
       COUNT(*) AS total,
       COUNT(CASE WHEN active = 1 THEN 1 END) AS active,
       AVG(age) AS avg_age
     `)
     .first()
 
-  // Parameterized complex query
-  const countryStats = await db.raw(
+  // Parameterized complex query (`?` placeholders; use $1, $2, ... on Postgres)
+  const countryStats = await db.unsafe(
     `
     SELECT
       country,

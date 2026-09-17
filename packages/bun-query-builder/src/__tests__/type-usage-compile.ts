@@ -554,6 +554,10 @@ async function _clientUsage(
     rows[0].seats
   }
 
+  // a bound fragment is accepted by the typed builder's where family too (#1146 follow-up)
+  const typedRaw = null as unknown as import('../client').BoundSqlFragment
+  users.where(typedRaw).orWhere(typedRaw)
+
   const email: string = await users.value('email')
   const count: number = await users.value('login_count')
   const names: string[] = await users.pluck('name')
@@ -1074,6 +1078,15 @@ async function _rawAndReturning(
   users.select?.([raw`count(*) as c`])
   // raw tagged-template with an escaped value
   users.whereRaw(raw`name = ${'Ada'}`)
+
+  // db.raw(sql, bindings) builds a bound fragment that where() and set() accept
+  const dbRaw = null as unknown as import('../client').QueryBuilder<QDB>['raw']
+  const bound: import('../client').BoundSqlFragment = dbRaw('login_count + ?', [1])
+  users.where(bound)
+  users.orWhere(dbRaw('login_count > ?', [3]))
+  db.updateTable('users').set({ login_count: bound }).where(dbRaw('id = ?', [1]))
+  db.deleteFrom('users').where(dbRaw('id = ?', [1]))
+  dbRaw`SELECT 1`
 
   // @ts-expect-error — a bare string is rejected by the SqlFragment type
   users.whereRaw('age > 18')

@@ -251,12 +251,12 @@ async function transferFunds(fromAccount: number, toAccount: number, amount: num
     }
 
     await tx.updateTable('accounts')
-      .set({ balance: db.sql`balance - ${amount}` })
+      .set({ balance: db.raw('balance - ?', [amount]) })
       .where({ id: fromAccount })
       .execute()
 
     await tx.updateTable('accounts')
-      .set({ balance: db.sql`balance + ${amount}` })
+      .set({ balance: db.raw('balance + ?', [amount]) })
       .where({ id: toAccount })
       .execute()
   }, { isolation: 'serializable', retries: 3 })
@@ -288,7 +288,7 @@ async function highContentionOperation(data: any) {
   return await db.transaction(async (tx) => {
     // Operations that might conflict with other transactions
     await tx.updateTable('counters')
-      .set({ value: db.sql`value + 1` })
+      .set({ value: db.raw('value + 1') })
       .where({ name: 'page_views' })
       .execute()
   }, {
@@ -318,7 +318,7 @@ async function processOrder(orderData: any) {
 
       // Update inventory
       await tx.updateTable('products')
-        .set({ stock_quantity: db.sql`stock_quantity - ${orderData.quantity}` })
+        .set({ stock_quantity: db.raw('stock_quantity - ?', [orderData.quantity]) })
         .where({ id: orderData.product_id })
         .execute()
 
@@ -448,11 +448,13 @@ await db.transaction(async (tx) => {
 ### Serializable reads with retries
 
 ```ts
+import { raw } from 'bun-query-builder'
+
 await db.transaction(async (tx) => {
   const totals = await tx
     .selectFrom('orders')
     .groupBy('customer_id')
-    .selectRaw(db.sql`SUM(total) as total`)
+    .selectRaw(raw`SUM(total) as total`)
     .execute()
   // ...work with totals
 }, { isolation: 'serializable', retries: 2 })

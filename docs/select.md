@@ -200,11 +200,14 @@ const neverUpdated = await db
 ## Raw Where Clauses
 
 ```typescript
+import { raw } from 'bun-query-builder'
 
-// Raw SQL in where
+// Raw SQL in where: one fragment, no bindings. The interpolated Date is
+// inlined as an escaped literal; use where() to bind request input.
+const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 const activeRecent = await db
   .selectFrom('users')
-  .whereRaw('DATE(created_at) > DATE_SUB(NOW(), INTERVAL 30 DAY)')
+  .whereRaw(raw`created_at > ${since}`)
   .get()
 
 ```
