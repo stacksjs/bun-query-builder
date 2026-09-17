@@ -25,7 +25,11 @@ export * from './types'
 
 // Resolve ambiguous re-exports by explicitly choosing which module's version to use
 export type { WhereOperator } from './browser'
-export type { ModelQueryBuilder } from './dynamodb'
+// The ORM builder that `createModel(...).query()` and `defineModel(...).query()`
+// return. It was the DynamoDB interface, which only the dynamodb entry point
+// should name that; it stays reachable here under an explicit alias.
+export type { ModelQueryBuilder } from './orm'
+export type { ModelQueryBuilder as DynamoDBModelQueryBuilder } from './dynamodb'
 export type { ColumnName, QueryBuilder } from './client'
 export { type ModelDefinition, defineModel } from './model'
 export type { ModelRecord } from './schema'

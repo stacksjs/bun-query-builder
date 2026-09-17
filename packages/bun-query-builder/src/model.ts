@@ -41,7 +41,7 @@
  */
 
 import { createBrowserModel, isBrowser, type BrowserModelDefinition } from './browser'
-import { clearLocalModels, createModel, type ModelDefinition as OrmModelDefinition } from './orm'
+import { clearLocalModels, createModel, type ModelStatic, type ModelDefinition as OrmModelDefinition } from './orm'
 
 // Re-export the browser model types for convenience
 export type { BrowserModelDefinition as ModelDefinition }
@@ -151,6 +151,27 @@ export function registerModel<TModel>(name: string, model: TModel): TModel {
 // ============================================================================
 
 /**
+ * The definition as the ORM types read it. A literal definition normally
+ * satisfies the ORM's `ModelDefinition` already, which keeps its column and
+ * relation names narrow; intersecting unconditionally would widen them.
+ */
+type ServerModelDefinition<TDef> = TDef extends OrmModelDefinition ? TDef : TDef & OrmModelDefinition
+
+/**
+ * What `defineModel()` returns: the ORM model, plus the raw definition for
+ * build tools that introspect it.
+ *
+ * It used to be typed as the browser model even though the package root runs
+ * on Bun and hands back the ORM model. So `whereRaw`, `with`, `whereGroup`,
+ * `increment` and the aggregates worked but did not type-check. Browser code
+ * builds its models with `createBrowserModel` from `bun-query-builder/browser`.
+ */
+export type DefinedModel<TDef extends BrowserModelDefinition> = ModelStatic<ServerModelDefinition<TDef>> & {
+  definition: TDef
+  getName: () => TDef['name']
+}
+
+/**
  * Check if we're running in a browser environment
  */
 function isClientSide(): boolean {
@@ -171,12 +192,14 @@ function isClientSide(): boolean {
  * @param definition - The model definition
  * @returns An isomorphic model with query methods
  */
-export function defineModel<const TDef extends BrowserModelDefinition>(definition: TDef) {
-  let model: ReturnType<typeof createBrowserModel<TDef>>
+export function defineModel<const TDef extends BrowserModelDefinition>(definition: TDef): DefinedModel<TDef> {
+  let model: DefinedModel<TDef>
 
   // In browser, use the browser model implementation (fetch-based)
   if (isClientSide()) {
-    model = createBrowserModel(definition)
+    // A DOM in a Bun process (happy-dom in tests, say) takes this branch. The
+    // fetch-backed model it gets lacks the server-only builder methods.
+    model = createBrowserModel(definition) as unknown as DefinedModel<TDef>
   }
   else {
     // On server, use the dynamic ORM directly — no code generation needed.
@@ -191,11 +214,11 @@ export function defineModel<const TDef extends BrowserModelDefinition>(definitio
       getDefinition: () => definition,
       getTable: () => definition.table,
       getName: () => definition.name,
-    }) as unknown as ReturnType<typeof createBrowserModel<TDef>>
+    }) as unknown as DefinedModel<TDef>
   }
 
   // Register the model in the global registry
-  registerModel(definition.name, model)
+  registerModel(definition.name, model as unknown as ReturnType<typeof createBrowserModel>)
 
   return model
 }

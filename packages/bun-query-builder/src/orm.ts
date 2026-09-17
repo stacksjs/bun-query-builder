@@ -2773,6 +2773,14 @@ class ModelQueryBuilder<
     return this.orderBy(column, 'asc')
   }
 
+  latest(column: ColumnName<TDef> = 'created_at' as ColumnName<TDef>): ModelQueryBuilder<TDef, TSelected> {
+    return this.orderBy(column, 'desc')
+  }
+
+  oldest(column: ColumnName<TDef> = 'created_at' as ColumnName<TDef>): ModelQueryBuilder<TDef, TSelected> {
+    return this.orderBy(column, 'asc')
+  }
+
   limit(count: number): ModelQueryBuilder<TDef, TSelected> {
     this._limit = count
     return this
@@ -3197,6 +3205,23 @@ class ModelQueryBuilder<
     return result
   }
 
+  /**
+   * The row with this primary key that also satisfies the query's other
+   * constraints, including its soft-delete scope. `defineModel()` models were
+   * typed with the browser builder's `query().find()`, which compiled on the
+   * server and then threw because this builder had none.
+   */
+  async find(id: number | string): Promise<ModelRecord<TDef, TSelected> | undefined> {
+    const pk = (this._definition.primaryKey || 'id') as ColumnName<TDef>
+    return this.where(pk, id as any).first()
+  }
+
+  async findOrFail(id: number | string): Promise<ModelRecord<TDef, TSelected>> {
+    const result = await this.find(id)
+    if (!result) throw new Error(`${this._definition.name} with id ${id} not found`)
+    return result
+  }
+
   async last(): Promise<ModelRecord<TDef, TSelected> | undefined> {
     const pk = this._definition.primaryKey || 'id'
     this._orderBy = [{ column: pk, direction: 'desc' }]
@@ -3558,6 +3583,8 @@ export type ModelStatic<TDef extends ModelDefinition> = StaticWhereOverloads<TDe
   createMany: (items: FillableAttributes<TDef>[]) => Promise<ModelRecord<TDef>[]>
   updateOrCreate: (search: Partial<ModelAttributes<TDef>>, data: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
   firstOrCreate: (search: Partial<ModelAttributes<TDef>>, data?: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
+  update: (id: number | string, data: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
+  delete: (id: number | string) => Promise<boolean>
   destroy: (id: number | string) => Promise<boolean>
   remove: (id: number | string) => Promise<boolean>
   truncate: () => Promise<void>
@@ -3729,6 +3756,29 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
       }
       const existing = await query.first()
       return existing || this.create({ ...search, ...data } as any)
+    },
+
+    /**
+     * Update the row with this primary key and return it, running the same
+     * fill, timestamps and hooks as `instance.update()`. Throws when no such row
+     * exists. `defineModel()` typed this browser-model method on the server,
+     * where it was missing.
+     */
+    async update(id: number | string, data: FillableAttributes<TDef>): Promise<ModelRecord<TDef>> {
+      const record = await model.findOrFail(id)
+      await record.update(data)
+      return record
+    },
+
+    /**
+     * Delete the row with this primary key through `instance.delete()`, so a
+     * soft-deletable model is soft-deleted and delete hooks run. False when no
+     * such row exists. `defineModel()` typed this browser-model method on the
+     * server, where it was missing.
+     */
+    async delete(id: number | string): Promise<boolean> {
+      const record = await model.find(id)
+      return record ? record.delete() : false
     },
 
     async destroy(id: number | string): Promise<boolean> {
