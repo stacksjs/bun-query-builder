@@ -98,6 +98,49 @@ function assertValidOrderByColumn(name: unknown, context: string): asserts name 
     throw new TypeError(`[bun-query-builder] ${context}: invalid ORDER BY column '${name}' — expected 'column' or 'table.column' of [A-Za-z0-9_] — refusing to interpolate into SQL`)
 }
 
+/**
+ * Resolve the bindings handed to `ModelQueryBuilder.whereRaw`/`orWhereRaw`.
+ *
+ * Both spellings are accepted: separate arguments, `whereRaw(sql, a, b)`, and
+ * one array, `whereRaw(sql, [a, b])` — the Laravel/Knex form the docs taught.
+ * The array form used to be stored as a single binding, `[[a, b]]`. bun:sqlite
+ * took that as the whole bindings list only when it was the only value of a
+ * read, threw once any other clause bound a value, and threw on every write
+ * because `run()` does not spread. Bun.sql comma-joined it for a text parameter,
+ * so one value passed and two failed with `insufficient data left in message`.
+ * See stacksjs/bun-query-builder#1146.
+ *
+ * The array is copied, so mutating it after the call does not change the query.
+ *
+ * On Postgres the lone array used to reach Bun.sql whole, so the parameter's
+ * type decided how it was sent, and some calls depended on that. Each element
+ * is now bound exactly as if it had been passed separately:
+ *
+ *  - an array meant as ONE json/jsonb value is wrapped,
+ *    `whereRaw('tags @> ?', [['bun']])`; unwrapped, `['bun']` now binds the
+ *    string `'bun'` where it used to bind the JSON array `["bun"]`. Arrays inside
+ *    the bindings are passed through untouched for this reason;
+ *  - a number, bigint or boolean compared with text needs a cast or a string,
+ *    `whereRaw("meta->>'id' = ?", [String(id)])`, where the whole array used to
+ *    arrive as text;
+ *  - `[null]` and `[undefined]` bind NULL, where they used to bind `''`.
+ *
+ * A lone `undefined` with no `?` in the fragment is no bindings: it is what a
+ * wrapper such as `(sql, bindings?) => q.whereRaw(sql, bindings)` forwards, and
+ * binding it would add a value no placeholder takes. With a `?` it stays a NULL
+ * binding, as before.
+ */
+function resolveRawBindings(fragment: string, params: unknown[]): unknown[] {
+  if (params.length !== 1)
+    return params
+  const only = params[0]
+  if (Array.isArray(only))
+    return [...only]
+  if (only === undefined && !fragment.includes('?'))
+    return []
+  return params
+}
+
 // Lazy reference to model registry to avoid circular dependency
 // eslint-disable-next-line pickier/no-unused-vars
 let _getModel: ((name: string) => any) | null = null
@@ -2582,8 +2625,13 @@ class ModelQueryBuilder<
 
   /**
    * Append a raw SQL fragment as a WHERE clause, with optional positional
-   * parameters. Use this when you need a nested OR-group or any SQL the
+   * `?` bindings. Use this when you need a nested OR-group or any SQL the
    * builder doesn't expose directly.
+   *
+   * Bindings may be passed as separate arguments or as one array; the two
+   * calls below are the same query. A lone array is always the bindings list,
+   * so on Postgres an array meant as one json/jsonb value is wrapped:
+   * `whereRaw('tags @> ?', [['bun']])`.
    *
    * @example
    * ```ts
@@ -2591,15 +2639,28 @@ class ModelQueryBuilder<
    *   .where('status', 'active')
    *   .whereRaw('(LOWER(make) LIKE ? OR LOWER(model) LIKE ?)', '%tesla%', '%tesla%')
    *   .get()
+   *
+   * Car.query()
+   *   .where('status', 'active')
+   *   .whereRaw('(LOWER(make) LIKE ? OR LOWER(model) LIKE ?)', ['%tesla%', '%tesla%'])
+   *   .get()
    * ```
    */
+  whereRaw(fragment: string, bindings: readonly unknown[]): ModelQueryBuilder<TDef, TSelected>
+  whereRaw(fragment: string, ...bindings: unknown[]): ModelQueryBuilder<TDef, TSelected>
   whereRaw(fragment: string, ...params: unknown[]): ModelQueryBuilder<TDef, TSelected> {
-    this._wheres.push({ raw: fragment, rawParams: params, boolean: 'and' })
+    this._wheres.push({ raw: fragment, rawParams: resolveRawBindings(fragment, params), boolean: 'and' })
     return this
   }
 
+  /**
+   * OR-connected counterpart of {@link whereRaw}, taking bindings the same two
+   * ways.
+   */
+  orWhereRaw(fragment: string, bindings: readonly unknown[]): ModelQueryBuilder<TDef, TSelected>
+  orWhereRaw(fragment: string, ...bindings: unknown[]): ModelQueryBuilder<TDef, TSelected>
   orWhereRaw(fragment: string, ...params: unknown[]): ModelQueryBuilder<TDef, TSelected> {
-    this._wheres.push({ raw: fragment, rawParams: params, boolean: 'or' })
+    this._wheres.push({ raw: fragment, rawParams: resolveRawBindings(fragment, params), boolean: 'or' })
     return this
   }
 

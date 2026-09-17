@@ -98,6 +98,32 @@ function renderBoundSqlExpression(expression: BoundSqlExpression, startIndex: nu
 }
 
 /**
+ * Whether a call that takes one fragment was handed values it would drop.
+ *
+ * `undefined` and an empty array drop nothing, so a wrapper that forwards
+ * optional bindings keeps working. So does a point-free collection callback —
+ * `fragments.forEach(q.whereRaw)`, `columns.map(raw)`, `set.forEach(q.orderByRaw)` —
+ * because its trailing arguments are the collection's `(index, array)`,
+ * `(value, set)` or `(key, map)`, which point back at `first`; a real bindings
+ * call cannot match that. A bare `(index)`, as `Array.from(xs, fn)` and iterator
+ * helpers pass, can: it is indistinguishable from `whereRaw(frag, 0)`, so only
+ * `raw()` exempts it, and only for a string with no `?`.
+ * See stacksjs/bun-query-builder#1146.
+ */
+function dropsTrailingArguments(first: unknown, extra: readonly unknown[]): boolean {
+  if (extra.length === 2) {
+    const [key, collection] = extra
+    if (Array.isArray(collection) && typeof key === 'number' && collection[key] === first)
+      return false
+    if (collection instanceof Set && key === first && collection.has(first))
+      return false
+    if (collection instanceof Map && collection.get(key) === first)
+      return false
+  }
+  return extra.some(arg => arg !== undefined && !(Array.isArray(arg) && arg.length === 0))
+}
+
+/**
  * # `raw`
  *
  * Build a raw SQL fragment for the `*Raw` builder methods (`whereRaw`,
@@ -123,9 +149,25 @@ function renderBoundSqlExpression(expression: BoundSqlExpression, startIndex: nu
  * db.selectFrom('orders').whereRaw(raw`status = ${userStatus}`) // value escaped
  * ```
  */
+export function raw(strings: TemplateStringsArray, ...values: unknown[]): RawExpression
+// eslint-disable-next-line pickier/no-unused-vars
+export function raw(sqlOrStrings: TemplateStringsArray | string): RawExpression
+// eslint-disable-next-line pickier/no-unused-vars
+export function raw(sql: string): RawExpression
 export function raw(strings: TemplateStringsArray | string, ...values: unknown[]): RawExpression {
-  if (typeof strings === 'string')
+  if (typeof strings === 'string') {
+    // `raw('x = ?', value)` type-checked and returned `{ raw: 'x = ?' }`,
+    // dropping the value, which is the #1146 failure one call earlier.
+    // `Array.from(columns, raw)` passes a bare index, harmless without a `?`.
+    const isMapIndex = values.length === 1 && Number.isInteger(values[0]) && (values[0] as number) >= 0 && !strings.includes('?')
+    if (!isMapIndex && dropsTrailingArguments(strings, values)) {
+      throw new TypeError(
+        '[query-builder] raw(string) takes no values, so the argument(s) after the string would be dropped. '
+        + 'Use raw as a tagged template instead, which interpolates each value as an escaped literal.',
+      )
+    }
     return { raw: strings }
+  }
   let out = strings[0]
   for (let i = 0; i < values.length; i++)
     out += formatSubqueryValue(values[i]) + strings[i + 1]
@@ -410,8 +452,30 @@ function validateQualifiedIdentifier(value: unknown, context: string): void {
  * so following the documented `sql\`...\`` path silently emitted
  * "[object Promise]" into the SQL and failed at execution. Use the exported
  * `raw` helper instead (it produces a `{ raw }` fragment).
+ *
+ * `extra` is whatever the caller passed after the fragment. These methods take
+ * no bindings, so the Knex/Laravel `whereRaw('LOWER(email) = ?', [email])` that
+ * docs/guide/where.md used to show had its array silently dropped: the `?` went
+ * out unbound, SQLite matched nothing, and Postgres raised a syntax error at
+ * execution. That now throws here instead. See stacksjs/bun-query-builder#1146.
  */
-function renderRawFragment(fragment: unknown, context: string): string {
+function renderRawFragment(fragment: unknown, context: string, extra: readonly unknown[] = []): string {
+  if (dropsTrailingArguments(fragment, extra)) {
+    // The advice differs by clause: where()/orWhere() and the model builder's
+    // bound whereRaw/orWhereRaw can stand in for a WHERE fragment. Nothing typed
+    // stands in for the others — having()'s type only takes selected columns,
+    // not the aggregates a HAVING fragment usually holds.
+    const alternative = context.startsWith('whereRaw(')
+      ? ', or use where(). Model.query().whereRaw(sql, ...bindings) is the builder that binds `?` values.'
+      : context.startsWith('orWhereRaw(')
+        ? ', or use orWhere(). Model.query().orWhereRaw(sql, ...bindings) is the builder that binds `?` values.'
+        : '.'
+    throw new TypeError(
+      `[query-builder] ${context}: this method takes a single fragment and no bindings, so the `
+      + `argument(s) after it would be dropped. Interpolate values with the exported \`raw\` tagged `
+      + `template, which inlines them as escaped literals${alternative}`,
+    )
+  }
   if (typeof fragment === 'string') {
     warnOnceBareSqlFragment(context)
     return fragment
@@ -4156,8 +4220,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         built = null
         return this as any
       },
-      selectRaw(fragment: any) {
-        const frag = renderRawFragment(fragment, 'selectRaw(fragment)')
+      selectRaw(fragment: any, ...extra: unknown[]) {
+        const frag = renderRawFragment(fragment, 'selectRaw(fragment)', extra)
         // Insert raw fragment into SELECT list before FROM
         const fromIdx = text.indexOf(' FROM ')
         if (fromIdx !== -1) {
@@ -5476,12 +5540,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       // A raw fragment is ONE term and is deliberately not auto-parenthesised —
       // wrapping would churn emitted SQL for no correctness gain. A fragment
       // containing a top-level OR must bracket itself; see docs/guide/where.md.
-      whereRaw(fragment: any) {
-        pushWhere('AND', renderRawFragment(fragment, 'whereRaw(fragment)'))
+      whereRaw(fragment: any, ...extra: unknown[]) {
+        pushWhere('AND', renderRawFragment(fragment, 'whereRaw(fragment)', extra))
         return this as any
       },
-      orWhereRaw(fragment: any) {
-        pushWhere('OR', renderRawFragment(fragment, 'orWhereRaw(fragment)'))
+      orWhereRaw(fragment: any, ...extra: unknown[]) {
+        pushWhere('OR', renderRawFragment(fragment, 'orWhereRaw(fragment)', extra))
         return this as any
       },
       whereColumn(left: string, op: WhereOperator, right: string) {
@@ -5775,8 +5839,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         }
         return this as any
       },
-      groupByRaw(fragment: any) {
-        const frag = renderRawFragment(fragment, 'groupByRaw(fragment)')
+      groupByRaw(fragment: any, ...extra: unknown[]) {
+        const frag = renderRawFragment(fragment, 'groupByRaw(fragment)', extra)
         text = SQL_PATTERNS.GROUP_BY.test(text)
           ? `${text}, ${frag}`
           : `${text} GROUP BY ${frag}`
@@ -5822,16 +5886,16 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         }
         return this as any
       },
-      havingRaw(fragment: any) {
-        const frag = renderRawFragment(fragment, 'havingRaw(fragment)')
+      havingRaw(fragment: any, ...extra: unknown[]) {
+        const frag = renderRawFragment(fragment, 'havingRaw(fragment)', extra)
         const kw = hasHaving ? 'AND' : 'HAVING'
         text += ` ${kw} ${frag}`
         hasHaving = true
         built = null
         return this as any
       },
-      orderByRaw(fragment: any) {
-        const frag = renderRawFragment(fragment, 'orderByRaw(fragment)')
+      orderByRaw(fragment: any, ...extra: unknown[]) {
+        const frag = renderRawFragment(fragment, 'orderByRaw(fragment)', extra)
         text = SQL_PATTERNS.ORDER_BY.test(text)
           ? `${text}, ${frag}`
           : `${text} ORDER BY ${frag}`
@@ -6748,8 +6812,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           const cols = columns.map(String).join(', ')
           return makeSub(baseText.replace(/^SELECT\s+/i, `SELECT DISTINCT ON (${cols}) `), terms, params, tail) as any
         },
-        selectRaw(fragment: any) {
-          const frag = renderRawFragment(fragment, 'selectFromSub.selectRaw(fragment)')
+        selectRaw(fragment: any, ...extra: unknown[]) {
+          const frag = renderRawFragment(fragment, 'selectFromSub.selectRaw(fragment)', extra)
           const fromIdx = baseText.indexOf(' FROM ')
           const newBase = fromIdx !== -1
             ? `${baseText.slice(0, fromIdx)}, ${frag}${baseText.slice(fromIdx)}`

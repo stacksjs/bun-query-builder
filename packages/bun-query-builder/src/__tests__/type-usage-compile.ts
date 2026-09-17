@@ -234,6 +234,14 @@ async function _ormUsage() {
   Member.whereBetween('age', [18, 99])
   Member.whereNotBetween('karma', [0, 10])
 
+  // raw where: bindings as separate arguments or as one array (#1146)
+  Member.query().whereRaw('LOWER(name) = ?', 'ada')
+  Member.query().whereRaw('LOWER(name) = ? AND age > ?', 'ada', 21)
+  Member.query().whereRaw('LOWER(name) = ? AND age > ?', ['ada', 21])
+  Member.query().whereRaw('LOWER(name) = ?', ['ada'] as const)
+  Member.query().orWhereRaw('age > ?', [21])
+  Member.query().whereRaw('age > 21')
+
   // @ts-expect-error — unknown column
   Member.where('handle', 'x')
   // @ts-expect-error — value must match the column type (age: number)
@@ -1068,6 +1076,12 @@ async function _rawAndReturning(
 
   // @ts-expect-error — a bare string is rejected by the SqlFragment type
   users.whereRaw('age > 18')
+  // @ts-expect-error — the select builder's *Raw methods take no bindings (#1146)
+  users.whereRaw(raw('age > ?'), [18])
+  // @ts-expect-error — raw(string) takes no values; use the tagged template (#1146)
+  users.whereRaw(raw('age > ?', 18))
+  // the string overload still maps point-free
+  users.orderByRaw(['created_at desc'].map(raw)[0])
 
   // returning() is a SelectQueryBuilder: row-fetching methods exist and are typed
   const insRow = await db.insertInto('users').values({ name: 'A' }).returning('id', 'email').first()
