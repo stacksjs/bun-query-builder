@@ -239,6 +239,11 @@ const tagged = await Post.query()
   .get()
 ```
 
+A `?` inside a string literal, quoted identifier or comment is not a
+placeholder. Postgres' jsonb `?`, `?|` and `?&` operators can't be told apart
+from placeholders, so use their function forms, `jsonb_exists(tags, ?)`,
+`jsonb_exists_any(tags, ?)` and `jsonb_exists_all(tags, ?)`.
+
 ## Date Conditions
 
 ```typescript

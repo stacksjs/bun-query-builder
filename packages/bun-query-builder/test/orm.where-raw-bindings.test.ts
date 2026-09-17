@@ -221,6 +221,12 @@ describe('whereRaw forwarded an undefined bindings argument (#1146)', () => {
     expect(User.query().where('id', 1).orWhereRaw('id = 2', undefined).toSql().params).toEqual([1])
   })
 
+  it('ignores a question mark inside a literal or comment when deciding', async () => {
+    const q = forward("name <> '?' /* why? */").where('country', 'UK')
+    expect(q.toSql().params).toEqual(['UK'])
+    expect(ids(await q.get())).toEqual([2])
+  })
+
   it('stays a NULL binding when the fragment has one', async () => {
     const q = User.query().whereRaw('? IS NULL', undefined).where('country', 'UK')
     expect(q.toSql().params).toEqual([undefined, 'UK'])

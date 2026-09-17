@@ -38,7 +38,7 @@ import { createFakerCompatLayer } from './faker-compat'
 import { normalizeRelationList } from './relation-utils'
 import { singularizerFor, toTableName as sharedToTableName } from './inflect'
 import type { WhereTerm } from './sql-fragments'
-import { renderInPredicate, renderWhereTerms } from './sql-fragments'
+import { countPlaceholders, renderInPredicate, renderWhereTerms, toDialectPlaceholders } from './sql-fragments'
 
 /**
  * Current timestamp formatted for the active dialect.
@@ -136,7 +136,7 @@ function resolveRawBindings(fragment: string, params: unknown[]): unknown[] {
   const only = params[0]
   if (Array.isArray(only))
     return [...only]
-  if (only === undefined && !fragment.includes('?'))
+  if (only === undefined && countPlaceholders(fragment) === 0)
     return []
   return params
 }
@@ -630,9 +630,13 @@ interface OrmExecutor {
 }
 
 /**
- * Rewrite `?` placeholders to Postgres `$1, $2, …` form. The ORM only ever
- * emits `?` as a bound-parameter marker (values are always parameterised and
- * identifiers are validated), so a sequential left-to-right pass is safe.
+ * Rewrite `?` placeholders to Postgres `$1, $2, …` form.
+ *
+ * This was a bare `sql.replace(/\?/g, …)`, on the reasoning that the ORM only
+ * emits `?` as a parameter marker. But `whereRaw` fragments are caller text, so
+ * `whereRaw("name = '?'")` went out as `name = '$1'` and matched nothing, and a
+ * `?` in a comment took a binding meant for a later placeholder. It now skips
+ * literals, quoted identifiers and comments like `toDialectPlaceholders`.
  *
  * Memoized: query TEXT repeats heavily (values are placeholders), and this
  * regex pass runs on every Postgres query the ORM executes. Bounded; cleared
@@ -644,8 +648,7 @@ const PG_PLACEHOLDER_CACHE_MAX = 500
 function toPostgresPlaceholders(sql: string): string {
   const hit = pgPlaceholderCache.get(sql)
   if (hit !== undefined) return hit
-  let i = 0
-  const out = sql.replace(/\?/g, () => `$${++i}`)
+  const out = toDialectPlaceholders(sql, 'postgres')
   if (pgPlaceholderCache.size >= PG_PLACEHOLDER_CACHE_MAX)
     pgPlaceholderCache.clear()
   pgPlaceholderCache.set(sql, out)

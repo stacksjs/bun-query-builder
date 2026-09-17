@@ -109,10 +109,10 @@ export function renderInPredicate(column: string, values: readonly unknown[], ne
  * application that developed against SQLite therefore finds out at the point
  * its raw queries first meet Postgres, and the error does not name the cause.
  *
- * Only unquoted placeholders are rewritten. A `?` inside a string literal, a
- * quoted identifier, or a dollar-quoted block is data and is left exactly as
- * written — the naive global replace is the reason this needs to be a function
- * with tests rather than one line at a call site.
+ * Only unquoted placeholders are rewritten; see {@link mapPlaceholders} for
+ * what counts as quoted. Postgres' jsonb `?`, `?|` and `?&` operators cannot be
+ * told apart from placeholders, so write them as `jsonb_exists(col, key)`,
+ * `jsonb_exists_any(col, keys)` and `jsonb_exists_all(col, keys)`.
  *
  * Dialects that already take `?` get the string back unchanged, so this is safe
  * to apply unconditionally.
@@ -120,54 +120,88 @@ export function renderInPredicate(column: string, values: readonly unknown[], ne
 export function toDialectPlaceholders(sql: string, dialect: SupportedDialect): string {
   if (dialect !== 'postgres')
     return sql
+  return mapPlaceholders(sql, ordinal => `$${ordinal}`).text
+}
 
+/**
+ * How many `?` placeholders `sql` binds, by the same rules as
+ * {@link toDialectPlaceholders}.
+ */
+export function countPlaceholders(sql: string): number {
+  return mapPlaceholders(sql, () => undefined).count
+}
+
+/**
+ * Walk `sql` and hand each unquoted `?` to `replace`, with its 1-based ordinal.
+ * A string it returns is spliced in; `undefined` keeps the `?`.
+ *
+ * Quoted, and so left alone, is everything that is data or prose rather than a
+ * placeholder:
+ *
+ *  - `'…'`, `"…"` and `` `…` `` runs, where doubling escapes the delimiter
+ *  - `$$…$$` / `$tag$…$tag$` dollar-quoted strings
+ *  - `-- …` line comments and `/* … *\/` block comments, which nest
+ *
+ * The ORM used a bare `sql.replace(/\?/g, …)`, so on Postgres
+ * `whereRaw("name = '?'")` was sent as `name = '$1'` and quietly matched nothing,
+ * and a `?` in a comment consumed a binding. The comment rules are the ones
+ * {@link scanTopLevelKeywords} uses; backslash escapes are not honoured, for the
+ * reason given there.
+ */
+export function mapPlaceholders(
+  sql: string,
+  replace: (ordinal: number) => string | undefined,
+): { text: string, count: number } {
   let out = ''
-  let index = 0
+  let count = 0
+  let copied = 0
   let position = 0
 
   while (position < sql.length) {
     const char = sql[position]!
+    let end = -1
 
-    // Single-quoted string literal, with '' as the escape.
-    if (char === '\'') {
-      const end = closingQuote(sql, position, '\'')
-      out += sql.slice(position, end)
-      position = end
-      continue
+    if (char === '\'' || char === '"' || char === '`') {
+      end = closingQuote(sql, position, char)
     }
-
-    // Double-quoted identifier, with "" as the escape.
-    if (char === '"') {
-      const end = closingQuote(sql, position, '"')
-      out += sql.slice(position, end)
-      position = end
-      continue
+    else if (char === '-' && sql[position + 1] === '-') {
+      const newline = sql.indexOf('\n', position + 2)
+      end = newline === -1 ? sql.length : newline
     }
-
-    // Dollar-quoted block: $tag$ … $tag$, where the tag may be empty.
-    if (char === '$') {
+    else if (char === '/' && sql[position + 1] === '*') {
+      let nesting = 1
+      end = position + 2
+      while (end < sql.length && nesting > 0) {
+        if (sql[end] === '/' && sql[end + 1] === '*') { nesting++; end += 2 }
+        else if (sql[end] === '*' && sql[end + 1] === '/') { nesting--; end += 2 }
+        else end++
+      }
+    }
+    else if (char === '$') {
       const tag = sql.slice(position).match(/^\$[A-Z_a-z]\w*\$|^\$\$/)?.[0]
       if (tag) {
         const close = sql.indexOf(tag, position + tag.length)
-        const end = close === -1 ? sql.length : close + tag.length
-        out += sql.slice(position, end)
-        position = end
-        continue
+        end = close === -1 ? sql.length : close + tag.length
       }
     }
 
-    if (char === '?') {
-      index++
-      out += `$${index}`
-      position++
+    if (end !== -1) {
+      position = end
       continue
     }
 
-    out += char
+    if (char === '?') {
+      count++
+      const replacement = replace(count)
+      if (replacement !== undefined) {
+        out += sql.slice(copied, position) + replacement
+        copied = position + 1
+      }
+    }
     position++
   }
 
-  return out
+  return { text: copied === 0 ? sql : out + sql.slice(copied), count }
 }
 
 /** Index just past the closing quote of the literal starting at `start`. */

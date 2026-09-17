@@ -14,7 +14,7 @@ import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
 import type { WhereTerm } from './sql-fragments'
-import { FALSE_PREDICATE, renderInPredicate, renderWhereTerms, scanTopLevelKeywords } from './sql-fragments'
+import { FALSE_PREDICATE, mapPlaceholders, renderInPredicate, renderWhereTerms, scanTopLevelKeywords } from './sql-fragments'
 
 export { resetConnection }
 
@@ -81,12 +81,11 @@ function renderBoundSqlExpression(expression: BoundSqlExpression, startIndex: nu
   if (config.dialect !== 'postgres' || parameters.length === 0)
     return { text: expression.sql, parameters }
 
+  // Skips literals and comments: a `?` in `'why?'` is data, and numbering it
+  // shifted every later placeholder onto the wrong parameter.
   let parameterIndex = 0
-  const text = expression.sql.replace(/\?/g, (placeholder) => {
-    if (parameterIndex >= parameters.length)
-      return placeholder
-    return getPlaceholder(startIndex + parameterIndex++)
-  })
+  const { text } = mapPlaceholders(expression.sql, () =>
+    parameterIndex < parameters.length ? getPlaceholder(startIndex + parameterIndex++) : undefined)
 
   if (parameterIndex !== parameters.length) {
     throw new TypeError(
