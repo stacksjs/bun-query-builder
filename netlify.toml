@@ -1,0 +1,5 @@
+# The docs moved from VitePress to BunPress, but the build still ran
+# `vitepress`, which is not installed, so every deploy preview failed.
+[build]
+  command = "bun run build:docs"
+  publish = "dist/.bunpress"
