@@ -126,6 +126,29 @@ await db
 
 ```
 
+## Deleting by id on a Model
+
+`Model.delete(id)` and `Model.destroy(id)` both delete the row the way an
+instance does: a model with `useSoftDeletes` is marked rather than removed, and
+`beforeDelete`/`afterDelete` run. Both answer `false` when there is no such row — including one that is already
+trashed, which they no longer see. Use `Model.forceDelete(id)` to purge that.
+
+```typescript
+await Post.delete(1) // or Post.destroy(1) — the same call
+await Post.onlyTrashed().first() // the row is still there, marked
+```
+
+`Model.forceDelete(id)` removes it for good, soft deletes or not, and finds a
+row that is already trashed. `Model.remove(id)` is the same call, matching what
+`db.remove(table, id)` means above. Delete hooks run either way.
+
+```typescript
+await Post.forceDelete(1) // or Post.remove(1)
+```
+
+An instance has the same pair: `post.delete()` marks a soft-deletable row,
+`post.forceDelete()` removes it.
+
 ## Delete with Returning
 
 ```typescript

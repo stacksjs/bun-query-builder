@@ -1455,7 +1455,9 @@ class ModelInstance<
     const pkValue = this._attributes[pk]
     const hooks = this._definition.hooks
 
-    if (!pkValue) throw new Error('Cannot delete a model without a primary key')
+    // `== null`, not falsy: 0 and '' are primary keys a row can legitimately
+    // carry, and rejecting them told the caller the instance had no key at all.
+    if (pkValue == null) throw new Error('Cannot delete a model without a primary key')
 
     await hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
 
@@ -1473,6 +1475,28 @@ class ModelInstance<
       await exec.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue])
     }
 
+    await hooks?.afterDelete?.(this as unknown as ModelHookInstance)
+
+    return true
+  }
+
+  /**
+   * Delete this row for good, even on a soft-deletable model.
+   *
+   * `delete()` marks a soft-deletable row instead of removing it, which leaves
+   * no way to purge one row through an instance. Delete hooks run either way.
+   */
+  async forceDelete(): Promise<boolean> {
+    const pk = this._definition.primaryKey || 'id'
+    const pkValue = this._attributes[pk]
+    const hooks = this._definition.hooks
+
+    // `== null`, not falsy: 0 and '' are primary keys a row can legitimately
+    // carry, and rejecting them told the caller the instance had no key at all.
+    if (pkValue == null) throw new Error('Cannot delete a model without a primary key')
+
+    await hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
+    await getExecutor().run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue])
     await hooks?.afterDelete?.(this as unknown as ModelHookInstance)
 
     return true
@@ -3589,6 +3613,7 @@ export type ModelStatic<TDef extends ModelDefinition> = StaticWhereOverloads<TDe
   update: (id: number | string, data: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
   delete: (id: number | string) => Promise<boolean>
   destroy: (id: number | string) => Promise<boolean>
+  forceDelete: (id: number | string) => Promise<boolean>
   remove: (id: number | string) => Promise<boolean>
   truncate: () => Promise<void>
   getDefinition: () => TDef
@@ -3784,14 +3809,30 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
       return record ? record.delete() : false
     },
 
-    async destroy(id: number | string): Promise<boolean> {
-      const exec = getExecutor()
-      const pk = definition.primaryKey || 'id'
-      return (await exec.run(`DELETE FROM ${definition.table} WHERE ${pk} = ?`, [id])).changes > 0
+    /**
+     * Delete the row with this primary key, the way `instance.delete()` does:
+     * a soft-deletable model is soft-deleted, and delete hooks run.
+     *
+     * This used to issue a bare `DELETE` on every model, so `destroy()` removed
+     * rows that `delete()` on the same model would have kept, and no hook saw
+     * it. `forceDelete()` is the spelling for a permanent one.
+     */
+    destroy(id: number | string): Promise<boolean> {
+      return model.delete(id)
+    },
+
+    /**
+     * Delete the row with this primary key for good, soft deletes or not.
+     * Delete hooks run. `remove()` is the same call — the name the client
+     * builder's `db.remove(table, id)` already uses for a real DELETE.
+     */
+    async forceDelete(id: number | string): Promise<boolean> {
+      const record = await model.withTrashed().find(id)
+      return record ? record.forceDelete() : false
     },
 
     remove(id: number | string): Promise<boolean> {
-      return this.destroy(id)
+      return model.forceDelete(id)
     },
 
     async truncate(): Promise<void> {
