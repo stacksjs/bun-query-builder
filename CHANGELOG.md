@@ -1,3 +1,33 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.69...v0.2.70)
+
+## 💥 Breaking Changes
+
+- fix(orm)!: destroy() honours soft deletes, and forceDelete() purges (#1159) ([cb84e14](https://github.com/stacksjs/bun-query-builder/commit/cb84e14)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1159](https://github.com/stacksjs/bun-query-builder/issues/1159), [#1159](https://github.com/stacksjs/bun-query-builder/issues/1159), [#1111](https://github.com/stacksjs/bun-query-builder/issues/1111))
+- fix(client)!: bind db.raw and db.sql fragment values or refuse them ([4834696](https://github.com/stacksjs/bun-query-builder/commit/4834696)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- fix(types)!: type defineModel as the ORM model it returns ([79cbbd4](https://github.com/stacksjs/bun-query-builder/commit/79cbbd4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- fix(orm)!: accept whereRaw bindings as one array ([8451f58](https://github.com/stacksjs/bun-query-builder/commit/8451f58)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1146](https://github.com/stacksjs/bun-query-builder/issues/1146))
+
+## 🐛 Bug Fixes
+
+- **client**: returningAll() is returning('*'), so it works on MySQL (#1160) ([78e270b](https://github.com/stacksjs/bun-query-builder/commit/78e270b)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1160](https://github.com/stacksjs/bun-query-builder/issues/1160), [#1160](https://github.com/stacksjs/bun-query-builder/issues/1160), [#1110](https://github.com/stacksjs/bun-query-builder/issues/1110), [#2637](https://github.com/stacksjs/bun-query-builder/issues/2637))
+- **sqlite**: keep the foreign key when a diff adds a column (#1155) ([bd8e3fd](https://github.com/stacksjs/bun-query-builder/commit/bd8e3fd)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1154](https://github.com/stacksjs/bun-query-builder/issues/1154), [#1155](https://github.com/stacksjs/bun-query-builder/issues/1155), [#1155](https://github.com/stacksjs/bun-query-builder/issues/1155))
+- **postgres**: skip literals and comments when numbering placeholders ([0259455](https://github.com/stacksjs/bun-query-builder/commit/0259455)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- **docs**: build the site with bunpress ([b387f8a](https://github.com/stacksjs/bun-query-builder/commit/b387f8a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- **transactions**: exclude post-commit callbacks from retries ([17ac15f](https://github.com/stacksjs/bun-query-builder/commit/17ac15f)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1144](https://github.com/stacksjs/bun-query-builder/issues/1144))
+- **cache**: isolate results by connection and transaction ([5f271d5](https://github.com/stacksjs/bun-query-builder/commit/5f271d5)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1143](https://github.com/stacksjs/bun-query-builder/issues/1143))
+- **hooks**: retain parameterized SQL for native queries ([e8d66ca](https://github.com/stacksjs/bun-query-builder/commit/e8d66ca)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1142](https://github.com/stacksjs/bun-query-builder/issues/1142))
+
+## 🔧 Chores
+
+- release v0.2.70 ([00ee480](https://github.com/stacksjs/bun-query-builder/commit/00ee480)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- **deps**: update non-major dependencies, except kysely (#1158) ([a7dfd4c](https://github.com/stacksjs/bun-query-builder/commit/a7dfd4c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1158](https://github.com/stacksjs/bun-query-builder/issues/1158), [#1158](https://github.com/stacksjs/bun-query-builder/issues/1158), [#1139](https://github.com/stacksjs/bun-query-builder/issues/1139))
+- drop imports nothing uses (#1156) ([239b824](https://github.com/stacksjs/bun-query-builder/commit/239b824)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1156](https://github.com/stacksjs/bun-query-builder/issues/1156), [#1156](https://github.com/stacksjs/bun-query-builder/issues/1156))
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.68...v0.2.69)
 
 ## ✨ Features
