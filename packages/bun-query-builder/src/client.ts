@@ -7562,34 +7562,22 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           return result
         },
         returningAll() {
-          // As in returning(): no rows inserted, nothing to return.
-          if (noRows)
-            return emptyReturningBuilder()
-          const returningSql = `${sqlText} RETURNING *`
-          const q = prepareQuery(returningSql, params)
-          const runFirst = async () => {
-            const result = await runWithHooks<any[]>(q, 'insert')
-            return Array.isArray(result) ? result[0] : result
-          }
-          return {
-            toSQL: () => makeExecutableQuery(q, returningSql) as any,
-            execute: () => runWithHooks<any[]>(q, 'insert'),
-            get: () => runWithHooks<any[]>(q, 'insert'),
-            first: runFirst,
-            executeTakeFirst: runFirst,
-            async firstOrFail() {
-              const row = await runFirst()
-              if (!row)
-                throw new Error('Insert with RETURNING returned no rows')
-              return row
-            },
-            async executeTakeFirstOrThrow() {
-              const row = await runFirst()
-              if (!row)
-                throw new Error('Insert with RETURNING returned no rows')
-              return row
-            },
-          } as any
+          /*
+           * `RETURNING *` is `returning('*')`, so this defers to it.
+           *
+           * It used to append the clause itself, a second implementation of
+           * the same idea, and the two drifted: every fix returning() gained
+           * stopped here. Most of all the MySQL branch, so `returningAll()`
+           * emitted `RETURNING *` at a server that has no RETURNING and every
+           * such write was a syntax error rather than a write - 63 call sites
+           * in Stacks alone (stacksjs/stacks#2637). It also never reached the
+           * empty-batch guard, and its handle was missing row accessors the
+           * return type declares.
+           *
+           * mysqlReturningBuilder already reads `*` as "every column", so the
+           * MySQL read-back needs nothing further.
+           */
+          return (this as any).returning('*')
         },
       } as any as TypedInsertQueryBuilder<DB, TTable>
     },
@@ -7909,26 +7897,17 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           return { numUpdatedRows: result }
         },
         returningAll() {
-          // Deferred for the same reason as returning(): holding this handle
-          // while the parent gains a predicate must not execute the statement
-          // as it stood beforehand. See #1110.
-          const retAllText = () => `${sqlText} RETURNING *`
-          const build = () => (params.length > 0 ? prepareQuery(retAllText(), params) : prepareQuery(retAllText()))
-          return {
-            toSQL: () => makeExecutableQuery(build(), retAllText()) as any,
-            execute: () => runWithHooks<any[]>(build(), 'update'),
-            async executeTakeFirst() {
-              const result = await runWithHooks<any[]>(build(), 'update')
-              return Array.isArray(result) ? result[0] : result
-            },
-            async executeTakeFirstOrThrow() {
-              const result = await runWithHooks<any[]>(build(), 'update')
-              const first = Array.isArray(result) ? result[0] : result
-              if (!first)
-                throw new Error('Update with RETURNING failed')
-              return first
-            },
-          } as any
+          /*
+           * `returning('*')`, for the reasons given on insertInto's.
+           *
+           * The duplicate here missed the MySQL branch, which reads the rows
+           * by the ids the predicate matched *before* the write, so on MySQL
+           * this emitted `UPDATE ... RETURNING *` and wrote nothing at all
+           * (stacksjs/stacks#2637). It also could not take a predicate added
+           * after it - the #1110 shape - because the handle it returned had no
+           * where() to delegate.
+           */
+          return (this as any).returning('*')
         },
       }
     },
@@ -8183,24 +8162,15 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           return { numDeletedRows: result }
         },
         returningAll() {
-          // Deferred, as returning() is — see #1110.
-          const retAllText = () => `${sqlText} RETURNING *`
-          const build = () => (delParams.length > 0 ? prepareQuery(retAllText(), delParams) : prepareQuery(retAllText()))
-          return {
-            toSQL: () => makeExecutableQuery(build(), retAllText()) as any,
-            execute: () => runWithHooks<any[]>(build(), 'delete'),
-            async executeTakeFirst() {
-              const result = await runWithHooks<any[]>(build(), 'delete')
-              return Array.isArray(result) ? result[0] : result
-            },
-            async executeTakeFirstOrThrow() {
-              const result = await runWithHooks<any[]>(build(), 'delete')
-              const first = Array.isArray(result) ? result[0] : result
-              if (!first)
-                throw new Error('Delete with RETURNING failed')
-              return first
-            },
-          } as any
+          /*
+           * `returning('*')`, for the reasons given on insertInto's.
+           *
+           * Besides emitting `RETURNING *` at MySQL (stacksjs/stacks#2637),
+           * the duplicate here skipped beforeDelete/afterDelete entirely, so
+           * `.returningAll()` walked straight past an application delete
+           * guard - the same defect returning() was fixed for.
+           */
+          return (this as any).returning('*')
         },
       }
     },
