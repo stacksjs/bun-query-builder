@@ -1268,7 +1268,13 @@ async function _defineModelUsage() {
   Trail.query().latest().oldest('distance')
   await Trail.update(1, { name: 'Ridge' })
   const deleted: boolean = await Trail.delete(1)
-  void deleted
+  const destroyed: boolean = await Trail.destroy(1)
+  void [deleted, destroyed]
+
+  // Purge statics, server-only — the browser model has no counterpart
+  const purged: boolean = await Trail.forceDelete(1)
+  const removed: boolean = await Trail.remove(1)
+  void [purged, removed]
 
   // Column names stay narrow
   // @ts-expect-error — unknown column
