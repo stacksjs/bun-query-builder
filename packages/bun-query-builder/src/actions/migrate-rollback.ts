@@ -1,6 +1,5 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import process from 'node:process'
+import { join } from 'node:path'
 import type { SupportedDialect } from '../types'
 import { config, getPlaceholder, isMysqlLike } from '../config'
 import { createQueryBuilder } from '../index'

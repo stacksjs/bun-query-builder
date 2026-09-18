@@ -1,7 +1,5 @@
 import type { SupportedDialect } from '@/types'
 import { existsSync, readdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import process from 'node:process'
 import { config } from '@/config'
 import { getDialectDriver } from '@/drivers'
 import { createQueryBuilder } from '../index'

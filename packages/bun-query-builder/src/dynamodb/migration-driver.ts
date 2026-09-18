@@ -23,7 +23,7 @@ import type { DynamoDBMigrationPlan, DynamoDBMigrationOperation, DynamoDBMigrati
 import { DynamoDBClient, createClient } from './client'
 import type { DynamoDBClientConfig } from './client'
 import { DynamoDBMigrationTracker } from './migration-tracker'
-import { buildMigrationPlan, extractTableDefinition, hashTableDefinition } from './migrations'
+import { buildMigrationPlan, extractTableDefinition } from './migrations'
 
 // ============================================================================
 // Types

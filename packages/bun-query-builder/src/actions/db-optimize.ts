@@ -1,6 +1,5 @@
 import type { SupportedDialect } from '@/types'
 import { isMysqlLike, resolveDialect } from '@/config'
-import process from 'node:process'
 import { bunSql, resolveDatabaseName } from '@/db'
 
 export interface OptimizeOptions {

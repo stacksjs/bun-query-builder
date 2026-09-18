@@ -40,7 +40,7 @@
  * ```
  */
 
-import { createBrowserModel, isBrowser, type BrowserModelDefinition } from './browser'
+import { createBrowserModel, type BrowserModelDefinition } from './browser'
 import { clearLocalModels, createModel, type ModelStatic, type ModelDefinition as OrmModelDefinition } from './orm'
 
 // Re-export the browser model types for convenience
