@@ -13,13 +13,9 @@
  */
 
 import type {
-  DynamoDBConfig,
-  DynamoDBDriver,
   DynamoDBGlobalSecondaryIndex,
   DynamoDBTableDefinition,
-  SingleTableEntityMapping,
 } from './drivers/dynamodb'
-import { createDynamoDBDriver } from './drivers/dynamodb'
 import type { DynamoDBFilterOperator, DynamoDBQueryBuilderOptions, DynamoDBValue } from './dynamodb-client'
 import { DynamoDBItemBuilder, DynamoDBQueryBuilder } from './dynamodb-client'
 

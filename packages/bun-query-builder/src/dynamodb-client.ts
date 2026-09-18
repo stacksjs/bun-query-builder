@@ -6,18 +6,13 @@
  */
 
 import type {
-  DynamoDBBatchGetItemParams,
-  DynamoDBBatchWriteItemParams,
   DynamoDBComparisonOperator,
   DynamoDBCondition,
   DynamoDBConfig,
-  DynamoDBDeleteItemParams,
   DynamoDBDriver,
-  DynamoDBGetItemParams,
   DynamoDBPutItemParams,
   DynamoDBQueryParams,
   DynamoDBScanParams,
-  DynamoDBTransactWriteParams,
   DynamoDBUpdateItemParams,
   SingleTableEntityMapping,
 } from './drivers/dynamodb'
