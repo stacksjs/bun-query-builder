@@ -1647,6 +1647,23 @@ function detectColumnRenames(
   }
 }
 
+/**
+ * Whether a column being ADDed on SQLite has to go through a table rebuild.
+ *
+ * `ADD COLUMN … REFERENCES …` is the only way to attach a foreign key to a new
+ * column (SQLite has no `ADD CONSTRAINT`), and SQLite refuses it when the
+ * column's default is not NULL — `Cannot add a REFERENCES column with non-NULL
+ * default value`, once foreign keys are on and the table has rows. Rebuilding
+ * the table applies the same FK through CREATE TABLE, where any default is
+ * fine. See #1154.
+ */
+function addedColumnNeedsRebuild(column: ColumnPlan | undefined): boolean {
+  if (!column?.references || !column.hasDefault)
+    return false
+  const value = column.defaultValue
+  return value !== undefined && value !== null && String(value).toUpperCase() !== 'NULL'
+}
+
 /** Whether a column is constrained such that SQLite can't DROP it in place. */
 function isColumnConstrained(table: TablePlan, columnName: string): boolean {
   const col = table.columns.find(c => c.name === columnName)
@@ -1987,6 +2004,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
         = modifiedCols.length > 0
           || fkChangedCols.length > 0
           || removedCols.some(name => isColumnConstrained(prev, name))
+          || addedCols.some(name => addedColumnNeedsRebuild(currCols[name]))
 
       if (needsRebuild) {
         const columnSource: Record<string, string> = {}

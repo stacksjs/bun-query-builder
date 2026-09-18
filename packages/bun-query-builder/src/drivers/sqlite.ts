@@ -147,6 +147,21 @@ export class SQLiteDriver implements DialectDriver {
     return ''
   }
 
+  /**
+   * `ALTER TABLE … ADD COLUMN`, with the column's FK inline.
+   *
+   * The FK used to be dropped here: `addForeignKey` returns '' on SQLite (no
+   * `ADD CONSTRAINT`), and this rendered only the type and constraints, so a
+   * `belongsTo` added to an EXISTING table produced a plain column and no
+   * foreign key at all — silently, on a migration that reported success. A
+   * fresh CREATE TABLE inlined it correctly the whole time. See #1154.
+   *
+   * SQLite accepts `ADD COLUMN … REFERENCES …` as long as the new column's
+   * default is NULL. A non-NULL default is refused once foreign keys are on and
+   * the table has rows (`Cannot add a REFERENCES column with non-NULL default
+   * value`), so the diff engine sends that combination through `rebuildTable`
+   * instead — see `addedColumnNeedsRebuild`.
+   */
   addColumn(tableName: string, column: ColumnPlan): string {
     const typeSql = this.getColumnType(column)
     const parts: string[] = [this.quoteIdentifier(column.name), typeSql]
@@ -159,6 +174,8 @@ export class SQLiteDriver implements DialectDriver {
     if (defaultValue) {
       parts.push(defaultValue)
     }
+
+    parts.push(...this.referencesClause(column))
 
     return `ALTER TABLE ${this.quoteIdentifier(tableName)} ADD COLUMN ${parts.join(' ')};`
   }
@@ -335,22 +352,33 @@ export class SQLiteDriver implements DialectDriver {
       parts.push(defaultValue)
     }
 
-    // Inline FK — for SQLite this is the ONLY path that works, since
-    // SQLite doesn't support `ALTER TABLE ADD CONSTRAINT`. The
-    // orchestrator (`generateSql` / `generateDiffSql` in migrations.ts)
-    // skips its post-CREATE `addForeignKey` pass when emitting CREATE
-    // TABLE so we don't duplicate the FK on dialects that accept both
-    // forms. Enforcement still requires `PRAGMA foreign_keys = ON` on
-    // the SQLite connection (off by default — set this in the
-    // consumer's connection bootstrap).
-    if (column.references) {
-      parts.push(`REFERENCES ${this.quoteIdentifier(column.references.table)}(${this.quoteIdentifier(column.references.column)})`)
-      if (column.references.onDelete)
-        parts.push(`ON DELETE ${column.references.onDelete.toUpperCase()}`)
-      if (column.references.onUpdate)
-        parts.push(`ON UPDATE ${column.references.onUpdate.toUpperCase()}`)
-    }
+    parts.push(...this.referencesClause(column))
 
     return parts.join(' ')
+  }
+
+  /**
+   * The inline `REFERENCES` clause, or nothing when the column declares no FK.
+   *
+   * For SQLite this is the ONLY path that works, since SQLite doesn't support
+   * `ALTER TABLE ADD CONSTRAINT`. The orchestrator (`generateSql` /
+   * `generateDiffSql` in migrations.ts) skips its post-CREATE `addForeignKey`
+   * pass when emitting CREATE TABLE so we don't duplicate the FK on dialects
+   * that accept both forms. Enforcement still requires `PRAGMA foreign_keys =
+   * ON` on the SQLite connection (off by default — set this in the consumer's
+   * connection bootstrap).
+   *
+   * Shared with `addColumn`: a column added to an existing table carries its FK
+   * too, and only the CREATE TABLE path used to render it. See #1154.
+   */
+  private referencesClause(column: ColumnPlan): string[] {
+    if (!column.references)
+      return []
+    const parts = [`REFERENCES ${this.quoteIdentifier(column.references.table)}(${this.quoteIdentifier(column.references.column)})`]
+    if (column.references.onDelete)
+      parts.push(`ON DELETE ${column.references.onDelete.toUpperCase()}`)
+    if (column.references.onUpdate)
+      parts.push(`ON UPDATE ${column.references.onUpdate.toUpperCase()}`)
+    return parts
   }
 }
