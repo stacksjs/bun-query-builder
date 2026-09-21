@@ -149,6 +149,24 @@ await Post.forceDelete(1) // or Post.remove(1)
 An instance has the same pair: `post.delete()` marks a soft-deletable row,
 `post.forceDelete()` removes it.
 
+## Deleting with a Model Query
+
+A model query has the same pair. `delete()` marks the matching rows on a model
+with `useSoftDeletes` and removes them on any other; `forceDelete()` removes
+them either way. Both resolve to the number of rows affected.
+
+```typescript
+await Post.where('views', 0).delete() // marks them
+await Post.where('views', 0).forceDelete() // removes them
+await Post.onlyTrashed().delete() // purges the trash
+```
+
+`beforeDelete` and `afterDelete` run once per row. To give each hook its row,
+the query reads the matching rows first, then deletes them by primary key, so
+the hooks and the delete cover the same rows. Every `beforeDelete` runs before
+anything is written, so one that throws cancels the whole delete. A model with
+no delete hooks skips the read and sends a single statement.
+
 ## Delete with Returning
 
 ```typescript
