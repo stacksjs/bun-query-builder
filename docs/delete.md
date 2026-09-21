@@ -57,24 +57,32 @@ await db
 
 ## Soft Deletes
 
-If your model supports soft deletes, records are marked as deleted instead of being removed:
+A soft-deleted row stays in the table with its `deleted_at` column set. The
+query builder does not mark rows for you: every `deleteFrom()` and
+`db.remove()` is a real `DELETE`. What it does is hide marked rows from reads,
+once the filter is switched on in your config:
 
 ```typescript
-// Model with soft deletes enabled
-const models = {
-  User: {
-    name: 'User',
-    table: 'users',
-    softDeletes: true,  // Enable soft deletes
-    // ...
+import { setConfig } from 'bun-query-builder'
+
+setConfig({
+  softDeletes: {
+    enabled: true,
+    column: 'deleted_at',
+    defaultFilter: true, // add `WHERE deleted_at IS NULL` to every selectFrom()
   },
-}
+})
+```
 
-// Soft delete a record
-await db.remove('users', 1)
-// Sets deleted_at = NOW() instead of removing the record
+```typescript
+// Soft delete a record: mark it
+await db
+  .updateTable('users')
+  .set({ deleted_at: new Date().toISOString() })
+  .where({ id: 1 })
+  .execute()
 
-// Query excluding soft deleted records (default behavior)
+// Query excluding soft deleted records (with defaultFilter on)
 const activeUsers = await db.selectFrom('users').get()
 
 // Query including soft deleted records
@@ -88,8 +96,11 @@ const deletedUsers = await db
   .selectFrom('users')
   .onlyTrashed()
   .get()
-
 ```
+
+On a model, `traits: { useSoftDeletes: true }` adds the column in migrations,
+and `User.delete(id)`, `User.destroy(id)` and `user.delete()` mark the row
+instead of removing it (see [Deleting by id on a Model](#deleting-by-id-on-a-model)).
 
 ## Restore Soft Deleted Records
 
@@ -113,16 +124,18 @@ await db
 
 ```typescript
 
-// Permanently delete a soft deleted record — `remove()` issues a real DELETE,
-// so it removes the row whether or not it was already soft-deleted.
+// `remove()` issues a real DELETE, so it removes the row whether or not it
+// was already soft-deleted.
 await db.remove('users', 1)
 
-// Force delete with conditions
+// Purge every soft-deleted row
 await db
   .deleteFrom('users')
-  .onlyTrashed()
-  .forceDelete()
+  .whereNotNull('deleted_at')
   .execute()
+
+// The same from a model: a delete on an onlyTrashed() query purges
+await User.onlyTrashed().delete()
 
 ```
 
