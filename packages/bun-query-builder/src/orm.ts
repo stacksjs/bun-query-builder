@@ -1062,10 +1062,21 @@ class ModelInstance<
   private _forced: Set<string> = new Set()
   private _definition: TDef
   private _hasSaved = false
+  /**
+   * Whether this instance is a row in the table: true when it was read from
+   * the database or has been inserted, false for one built by `create()`,
+   * `make()` or `replicate()` that has not been saved yet. save() branches on
+   * this. It used to branch on whether the primary key was truthy, which sent
+   * a caller-supplied key (`create({ id: 5 })`, or any string key) down the
+   * UPDATE path, so nothing was inserted, and sent a loaded row whose key was
+   * `0` down the INSERT path, so it was duplicated.
+   */
+  private _exists: boolean
   private _relations: Record<string, ModelInstance<any, any>[] | ModelInstance<any, any> | null> = {}
 
-  constructor(definition: TDef, attributes: Partial<ModelAttributes<TDef>> = {}) {
+  constructor(definition: TDef, attributes: Partial<ModelAttributes<TDef>>, exists: boolean) {
     this._definition = definition
+    this._exists = exists
     // The spread already gives us a private copy, so the normalizer may reuse
     // it instead of building a second object per hydrated row.
     this._attributes = normalizeAttributeKeysInPlace({ ...attributes })
@@ -1306,13 +1317,17 @@ class ModelInstance<
       }
     }
 
-    if (this._attributes[pk]) {
+    if (this._exists) {
       // Update
       await hooks?.beforeUpdate?.(this as unknown as ModelHookInstance, this.getChanges())
 
       const changes = this.getChanges()
       const changeKeys = Object.keys(changes)
       if (changeKeys.length > 0) {
+        // A row read without its key (`select('title')`) cannot be addressed.
+        // This used to take the INSERT branch and write a copy of the row.
+        if (this._attributes[pk] == null)
+          throw new Error(`Cannot save a model without a primary key: '${pk}' was not selected`)
         const sets = changeKeys.map(k => `${k} = ?`).join(', ')
         const values = [...Object.values(changes), this._attributes[pk]]
 
@@ -1375,6 +1390,15 @@ class ModelInstance<
         }
       }
 
+      // A key the caller supplied is written. Neither loop above picks it up
+      // unless the model declares it as an attribute, and a string key has no
+      // database default to fall back on.
+      const suppliedKey = this._attributes[pk]
+      const keyAttr = attrs[pk]
+      const keyGuarded = keyAttr?.guarded && !this._forced.has(pk)
+      if (suppliedKey != null && !(pk in data) && !keyGuarded)
+        data[pk] = suppliedKey
+
       if (timestampsEnabled(this._definition)) {
         const now = formatNow()
         // An explicitly supplied `created_at` wins.
@@ -1416,8 +1440,12 @@ class ModelInstance<
       for (const [key, value] of Object.entries(data)) {
         this._attributes[key] = value
       }
-      if (result.lastInsertId != null)
+      // Only a generated key is read back. For a supplied one the driver's
+      // insert id is the rowid (SQLite) or 0 (MySQL on a non-AUTO_INCREMENT
+      // key), not the key.
+      if (!(pk in data) && result.lastInsertId != null)
         this._attributes[pk] = result.lastInsertId
+      this._exists = true
 
       await hooks?.afterCreate?.(this as unknown as ModelHookInstance)
     }
@@ -1446,7 +1474,7 @@ class ModelInstance<
     if (id == null) return null
     const row = await exec.get(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`, [id])
     if (!row) return null
-    return new ModelInstance(this._definition, row as Partial<ModelAttributes<TDef>>)
+    return new ModelInstance(this._definition, row as Partial<ModelAttributes<TDef>>, true)
   }
 
   async delete(): Promise<boolean> {
@@ -1569,7 +1597,7 @@ class ModelInstance<
     delete attrs.uuid
     delete attrs.created_at
     delete attrs.updated_at
-    return new ModelInstance<TDef, TSelected>(this._definition, attrs as any)
+    return new ModelInstance<TDef, TSelected>(this._definition, attrs as any, false)
   }
 
   toArray(): Record<string, unknown> {
@@ -2280,7 +2308,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
         else if (k !== fkParent && k !== fkRelated)
           pivotExtras[k] = v
       }
-      const inst = new ModelInstance(this._relatedDef, relatedRow as any)
+      const inst = new ModelInstance(this._relatedDef, relatedRow as any, true)
       ;(inst as any).pivot = pivotExtras
       return inst
     })
@@ -3036,7 +3064,7 @@ class ModelQueryBuilder<
         }
         for (const instance of instances) {
           const related = grouped.get(instance.get(pk as any)) || []
-          instance.setRelation(relationName, related.map(r => new ModelInstance(relDef as any, r as any)))
+          instance.setRelation(relationName, related.map(r => new ModelInstance(relDef as any, r as any, true)))
         }
       }
       else {
@@ -3051,7 +3079,7 @@ class ModelQueryBuilder<
         }
         for (const instance of instances) {
           const row = byFk.get(instance.get(pk as any))
-          instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any) : null)
+          instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any, true) : null)
         }
       }
     }
@@ -3083,7 +3111,7 @@ class ModelQueryBuilder<
       for (const instance of instances) {
         const fkVal = (instance as any)._attributes[rel.foreignKey]
         const row = byPk.get(fkVal)
-        instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any) : null)
+        instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any, true) : null)
       }
     }
 
@@ -3144,7 +3172,7 @@ class ModelQueryBuilder<
           .map((p) => {
             const relRow = relatedByPk.get(p[rel.pivotFkRelated!])
             if (!relRow) return null
-            const inst = new ModelInstance(relDef as any, relRow as any)
+            const inst = new ModelInstance(relDef as any, relRow as any, true)
             // Attach pivot extras under instance.pivot
             const extras: Record<string, unknown> = {}
             for (const [k, v] of Object.entries(p)) {
@@ -3197,7 +3225,7 @@ class ModelQueryBuilder<
         const parentVal = throughToParent.get(row[rel.targetForeignKey!])
         if (parentVal == null) continue
         if (!byParent.has(parentVal)) byParent.set(parentVal, [])
-        byParent.get(parentVal)!.push(new ModelInstance(relDef as any, row as any))
+        byParent.get(parentVal)!.push(new ModelInstance(relDef as any, row as any, true))
       }
 
       for (const instance of instances) {
@@ -3211,7 +3239,7 @@ class ModelQueryBuilder<
     const exec = getExecutor()
     const { sql, params } = this.buildQuery()
     const rows = await exec.all(sql, params)
-    const instances = rows.map(row => new ModelInstance<TDef, TSelected>(this._definition, row as any))
+    const instances = rows.map(row => new ModelInstance<TDef, TSelected>(this._definition, row as any, true))
 
     // Eager load relations
     if (this._withRelations.length > 0) {
@@ -3710,7 +3738,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
       // Exclude soft-deleted rows by default (use withTrashed()/query() to override).
       const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
       const row = await exec.get(`SELECT * FROM ${definition.table} WHERE ${pk} = ?${sd}`, [id])
-      return row ? new ModelInstance<TDef>(definition, row as any) as ModelRecord<TDef> : undefined
+      return row ? new ModelInstance<TDef>(definition, row as any, true) as ModelRecord<TDef> : undefined
     },
 
     async findOrFail(id: number | string): Promise<ModelRecord<TDef>> {
@@ -3724,7 +3752,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
       const pk = definition.primaryKey || 'id'
       const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
       const rows = await exec.all(`SELECT * FROM ${definition.table} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})${sd}`, ids)
-      return rows.map(row => new ModelInstance<TDef>(definition, row as any) as ModelRecord<TDef>)
+      return rows.map(row => new ModelInstance<TDef>(definition, row as any, true) as ModelRecord<TDef>)
     },
 
     all: () => new ModelQueryBuilder<TDef>(definition).get(),
@@ -3745,7 +3773,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
     },
 
     async create(data: FillableAttributes<TDef>): Promise<ModelRecord<TDef>> {
-      const instance = new ModelInstance<TDef>(definition, data as any)
+      const instance = new ModelInstance<TDef>(definition, data as any, false)
       await instance.save()
       return instance as ModelRecord<TDef>
     },
@@ -3843,7 +3871,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
     getTable: () => definition.table,
 
     make(data: Partial<Attrs> = {}): ModelInstance<TDef> {
-      return new ModelInstance<TDef>(definition, data as any)
+      return new ModelInstance<TDef>(definition, data as any, false)
     },
 
     latest: (column: Cols = 'created_at' as Cols) => new ModelQueryBuilder<TDef>(definition).orderByDesc(column),
