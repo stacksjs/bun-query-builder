@@ -57,6 +57,8 @@ afterEach(() => {
 const total = (): number => (db.query('SELECT count(*) c FROM sd_posts').get() as any).c
 const alive = (): number => (db.query('SELECT count(*) c FROM sd_posts WHERE deleted_at IS NULL').get() as any).c
 const titles = (): string[] => (db.query('SELECT title FROM sd_posts ORDER BY title').all() as any[]).map(r => r.title)
+const trashedOn = (date: string): string[] =>
+  (db.query('SELECT title FROM sd_posts WHERE deleted_at = ? ORDER BY title').all(date) as any[]).map(r => r.title)
 
 describe('delete() honours the soft-delete scope (#1111)', () => {
   it('onlyTrashed().delete() removes the trashed rows and spares the live ones', async () => {
@@ -73,15 +75,27 @@ describe('delete() honours the soft-delete scope (#1111)', () => {
   it('an unscoped delete still excludes trashed rows, as reads do', async () => {
     await Post.query().delete()
 
-    // The default scope hides trashed rows, so a hard delete must not reach
-    // them either — otherwise the same query means two different row sets
-    // depending on whether it reads or writes.
+    // The default scope hides trashed rows, so a delete must not reach them
+    // either — otherwise the same query means two different row sets
+    // depending on whether it reads or writes. On this soft-deletable model
+    // the live rows are marked, and the trashed ones keep their deleted_at.
+    expect(total()).toBe(4)
+    expect(alive()).toBe(0)
+    expect(trashedOn('2026-01-01')).toEqual(['a', 'b'])
+  })
+
+  it('an unscoped forceDelete removes only the rows reads would see', async () => {
+    await Post.query().forceDelete()
+
     expect(titles()).toEqual(['a', 'b'])
   })
 
   it('a user filter still applies alongside the scope', async () => {
     await Post.query().where('title', 'c').delete()
+    expect(total()).toBe(4)
+    expect(alive()).toBe(1)
 
+    await Post.query().withTrashed().where('title', 'c').forceDelete()
     expect(titles()).toEqual(['a', 'b', 'd'])
   })
 })

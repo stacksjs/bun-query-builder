@@ -927,6 +927,13 @@ export function getDatabase(): Database {
 const SOFT_DELETE_COLUMN = 'deleted_at'
 
 /**
+ * Keys per statement when a query delete with hooks deletes the rows it read
+ * by key. Far under every dialect's bound-parameter limit (SQLite 32766,
+ * Postgres 65535).
+ */
+const DELETE_KEY_CHUNK = 500
+
+/**
  * Alias prefix for the related table's columns in a belongsToMany SELECT, so a
  * same-named pivot column (`id`, `status`, `created_at`, …) can't overwrite the
  * related value when both tables are selected into one flat row. We alias the
@@ -3516,23 +3523,88 @@ class ModelQueryBuilder<
     return Number(await this.aggregate('SUM', column as string) ?? 0) || 0
   }
 
+  /**
+   * Delete the matching rows the way `instance.delete()` would: a model with
+   * `useSoftDeletes` has them marked, any other has them removed, and
+   * `beforeDelete`/`afterDelete` run for each row. Resolves to the number of
+   * rows affected.
+   *
+   * This was a bare `DELETE` on every model, with no hooks. On a soft-deletable
+   * model `Post.where(...).delete()` permanently removed live rows that
+   * `Post.delete(id)` would have marked.
+   *
+   * `onlyTrashed().delete()` still purges the trash (#1111), since marking rows
+   * that are already marked would do nothing. `forceDelete()` purges any scope.
+   */
   async delete(): Promise<number> {
     this.assertNoUnappliedClauses('delete')
+    const mark = softDeletesEnabled(this._definition as ModelDefinition) && this._trashed !== 'only'
+    return this.deleteMatching(mark)
+  }
+
+  /**
+   * Remove the matching rows for good, soft deletes or not. Delete hooks run
+   * for each row. Resolves to the number of rows removed.
+   */
+  async forceDelete(): Promise<number> {
+    this.assertNoUnappliedClauses('forceDelete')
+    return this.deleteMatching(false)
+  }
+
+  private async deleteMatching(mark: boolean): Promise<number> {
     const exec = getExecutor()
-    const params: unknown[] = []
-    let sql = `DELETE FROM ${this._definition.table}`
+    const table = this._definition.table
+    const hooks = this._definition.hooks
 
     // composeWhere, not buildWhereClauses: the soft-delete predicate is added
     // only by composeWhere, so building the WHERE here meant a scope that
     // exists purely as that predicate contributed nothing to the statement.
     // `onlyTrashed().delete()` — purge the trash — emitted a bare DELETE and
     // removed every row, live ones included. See #1111.
-    const whereBody = this.composeWhere(params)
-    if (whereBody) {
-      sql += ` WHERE ${whereBody}`
+    const params: unknown[] = []
+    let whereBody = this.composeWhere(params)
+    // withTrashed() reaches rows that are already marked. Marking them again
+    // would move their deleted_at, so they are left as they are.
+    if (mark && this._trashed === 'include')
+      whereBody = whereBody ? `(${whereBody}) AND ${SOFT_DELETE_COLUMN} IS NULL` : `${SOFT_DELETE_COLUMN} IS NULL`
+    const where = whereBody ? ` WHERE ${whereBody}` : ''
+    const now = mark ? formatNow() : undefined
+
+    if (!hooks?.beforeDelete && !hooks?.afterDelete) {
+      return mark
+        ? (await exec.run(`UPDATE ${table} SET ${SOFT_DELETE_COLUMN} = ?${where}`, [now, ...params])).changes
+        : (await exec.run(`DELETE FROM ${table}${where}`, params)).changes
     }
 
-    return (await exec.run(sql, params)).changes
+    // Hooks take the row, so the rows are read first and then deleted by key:
+    // the hooks and the statement see the same set. Every beforeDelete runs
+    // before anything is written, so one that throws stops the whole delete.
+    const pk = this._definition.primaryKey || 'id'
+    const rows = await exec.all(`SELECT * FROM ${table}${where}`, params)
+    const instances = rows.map(row => new ModelInstance<TDef>(this._definition, row as Partial<ModelAttributes<TDef>>, true))
+    const keys = instances.map(i => (i as any)._attributes[pk] as unknown)
+    if (keys.some(k => k == null))
+      throw new Error(`Cannot delete a model without a primary key: '${pk}' is missing from a matching row`)
+
+    for (const instance of instances)
+      await hooks.beforeDelete?.(instance as unknown as ModelHookInstance)
+
+    let changes = 0
+    for (let i = 0; i < keys.length; i += DELETE_KEY_CHUNK) {
+      const chunk = keys.slice(i, i + DELETE_KEY_CHUNK)
+      const inList = `${pk} IN (${chunk.map(() => '?').join(', ')})`
+      changes += mark
+        ? (await exec.run(`UPDATE ${table} SET ${SOFT_DELETE_COLUMN} = ? WHERE ${inList}`, [now, ...chunk])).changes
+        : (await exec.run(`DELETE FROM ${table} WHERE ${inList}`, chunk)).changes
+    }
+
+    for (const instance of instances) {
+      // As instance.delete() does, so trashed() in afterDelete is accurate.
+      if (mark)
+        (instance as any)._attributes[SOFT_DELETE_COLUMN] = now
+      await hooks.afterDelete?.(instance as unknown as ModelHookInstance)
+    }
+    return changes
   }
 
   async update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): Promise<number> {

@@ -1276,6 +1276,11 @@ async function _defineModelUsage() {
   const removed: boolean = await Trail.remove(1)
   void [purged, removed]
 
+  // A query delete resolves to the rows affected, marked or removed
+  const marked: number = await Trail.where('distance', '>', 1).delete()
+  const forced: number = await Trail.query().onlyTrashed().forceDelete()
+  void [marked, forced]
+
   // Column names stay narrow
   // @ts-expect-error — unknown column
   Trail.where('altitude', 1)
