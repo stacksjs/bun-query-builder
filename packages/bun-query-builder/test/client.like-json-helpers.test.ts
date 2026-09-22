@@ -57,7 +57,7 @@ describe('like/json helpers', () => {
   })
 
   it('json helpers exist', () => {
-    const a = String((db.selectFrom('users').whereJsonContains('prefs', { theme: 'dark' }) as any).toText?.() ?? '')
+    const a = String((db.selectFrom('users').whereJsonContains('prefs', ['dark']) as any).toText?.() ?? '')
     expect(a).toContain('WHERE')
   })
 
