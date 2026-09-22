@@ -13,12 +13,12 @@ import { dts } from 'bun-plugin-dtsx'
 const result = await Bun.build({
   splitting: true,
   minify: true,
-  entrypoints: ['src/index.ts', 'src/browser.ts', 'src/dynamodb/index.ts', 'bin/cli.ts'],
+  entrypoints: ['src/index.ts', 'src/runtime.ts', 'src/browser.ts', 'src/dynamodb/index.ts', 'bin/cli.ts'],
   outdir: './dist',
   target: 'bun',
   plugins: [dts({
     root: './src',
-    entrypoints: ['index.ts', 'browser.ts', 'dynamodb/index.ts'],
+    entrypoints: ['index.ts', 'runtime.ts', 'browser.ts', 'dynamodb/index.ts'],
   })],
 })
 
@@ -80,3 +80,5 @@ async function assertCompilable(entry: string): Promise<void> {
 
 // eslint-disable-next-line ts/no-top-level-await -- build script, not shipped; see the note above
 await assertCompilable('./dist/src/index.js')
+// eslint-disable-next-line ts/no-top-level-await -- build script, not shipped; see the note above
+await assertCompilable('./dist/src/runtime.js')

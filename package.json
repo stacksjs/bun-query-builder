@@ -25,6 +25,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    },
     "./*": {
       "import": "./dist/*"
     }
@@ -57,7 +61,7 @@
     "zip:darwin-x64": "zip -j bin/qbx-darwin-x64.zip bin/qbx-darwin-x64",
     "zip:darwin-arm64": "zip -j bin/qbx-darwin-arm64.zip bin/qbx-darwin-arm64",
     "fresh": "bun x rimraf node_modules/ bun.lock && bun i",
-    "test": "bun run compile && bun test --max-concurrency=1 packages/bun-query-builder/test",
+    "test": "bun run build && bun test --max-concurrency=1 packages/bun-query-builder/test",
     "lint": "bun x --bun pickier .",
     "lint:fix": "bun x --bun pickier . --fix",
     "format": "bun x --bun pickier . --format",
