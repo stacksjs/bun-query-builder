@@ -4,6 +4,7 @@
 *.log
 *.tgz
 coverage
+bench/runtime-import/results/*.json
 dist
 lib-cov
 logs
