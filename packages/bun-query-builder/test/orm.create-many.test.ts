@@ -79,7 +79,7 @@ afterEach(() => {
 })
 
 describe('createMany', () => {
-  it('writes records that share columns in one statement', async () => {
+  it('writes records that share columns in power-of-two statements', async () => {
     const made = await Country.createMany([
       { code: 'US', name: 'United States' },
       { code: 'DE', name: 'Germany' },
@@ -91,7 +91,9 @@ describe('createMany', () => {
       { code: 'JP', name: 'Japan' },
       { code: 'US', name: 'United States' },
     ])
-    expect(statements.filter(s => s.includes('cm_countries'))).toHaveLength(1)
+    // Three records are two statements, of 2 and 1 rows: row counts are
+    // powers of two so the set of cached statements stays small.
+    expect(statements.filter(s => s.includes('cm_countries'))).toHaveLength(2)
   })
 
   it('runs every record\'s create hooks, in order', async () => {
@@ -125,8 +127,24 @@ describe('createMany', () => {
     const many = Array.from({ length: 12000 }, (_, i) => ({ code: `C${i}`, name: `n${i}` }))
     await Country.createMany(many)
     expect((db.query('SELECT COUNT(*) AS n FROM cm_countries').get() as any).n).toBe(12000)
-    // 2 columns, 30000 parameters per statement: 15000 rows fit in one.
-    expect(statements.filter(s => s.includes('cm_countries'))).toHaveLength(1)
+    // 2 columns at 4096 parameters is 2048 rows a statement: five full ones,
+    // then 1024 + 512 + 128 + 64 + 32 for the remaining 1760.
+    const counts = statements.filter(s => s.includes('cm_countries')).map(s => (s.match(/\(\?, \?\)/g) ?? []).length)
+    expect(counts).toEqual([2048, 2048, 2048, 2048, 2048, 1024, 512, 128, 64, 32])
+  })
+
+  it('writes any number of records in a bounded set of statement shapes', async () => {
+    // Drivers cache each distinct statement for the connection's lifetime,
+    // and the server keeps its plan. Sizing chunks to whatever was left made
+    // every remainder a new statement, so a year of daily batches grew one
+    // Postgres backend past 1.8 GB. Powers of two bound it.
+    let next = 0
+    for (let batch = 1; batch <= 300; batch++) {
+      await Country.createMany(Array.from({ length: batch }, () => ({ code: `K${next}`, name: `n${next++}` })))
+    }
+    const shapes = new Set(statements.filter(s => s.includes('cm_countries')))
+    expect(shapes.size).toBeLessThanOrEqual(12)
+    expect((db.query('SELECT COUNT(*) AS n FROM cm_countries').get() as any).n).toBe(next)
   })
 
   it('returns an empty list for no records without touching the database', async () => {

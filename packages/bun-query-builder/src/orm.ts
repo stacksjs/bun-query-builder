@@ -938,10 +938,61 @@ export function getDatabase(): Database {
 }
 
 /**
- * Bound parameters per bulk INSERT. Under the lowest ceiling of the three
- * dialects (SQLite 32766; Postgres and MySQL 65535), with headroom.
+ * Bound parameters per bulk INSERT.
+ *
+ * Far under every dialect's ceiling (SQLite 32766; Postgres and MySQL 65535),
+ * because the ceiling is not what limits it. Drivers cache each distinct
+ * statement as a prepared statement for the life of the connection (Bun's SQL
+ * does by default), and the database server keeps its parse and plan: about
+ * 0.2 KB per parameter on Postgres. At 30000 a year of seed data in batches
+ * grew one Postgres backend past 1.8 GB. Kept small, and with the row counts
+ * below limited to powers of two, a table costs a few MB of cached statements
+ * however much is written.
  */
-const BULK_INSERT_MAX_PARAMS = 30000
+const BULK_INSERT_MAX_PARAMS = 4096
+
+/** Rows per jsonb batch on Postgres, where the whole batch is one parameter. */
+const BULK_JSON_ROWS = 1000
+
+/**
+ * Whether rows can travel as one jsonb parameter without changing meaning.
+ *
+ * Only primitives and dates: JSON renders those exactly as the VALUES path
+ * would bind them. A column declared json/jsonb stays on the VALUES path,
+ * where a pre-serialized string is parsed as JSON; through jsonb it would
+ * arrive as a JSON string scalar instead. So do binary values, which JSON
+ * cannot carry.
+ */
+function jsonBatchable(definition: ModelDefinition, columns: string[], rows: Record<string, unknown>[]): boolean {
+  const attributes = definition.attributes as Record<string, { type?: unknown }>
+  const byColumn = new Map(Object.entries(attributes).map(([key, attr]) => [toSnakeCase(key), attr]))
+  for (const column of columns) {
+    const type = String(byColumn.get(column)?.type ?? '').toLowerCase()
+    if (type === 'json' || type === 'jsonb')
+      return false
+  }
+  for (const row of rows) {
+    for (const column of columns) {
+      const value = row[column]
+      if (value === null || value === undefined || value instanceof Date)
+        continue
+      const kind = typeof value
+      if (kind !== 'string' && kind !== 'number' && kind !== 'boolean' && kind !== 'bigint')
+        return false
+    }
+  }
+  return true
+}
+
+/** JSON.stringify replacer: bigint as its decimal text, which Postgres casts back. */
+function jsonValue(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value
+}
+
+/** The largest power of two at most `n` (n >= 1). */
+function floorPowerOfTwo(n: number): number {
+  return 2 ** Math.floor(Math.log2(n))
+}
 
 /** The column soft deletes are tracked on (matches the migration + `delete()`). */
 const SOFT_DELETE_COLUMN = 'deleted_at'
@@ -3963,9 +4014,52 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
           continue
         }
 
-        const perStatement = Math.max(1, Math.floor(BULK_INSERT_MAX_PARAMS / columns.length))
-        for (let start = 0; start < indexes.length; start += perStatement) {
-          const chunk = indexes.slice(start, start + perStatement)
+        // Postgres: the batch goes as ONE jsonb parameter, typed by the table's
+        // own row type. Drivers cache a prepared statement per query text AND
+        // per parameter types (Bun infers them from the values, and a null is
+        // a different type), and never free one. A multi-row VALUES insert of
+        // rows with optional columns is a new type signature nearly every
+        // execution, so a year of seeded analytics left thousands of cached
+        // statements on one connection and grew its Postgres backend past
+        // 1.8 GB. One jsonb parameter is one signature per column shape.
+        if (exec.dialect === 'postgres' && jsonBatchable(definition, columns, indexes.map(i => rows[i]!))) {
+          const table = definition.table
+          const list = columns.join(', ')
+          // Bound as text and cast on the server: typed as jsonb, the driver
+          // JSON-encodes the parameter itself and the batch arrives as one
+          // JSON string rather than an array.
+          const sql = `INSERT INTO ${table} (${list}) SELECT ${list} FROM jsonb_populate_recordset(NULL::${table}, (?::text)::jsonb)`
+          for (let start = 0; start < indexes.length; start += BULK_JSON_ROWS) {
+            const chunk = indexes.slice(start, start + BULK_JSON_ROWS)
+            const payload = JSON.stringify(chunk.map(i => Object.fromEntries(columns.map(c => [c, rows[i]![c] ?? null]))), jsonValue)
+            if (!generated) {
+              await exec.run(sql, [payload])
+              for (const i of chunk)
+                await instances[i]!._markInserted(rows[i]!)
+              continue
+            }
+            // Inserted in recordset order; integer keys are sorted too, which
+            // is a sequence's allocation order, so the pairing holds either way.
+            const returned = (await exec.all(`${sql} RETURNING ${pk}`, [payload])).map(r => r[pk])
+            const keys = returned.every(k => typeof k === 'number' || typeof k === 'bigint')
+              ? [...returned].sort((a, b) => (a as number) < (b as number) ? -1 : (a as number) > (b as number) ? 1 : 0)
+              : returned
+            for (let j = 0; j < chunk.length; j++)
+              await instances[chunk[j]!]!._markInserted(rows[chunk[j]!]!, keys[j])
+          }
+          continue
+        }
+
+        // Every statement's row count is a power of two, so however many
+        // records arrive and however the caller batches them, one column shape
+        // produces at most log2(perStatement) + 1 distinct statements to cache.
+        // Sizing each chunk to "whatever is left" made every remainder a new
+        // statement: a year of daily batches was over a thousand of them.
+        const perStatement = floorPowerOfTwo(Math.max(1, Math.floor(BULK_INSERT_MAX_PARAMS / columns.length)))
+        for (let start = 0; start < indexes.length;) {
+          const size = Math.min(perStatement, floorPowerOfTwo(indexes.length - start))
+          const chunk = indexes.slice(start, start + size)
+          start += size
           const sql = `INSERT INTO ${definition.table} (${columns.join(', ')}) VALUES ${chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ')}`
           const params = chunk.flatMap(i => columns.map(c => rows[i]![c]))
 

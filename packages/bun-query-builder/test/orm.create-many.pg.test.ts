@@ -2,7 +2,8 @@
  * `createMany()` against a live Postgres — see orm.create-many.test.ts for the
  * contract. Postgres reads generated keys through `RETURNING` and rewrites `?`
  * to `$n`, so the batched statement is exercised here too, including the
- * 65535-parameter ceiling.
+ * 65535-parameter ceiling, and that batches leave no pile of prepared
+ * statements behind.
  *
  * Runs in a subprocess, like orm.save-primary-key.pg.test.ts: an earlier
  * configureOrm() in the same process pins the model layer to sqlite.
@@ -26,6 +27,7 @@ describe.skipIf(!pgAvailable)('createMany() against live Postgres', () => {
     writeFileSync(scriptPath, `
 import { SQL } from 'bun'
 import { setConfig, resetConnection, defineModel, clearModelRegistry } from ${JSON.stringify(srcEntry)}
+import { getOrCreateBunSql } from ${JSON.stringify(resolve(import.meta.dir, '../src/db.ts'))}
 
 const URL = ${JSON.stringify(PG_URL)}
 const failures = []
@@ -62,6 +64,32 @@ const n = (await raw.unsafe('SELECT COUNT(*)::int AS n FROM _qb_cm_countries'))[
 check('all rows written', n, 40000)
 if (ms > 10000) failures.push('40000 rows took ' + Math.round(ms) + 'ms, which is not a batch')
 
+// Nulls in different columns row to row, over many batches. Each of those
+// used to be a new prepared statement on the connection, never freed.
+await raw.unsafe('DROP TABLE IF EXISTS _qb_cm_hits')
+await raw.unsafe('CREATE TABLE _qb_cm_hits (id text primary key, a text, b integer, c boolean, d bigint, e timestamp, f double precision)')
+const Hit = defineModel({ name: 'CmPgHit', table: '_qb_cm_hits', primaryKey: 'id', traits: { useTimestamps: false },
+  attributes: { id: { type: 'string', fillable: true }, a: { type: 'string', fillable: true }, b: { type: 'integer', fillable: true },
+    c: { type: 'boolean', fillable: true }, d: { type: 'bigint', fillable: true }, e: { type: 'datetime', fillable: true }, f: { type: 'double', fillable: true } } })
+const conn = getOrCreateBunSql()
+const before = (await conn.unsafe('SELECT count(*)::int AS n FROM pg_prepared_statements'))[0].n
+let hits = 0
+for (let batch = 1; batch <= 40; batch++) {
+  await Hit.createMany(Array.from({ length: 25 + batch }, () => {
+    const m = hits++ % 64
+    return { id: 'h' + hits, a: m & 1 ? null : "it's", b: m & 2 ? null : hits, c: m & 4 ? null : hits % 2 === 0,
+      d: m & 8 ? null : 9007199254740993n, e: m & 16 ? null : new Date(Date.UTC(2026, 0, 2, 3, 4, 5)), f: m & 32 ? null : 0.125 }
+  }))
+}
+const after = (await conn.unsafe('SELECT count(*)::int AS n FROM pg_prepared_statements'))[0].n
+if (after - before > 4) failures.push('batches left ' + (after - before) + ' prepared statements on the connection')
+check('every hit written', (await raw.unsafe('SELECT count(*)::int AS n FROM _qb_cm_hits'))[0].n, hits)
+const sample = (await raw.unsafe("SELECT a, b, c, d::text AS d, to_char(e, 'YYYY-MM-DD HH24:MI:SS') AS e, f FROM _qb_cm_hits WHERE id = 'h1'"))[0]
+check('values survive the jsonb batch', [sample.a, sample.b, sample.c, sample.d, sample.e, sample.f], ["it's", 1, false, '9007199254740993', '2026-01-02 03:04:05', 0.125])
+const nulls = (await raw.unsafe("SELECT a, b, c, d, e, f FROM _qb_cm_hits WHERE id = 'h64'"))[0]
+check('nulls stay null', [nulls.a, nulls.b, nulls.c, nulls.d, nulls.e, nulls.f], [null, null, null, null, null, null])
+
+await raw.unsafe('DROP TABLE IF EXISTS _qb_cm_hits')
 await raw.unsafe('DROP TABLE IF EXISTS _qb_cm_posts')
 await raw.unsafe('DROP TABLE IF EXISTS _qb_cm_countries')
 await raw.end()
