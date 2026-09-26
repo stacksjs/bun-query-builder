@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.1...v0.3.2)
+
+## 🐛 Bug Fixes
+
+- **orm**: createMany leaves no pile of prepared statements behind ([944f66f](https://github.com/stacksjs/bun-query-builder/commit/944f66f)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.2 ([bc12109](https://github.com/stacksjs/bun-query-builder/commit/bc12109)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.0...v0.3.1)
 
 ## ⚡ Performance Improvements
