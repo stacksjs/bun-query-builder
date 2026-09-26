@@ -2084,7 +2084,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
     for (const colName of modifiedCols) {
       const prevCol = prevCols[colName]
       const currCol = currCols[colName]
-      const modifyColumnStatement = driver.modifyColumn(curr.table, currCol)
+      const modifyColumnStatement = driver.modifyColumn(curr.table, currCol, prevCol)
       tableChanges.push(modifyColumnStatement)
       chunks.push(modifyColumnStatement)
       operations.push({

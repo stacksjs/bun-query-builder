@@ -12,7 +12,7 @@ export interface DialectDriver {
   createIndex: (tableName: string, index: IndexPlan, columns?: readonly ColumnPlan[]) => string
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string, existingConstraintNames?: string[]) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
-  modifyColumn: (tableName: string, column: ColumnPlan) => string
+  modifyColumn: (tableName: string, column: ColumnPlan, previous?: ColumnPlan) => string
   /** Rename a column in place (SQLite 3.25+, MySQL 8.0+, Postgres). */
   renameColumn: (tableName: string, from: string, to: string) => string
   /** Rename a table. */
@@ -235,10 +235,29 @@ export class PostgresDriver implements DialectDriver {
    * model asking for something the data does not support, and silence would
    * leave the two disagreeing again.
    */
-  modifyColumn(tableName: string, column: ColumnPlan): string {
+  modifyColumn(tableName: string, column: ColumnPlan, previous?: ColumnPlan): string {
     const typeSql = this.getColumnType(column)
     const table = this.quoteIdentifier(tableName)
     const name = this.quoteIdentifier(column.name)
+
+    // When the differ knows what the column was, only the facets that changed
+    // are written. Restating the rest is harmless in effect but not in cost:
+    // `ALTER COLUMN ... TYPE` takes an ACCESS EXCLUSIVE lock on the table even
+    // when the type is unchanged, so a default-only change (every managed
+    // `created_at` moving from CURRENT_TIMESTAMP to the UTC clock) locked each
+    // of the app's largest tables in turn, during a deploy, for nothing. With
+    // no previous column the full restatement below still applies.
+    if (previous && this.getColumnType(previous) === typeSql && !enumChanged(previous, column)) {
+      const statements: string[] = []
+      if (!column.isPrimaryKey && previous.isNullable !== column.isNullable)
+        statements.push(`ALTER TABLE ${table} ALTER COLUMN ${name} ${column.isNullable ? 'DROP NOT NULL' : 'SET NOT NULL'};`)
+      const before = this.getDefaultValue(previous)
+      const after = this.getDefaultValue(column)
+      if (before !== after)
+        statements.push(after ? `ALTER TABLE ${table} ALTER COLUMN ${name} SET ${after};` : `ALTER TABLE ${table} ALTER COLUMN ${name} DROP DEFAULT;`)
+      if (statements.length)
+        return statements.join('\n')
+    }
 
     // The old default comes off before the type changes, and the new one goes
     // on after.
@@ -385,4 +404,9 @@ export class PostgresDriver implements DialectDriver {
 
     return parts.join(' ')
   }
+}
+
+/** Whether an enum column's allowed values differ, which its type string alone does not show. */
+function enumChanged(a: ColumnPlan, b: ColumnPlan): boolean {
+  return JSON.stringify(a.enumValues ?? []) !== JSON.stringify(b.enumValues ?? [])
 }

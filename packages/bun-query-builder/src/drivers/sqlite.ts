@@ -25,7 +25,7 @@ export interface DialectDriver {
   createIndex: (tableName: string, index: IndexPlan, columns?: readonly ColumnPlan[]) => string
   addForeignKey: (tableName: string, columnName: string, refTable: string, refColumn: string, onDelete?: string, onUpdate?: string) => string
   addColumn: (tableName: string, column: ColumnPlan) => string
-  modifyColumn: (tableName: string, column: ColumnPlan) => string
+  modifyColumn: (tableName: string, column: ColumnPlan, previous?: ColumnPlan) => string
   /** Rename a column in place (SQLite 3.25+, MySQL 8.0+, Postgres). */
   renameColumn: (tableName: string, from: string, to: string) => string
   /** Rename a table. */
