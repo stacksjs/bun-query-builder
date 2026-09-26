@@ -1,3 +1,39 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.70...v0.3.0)
+
+## 💥 Breaking Changes
+
+- fix(orm)!: query delete() honours soft deletes and runs delete hooks (#1163) ([7cdd77f](https://github.com/stacksjs/bun-query-builder/commit/7cdd77f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1163](https://github.com/stacksjs/bun-query-builder/issues/1163), [#1163](https://github.com/stacksjs/bun-query-builder/issues/1163), [#1111](https://github.com/stacksjs/bun-query-builder/issues/1111))
+
+## 🐛 Bug Fixes
+
+- **orm**: save() inserts or updates by whether the row exists (#1161) ([24dc4c1](https://github.com/stacksjs/bun-query-builder/commit/24dc4c1)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1161](https://github.com/stacksjs/bun-query-builder/issues/1161), [#1161](https://github.com/stacksjs/bun-query-builder/issues/1161))
+
+## ⚡ Performance Improvements
+
+- **orm**: createMany writes in batches, and an unconfigured model layer says so ([d122fdc](https://github.com/stacksjs/bun-query-builder/commit/d122fdc)) _(by Chris <chris@stacksjs.com>)_
+- add narrow SQL runtime entry ([4a7c5a3](https://github.com/stacksjs/bun-query-builder/commit/4a7c5a3)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📝 Documentation
+
+- **delete**: describe soft deletes as the builder implements them (#1162) ([4763d34](https://github.com/stacksjs/bun-query-builder/commit/4763d34)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1162](https://github.com/stacksjs/bun-query-builder/issues/1162), [#1162](https://github.com/stacksjs/bun-query-builder/issues/1162))
+
+## ✅ Tests
+
+- make JSON helper smoke test portable ([b6df9d9](https://github.com/stacksjs/bun-query-builder/commit/b6df9d9)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.0 ([06f6229](https://github.com/stacksjs/bun-query-builder/commit/06f6229)) _(by Chris <chris@stacksjs.com>)_
+
+## bench
+
+- add runtime import diagnostic ([14e3599](https://github.com/stacksjs/bun-query-builder/commit/14e3599)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.69...v0.2.70)
 
 ## 💥 Breaking Changes
