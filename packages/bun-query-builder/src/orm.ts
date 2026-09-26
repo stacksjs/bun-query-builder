@@ -869,6 +869,8 @@ export function releaseOrm(): void {
  * while mysql / postgres route through the shared async `SQL` driver. The
  * executor is rebuilt whenever the dialect or database name changes.
  */
+let _warnedImplicitMemory = false
+
 function getExecutor(): OrmExecutor {
   if (globalDb) {
     if (!_executor || _executorForDb !== globalDb) {
@@ -891,6 +893,18 @@ function getExecutor(): OrmExecutor {
   _executorDatabase = database
 
   if (dialect === 'sqlite') {
+    // No database named means an in-memory one, which is right for a test and
+    // wrong everywhere else: every write succeeds and is gone when the process
+    // exits. Said once, so a model layer that was never pointed at the app's
+    // database is visible instead of looking like it works.
+    if (!database && !_warnedImplicitMemory) {
+      _warnedImplicitMemory = true
+      console.warn(
+        '[bun-query-builder] The model layer has no database configured, so it is using an in-memory '
+        + 'SQLite database and nothing it writes will persist. Configure one with setConfig({ dialect, database }) '
+        + 'or configureOrm({ database }), or name \':memory:\' explicitly to silence this.',
+      )
+    }
     const db = new Database(database || ':memory:', { create: true })
     // Same rationale as configureOrm: this lazily-created connection is the
     // model write path — it must get the per-connection bootstrap pragmas.
@@ -922,6 +936,12 @@ export function getDatabase(): Database {
     + `the configured dialect is '${exec.dialect}'. Use the async model API instead.`,
   )
 }
+
+/**
+ * Bound parameters per bulk INSERT. Under the lowest ceiling of the three
+ * dialects (SQLite 32766; Postgres and MySQL 65535), with headroom.
+ */
+const BULK_INSERT_MAX_PARAMS = 30000
 
 /** The column soft deletes are tracked on (matches the migration + `delete()`). */
 const SOFT_DELETE_COLUMN = 'deleted_at'
@@ -1310,11 +1330,124 @@ class ModelInstance<
     return this
   }
 
-  async save(): Promise<this> {
-    const exec = getExecutor()
+  /**
+   * The row a create would INSERT, with every create-time rule applied:
+   * mutators, declared and implied columns, a supplied key, timestamps, uuid,
+   * and the `beforeCreate` hook. Shared by `save()` and `createMany()`, so a
+   * bulk insert writes exactly what the same records would one at a time.
+   *
+   * @internal
+   */
+  async _prepareInsert(): Promise<Record<string, unknown>> {
+    this._applySetters()
     const pk = this._definition.primaryKey || 'id'
     const hooks = this._definition.hooks
+    const attrs = this._definition.attributes
+    const data: Record<string, unknown> = {}
 
+    // Persist every declared attribute that's explicitly present on the
+    // instance — not just `fillable` ones. Previously a non-fillable value
+    // set via create() data / .set() / forceFill() (the common case for FK
+    // columns like `user_id`) was dropped from the INSERT while remaining on
+    // the in-memory instance, desyncing the two and breaking NOT-NULL FKs on
+    // Postgres. `guarded` columns stay mass-assignment protected. See #1025.
+    for (const [key, attr] of Object.entries(attrs)) {
+      // A `guarded` column is dropped from the INSERT unless it was set
+      // through `forceFill()`. Without that exception the documented
+      // escape hatch did not escape: `forceFill({ apiKey })` on a guarded
+      // NOT NULL column threw a constraint error, and on a nullable one it
+      // silently wrote NULL. See #1025 for why guarded is filtered at all.
+      if (attr.guarded && !this._forced.has(toSnakeCase(key))) continue
+      // `attrs` keys are whatever casing the model declared them with
+      // (commonly camelCase, e.g. `memberCount`) but `_attributes` is
+      // always snake_case (see normalizeAttributeKeys) — same casing a
+      // read produces. Normalize the lookup and write the column under
+      // its real (snake_case) name, since that's what the table has.
+      const col = toSnakeCase(key)
+      if (this._attributes[col] !== undefined) {
+        data[col] = this._attributes[col]
+      }
+    }
+
+    // FK columns implied by a `belongsTo` relation (e.g. `monitor_id` on
+    // a model that only declares `belongsTo: ['Monitor']`, with no
+    // matching entry in `attributes`) are never in `attrs` above — the
+    // migration generator infers them from `belongsTo` separately, but
+    // that inference doesn't feed back into the runtime attribute map
+    // this loop reads. Sweep any `_id`-suffixed key present on the
+    // instance that the loop above didn't already pick up. Mass
+    // assignment already gated these through its own `_id` bypass (see
+    // applyMassAssignmentRules) before the value ever reached
+    // `_attributes`, so no further guard is needed here.
+    for (const key of Object.keys(this._attributes)) {
+      if (key.endsWith('_id') && key !== pk && !(key in data)) {
+        data[key] = this._attributes[key]
+      }
+    }
+
+    // A key the caller supplied is written. Neither loop above picks it up
+    // unless the model declares it as an attribute, and a string key has no
+    // database default to fall back on.
+    const suppliedKey = this._attributes[pk]
+    const keyAttr = attrs[pk]
+    const keyGuarded = keyAttr?.guarded && !this._forced.has(pk)
+    if (suppliedKey != null && !(pk in data) && !keyGuarded)
+      data[pk] = suppliedKey
+
+    if (timestampsEnabled(this._definition)) {
+      const now = formatNow()
+      // An explicitly supplied `created_at` wins.
+      //
+      // `created_at` is contributed by the timestamps trait, not declared in
+      // `attributes`, so the loop above never copies it out of
+      // `_attributes` — and this block then wrote `now` unconditionally. A
+      // caller that set it deliberately (importing historical records,
+      // backfilling a migration, seeding a database whose dates carry
+      // meaning) got the insert time instead, silently: the value was
+      // accepted, no error was raised, and the row simply came back with the
+      // wrong date. Note `update()` honoured the same field, so the two
+      // paths disagreed about who owned the column.
+      //
+      // `updated_at` stays `now` on purpose — the row IS being written right
+      // now, and a caller-supplied value there would be describing a write
+      // that never happened. Matches the DynamoDB driver's rule, which has
+      // always been `if (!item.createdAt) item.createdAt = now`.
+      const supplied = this._attributes.created_at
+      data.created_at = supplied === undefined || supplied === null ? now : supplied
+      data.updated_at = now
+    }
+
+    if (this._definition.traits?.useUuid && !data.uuid) {
+      data.uuid = crypto.randomUUID()
+    }
+
+    await hooks?.beforeCreate?.(data)
+    return data
+  }
+
+  /**
+   * Record a completed INSERT on the instance and run `afterCreate`.
+   * `generatedKey` is the key the database assigned, when the row did not
+   * supply one.
+   *
+   * @internal
+   */
+  async _markInserted(data: Record<string, unknown>, generatedKey?: unknown): Promise<void> {
+    const pk = this._definition.primaryKey || 'id'
+    for (const [key, value] of Object.entries(data))
+      this._attributes[key] = value
+    if (!(pk in data) && generatedKey != null)
+      this._attributes[pk] = generatedKey
+    this._exists = true
+
+    await this._definition.hooks?.afterCreate?.(this as unknown as ModelHookInstance)
+
+    this._original = { ...this._attributes }
+    this._hasSaved = true
+  }
+
+  /** Run the model's `set` mutators over every dirty attribute. */
+  private _applySetters(): void {
     const setters = this._definition.set || {}
     for (const [key, setter] of Object.entries(setters)) {
       if (this.isDirty(key as ColumnName<TDef>)) {
@@ -1323,8 +1456,15 @@ class ModelInstance<
         this._attributes[toSnakeCase(key)] = setter(this._attributes as Record<string, unknown>)
       }
     }
+  }
+
+  async save(): Promise<this> {
+    const exec = getExecutor()
+    const pk = this._definition.primaryKey || 'id'
+    const hooks = this._definition.hooks
 
     if (this._exists) {
+      this._applySetters()
       // Update
       await hooks?.beforeUpdate?.(this as unknown as ModelHookInstance, this.getChanges())
 
@@ -1354,87 +1494,7 @@ class ModelInstance<
     }
     else {
       // Create
-      const attrs = this._definition.attributes
-      const data: Record<string, unknown> = {}
-
-      // Persist every declared attribute that's explicitly present on the
-      // instance — not just `fillable` ones. Previously a non-fillable value
-      // set via create() data / .set() / forceFill() (the common case for FK
-      // columns like `user_id`) was dropped from the INSERT while remaining on
-      // the in-memory instance, desyncing the two and breaking NOT-NULL FKs on
-      // Postgres. `guarded` columns stay mass-assignment protected. See #1025.
-      for (const [key, attr] of Object.entries(attrs)) {
-        // A `guarded` column is dropped from the INSERT unless it was set
-        // through `forceFill()`. Without that exception the documented
-        // escape hatch did not escape: `forceFill({ apiKey })` on a guarded
-        // NOT NULL column threw a constraint error, and on a nullable one it
-        // silently wrote NULL. See #1025 for why guarded is filtered at all.
-        if (attr.guarded && !this._forced.has(toSnakeCase(key))) continue
-        // `attrs` keys are whatever casing the model declared them with
-        // (commonly camelCase, e.g. `memberCount`) but `_attributes` is
-        // always snake_case (see normalizeAttributeKeys) — same casing a
-        // read produces. Normalize the lookup and write the column under
-        // its real (snake_case) name, since that's what the table has.
-        const col = toSnakeCase(key)
-        if (this._attributes[col] !== undefined) {
-          data[col] = this._attributes[col]
-        }
-      }
-
-      // FK columns implied by a `belongsTo` relation (e.g. `monitor_id` on
-      // a model that only declares `belongsTo: ['Monitor']`, with no
-      // matching entry in `attributes`) are never in `attrs` above — the
-      // migration generator infers them from `belongsTo` separately, but
-      // that inference doesn't feed back into the runtime attribute map
-      // this loop reads. Sweep any `_id`-suffixed key present on the
-      // instance that the loop above didn't already pick up. Mass
-      // assignment already gated these through its own `_id` bypass (see
-      // applyMassAssignmentRules) before the value ever reached
-      // `_attributes`, so no further guard is needed here.
-      for (const key of Object.keys(this._attributes)) {
-        if (key.endsWith('_id') && key !== pk && !(key in data)) {
-          data[key] = this._attributes[key]
-        }
-      }
-
-      // A key the caller supplied is written. Neither loop above picks it up
-      // unless the model declares it as an attribute, and a string key has no
-      // database default to fall back on.
-      const suppliedKey = this._attributes[pk]
-      const keyAttr = attrs[pk]
-      const keyGuarded = keyAttr?.guarded && !this._forced.has(pk)
-      if (suppliedKey != null && !(pk in data) && !keyGuarded)
-        data[pk] = suppliedKey
-
-      if (timestampsEnabled(this._definition)) {
-        const now = formatNow()
-        // An explicitly supplied `created_at` wins.
-        //
-        // `created_at` is contributed by the timestamps trait, not declared in
-        // `attributes`, so the loop above never copies it out of
-        // `_attributes` — and this block then wrote `now` unconditionally. A
-        // caller that set it deliberately (importing historical records,
-        // backfilling a migration, seeding a database whose dates carry
-        // meaning) got the insert time instead, silently: the value was
-        // accepted, no error was raised, and the row simply came back with the
-        // wrong date. Note `update()` honoured the same field, so the two
-        // paths disagreed about who owned the column.
-        //
-        // `updated_at` stays `now` on purpose — the row IS being written right
-        // now, and a caller-supplied value there would be describing a write
-        // that never happened. Matches the DynamoDB driver's rule, which has
-        // always been `if (!item.createdAt) item.createdAt = now`.
-        const supplied = this._attributes.created_at
-        data.created_at = supplied === undefined || supplied === null ? now : supplied
-        data.updated_at = now
-      }
-
-      if (this._definition.traits?.useUuid && !data.uuid) {
-        data.uuid = crypto.randomUUID()
-      }
-
-      await hooks?.beforeCreate?.(data)
-
+      const data = await this._prepareInsert()
       const columns = Object.keys(data)
       const placeholders = columns.map(() => '?').join(', ')
 
@@ -1444,17 +1504,11 @@ class ModelInstance<
         pk,
       )
 
-      for (const [key, value] of Object.entries(data)) {
-        this._attributes[key] = value
-      }
       // Only a generated key is read back. For a supplied one the driver's
       // insert id is the rowid (SQLite) or 0 (MySQL on a non-AUTO_INCREMENT
       // key), not the key.
-      if (!(pk in data) && result.lastInsertId != null)
-        this._attributes[pk] = result.lastInsertId
-      this._exists = true
-
-      await hooks?.afterCreate?.(this as unknown as ModelHookInstance)
+      await this._markInserted(data, pk in data ? undefined : result.lastInsertId)
+      return this
     }
 
     this._original = { ...this._attributes }
@@ -3850,12 +3904,92 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
       return instance as ModelRecord<TDef>
     },
 
+    /**
+     * Insert many records in as few statements as the database allows.
+     *
+     * This was a loop of `create()`, one INSERT and one round trip per row,
+     * which put seeding and importing tens of thousands of rows into minutes.
+     * Every record still goes through the same create path as `create()` —
+     * mass assignment, mutators, timestamps, uuid, `beforeCreate` and
+     * `afterCreate` run per record — and only the write is batched: records
+     * that set the same columns share a multi-row INSERT, chunked under the
+     * bound-parameter limit of every dialect.
+     *
+     * Keys a record supplies are written as given. Keys the database
+     * generates are read back with RETURNING on Postgres and SQLite; MySQL has
+     * no RETURNING, so records there without a key are inserted one at a time
+     * to read each id, exactly as before.
+     */
     async createMany(items: FillableAttributes<TDef>[]): Promise<ModelRecord<TDef>[]> {
-      // Sequential to preserve insertion order and avoid hammering a single
-      // connection with concurrent writes.
-      const out: ModelRecord<TDef>[] = []
-      for (const data of items) out.push(await this.create(data))
-      return out
+      const instances = items.map(data => new ModelInstance<TDef>(definition, data as any, false))
+      if (!instances.length)
+        return []
+
+      const exec = getExecutor()
+      const pk = definition.primaryKey || 'id'
+      const rows: Record<string, unknown>[] = []
+      for (const instance of instances)
+        rows.push(await instance._prepareInsert())
+
+      // Rectangular statements: group records by the columns they set, in
+      // first-seen order so the common case (one shape) is one group.
+      const groups = new Map<string, number[]>()
+      rows.forEach((row, i) => {
+        const shape = Object.keys(row).join('\u0000')
+        const group = groups.get(shape)
+        if (group)
+          group.push(i)
+        else
+          groups.set(shape, [i])
+      })
+
+      for (const [shape, indexes] of groups) {
+        const columns = shape ? shape.split('\u0000') : []
+        const generated = !columns.includes(pk)
+
+        if (!columns.length || (generated && exec.dialect === 'mysql')) {
+          for (const i of indexes) {
+            const row = rows[i]!
+            const cols = Object.keys(row)
+            const result = await exec.insert(
+              cols.length
+                ? `INSERT INTO ${definition.table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
+                : `INSERT INTO ${definition.table} DEFAULT VALUES`,
+              Object.values(row),
+              pk,
+            )
+            await instances[i]!._markInserted(row, generated ? result.lastInsertId : undefined)
+          }
+          continue
+        }
+
+        const perStatement = Math.max(1, Math.floor(BULK_INSERT_MAX_PARAMS / columns.length))
+        for (let start = 0; start < indexes.length; start += perStatement) {
+          const chunk = indexes.slice(start, start + perStatement)
+          const sql = `INSERT INTO ${definition.table} (${columns.join(', ')}) VALUES ${chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ')}`
+          const params = chunk.flatMap(i => columns.map(c => rows[i]![c]))
+
+          if (!generated) {
+            await exec.run(sql, params)
+            for (const i of chunk)
+              await instances[i]!._markInserted(rows[i]!)
+            continue
+          }
+
+          // Generated keys come back in the order the VALUES were written on
+          // both Postgres and SQLite. Integer keys are also sorted, which is
+          // the allocation order of a sequence or rowid, so the pairing holds
+          // even if a future engine returns them in another order.
+          const returned = (await exec.all(`${sql} RETURNING ${pk}`, params)).map(r => r[pk])
+          const keys = returned.every(k => typeof k === 'number' || typeof k === 'bigint')
+            ? [...returned].sort((a, b) => (a as number) < (b as number) ? -1 : (a as number) > (b as number) ? 1 : 0)
+            : returned
+          for (let j = 0; j < chunk.length; j++)
+            await instances[chunk[j]!]!._markInserted(rows[chunk[j]!]!, keys[j])
+        }
+      }
+
+      return instances as ModelRecord<TDef>[]
     },
 
     async updateOrCreate(
