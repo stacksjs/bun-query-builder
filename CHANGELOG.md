@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.0...v0.3.1)
+
+## ⚡ Performance Improvements
+
+- **migrations**: a Postgres column change writes only what changed ([065b5a3](https://github.com/stacksjs/bun-query-builder/commit/065b5a3)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.1 ([88ddf67](https://github.com/stacksjs/bun-query-builder/commit/88ddf67)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.2.70...v0.3.0)
 
 ## 💥 Breaking Changes
