@@ -44,6 +44,8 @@ import type { ValidationType } from './schema'
 interface InferablePivotColumnAttribute {
   default?: unknown
   nullable?: boolean
+  /** NOT NULL when true. Beats the validator's own `.required()`, as in the migration generator. */
+  required?: boolean
   validation?: { rule: ValidationType; message?: Record<string, string> }
 }
 
@@ -81,6 +83,8 @@ interface InferableAttribute<T = unknown> {
   hidden?: boolean
   guarded?: boolean
   nullable?: boolean
+  /** NOT NULL when true. Beats the validator's own `.required()`, as in the migration generator. */
+  required?: boolean
   default?: InferType<T>
   validation?: {
     rule: ValidationType

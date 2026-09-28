@@ -231,6 +231,8 @@ export interface TypedAttribute<T = unknown> {
   hidden?: boolean
   guarded?: boolean
   nullable?: boolean
+  /** NOT NULL when true. Beats the validator's own `.required()`, as in the migration generator. */
+  required?: boolean
   default?: InferType<T>
   /** Control FK constraint: false to skip, true to auto-infer, or explicit config */
   foreignKey?: boolean | import('./schema').ForeignKeyConfig
@@ -511,15 +513,55 @@ type FillableAttributes<TDef extends ModelDefinition> = Partial<Pick<
     // Already nullable: nothing to add.
     null extends ModelAttributes<TDef>[K]
       ? ModelAttributes<TDef>[K]
-      // Optional, so the column is nullable in the database: `null` is how a
-      // write CLEARS it, which is different from omitting the key.
+      // Optional, or a column the migration creates without NOT NULL: `null`
+      // is how a write CLEARS it, which is different from omitting the key.
       : undefined extends ModelAttributes<TDef>[K]
         ? ModelAttributes<TDef>[K] | null
-        // Required: null stays rejected, as the NOT NULL column would reject it.
-        : ModelAttributes<TDef>[K]
-  },
-  FillableKeys<TDef> | SnakeCase<FillableKeys<TDef>> | BelongsToKeys<TDef>
+        : K extends NullableColumnKeys<TDef>
+          ? ModelAttributes<TDef>[K] | null
+          // Required: null stays rejected, as the NOT NULL column would reject it.
+          : ModelAttributes<TDef>[K]
+  } & BelongsToCamelColumns<TDef>,
+  FillableKeys<TDef> | SnakeCase<FillableKeys<TDef>> | BelongsToKeys<TDef> | CamelCase<BelongsToKeys<TDef>>
 >>
+
+/**
+ * Whether the migration generator creates this attribute's column without
+ * NOT NULL. Mirrors `migrations.ts`: `nullable ?? !(required ?? validator
+ * .required())`. A plain `schema.string()` infers `string`, not
+ * `string | undefined`, so the check above never saw it as optional - and a
+ * write clearing a nullable column (`{ cwd: null }`) was a type error against
+ * a column the database had just been told could hold null.
+ */
+type IsNullableColumn<TAttr> =
+  TAttr extends { nullable: true } ? true
+    : TAttr extends { nullable: false } ? false
+      : TAttr extends { required: true } ? false
+        : TAttr extends { required: false } ? true
+          : TAttr extends { validation: { rule: { readonly __isRequired: true } } } ? false
+            : true
+
+type NullableAttributeKeys<TDef extends ModelDefinition> = {
+  [K in AttributeKeys<TDef>]: IsNullableColumn<TDef['attributes'][K]> extends true ? K : never
+}[AttributeKeys<TDef>]
+
+// `belongsTo` FK columns are created nullable, like any unrequired column.
+type NullableColumnKeys<TDef extends ModelDefinition> =
+  | NullableAttributeKeys<TDef>
+  | SnakeCase<NullableAttributeKeys<TDef>>
+  | BelongsToKeys<TDef>
+
+type CamelCase<S extends string> = S extends `${infer Head}_${infer Tail}` ? `${Head}${Capitalize<CamelCase<Tail>>}` : S
+
+/**
+ * `conversationId` as well as `conversation_id`: every write key is
+ * normalized to snake_case before it reaches SQL (`normalizeAttributeKeys`),
+ * so the camelCase spelling already worked at runtime - and declared
+ * attributes accept both - but the type only admitted the column name.
+ */
+type BelongsToCamelColumns<TDef extends ModelDefinition> = {
+  [K in Exclude<BelongsToKeys<TDef>, DeclaredColumns<TDef>> as CamelCase<K>]: number | null
+}
 
 // Numeric attribute columns - constrains aggregate methods (sum, avg, etc.)
 type NumericColumns<TDef extends ModelDefinition> = {

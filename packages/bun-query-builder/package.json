@@ -83,7 +83,7 @@
   "dependencies": {
     "@stacksjs/clapp": "^0.2.16",
     "@stacksjs/ts-faker": "^0.1.8",
-    "@stacksjs/ts-validation": "^0.5.2",
+    "@stacksjs/ts-validation": "^0.5.6",
     "dynamodb-tooling": "^0.3.6"
   },
   "devDependencies": {
