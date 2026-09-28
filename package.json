@@ -88,7 +88,7 @@
     "@stacksjs/ts-faker": "^0.1.8",
     "better-dx": "^0.2.25",
     "pickier": "^0.1.65",
-    "ts-pantry": "^0.11.60"
+    "ts-pantry": "^0.11.64"
   },
   "workspaces": [
     "packages/*"
