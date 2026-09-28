@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.2...v0.3.3)
+
+## 🐛 Bug Fixes
+
+- **orm**: writes accept null for every column the migration makes nullable ([10185ea](https://github.com/stacksjs/bun-query-builder/commit/10185ea)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.3 ([3cef98e](https://github.com/stacksjs/bun-query-builder/commit/3cef98e)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.1...v0.3.2)
 
 ## 🐛 Bug Fixes
