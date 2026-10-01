@@ -14,7 +14,7 @@ import { bunSql, getOrCreateBunSql, resetConnection } from './db'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
 import type { WhereTerm } from './sql-fragments'
-import { FALSE_PREDICATE, mapPlaceholders, renderInPredicate, renderWhereTerms, scanTopLevelKeywords } from './sql-fragments'
+import { countPlaceholders, FALSE_PREDICATE, mapPlaceholders, renderInPredicate, renderWhereTerms, scanTopLevelKeywords } from './sql-fragments'
 
 export { resetConnection }
 
@@ -580,6 +580,55 @@ function renderRawFragment(fragment: unknown, context: string, extra: readonly u
     `[query-builder] ${context}: cannot render this value as a SQL fragment. `
     + `A Bun \`sql\`...\`\` query object cannot be converted to SQL text — pass a `
     + `string, or use the exported \`raw\` helper: raw\`count(*) as c\` / raw('age > 18').`,
+  )
+}
+
+/**
+ * Refuse a raw query whose bindings the connection could never reach.
+ *
+ * Postgres has no `?` parameter. It parses the token as an operator, looks for a
+ * right operand, and rejects the next word — so
+ * `unsafe('SELECT * FROM users WHERE email = ? LIMIT 1', [email])` reports a
+ * syntax error at `LIMIT`, 37 characters past the actual fault, while the bound
+ * value in `params` was never going to arrive. The same call passes on SQLite and
+ * MySQL, which both take `?`, so a cross-dialect suite goes red on one dialect
+ * only and the first hour goes into `LIMIT`. stacksjs/bun-query-builder#1171
+ *
+ * Keyed on the ABSENCE of `$n` rather than the presence of `?`, which is what
+ * makes it free of false positives:
+ *
+ *  - `?` is a real Postgres operator — `data ? 'key'` on jsonb, and several of
+ *    the geometric types — so a query carrying both `$1` and a `?` operator is
+ *    legitimate, and seeing `$n` is enough to leave it alone.
+ *  - A `?` inside a string literal (`WHERE name = 'what?'`) is not a placeholder
+ *    either, and such a query would not be passing bindings in the first place.
+ *
+ * Bindings with no `$n` anywhere, meanwhile, cannot be a working query on
+ * Postgres whatever the text does: either a placeholder is written in the wrong
+ * style, or nothing references the values. Both are worth naming here rather
+ * than at a token the server picked.
+ *
+ * A call with no bindings is never inspected, so raw DDL keeps working untouched.
+ */
+function assertBindablePlaceholders(query: string, params: readonly unknown[] | undefined): void {
+  if (!params || params.length === 0) return
+  if (config.dialect !== 'postgres') return
+  // Not scanned for quoting: a `$1` buried in a string literal only costs this
+  // guard a catch, where a false positive would cost a working query.
+  if (/\$\d/.test(query)) return
+
+  // countPlaceholders skips `?` in quoted runs and comments, so this reports the
+  // ones that were actually meant as placeholders.
+  const marks = countPlaceholders(query)
+  const bindings = `${params.length} binding${params.length === 1 ? '' : 's'}`
+  const cause = marks > 0
+    ? `the query binds them with ${marks} \`?\` placeholder${marks === 1 ? '' : 's'}, which Postgres reads as an operator rather than a parameter`
+    : 'the query contains no $n placeholder for them to bind to'
+  throw new TypeError(
+    `[query-builder] unsafe(): ${bindings} supplied, but ${cause}. Postgres numbers `
+    + `its parameters, so write $1, $2 … in the order the bindings should bind: `
+    + `unsafe('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]). `
+    + `\`?\` is correct on SQLite and MySQL, which is why this call may work there.`,
   )
 }
 
@@ -8265,6 +8314,9 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       return false
     },
     unsafe(query: string, params?: any[]) {
+      // Throws at the call site, before the connection sees a query whose
+      // bindings it cannot bind — see assertBindablePlaceholders.
+      assertBindablePlaceholders(query, params)
       // Use this builder's connection. Transaction callbacks receive a
       // builder whose `_sql` is the reserved transaction connection; routing
       // raw SQL through the process-wide pool lets it escape the transaction

@@ -96,6 +96,29 @@ const result = await db.unsafe(`
 Always prefer parameterized queries when possible to prevent SQL injection. Only use `unsafe` when absolutely necessary and never with user-provided input.
 :::
 
+### Placeholder style is the connection's, not the builder's
+
+When you pass bindings to `unsafe`, you are writing for the driver directly, so the
+placeholders have to be the ones that connection understands. Postgres numbers its
+parameters; SQLite and MySQL take `?`:
+
+```typescript
+// Postgres
+await db.unsafe('SELECT * FROM users WHERE email = $1 LIMIT 1', [email])
+
+// SQLite and MySQL
+await db.unsafe('SELECT * FROM users WHERE email = ? LIMIT 1', [email])
+```
+
+Postgres has no `?` parameter — it reads the token as an operator and rejects the
+word that follows, so the error names whatever comes next (`LIMIT`, above) rather
+than the placeholder. Because the same call works on SQLite and MySQL, this shows
+up as a one-dialect failure. `unsafe` therefore refuses bindings on Postgres when
+the query has no `$n`, and names the real problem at the call site.
+
+A query with no bindings is never inspected, so raw DDL and a literal `?` inside a
+string are unaffected.
+
 ## Execute Raw SQL
 
 Execute non-query SQL statements:
