@@ -1,3 +1,21 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.3...v0.3.4)
+
+## 🐛 Bug Fixes
+
+- **client**: unsafe() refuses ?-style bindings on Postgres (#1172) ([b476f94](https://github.com/stacksjs/bun-query-builder/commit/b476f94)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1171](https://github.com/stacksjs/bun-query-builder/issues/1171), [#1172](https://github.com/stacksjs/bun-query-builder/issues/1172), [#1172](https://github.com/stacksjs/bun-query-builder/issues/1172))
+
+## 🔧 Chores
+
+- release v0.3.4 ([8ddc616](https://github.com/stacksjs/bun-query-builder/commit/8ddc616)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- run @stacksjs/logsmith, not the unrelated npm 'logsmith' ([b2dc7da](https://github.com/stacksjs/bun-query-builder/commit/b2dc7da)) _(by Chris <chrisbreuer93@gmail.com>)_
+- release through @stacksjs/bumpx, not the unrelated npm 'bumpx' ([bbde2cd](https://github.com/stacksjs/bun-query-builder/commit/bbde2cd)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: update ts-pantry, chalk and drizzle-orm ([4167653](https://github.com/stacksjs/bun-query-builder/commit/4167653)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1168](https://github.com/stacksjs/bun-query-builder/issues/1168), [#1158](https://github.com/stacksjs/bun-query-builder/issues/1158))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.2...v0.3.3)
 
 ## 🐛 Bug Fixes
