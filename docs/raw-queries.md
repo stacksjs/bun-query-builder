@@ -96,6 +96,29 @@ const result = await db.unsafe(`
 Always prefer parameterized queries when possible to prevent SQL injection. Only use `unsafe` when absolutely necessary and never with user-provided input.
 :::
 
+### Placeholder style is the connection's, not the builder's
+
+When you pass bindings to `unsafe`, you are writing for the driver directly, so the
+placeholders have to be the ones that connection understands. Postgres numbers its
+parameters; SQLite and MySQL take `?`:
+
+```typescript
+// Postgres
+await db.unsafe('SELECT * FROM users WHERE email = $1 LIMIT 1', [email])
+
+// SQLite and MySQL
+await db.unsafe('SELECT * FROM users WHERE email = ? LIMIT 1', [email])
+```
+
+Postgres has no `?` parameter — it reads the token as an operator and rejects the
+word that follows, so the error names whatever comes next (`LIMIT`, above) rather
+than the placeholder. Because the same call works on SQLite and MySQL, this shows
+up as a one-dialect failure. `unsafe` therefore refuses bindings on Postgres when
+the query has no `$n`, and names the real problem at the call site.
+
+A query with no bindings is never inspected, so raw DDL and a literal `?` inside a
+string are unaffected.
+
 ## Execute Raw SQL
 
 Execute non-query SQL statements:
@@ -235,24 +258,31 @@ stats.forEach((s) => {
 
 ```
 
-## Prepared Statements
+## Repeated Queries
 
-Use prepared statements for repeated queries:
+`unsafe` is not a prepared-statement handle. It returns a query that runs when you
+await it and resolves to an array of rows, so there is no `.get()` to call per
+execution and nothing to finalize:
 
 ```typescript
+// Run it once per set of values, awaiting each. Postgres placeholders shown —
+// see "Placeholder style is the connection's, not the builder's" above.
+const user1 = await db.unsafe('SELECT * FROM users WHERE id = $1', [1])
+const user2 = await db.unsafe('SELECT * FROM users WHERE id = $1', [2])
 
-// Prepare a statement
-const stmt = db.unsafe('SELECT * FROM users WHERE id = ?')
-
-// Execute multiple times efficiently
-const user1 = await stmt.get([1])
-const user2 = await stmt.get([2])
-const user3 = await stmt.get([3])
-
-// Finalize when done
-stmt.finalize()
-
+// Each resolves to an array of rows — index in, or use the builder's first().
+console.log(user1[0]?.name)
 ```
+
+Keep the SQL text identical across those calls and vary only the bindings. That is
+what lets the driver reuse its plan, and it is also what keeps the values
+parameterized rather than concatenated in.
+
+::: tip
+The object `unsafe` returns before you await it is the driver's own, and its shape
+differs between `bun:sqlite` and `Bun.sql`. Await it and work with the rows; don't
+reach for methods on the unawaited value.
+:::
 
 ## Transaction with Raw Queries
 
