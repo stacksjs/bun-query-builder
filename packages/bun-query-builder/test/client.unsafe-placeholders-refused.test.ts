@@ -95,21 +95,22 @@ describe('unsafe() placeholder style (#1171)', () => {
     beforeEach(() => { config.dialect = 'postgres' as any })
 
     it('accepts $n, in any order', () => {
-      // The shape db.d.ts documents. Throwing here would be the false positive
-      // that matters, so assert the guard specifically, not the connection.
-      expect(() => assertOnly(() => qb().unsafe('SELECT $2 AS a, $1 AS b', ['ONE', 'TWO']))).not.toThrow(REFUSED)
+      // The shape db.d.ts documents. A throw here is the false positive that
+      // would matter, so this asserts nothing is thrown at all.
+      expect(refusal(() => qb().unsafe('SELECT $2 AS a, $1 AS b', ['ONE', 'TWO']))).toBeNull()
     })
 
     it('accepts a jsonb ? operator when $n is also present', () => {
-      // `data ? 'key'` is a real Postgres operator, not a placeholder.
-      expect(() => assertOnly(() => qb().unsafe('SELECT * FROM t WHERE data ? \'key\' AND id = $1', [7]))).not.toThrow(REFUSED)
+      // `data ? 'key'` is a real Postgres operator, not a placeholder. Keying the
+      // check on `?` instead of on the absence of $n would reject this.
+      expect(refusal(() => qb().unsafe('SELECT * FROM t WHERE data ? \'key\' AND id = $1', [7]))).toBeNull()
     })
 
     it('never inspects a query with no bindings', () => {
       // Raw DDL, and the `?` in a literal that is data rather than a placeholder.
-      expect(() => assertOnly(() => qb().unsafe('CREATE TABLE t (id int)'))).not.toThrow(REFUSED)
-      expect(() => assertOnly(() => qb().unsafe('SELECT * FROM users WHERE name = \'what?\''))).not.toThrow(REFUSED)
-      expect(() => assertOnly(() => qb().unsafe('SELECT * FROM users WHERE email = ?', []))).not.toThrow(REFUSED)
+      expect(refusal(() => qb().unsafe('CREATE TABLE t (id int)'))).toBeNull()
+      expect(refusal(() => qb().unsafe('SELECT * FROM users WHERE name = \'what?\''))).toBeNull()
+      expect(refusal(() => qb().unsafe('SELECT * FROM users WHERE email = ?', []))).toBeNull()
     })
   })
 
@@ -117,29 +118,35 @@ describe('unsafe() placeholder style (#1171)', () => {
     it('SQLite and MySQL still take ?', () => {
       for (const d of ['sqlite', 'mysql'] as const) {
         config.dialect = d as any
-        expect(() => assertOnly(() => qb().unsafe('SELECT * FROM users WHERE email = ? LIMIT 1', ['a@b.c'])))
-          .not.toThrow(REFUSED)
+        expect(refusal(() => qb().unsafe('SELECT * FROM users WHERE email = ? LIMIT 1', ['a@b.c']))).toBeNull()
       }
     })
   })
 })
 
 /**
- * Run `fn` and swallow anything that is not this guard's refusal.
+ * The message `fn` threw, or null if it returned.
  *
- * These cases assert that the GUARD does not fire. Past it the call reaches a
- * connection that no test here configures, so a driver error is expected and
- * says nothing about the thing under test; only a `[query-builder] unsafe()`
- * message would.
+ * `unsafe` returns a LAZY query: it reaches a database when something awaits it,
+ * and not before. So these cases call it and discard the result, which exercises
+ * the guard while executing nothing.
+ *
+ * That is load-bearing, not tidiness. An earlier version of this helper did
+ * `void Promise.resolve(out).catch(…)` to ignore driver errors — but
+ * `Promise.resolve` calls `.then` on the thenable, so every "leaves it alone"
+ * case below really ran, `CREATE TABLE t (id int)` included, against whatever
+ * database the environment pointed at. In CI that is the shared `test_db`, and
+ * the unawaited queries outlived the file and timed out the next one's
+ * `beforeAll` (`closeConnection` → `resetDatabase` → `generateMigration`, on a
+ * 5s hook budget). Returning the message instead of swallowing it also means an
+ * unexpected throw fails loudly rather than passing as "not refused".
  */
-function assertOnly(fn: () => unknown): void {
+function refusal(fn: () => unknown): string | null {
   try {
-    const out = fn()
-    // A promise that rejects in the driver is not this guard's business either.
-    void Promise.resolve(out).catch(() => {})
+    fn()
+    return null
   }
   catch (error) {
-    if (REFUSED.test((error as Error).message))
-      throw error
+    return (error as Error).message
   }
 }
