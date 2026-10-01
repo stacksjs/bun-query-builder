@@ -8,6 +8,7 @@
         "@stacksjs/ts-validation": "^0.5.6",
       },
       "devDependencies": {
+        "@buddysh/buddy": "^0.11.2",
         "@stacksjs/bunpress": "^0.2.14",
         "@stacksjs/launchpad": "^0.6.4",
         "@stacksjs/ts-faker": "^0.1.8",
@@ -61,6 +62,8 @@
     "typescript": "^7.0.2",
   },
   "packages": {
+    "@buddysh/buddy": ["@buddysh/buddy@0.11.2", "", { "dependencies": { "prompts": "^2.4.2", "ts-pantry": "^0.11.64" }, "peerDependencies": { "@anthropic-ai/sdk": ">=0.117.1 <0.123.0" }, "optionalPeers": ["@anthropic-ai/sdk"], "bin": { "buddy": "./dist/bin/cli.js" } }, "sha512-JFXYixMjEcggy6Do8zgCUwiJ7/eEXvxTYr4Nd7QGiryhQ1aCoWYV0GkTRmmtC/hAOPUUMwQEjmFe3gBgMkCW0g=="],
+
     "@bun-query-builder/benchmark": ["@bun-query-builder/benchmark@workspace:packages/benchmark"],
 
     "@colors/colors": ["@colors/colors@1.5.0", "", {}, "sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ=="],

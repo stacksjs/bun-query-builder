@@ -1,6 +1,6 @@
-import type { BuddyBotConfig } from 'buddy-bot'
+import type { BuddyConfig } from '@buddysh/buddy'
 
-const config: BuddyBotConfig = {
+const config: BuddyConfig = {
   repository: {
     owner: 'stacksjs',
     name: 'bun-query-builder',
