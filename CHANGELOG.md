@@ -1,3 +1,23 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.4...v0.3.5)
+
+## ✨ Features
+
+- libSQL / Turso transport for the sqlite dialect ([db2aa93](https://github.com/stacksjs/bun-query-builder/commit/db2aa93)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **deps**: apply the buddy rename contents, not just the file rename (#1174) ([481ff51](https://github.com/stacksjs/bun-query-builder/commit/481ff51)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1174](https://github.com/stacksjs/bun-query-builder/issues/1174), [#1174](https://github.com/stacksjs/bun-query-builder/issues/1174), [#1173](https://github.com/stacksjs/bun-query-builder/issues/1173), [#1173](https://github.com/stacksjs/bun-query-builder/issues/1173))
+
+## 🔧 Chores
+
+- release v0.3.5 ([675f459](https://github.com/stacksjs/bun-query-builder/commit/675f459)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: move from buddy-bot to @buddysh/buddy (#1173) ([fa140a2](https://github.com/stacksjs/bun-query-builder/commit/fa140a2)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1173](https://github.com/stacksjs/bun-query-builder/issues/1173), [#1173](https://github.com/stacksjs/bun-query-builder/issues/1173), [#1453](https://github.com/stacksjs/bun-query-builder/issues/1453), [#1168](https://github.com/stacksjs/bun-query-builder/issues/1168))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.3...v0.3.4)
 
 ## 🐛 Bug Fixes
