@@ -535,6 +535,34 @@ config.sql.randomFunction = 'RANDOM()'
 config.sql.sharedLockSyntax = 'FOR SHARE'
 ```
 
+## libSQL and Turso
+
+libSQL is SQLite's SQL behind a network server, so it is not a separate dialect: keep `dialect: 'sqlite'` and point `database.url` at the server. Every query, DDL statement and migration renders exactly as it does for a local SQLite file; only the connection changes. The transport is built in and has no dependency: it speaks the Hrana-over-HTTP protocol (`POST /v3/pipeline`) to Turso, `sqld`, or `turso dev`.
+
+```ts
+import { setConfig } from 'bun-query-builder'
+
+setConfig({
+  dialect: 'sqlite',
+  database: {
+    database: 'app',
+    url: process.env.TURSO_DATABASE_URL, // libsql://app-org.turso.io
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  },
+})
+```
+
+- `libsql://` means TLS. For a local `turso dev` or `sqld`, use `http://127.0.0.1:8080` (or `libsql://127.0.0.1:8080?tls=0`).
+- The CLI accepts `DB_CONNECTION=turso` or `DB_CONNECTION=libsql` and treats both as the `sqlite` dialect.
+- A statement outside a transaction is one HTTP request, so concurrent queries run concurrently.
+- `db.transaction()` runs on one server stream: `BEGIN`, your queries, then `COMMIT` or `ROLLBACK`. Nested `transaction()`/`savepoint()` calls become SAVEPOINTs on that stream. A raw `BEGIN` through `unsafe()`, or a migration file containing one, pins the connection to a stream until the server is back in autocommit.
+- `PRAGMA foreign_keys = OFF` set on the connection is replayed at the start of every later request, so it behaves as it does on a single SQLite connection. Turso and `sqld` enforce foreign keys by default and refuse most other pragmas, `VACUUM`, `ATTACH` and temporary tables.
+- Integers outside JavaScript's safe range come back as `bigint` rather than a rounded number. Blobs come back as `Uint8Array`. A `Date` binds as its ISO-8601 string.
+- Errors carry `code` and `errno` the way `bun:sqlite` reports them (`SQLITE_CONSTRAINT_UNIQUE`, `2067`), so duplicate checks written for SQLite keep working. A refused token raises a `LibSQLError` with `code: 'LIBSQL_UNAUTHORIZED'` and `status: 401`; the token never appears in a message.
+- `connection.batch([{ sql, args }, ...])` runs several statements atomically in one round trip.
+
+`createLibSQLSQL({ url, authToken })` builds the same connection directly, for use with `createQueryBuilder({ sql })`.
+
 ## Identifiers and Quoting
 
 - We rely on Bun `sql` for identifier quoting; avoid interpolating raw identifiers without validation

@@ -86,6 +86,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import process from 'node:process'
 import { config } from './config'
+import { createLibSQLSQL, isLibSQLUrl } from './libsql'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 import { SQLiteDeferredInserts } from './sqlite-deferred-inserts'
 
@@ -860,8 +861,34 @@ export function resolvePoolOptions(pool?: PoolConfig): {
  * For SQLite, uses bun:sqlite directly for better compiled binary support.
  * Handles connection errors gracefully by falling back to in-memory SQLite.
  */
+/**
+ * The libSQL server a sqlite-dialect config points at, or null for a file.
+ *
+ * libSQL is SQLite's SQL behind a network transport, so it is selected by the
+ * URL rather than by a dialect of its own: every grammar branch keyed on
+ * `sqlite` stays correct, and only the connection differs. `database.url`
+ * is the documented place; a URL in `database.database` is accepted too,
+ * since that slot is the "where is it" field for sqlite.
+ */
+export function resolveLibSQLTarget(dbConfig: DatabaseConfig = config.database as DatabaseConfig, dialect: SupportedDialect = config.dialect): { url: string, authToken?: string } | null {
+  if (dialect !== 'sqlite' || !dbConfig)
+    return null
+  const url = isLibSQLUrl(dbConfig.url) ? dbConfig.url : isLibSQLUrl(dbConfig.database) ? dbConfig.database : null
+  if (!url)
+    return null
+  return { url, authToken: dbConfig.authToken || undefined }
+}
+
 export function getBunSql(): SQL {
   const dialect = config.dialect
+
+  // A libSQL server (Turso, sqld, `turso dev`): SQLite SQL over Hrana/HTTP.
+  // Construction cannot fail on the network - nothing is sent until the first
+  // query - so a bad URL throws here, loudly, rather than falling back.
+  const libsql = resolveLibSQLTarget(config.database as DatabaseConfig, dialect)
+  if (libsql)
+    return createLibSQLSQL(libsql)
+
   const connectionString = createConnectionString(dialect, config.database)
 
   try {
@@ -929,6 +956,8 @@ function connectionSignature(): string {
     host: d.host,
     port: d.port,
     url: d.url,
+    // Compared, never logged: a rotated token must open a new connection.
+    authToken: d.authToken,
     pool: resolvePoolOptions(d.pool),
   })
 }

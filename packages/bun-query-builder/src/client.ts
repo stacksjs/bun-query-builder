@@ -10,13 +10,13 @@ import type { QueryBuilderOptions, QueryHooks, SupportedDialect} from './types'
 import { config, getPlaceholder, getPlaceholders, isMysqlLike, setConfig } from './config'
 import type { DriverConnection, DriverQuery } from './db'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
-import { bunSql, getOrCreateBunSql, resetConnection } from './db'
+import { bunSql, getOrCreateBunSql, resetConnection, resolveLibSQLTarget } from './db'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
 import type { WhereTerm } from './sql-fragments'
 import { countPlaceholders, FALSE_PREDICATE, mapPlaceholders, renderInPredicate, renderWhereTerms, scanTopLevelKeywords } from './sql-fragments'
 
-export { resetConnection }
+export { resetConnection, resolveLibSQLTarget }
 
 // Type guard for raw SQL expressions
 interface RawExpression {

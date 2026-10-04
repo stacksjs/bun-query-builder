@@ -350,6 +350,14 @@ export interface DatabaseConfig {
   ssl?: boolean
   /** Connection-pool tuning passed through to the Bun SQL driver. See {@link PoolConfig}. */
   pool?: PoolConfig
+  /**
+   * Bearer token for a libSQL server (a Turso database token).
+   *
+   * Only read when the dialect is `sqlite` and `url` is a libSQL URL
+   * (`libsql://`, `https://`, `http://`, `ws(s)://`). libSQL speaks SQLite's
+   * SQL, so it keeps the `sqlite` dialect and only the transport changes.
+   */
+  authToken?: string
 }
 
 /** Vitess topology controls that affect generated DDL. */

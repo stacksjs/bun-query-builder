@@ -32,7 +32,7 @@ import type { RelationCardinality } from './type-inference'
 import { isNumericPlanType, normalizeAttributeType, sqliteAffinityFor } from './column-types'
 import { config, isMysqlLike } from './config'
 import type { DriverConnection } from './db'
-import { getOrCreateBunSql } from './db'
+import { getOrCreateBunSql, resolveLibSQLTarget } from './db'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 import { createFakerCompatLayer } from './faker-compat'
 import { normalizeRelationList } from './relation-utils'
@@ -811,10 +811,12 @@ class DriverExecutor implements OrmExecutor {
       return { changes: 1, lastInsertId: row ? (row[primaryKey] ?? null) : null }
     }
     // MySQL: no RETURNING — read the driver's insertId, falling back to
-    // LAST_INSERT_ID() on the same connection.
+    // LAST_INSERT_ID() on the same connection. SQLite over libSQL reports the
+    // rowid with the result itself; a follow-up `last_insert_rowid()` would run
+    // on a different server connection and read 0, so there is no fallback.
     const res = await this.conn().unsafe(sql, params)
     let id = extractInsertId(res)
-    if (id == null) {
+    if (id == null && this.dialect !== 'sqlite') {
       const rows = await this.conn().unsafe('SELECT LAST_INSERT_ID() as id', [])
       const row = Array.isArray(rows) ? rows[0] : rows
       id = (row?.id as number | bigint | undefined) ?? null
@@ -926,15 +928,24 @@ function getExecutor(): OrmExecutor {
 
   const dialect = config.dialect
   const database = config.database?.database ?? null
+  // The libSQL URL is part of the identity: pointing the same `database` name
+  // at a server instead of a file has to rebuild the executor.
+  const identity = `${database ?? ''}|${resolveLibSQLTarget()?.url ?? ''}`
 
-  if (_executor && _executorForDb === null && _executorDialect === dialect && _executorDatabase === database)
+  if (_executor && _executorForDb === null && _executorDialect === dialect && _executorDatabase === identity)
     return _executor
 
   _executorForDb = null
   _executorDialect = dialect
-  _executorDatabase = database
+  _executorDatabase = identity
 
-  if (dialect === 'sqlite') {
+  // A libSQL server keeps the sqlite dialect but is not a file `bun:sqlite`
+  // can open: the model layer writes through the shared async connection,
+  // exactly as it does for the network dialects.
+  if (dialect === 'sqlite' && resolveLibSQLTarget()) {
+    _executor = new DriverExecutor(dialect)
+  }
+  else if (dialect === 'sqlite') {
     // No database named means an in-memory one, which is right for a test and
     // wrong everywhere else: every write succeeds and is gone when the process
     // exits. Said once, so a model layer that was never pointed at the app's

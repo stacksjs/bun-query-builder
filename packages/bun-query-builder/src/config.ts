@@ -255,11 +255,26 @@ const configState: ConfigState
  */
 export function resolveDialect(explicit?: string | null): SupportedDialect {
   if (explicit)
-    return explicit as SupportedDialect
+    return normalizeDialectName(explicit)
   const fromEnv = process.env.DB_DIALECT || process.env.DB_CONNECTION
   if (fromEnv)
-    return fromEnv as SupportedDialect
+    return normalizeDialectName(fromEnv)
   return (config.dialect || 'postgres') as SupportedDialect
+}
+
+/**
+ * Collapse a connection name onto the dialect whose SQL it speaks.
+ *
+ * `turso` and `libsql` are SQLite behind a network transport (see
+ * `src/libsql.ts`): they render SQLite SQL and are reached through
+ * `database.url`, so as a DIALECT they are `sqlite`. `DB_CONNECTION=turso`
+ * otherwise arrived here verbatim and every dialect switch fell through.
+ */
+export function normalizeDialectName(name: string): SupportedDialect {
+  const lower = name.trim().toLowerCase()
+  if (lower === 'turso' || lower === 'libsql')
+    return 'sqlite'
+  return lower as SupportedDialect
 }
 
 /**
