@@ -418,6 +418,12 @@ export interface MigrationOperation {
   confidence?: 'high' | 'low'
   /** The SQL this op emits (joined when an op maps to multiple statements). */
   sql: string
+  /**
+   * Set when the emitted SQL deliberately differs from what the model says,
+   * with the reason and what to do about it — e.g. a NOT NULL column without a
+   * default added to an existing table, which is emitted as nullable.
+   */
+  warning?: string
 }
 
 /**
@@ -1849,6 +1855,37 @@ function addedColumnNeedsRebuild(column: ColumnPlan | undefined): boolean {
   return value !== undefined && value !== null && String(value).toUpperCase() !== 'NULL'
 }
 
+/**
+ * Whether a column ADDED to an existing table would need a value for every row
+ * that is already there, and has none to give: NOT NULL with no default.
+ *
+ * Postgres refuses such an `ADD COLUMN` on a populated table, SQLite refuses it
+ * on any table, and MySQL fills in a type-dependent implicit value (`''`, `0`)
+ * that nobody chose. None of those is what the model meant.
+ */
+function needsBackfill(column: ColumnPlan): boolean {
+  return !column.isPrimaryKey && !column.isNullable && !(column.hasDefault && column.defaultValue !== undefined)
+}
+
+/**
+ * The column as it is actually added, and the warning that explains why it
+ * differs from the model.
+ *
+ * Emitted NULLABLE, with a comment in the migration, rather than as NOT NULL:
+ * it is the only form that applies on every dialect and every table, populated
+ * or not, and it loses nothing. The model still says NOT NULL, so the
+ * tightening is still model-driven — backfill the rows, then either give the
+ * attribute a default or regenerate against the live database (`fromDb`),
+ * which sees the nullable column and emits the `SET NOT NULL`.
+ */
+function columnAsAdded(table: string, column: ColumnPlan): { column: ColumnPlan, warning?: string } {
+  if (!needsBackfill(column))
+    return { column }
+  const warning = `${table}.${column.name} is NOT NULL in the model but has no default, so rows already in "${table}" would have no value for it. `
+    + 'It is added as NULLABLE. Backfill it, then give the attribute a default or regenerate from the live database (fromDb) to apply NOT NULL.'
+  return { column: { ...column, isNullable: true }, warning }
+}
+
 /** Whether a column is constrained such that SQLite can't DROP it in place. */
 function isColumnConstrained(table: TablePlan, columnName: string): boolean {
   const col = table.columns.find(c => c.name === columnName)
@@ -2285,13 +2322,28 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
       if (needsRebuild) {
         const columnSource: Record<string, string> = {}
         const renameTo = new Map(renames.map(r => [r.to, r.from]))
+        const warnings: string[] = []
+        const targetColumns: ColumnPlan[] = []
         for (const c of curr.columns) {
-          if (prevCols[c.name])
+          if (prevCols[c.name]) {
             columnSource[c.name] = c.name // carried over
-          else if (renameTo.has(c.name))
+            targetColumns.push(c)
+          }
+          else if (renameTo.has(c.name)) {
             columnSource[c.name] = renameTo.get(c.name)! // renamed: pull from old name
-          // else: brand-new column -> omit so it gets its DEFAULT / NULL
+            targetColumns.push(c)
+          }
+          else {
+            // Brand-new column -> omitted from the copy so it gets its
+            // DEFAULT / NULL, which a NOT NULL column without a default
+            // cannot take. Same rule as an in-place ADD COLUMN.
+            const added = columnAsAdded(curr.table, c)
+            if (added.warning)
+              warnings.push(added.warning)
+            targetColumns.push(added.column)
+          }
         }
+        const target: TablePlan = warnings.length > 0 ? { ...curr, columns: targetColumns } : curr
 
         let tempName = `_qb_tmp_${curr.table}`
         let guard = 0
@@ -2300,7 +2352,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
           tempName = `_qb_tmp_${curr.table}_${guard}`
         }
 
-        const rebuildStatement = driver.rebuildTable({ target: curr, tempName, columnSource })
+        const rebuildStatement = `${warnings.map(w => `-- qb: ${w}\n`).join('')}${driver.rebuildTable({ target, tempName, columnSource })}`
         chunks.push(rebuildStatement)
         const typeChanged = modifiedCols.some(n => prevCols[n].type !== currCols[n].type)
         operations.push({
@@ -2308,7 +2360,10 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
           table: curr.table,
           destructive: removedCols.length > 0 || typeChanged,
           sql: rebuildStatement,
+          ...(warnings.length > 0 ? { warning: warnings.join(' ') } : {}),
         })
+        if (opts.write === true && !opts.dryRun)
+          warnings.forEach(w => console.warn(`-- ${w}`))
         for (const r of renames)
           operations.push({ kind: 'rename_column', table: curr.table, from: r.from, to: r.to, destructive: false, confidence: 'high', sql: rebuildStatement })
         for (const name of removedCols)
@@ -2400,12 +2455,14 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
 
     // Add new columns
     for (const colName of addedCols) {
-      const c = currCols[colName]
-      const addColumnStatement = driver.addColumn(curr.table, c)
+      const { column: c, warning } = columnAsAdded(curr.table, currCols[colName])
+      const addColumnStatement = `${warning ? `-- qb: ${warning}\n` : ''}${driver.addColumn(curr.table, c)}`
       tableChanges.push(addColumnStatement)
       chunks.push(addColumnStatement)
-      operations.push({ kind: 'add_column', table: curr.table, column: c.name, destructive: false, sql: addColumnStatement })
+      operations.push({ kind: 'add_column', table: curr.table, column: c.name, destructive: false, sql: addColumnStatement, ...(warning ? { warning } : {}) })
       info(`-- Detected new column: ${curr.table}.${c.name}`)
+      if (warning && opts.write === true && !opts.dryRun)
+        console.warn(`-- ${warning}`)
       hasChanges = true
 
       if (c.references) {
