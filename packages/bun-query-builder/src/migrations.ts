@@ -396,6 +396,7 @@ export type MigrationOpKind =
   | 'add_foreign_key'
   | 'rebuild_table'
   | 'create_enum'
+  | 'add_enum_value'
 
 /**
  * A structured description of one change emitted by the diff engine. Callers
@@ -1619,7 +1620,8 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
 
 /**
  * Whether a change keeps the physical type but tightens a bound on it, so
- * existing values may no longer fit (a varchar(100) becoming varchar(50)).
+ * existing values may no longer fit (a varchar(100) becoming varchar(50), a
+ * decimal losing digits, an enum losing a value).
  * Postgres and strict MySQL refuse the ALTER when a row is too long; MySQL in
  * a permissive mode truncates. Either way it is not a free change.
  */
@@ -1633,6 +1635,9 @@ export function isNarrowingChange(from: ColumnPlan, to: ColumnPlan): boolean {
     const b = decimalPrecision(to)
     return b.scale < a.scale || (b.precision - b.scale) < (a.precision - a.scale)
   }
+  // An enum that loses a value: rows holding it can no longer be cast across.
+  if (from.type === 'enum' && to.type === 'enum')
+    return (from.enumValues ?? []).some(v => !(to.enumValues ?? []).includes(v))
   return false
 }
 
@@ -2115,8 +2120,12 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
     emit(combinedStatement, `create-${t.table}-table`)
   }
 
-  // 2) Create enum types for new columns in existing tables
+  // 2) Create enum types for new columns in existing tables, and extend the
+  // types of existing enum columns that gained values.
   const enumTypes = new Set<string>()
+  // Columns whose new enum values step 2 already added; step 6 compares them
+  // as though the values were already there, so nothing else is re-emitted.
+  const enumValuesAdded = new Set<string>()
   for (const tableName of Object.keys(nextTables)) {
     const prev = prevTables[tableName]
     const curr = nextTables[tableName]
@@ -2140,8 +2149,31 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
       const enumTypeName = `${curr.table}_${c.name}_type`
       c.enumTypeName = enumTypeName
 
-      if (prevCols[colName])
+      const prevCol = prevCols[colName]
+      if (prevCol?.type === 'enum') {
+        // Values only ever added (the common case: a new status) become
+        // `ALTER TYPE ... ADD VALUE` in a migration file of their own. Own
+        // file, because a value added inside a transaction cannot be used
+        // until it commits, and the table's alter file - which may set the
+        // new value as the default - runs in a transaction of its own after
+        // this one. Removals are left to the column change in step 6, which
+        // rebuilds the type.
+        const before = prevCol.enumValues ?? []
+        const added = c.enumValues.filter(v => !before.includes(v))
+        const removed = before.filter(v => !c.enumValues!.includes(v))
+        const liveType = prevCol.enumTypeName ?? enumTypeName
+        if (driver.addEnumValues && before.length > 0 && added.length > 0 && removed.length === 0 && liveType === enumTypeName) {
+          const addValuesStatement = driver.addEnumValues(liveType, added)
+          chunks.push(addValuesStatement)
+          operations.push({ kind: 'add_enum_value', table: curr.table, column: c.name, destructive: false, sql: addValuesStatement })
+          emit(addValuesStatement, `alter-${liveType}-enum`)
+          info(`-- Detected new enum value(s) on ${curr.table}.${c.name}: ${added.join(', ')}`)
+          enumValuesAdded.add(foreignKeyKey(curr.table, c.name))
+        }
         continue
+      }
+      // An existing column turning INTO an enum needs its type created too;
+      // the ALTER COLUMN ... TYPE in step 6 names it.
 
       if (!enumTypes.has(enumTypeName)) {
         const createEnumStatement = driver.createEnumType(enumTypeName, c.enumValues)
@@ -2226,6 +2258,13 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
         currIdx = mapIndexesByKey(curr.indexes, curr.table)
       }
       removedCols = []
+    }
+
+    // An enum column whose added values step 2 already emitted is compared as
+    // if they were in place, so only its OTHER facets can still differ.
+    for (const name of Object.keys(prevCols)) {
+      if (currCols[name] && enumValuesAdded.has(foreignKeyKey(curr.table, name)))
+        prevCols[name] = { ...prevCols[name], enumValues: currCols[name].enumValues }
     }
 
     // Columns present on both sides whose attributes changed, and FK-only changes.

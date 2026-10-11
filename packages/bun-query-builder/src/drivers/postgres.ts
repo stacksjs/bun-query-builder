@@ -4,6 +4,12 @@ import { qualifiedIndexName } from './index-name'
 
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
+  /**
+   * Append values to an existing named enum type. Only dialects with named
+   * enum types (Postgres) implement it; inline enums (MySQL's `ENUM(...)`,
+   * SQLite's CHECK) change with the column definition instead.
+   */
+  addEnumValues?: (enumTypeName: string, values: string[]) => string
   createTable: (table: TablePlan) => string
   /**
    * `columns` is the table's column plan, which MySQL needs and the others
@@ -176,6 +182,21 @@ export class PostgresDriver implements DialectDriver {
     return `CREATE TYPE ${this.quoteIdentifier(enumTypeName)} AS ENUM (${enumValues});`
   }
 
+  /**
+   * `ALTER TYPE ... ADD VALUE IF NOT EXISTS` per value.
+   *
+   * Allowed inside a transaction since Postgres 12, but a value added in a
+   * transaction cannot be USED (as a default, in an UPDATE) until that
+   * transaction commits. The differ therefore emits these in a migration file
+   * of their own, ahead of the table's alter file, and the runner applies each
+   * file in its own transaction.
+   */
+  addEnumValues(enumTypeName: string, values: string[]): string {
+    return values
+      .map(v => `ALTER TYPE ${this.quoteIdentifier(enumTypeName)} ADD VALUE IF NOT EXISTS '${v.replace(/'/g, '\'\'')}';`)
+      .join('\n')
+  }
+
   createTable(table: TablePlan): string {
     const columns = table.columns.map(c => this.renderColumn(c)).join(',\n  ')
     return `CREATE TABLE IF NOT EXISTS ${this.quoteIdentifier(table.table)} (\n  ${columns}\n);`
@@ -248,6 +269,13 @@ export class PostgresDriver implements DialectDriver {
     // `created_at` moving from CURRENT_TIMESTAMP to the UTC clock) locked each
     // of the app's largest tables in turn, during a deploy, for nothing. With
     // no previous column the full restatement below still applies.
+    // An enum whose allowed values changed. The type string alone does not
+    // show it - `"t_c_type"` before and after - so the old fall-through below
+    // emitted `ALTER COLUMN ... TYPE "t_c_type"`, a no-op cast to the type the
+    // column already had, and the new values never existed.
+    if (previous?.type === 'enum' && column.type === 'enum' && column.enumTypeName && column.enumValues?.length && enumChanged(previous, column))
+      return this.changeEnumValues(tableName, column, previous)
+
     if (previous && this.getColumnType(previous) === typeSql && !enumChanged(previous, column)) {
       const statements: string[] = []
       if (!column.isPrimaryKey && previous.isNullable !== column.isNullable)
@@ -288,6 +316,63 @@ export class PostgresDriver implements DialectDriver {
     if (defaultValue)
       statements.push(`ALTER TABLE ${table} ALTER COLUMN ${name} SET ${defaultValue};`)
 
+    return statements.join('\n')
+  }
+
+  /**
+   * Bring an enum column's type to the model's value set.
+   *
+   * Only additions: `ADD VALUE` for each, then any other facet that changed.
+   * (A caller that also uses a new value - as the default, say - must commit
+   * the ADD VALUE first; the differ does that by emitting it separately.)
+   *
+   * Any removal: Postgres cannot drop a value from an enum, so the type is
+   * rebuilt - the old one renamed aside, the new one created, the column cast
+   * across through text, the old type dropped. The cast fails, and the
+   * migration with it, if a row still holds a removed value; that is the
+   * model asking for something the data does not support.
+   */
+  private changeEnumValues(tableName: string, column: ColumnPlan, previous: ColumnPlan): string {
+    const table = this.quoteIdentifier(tableName)
+    const name = this.quoteIdentifier(column.name)
+    const newType = column.enumTypeName!
+    const oldType = previous.enumTypeName ?? newType
+    const before = previous.enumValues ?? []
+    const after = column.enumValues ?? []
+    const removed = before.filter(v => !after.includes(v))
+
+    const facets = (): string[] => {
+      const out: string[] = []
+      if (!column.isPrimaryKey && previous.isNullable !== column.isNullable)
+        out.push(`ALTER TABLE ${table} ALTER COLUMN ${name} ${column.isNullable ? 'DROP NOT NULL' : 'SET NOT NULL'};`)
+      const was = this.getDefaultValue(previous)
+      const now = this.getDefaultValue(column)
+      if (was !== now)
+        out.push(now ? `ALTER TABLE ${table} ALTER COLUMN ${name} SET ${now};` : `ALTER TABLE ${table} ALTER COLUMN ${name} DROP DEFAULT;`)
+      return out
+    }
+
+    if (removed.length === 0 && oldType === newType) {
+      const added = after.filter(v => !before.includes(v))
+      return [this.addEnumValues(oldType, added), ...facets()].filter(Boolean).join('\n')
+    }
+
+    const statements: string[] = []
+    const aside = `${oldType}__qb_old`
+    if (oldType === newType)
+      statements.push(`ALTER TYPE ${this.quoteIdentifier(oldType)} RENAME TO ${this.quoteIdentifier(aside)};`)
+    statements.push(this.createEnumType(newType, after))
+    statements.push(`ALTER TABLE ${table} ALTER COLUMN ${name} DROP DEFAULT;`)
+    statements.push(`ALTER TABLE ${table} ALTER COLUMN ${name} TYPE ${this.quoteIdentifier(newType)} USING ${name}::text::${this.quoteIdentifier(newType)};`)
+    if (!column.isPrimaryKey)
+      statements.push(`ALTER TABLE ${table} ALTER COLUMN ${name} ${column.isNullable ? 'DROP NOT NULL' : 'SET NOT NULL'};`)
+    const defaultValue = this.getDefaultValue(column)
+    if (defaultValue)
+      statements.push(`ALTER TABLE ${table} ALTER COLUMN ${name} SET ${defaultValue};`)
+    // A legacy, differently named type may be shared with other columns, so
+    // only the one this rebuild renamed aside is dropped.
+    if (oldType === newType)
+      statements.push(`DROP TYPE ${this.quoteIdentifier(aside)};`)
     return statements.join('\n')
   }
 

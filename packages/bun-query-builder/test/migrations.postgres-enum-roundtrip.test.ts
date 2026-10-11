@@ -108,7 +108,9 @@ describe('reconciling an introspected enum against its model', () => {
 
     const result = generateDiffOperations(introspected, planWith(modelSide))
 
-    expect(result.operations.some(op => op.kind === 'modify_column' && op.column === 'state')).toBe(true)
+    // An added value is `ALTER TYPE ... ADD VALUE`, not a column retype.
+    expect(result.operations.some(op => op.kind === 'add_enum_value' && op.column === 'state')).toBe(true)
+    expect(result.statements.join('\n')).toContain('ALTER TYPE "issues_state_type" ADD VALUE IF NOT EXISTS \'closed\'')
   })
 
   /** The one that stopped `migrate` running at all. */
