@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.7...v0.3.8)
+
+## 🐛 Bug Fixes
+
+- bind a whereIn subquery's own parameters ([8d3e2fd](https://github.com/stacksjs/bun-query-builder/commit/8d3e2fd)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.8 ([4da621d](https://github.com/stacksjs/bun-query-builder/commit/4da621d)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.6...v0.3.7)
 
 ## ✨ Features
