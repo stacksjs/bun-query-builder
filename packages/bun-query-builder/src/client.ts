@@ -491,6 +491,25 @@ function assertSafeWhereOperator(op: unknown, context: string): string {
 }
 
 /**
+ * `where(col, 'is', null)` / `where(col, 'is not', null)` as the predicate
+ * itself, or `null` for every other operator.
+ *
+ * `IS` compares against NULL only, and NULL cannot ride in a placeholder on
+ * every dialect: SQLite reads `col IS ?` bound to null as `IS NULL`, while
+ * PostgreSQL rejects `col IS $1` as a syntax error. So the string and array
+ * forms of where/andWhere/orWhere on selects, updates and deletes worked in
+ * SQLite tests and failed on the production database.
+ */
+function renderNullPredicate(column: string, op: string, value: unknown, context: string): string | null {
+  const lower = op.toLowerCase()
+  if (lower !== 'is' && lower !== 'is not')
+    return null
+  if (value !== null && value !== undefined)
+    throw new TypeError(`[query-builder] ${context}: operator '${op}' only accepts NULL/undefined as value, got ${typeof value} (${String(value)})`)
+  return `${column} IS ${lower === 'is not' ? 'NOT ' : ''}NULL`
+}
+
+/**
  * Like `validateIdentifier`, but allows one optional `table.`
  * prefix so qualified column references (`users.id`, `posts.title`)
  * pass through. Each segment must independently match the strict
@@ -3894,6 +3913,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       if (typeof expr === 'string' && op !== undefined) {
         validateIdentifier(String(expr), `${label}(column)`)
         assertSafeWhereOperator(op, `${label}(operator)`)
+        const isNull = renderNullPredicate(String(expr), String(op), value, label)
+        if (isNull) {
+          pushWhere(conn, isNull)
+          return self
+        }
         const paramIndex = whereParams.length + 1
         whereParams.push(value)
         pushWhere(conn, `${String(expr)} ${String(op)} ${getPlaceholder(paramIndex)}`)
@@ -3915,6 +3939,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           pushWhere(conn, clause)
         }
         else {
+          const isNull = renderNullPredicate(colName, operator, val, label)
+          if (isNull) {
+            pushWhere(conn, isNull)
+            return self
+          }
           const paramIndex = whereParams.length + 1
           whereParams.push(val)
           pushWhere(conn, `${colName} ${operator} ${getPlaceholder(paramIndex)}`)
@@ -5311,6 +5340,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             pushWhere('AND', clause)
             return this
           }
+          const isNull = renderNullPredicate(quoteColumnForDialect(String(expr)), operator, value, 'where')
+          if (isNull) {
+            pushWhere('AND', isNull)
+            return this
+          }
           const paramIndex = whereParams.length + 1
           whereParams.push(value)
           pushWhere('AND', `${quoteColumnForDialect(String(expr))} ${String(op)} ${getPlaceholder(paramIndex)}`)
@@ -5332,6 +5366,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             pushWhere('AND', clause)
           }
           else {
+            const isNull = renderNullPredicate(quoteColumnForDialect(colName), operator, val, 'where')
+            if (isNull) {
+              pushWhere('AND', isNull)
+              return this
+            }
             const paramIndex = whereParams.length + 1
             whereParams.push(val)
             pushWhere('AND', `${quoteColumnForDialect(colName)} ${operator} ${getPlaceholder(paramIndex)}`)
@@ -7731,6 +7770,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               return this
             }
 
+            const isNull = renderNullPredicate(left, safeOperator, value, 'updateTable.where')
+            if (isNull) {
+              appendPredicate(isNull)
+              built = prepareQuery(sqlText, params)
+              return this
+            }
             const paramIndex = params.length + 1
             appendPredicate(`${left} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             params.push(value)
@@ -7752,6 +7797,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               return this
             }
 
+            const isNull = renderNullPredicate(quoteId(String(col)), safeOperator, val, 'updateTable.where')
+            if (isNull) {
+              appendPredicate(isNull)
+              built = prepareQuery(sqlText, params)
+              return this
+            }
             const paramIndex = params.length + 1
             appendPredicate(`${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             params.push(val)
@@ -8025,6 +8076,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               return this
             }
 
+            const isNull = renderNullPredicate(quoteId(expr), safeOperator, value, 'deleteFrom.where')
+            if (isNull) {
+              appendPredicate(isNull)
+              built = null
+              return this
+            }
             const paramIndex = delParams.length + 1
             appendPredicate(`${quoteId(expr)} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             delParams.push(value)
@@ -8045,6 +8102,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               return this
             }
 
+            const isNull = renderNullPredicate(quoteId(String(col)), safeOperator, val, 'deleteFrom.where')
+            if (isNull) {
+              appendPredicate(isNull)
+              built = null
+              return this
+            }
             const paramIndex = delParams.length + 1
             appendPredicate(`${quoteId(String(col))} ${safeOperator} ${getPlaceholder(paramIndex)}`)
             delParams.push(val)
