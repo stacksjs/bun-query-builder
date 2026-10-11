@@ -37,13 +37,15 @@ function plan(dialect: 'postgres' | 'sqlite' | 'mysql', extra: ColumnPlan[] = []
 const coachId: ColumnPlan = { name: 'coach_id', type: 'bigint', isPrimaryKey: false, isUnique: false, isNullable: false, hasDefault: false }
 
 describe('adding a NOT NULL column with no default to an existing table', () => {
-  it('postgres: added as nullable, with a comment and a warning', () => {
-    const { operations, statements } = generateDiffOperations(plan('postgres'), plan('postgres', [coachId]))
+  it('postgres: added as nullable, with a comment in the file and a warning on the operation', () => {
+    const { operations, statements, files } = generateDiffOperations(plan('postgres'), plan('postgres', [coachId]))
     const add = operations.find(op => op.kind === 'add_column')!
     expect(add.warning).toMatch(/orders\.coach_id is NOT NULL in the model but has no default/)
-    expect(add.sql).toContain('-- qb: orders.coach_id is NOT NULL')
-    expect(add.sql).toContain('ALTER TABLE "orders" ADD COLUMN "coach_id" bigint;')
+    expect(add.sql).toBe('ALTER TABLE "orders" ADD COLUMN "coach_id" bigint;')
     expect(statements.join('\n')).not.toMatch(/"coach_id" bigint not null/i)
+    // Statements stay plain SQL for callers that parse them; the file explains.
+    expect(statements.join('\n')).not.toContain('-- qb:')
+    expect(files[0].sql).toContain('-- qb: orders.coach_id is NOT NULL')
   })
 
   it('mysql: same rule, rather than letting MySQL invent a 0 for every row', () => {

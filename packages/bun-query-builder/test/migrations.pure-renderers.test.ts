@@ -131,7 +131,9 @@ describe('writing is explicit', () => {
     await generateMigration(modelsDir, { dialect: 'sqlite', dryRun: true })
     expect(migrationFiles()).toEqual([])
 
-    await generateMigration(modelsDir, { dialect: 'sqlite' })
+    const result = await generateMigration(modelsDir, { dialect: 'sqlite' })
     expect(migrationFiles().some(f => f.endsWith('-create-orders-table.sql'))).toBe(true)
+    // The result describes the files too, for callers that write their own.
+    expect(result.files?.map(f => f.name)).toEqual(['create-orders-table'])
   })
 })

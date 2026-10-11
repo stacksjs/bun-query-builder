@@ -641,6 +641,14 @@ export interface GenerateMigrationResult {
    * Optional for backward compatibility with existing consumers.
    */
   operations?: import('./migrations').MigrationOperation[]
+  /**
+   * The migration files the SQL groups into, in order — written to disk
+   * unless this was a dry run. A caller that persists migrations itself can
+   * write these instead of regrouping `sqlStatements`; in particular, an enum
+   * `ADD VALUE` arrives in a file of its own, ahead of any table change that
+   * might use the new value.
+   */
+  files?: import('./migrations').GeneratedMigrationFile[]
 }
 
 export interface UnsafeOptions {

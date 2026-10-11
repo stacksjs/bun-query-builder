@@ -2352,7 +2352,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
           tempName = `_qb_tmp_${curr.table}_${guard}`
         }
 
-        const rebuildStatement = `${warnings.map(w => `-- qb: ${w}\n`).join('')}${driver.rebuildTable({ target, tempName, columnSource })}`
+        const rebuildStatement = driver.rebuildTable({ target, tempName, columnSource })
         chunks.push(rebuildStatement)
         const typeChanged = modifiedCols.some(n => prevCols[n].type !== currCols[n].type)
         operations.push({
@@ -2369,7 +2369,10 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
         for (const name of removedCols)
           operations.push({ kind: 'drop_column', table: curr.table, column: name, destructive: true, sql: rebuildStatement })
         info(`-- Detected SQLite table rebuild required: ${curr.table}`)
-        emit(rebuildStatement, `alter-${curr.table}-table`)
+        // The explanation goes in the FILE only. `statements` and `op.sql` stay
+        // plain SQL, because callers that persist migrations themselves parse
+        // them (a leading comment hides what a statement is).
+        emit(`${warnings.map(w => `-- qb: ${w}\n`).join('')}${rebuildStatement}`, `alter-${curr.table}-table`)
         continue
       }
     }
@@ -2456,8 +2459,9 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
     // Add new columns
     for (const colName of addedCols) {
       const { column: c, warning } = columnAsAdded(curr.table, currCols[colName])
-      const addColumnStatement = `${warning ? `-- qb: ${warning}\n` : ''}${driver.addColumn(curr.table, c)}`
-      tableChanges.push(addColumnStatement)
+      const addColumnStatement = driver.addColumn(curr.table, c)
+      // The comment goes in the file only; see the rebuild path above.
+      tableChanges.push(warning ? `-- qb: ${warning}\n${addColumnStatement}` : addColumnStatement)
       chunks.push(addColumnStatement)
       operations.push({ kind: 'add_column', table: curr.table, column: c.name, destructive: false, sql: addColumnStatement, ...(warning ? { warning } : {}) })
       info(`-- Detected new column: ${curr.table}.${c.name}`)

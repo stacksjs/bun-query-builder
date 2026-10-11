@@ -1,4 +1,4 @@
-import type { MigrationPlan } from '@/migrations'
+import type { DiffResult, MigrationPlan } from '@/migrations'
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
 import type { SchemaDrift } from './schema-drift'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -8,7 +8,7 @@ import process from 'node:process'
 import { config, getConfig } from '@/config'
 import { withFreshConnection } from '@/db'
 import { getDialectDriver } from '@/drivers'
-import { buildMigrationPlan, createQueryBuilder, generateDiffOperations, generateSql, hashMigrationPlan, isGeneratedMigrationSql, lastCreatedMigrationFiles, loadModels } from '../index'
+import { buildMigrationPlan, createQueryBuilder, generateDiffOperations, generateSqlFiles, hashMigrationPlan, isGeneratedMigrationSql, lastCreatedMigrationFiles, loadModels, writeMigrationFiles } from '../index'
 import { buildPlanFromDatabase } from './introspect-db'
 import { auditSchemaDrift, formatSchemaDrift } from './schema-drift'
 import { findWorkspaceRoot, getSqlDirectory } from '@/workspace'
@@ -354,7 +354,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   // real (non-preview) generate writes the files they describe.
   const write = !opts.dryRun
   const diff = opts.full
-    ? { statements: generateSql(plan, { write }), operations: plan.tables.map((t: MigrationPlan['tables'][number]) => ({ kind: 'create_table' as const, table: t.table, destructive: false, sql: '' })) }
+    ? fullCreate(plan, write)
     : generateDiffOperations(previous, plan, {
         applyRenames: opts.applyRenames,
         write,
@@ -410,7 +410,16 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   if (!opts.dryRun)
     savePlanSnapshot(workspaceRoot, dialect, plan)
 
-  return { sql, sqlStatements, hasChanges, plan, operations }
+  return { sql, sqlStatements, hasChanges, plan, operations, files: diff.files }
+}
+
+/** The full-schema migration for `opts.full`, shaped like a diff result. */
+function fullCreate(plan: MigrationPlan, write: boolean): DiffResult {
+  const { statements, files } = generateSqlFiles(plan)
+  if (write)
+    writeMigrationFiles(files, { deterministic: true })
+  const operations = plan.tables.map(t => ({ kind: 'create_table' as const, table: t.table, destructive: false, sql: '' }))
+  return { statements, operations, files }
 }
 
 /**
