@@ -97,17 +97,21 @@ cli
   .option('--state <path>', 'Path to migration state file (defaults to <dir>/.qb-migrations.<dialect>.json)')
   .option('--apply', 'Execute the generated SQL against the database')
   .option('--full', 'Force full migration SQL instead of incremental diff')
+  .option('--from-db', 'Diff the models against the live database instead of the model snapshot')
+  .option('--strict', 'Fail when the migrated schema does not match the models')
   .example('query-builder migrate ./app/Models --dialect postgres')
-  .action(async (dir: string, opts: MigrateOptions) => {
+  .example('query-builder migrate ./app/Models --from-db --strict')
+  .action(async (dir: string, opts: MigrateOptions & { strict?: boolean }) => {
     try {
       await generateMigration(dir, {
         dialect: opts.dialect,
         state: opts.state,
         apply: opts.apply,
         full: opts.full,
+        fromDb: opts.fromDb,
       })
 
-      await executeMigration()
+      await executeMigration(undefined, { strict: opts.strict, auditDrift: opts.strict ? 'always' : true })
     }
     catch (err) {
       console.error('-- Migration failed:', err)

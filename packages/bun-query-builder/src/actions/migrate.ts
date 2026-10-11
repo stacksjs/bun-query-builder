@@ -1,5 +1,6 @@
 import type { MigrationPlan } from '@/migrations'
 import type { GenerateMigrationResult, MigrateOptions, SupportedDialect } from '@/types'
+import type { SchemaDrift } from './schema-drift'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
@@ -9,6 +10,7 @@ import { withFreshConnection } from '@/db'
 import { getDialectDriver } from '@/drivers'
 import { buildMigrationPlan, createQueryBuilder, generateDiffOperations, generateSql, hashMigrationPlan, isGeneratedMigrationSql, lastCreatedMigrationFiles, loadModels } from '../index'
 import { buildPlanFromDatabase } from './introspect-db'
+import { auditSchemaDrift, formatSchemaDrift } from './schema-drift'
 import { findWorkspaceRoot, getSqlDirectory } from '@/workspace'
 
 /**
@@ -584,7 +586,62 @@ async function withMigrationLock<T>(dialect: SupportedDialect, fn: () => Promise
  * migrations directory — the models directory was the common one — will see
  * that directory enumerated instead.
  */
-export async function executeMigration(dirs?: string | string[]): Promise<boolean> {
+export async function executeMigration(dirs?: string | string[], options: ExecuteMigrationOptions = {}): Promise<boolean> {
+  return (await executeMigrationWithReport(dirs, options)).ok
+}
+
+export interface ExecuteMigrationOptions {
+  /**
+   * Compare the live schema with the models after migrating, and warn about
+   * what is missing.
+   *
+   * - `true` (default): after a run that applied at least one file.
+   * - `'always'`: after every run, including one with nothing pending — the
+   *   way to catch drift left behind by an earlier run.
+   * - `false`: never.
+   *
+   * The comparison is against `plan` when given, else the model snapshot
+   * (`model-snapshot.<dialect>.json`) that generation keeps; with neither,
+   * nothing is audited.
+   */
+  auditDrift?: boolean | 'always'
+  /**
+   * Throw when the audit finds drift (or cannot run), instead of only
+   * warning. Off by default so existing applications keep migrating; turn it
+   * on in CI or a deploy step to make a schema that does not match the
+   * models a failure. The migrations themselves have already been applied
+   * and recorded when this throws.
+   */
+  strict?: boolean
+  /** The plan to audit against. Defaults to the stored model snapshot. */
+  plan?: MigrationPlan
+}
+
+export interface ExecuteMigrationResult {
+  ok: boolean
+  /** Migration files applied (or recorded as already applied) by this run, in order. */
+  executed: string[]
+  /**
+   * What the post-migration audit found: tables and columns the models
+   * declare that the database lacks, and type-family mismatches. Undefined
+   * when no audit ran.
+   */
+  drift?: SchemaDrift
+}
+
+/**
+ * Like {@link executeMigration}, but reports what ran and whether the
+ * resulting schema matches the models.
+ *
+ * The audit exists for a failure the runner cannot otherwise see. A generated
+ * `CREATE TABLE IF NOT EXISTS` applied to a database where the table already
+ * exists in an older shape is a successful no-op: it is recorded, the snapshot
+ * has already moved on, and the columns it would have created are never
+ * added. Nothing fails, and every later diff agrees there is nothing to do.
+ * Checking the live tables against the plan after the batch is what turns
+ * that into a visible warning (or, with `strict`, an error).
+ */
+export async function executeMigrationWithReport(dirs?: string | string[], options: ExecuteMigrationOptions = {}): Promise<ExecuteMigrationResult> {
   // Load the config file before anything reads `snapshotDir`.
   //
   // `config` is a synchronous singleton of defaults plus whatever `setConfig`
@@ -600,14 +657,64 @@ export async function executeMigration(dirs?: string | string[]): Promise<boolea
   const dialect = config.dialect || 'postgres'
 
   const scriptFiles = collectMigrationFiles(resolveMigrationDirs(dirs, workspaceRoot))
+  const executed: string[] = []
 
   if (scriptFiles.length === 0) {
     info('-- No migration files found to execute')
-    return true
+  }
+  else {
+    info(`-- Found ${scriptFiles.length} script files to execute`)
+    await applyPendingMigrations(scriptFiles, dialect, executed)
   }
 
-  info(`-- Found ${scriptFiles.length} script files to execute`)
+  const auditMode = options.auditDrift ?? true
+  const shouldAudit = auditMode === 'always' || (auditMode === true && executed.length > 0)
+  const drift = shouldAudit ? await auditAfterMigrating(workspaceRoot, dialect, options) : undefined
 
+  return { ok: true, executed, ...(drift ? { drift } : {}) }
+}
+
+/**
+ * Audit the live schema against the plan and surface what is missing.
+ *
+ * Never fails the run unless `strict` asks it to: the migrations have been
+ * applied either way, and an audit that cannot introspect (an unusual driver,
+ * a permissions gap) must not turn a successful migrate into a failed one.
+ */
+async function auditAfterMigrating(workspaceRoot: string, dialect: SupportedDialect, options: ExecuteMigrationOptions): Promise<SchemaDrift | undefined> {
+  const plan = options.plan ?? loadPlanSnapshot(workspaceRoot, dialect)
+  if (!plan || plan.dialect !== dialect || plan.tables.length === 0) {
+    info('-- No model snapshot to audit the schema against; skipping the drift check')
+    return undefined
+  }
+
+  let drift: SchemaDrift
+  try {
+    drift = await auditSchemaDrift(plan, { dialect })
+  }
+  catch (err) {
+    const message = `-- Could not audit the schema after migrating: ${err instanceof Error ? err.message : String(err)}`
+    if (options.strict)
+      throw new Error(message.replace(/^-- /, ''))
+    info(message)
+    return undefined
+  }
+
+  if (!drift.clean) {
+    const report = formatSchemaDrift(drift)
+    if (options.strict)
+      throw new Error(`Migrations were applied, but ${report.charAt(0).toLowerCase()}${report.slice(1)}`)
+    console.warn(`-- ${report.split('\n').join('\n-- ')}`)
+  }
+  else {
+    info('-- Schema matches the models')
+  }
+
+  return drift
+}
+
+/** Apply every file not yet in the ledger, in order, under the migration lock. */
+async function applyPendingMigrations(scriptFiles: Array<{ name: string, path: string }>, dialect: SupportedDialect, executed: string[]): Promise<void> {
   try {
     const qb = createQueryBuilder()
 
@@ -623,7 +730,7 @@ export async function executeMigration(dirs?: string | string[]): Promise<boolea
     // Leaving it outside the lock meant the very scenario the lock exists for,
     // two concurrent boots, still had a way to fail. Caught by the locking
     // regression test failing intermittently in CI while passing locally.
-    return await withMigrationLock(dialect, async () => {
+    await withMigrationLock(dialect, async () => {
       // Create migrations table if it doesn't exist
       await createMigrationsTable(qb, dialect)
 
@@ -647,7 +754,7 @@ export async function executeMigration(dirs?: string | string[]): Promise<boolea
 
       if (pending.length === 0) {
         info('-- No pending migrations to execute')
-        return true
+        return
       }
 
       info(`-- Executing ${pending.length} migration${pending.length === 1 ? '' : 's'}`)
@@ -680,6 +787,7 @@ export async function executeMigration(dirs?: string | string[]): Promise<boolea
             else
               info(`--   (${file} contains a statement that cannot run in a transaction, so it was not applied atomically)`)
           }
+          executed.push(file)
           info(`-- ✓ Migration ${file} executed and recorded`)
         }
         catch (err) {
@@ -691,6 +799,7 @@ export async function executeMigration(dirs?: string | string[]): Promise<boolea
           // authored migration, fails loudly.
           if (isGeneratedMigration(filePath) && isAlreadyAppliedError(err)) {
             await recordMigration(qb, file, dialect)
+            executed.push(file)
             info(`-- ✓ Migration ${file} was already applied; recorded it (${err instanceof Error ? err.message : String(err)})`)
             continue
           }
@@ -699,16 +808,13 @@ export async function executeMigration(dirs?: string | string[]): Promise<boolea
         }
       }
 
-        info('-- All migrations executed successfully')
-        return true
+      info('-- All migrations executed successfully')
     })
   }
   catch (err) {
     console.error('-- Migration execution failed:', err)
     throw err
   }
-
-  return true
 }
 
 export async function resetDatabase(dir?: string, opts: MigrateOptions = {}): Promise<boolean> {
