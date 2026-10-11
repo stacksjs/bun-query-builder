@@ -299,9 +299,14 @@ async function buildSqliteTable(qb: any, table: string): Promise<TablePlan> {
     if (columns.length === 0)
       continue
     const isUnique = Number(idx.unique) === 1
-    if (isUnique && columns.length === 1)
+    // A partial index's predicate only lives in its DDL. Without it, a model's
+    // `where` and the live index would diff as different indexes on every
+    // reconcile, and a unique partial index would read as a plain unique
+    // column.
+    const where = Number(idx.partial) === 1 ? await sqliteIndexPredicate(qb, physName) : undefined
+    if (isUnique && columns.length === 1 && !where)
       uniqueColumns.add(columns[0])
-    indexes.push({ name: physName, columns, type: isUnique ? 'unique' : 'index' })
+    indexes.push({ name: physName, columns, type: isUnique ? 'unique' : 'index', ...(where ? { where } : {}) })
   }
 
   const columns: ColumnPlan[] = colRows.map((r: any) => {
@@ -324,6 +329,36 @@ async function buildSqliteTable(qb: any, table: string): Promise<TablePlan> {
   })
 
   return { table, columns, indexes }
+}
+
+/** The `WHERE` predicate of a SQLite partial index, read from its DDL. */
+async function sqliteIndexPredicate(qb: any, indexName: string): Promise<string | undefined> {
+  const rows = await qb.unsafe(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`, [indexName])
+  return parseIndexPredicate(String(rows?.[0]?.sql ?? ''))
+}
+
+/** The text after the top-level `WHERE` of a `CREATE INDEX` statement, if any. */
+export function parseIndexPredicate(ddl: string): string | undefined {
+  // The column list is parenthesised, so the first WHERE after its closing
+  // paren at depth zero is the predicate's.
+  let depth = 0
+  let inLiteral = false
+  for (let i = 0; i < ddl.length; i++) {
+    const ch = ddl[i]
+    if (ch === '\'')
+      inLiteral = !inLiteral
+    if (inLiteral)
+      continue
+    if (ch === '(')
+      depth++
+    else if (ch === ')')
+      depth--
+    else if (depth === 0 && /^where\b/i.test(ddl.slice(i, i + 6)) && /[\s)]/.test(ddl[i - 1] ?? '')) {
+      const predicate = ddl.slice(i + 5).trim().replace(/;\s*$/, '').trim()
+      return predicate || undefined
+    }
+  }
+  return undefined
 }
 
 /** Parse `CHECK ("col" IN ('a','b'))` out of a SQLite table's DDL for one column. */
@@ -625,7 +660,10 @@ function groupPhysicalIndexes(
   for (const [physName, entry] of byName) {
     if (entry.columns.length === 0)
       continue
-    if (entry.isUnique && entry.columns.length === 1)
+    // A unique PARTIAL index constrains only some rows, so it does not make
+    // the column unique — reading it as such diffed against every model that
+    // declares it in `indexes` as a uniqueness change.
+    if (entry.isUnique && entry.columns.length === 1 && !entry.where)
       uniqueColumns.add(entry.columns[0])
     indexes.push({
       name: physName,

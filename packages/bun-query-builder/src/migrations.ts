@@ -1792,7 +1792,51 @@ function referencesAreDifferent(r1?: ColumnPlan['references'], r2?: ColumnPlan['
  * it maps both spellings onto one, so it cannot say which the model wrote.
  */
 function indexKey(index: IndexPlan, table: string): string {
-  return `${index.type}:${qualifiedIndexName(table, index.name)}:${index.columns.join(',')}`
+  return `${index.type}:${qualifiedIndexName(table, index.name)}:${index.columns.join(',')}:${normalizeIndexPredicate(index.where)}`
+}
+
+/**
+ * A partial-index predicate reduced to a form that compares equal however it
+ * was spelled.
+ *
+ * The predicate is part of an index's identity: changing `status = 'active'`
+ * to `status <> 'archived'` is a different index, and leaving it out of the
+ * diff key meant the change emitted nothing at all. But a predicate read back
+ * from a live database is not the string the model wrote - Postgres stores
+ * `deleted_at IS NULL` as `(deleted_at IS NULL)`, adds `::text` casts to
+ * literals, and rewrites `IN (...)` as `= ANY (ARRAY[...])` - and comparing
+ * those literally would drop and recreate every partial index on every live
+ * reconcile.
+ *
+ * So, outside string literals (which are kept verbatim): casts, identifier
+ * quotes, parentheses, brackets and whitespace are removed, keywords are
+ * lowercased, and Postgres's rewrites of IN / NOT IN (to array comparisons)
+ * and of a simple BETWEEN (to a pair of comparisons) are mapped back.
+ * Two predicates that differ only in those respects are the same index.
+ */
+export function normalizeIndexPredicate(where: string | undefined): string {
+  if (!where || !where.trim())
+    return ''
+
+  // Odd entries are single-quoted literals (with '' escapes), kept as written.
+  const parts = where.trim().split(/('(?:[^']|'')*')/)
+  return parts.map((part, i) => {
+    if (i % 2 === 1)
+      return part
+    return part
+      .replace(/::\s*(?:character varying|bit varying|double precision|timestamp(?:\s*\(\d+\))?(?:\s+with(?:out)?\s+time\s+zone)?|time(?:\s+with(?:out)?\s+time\s+zone)?|"?[a-z_][\w$]*"?(?:\s*\(\d+(?:\s*,\s*\d+)?\))?)(?:\[\])?/gi, '')
+      .replace(/"/g, '')
+      .toLowerCase()
+      .replace(/!=/g, '<>')
+      .replace(/[()]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/<>\s*all\s*array\s*\[/g, ' not in ')
+      .replace(/=\s*any\s*array\s*\[/g, ' in ')
+      // Postgres expands `n BETWEEN 1 AND 5` to `n >= 1 AND n <= 5`.
+      .replace(/([\w.]+) between (\S+) and (\S+)/g, '$1 >= $2 and $1 <= $3')
+      .replace(/[[\]]/g, ' ')
+      .replace(/\s+/g, '')
+  }).join('')
 }
 
 function mapIndexesByKey(indexes: IndexPlan[], table: string): Record<string, IndexPlan> {
@@ -2059,7 +2103,14 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
       // model-owned columns. Treat every live-only index as out of scope on a
       // reconcile run; a model snapshot remains the evidence required to drop
       // one intentionally.
-      const keptIndexes = prev.indexes.filter(idx => !currIdx[indexKey(idx, prev.table)])
+      //
+      // Unless the models declare an index by the SAME name. Then the live one
+      // is not out of scope, it is a stale definition of a model-owned index
+      // (a changed predicate or column list), and keeping it would leave the
+      // `CREATE INDEX IF NOT EXISTS` for the new definition a silent no-op.
+      const declaredIndexNames = new Set(curr.indexes.map(idx => qualifiedIndexName(curr.table, idx.name)))
+      const keptIndexes = prev.indexes.filter(idx => !currIdx[indexKey(idx, prev.table)]
+        && !declaredIndexNames.has(qualifiedIndexName(prev.table, idx.name)))
 
       if (preserved.length > 0 || keptIndexes.length > 0) {
         if (preserved.length > 0) {
