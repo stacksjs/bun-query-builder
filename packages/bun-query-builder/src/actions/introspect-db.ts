@@ -403,6 +403,14 @@ export function pgColumnType(
   return enumValues ? { type, enumValues, enumTypeName: udtName } : { type }
 }
 
+/** A Postgres `character_maximum_length`, or undefined for an unbounded column. */
+export function pgColumnMaxLength(raw: unknown): number | undefined {
+  if (raw === null || raw === undefined || raw === '')
+    return undefined
+  const length = Number(raw)
+  return Number.isSafeInteger(length) && length > 0 ? length : undefined
+}
+
 async function buildPgTable(qb: any, table: string, enumLabels?: Map<string, string[]>): Promise<TablePlan> {
   const enums = enumLabels ?? await pgEnumLabels(qb)
   const colRows = await qb.unsafe(
@@ -483,9 +491,13 @@ async function buildPgTable(qb: any, table: string, enumLabels?: Map<string, str
     const hasDefault = rawDefault != null && !isSerial
     // `data_type` is `USER-DEFINED` for an enum and the type name is in
     // `udt_name`, so the values have to come from the catalogue.
+    const columnType = pgColumnType(String(r.data_type ?? ''), r.udt_name == null ? '' : String(r.udt_name), enums)
     return {
       name,
-      ...pgColumnType(String(r.data_type ?? ''), r.udt_name == null ? '' : String(r.udt_name), enums),
+      ...columnType,
+      // The bound of a varchar/char column, so a model's `max(n)` and the live
+      // column compare by length rather than as two equal `string`s.
+      maxLength: columnType.type === 'string' ? pgColumnMaxLength(r.character_maximum_length) : undefined,
       isPrimaryKey,
       isUnique: uniqueColumns.has(name),
       isNullable: isPrimaryKey ? false : String(r.is_nullable).toUpperCase() === 'YES',

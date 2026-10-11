@@ -1465,7 +1465,8 @@ function mapColumnsByName(columns: ColumnPlan[]): Record<string, ColumnPlan> {
  * SQLite is the lossy one (string/text/date/datetime/json all map to TEXT;
  * boolean/integer/bigint to INTEGER; float/double/decimal to REAL). For
  * Postgres/MySQL the normalized type round-trips faithfully enough to compare
- * directly.
+ * directly — except for the facets the normalized type does not carry, which
+ * are spelled out here: a varchar's length on every dialect that has one.
  */
 export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect): string {
   if (dialect === 'sqlite') {
@@ -1513,7 +1514,25 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
       default: return col.type
     }
   }
+  // Postgres compared bare plan types, so `max(50)` becoming `max(100)` was
+  // invisible: both are `string`, the diff saw nothing, and the column stayed
+  // varchar(50) while the validator accepted 100 characters - every longer
+  // write then failed with "value too long for type character varying(50)".
+  if (col.type === 'string')
+    return `varchar(${col.maxLength ?? 255})`
   return col.type
+}
+
+/**
+ * Whether a change keeps the physical type but tightens a bound on it, so
+ * existing values may no longer fit (a varchar(100) becoming varchar(50)).
+ * Postgres and strict MySQL refuse the ALTER when a row is too long; MySQL in
+ * a permissive mode truncates. Either way it is not a free change.
+ */
+export function isNarrowingChange(from: ColumnPlan, to: ColumnPlan): boolean {
+  if (from.type === 'string' && to.type === 'string')
+    return (to.maxLength ?? 255) < (from.maxLength ?? 255)
+  return false
 }
 
 /**
@@ -2157,7 +2176,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
         kind: 'modify_column',
         table: curr.table,
         column: colName,
-        destructive: prevCol.type !== currCol.type && !isLosslessTypeChange(prevCol.type, currCol.type),
+        destructive: (prevCol.type !== currCol.type && !isLosslessTypeChange(prevCol.type, currCol.type)) || isNarrowingChange(prevCol, currCol),
         sql: modifyColumnStatement,
       })
       info(`-- Detected column change: ${curr.table}.${colName} (${prevCol.type} -> ${currCol.type})`)
