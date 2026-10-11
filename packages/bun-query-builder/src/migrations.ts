@@ -423,6 +423,12 @@ export function isLosslessTypeChange(from: NormalizedColumnType, to: NormalizedC
 export interface DiffResult {
   statements: string[]
   operations: MigrationOperation[]
+  /**
+   * The migration files this diff corresponds to, in order. Returned whether
+   * or not they were written, so a caller that persists migrations itself
+   * does not have to regroup `statements` by table.
+   */
+  files: GeneratedMigrationFile[]
 }
 
 function guessTypeFromName(columnName: string): NormalizedColumnType | undefined {
@@ -1207,21 +1213,77 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
   return { dialect: options.dialect, vitessSharded: options.vitessSharded, tables }
 }
 
-export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}): string[] {
-  // Reset migration counter for proper ordering
+/**
+ * One migration file the generator would write: the descriptive part of its
+ * name (`create-orders-table`, `alter-orders-table`, ...) and its SQL, without
+ * the provenance header or the sequence prefix — both are added only when the
+ * file is actually written, by {@link writeMigrationFiles}.
+ */
+export interface GeneratedMigrationFile {
+  name: string
+  sql: string
+}
+
+export interface GenerateSqlOptions {
+  /**
+   * Write one migration file per table into the configured migrations
+   * directory, in addition to returning the SQL. Off by default: rendering SQL
+   * is a pure function of the plan, and a caller that only wanted to look at
+   * the statements (a preview, a test fixture, `generateSqlString`) used to
+   * find a `0000000001-create-orders-table.sql` in its working directory.
+   */
+  write?: boolean
+  /** Never write, even with `write: true`. Kept for existing callers. */
+  dryRun?: boolean
+}
+
+/**
+ * Write rendered migration files into the configured migrations directory.
+ *
+ * The only place the generator touches the disk. `deterministic` selects the
+ * naming scheme: zero-padded sequence numbers for a full-schema corpus (the
+ * same models always produce the same file names), timestamps for incremental
+ * diffs. A file whose statements the corpus already carries is skipped — see
+ * `createMigrationFile`.
+ *
+ * Returns the names of the files actually written, which is also what
+ * {@link lastCreatedMigrationFiles} reports afterwards.
+ */
+export function writeMigrationFiles(files: GeneratedMigrationFile[], opts: { deterministic: boolean }): string[] {
   migrationCounter = 0
   migrationsCreatedCount = 0
   migrationsUpdatedCount = 0
   createdMigrationFiles = []
   existingCorpusBodies = null
-  useDeterministicNames = true // Framework migrations use deterministic sequence names
+  useDeterministicNames = opts.deterministic
 
-  // In dry-run mode we compute statements/operations without touching disk —
-  // used by callers that want to PREVIEW a migration (e.g. to gate destructive
-  // changes behind confirmation) before generating for real.
-  const emit = opts.dryRun ? (): boolean => false : createMigrationFile
+  for (const file of files)
+    createMigrationFile(file.sql, file.name)
 
+  const totalChanges = migrationsCreatedCount + migrationsUpdatedCount
+  if (totalChanges === 0) {
+    info('-- Nothing to migrate')
+  }
+  else {
+    const parts: string[] = []
+    if (migrationsCreatedCount > 0)
+      parts.push(`${migrationsCreatedCount} created`)
+    if (migrationsUpdatedCount > 0)
+      parts.push(`${migrationsUpdatedCount} updated`)
+    info(`-- Migration files: ${parts.join(', ')}`)
+  }
+
+  return [...createdMigrationFiles]
+}
+
+/**
+ * Render the full-schema create migrations for a plan: one file per table,
+ * holding its enum types, CREATE TABLE, indexes and (on the last file) any
+ * cyclic foreign keys. Pure — nothing is written.
+ */
+export function generateSqlFiles(plan: MigrationPlan): { statements: string[], files: GeneratedMigrationFile[] } {
   const statements: string[] = []
+  const files: GeneratedMigrationFile[] = []
   const driver = getDialectDriver(plan.dialect, { vitessSharded: plan.vitessSharded })
 
   const { tables, deferredForeignKeys } = orderTablesForCreate(plan.tables, plan.dialect)
@@ -1280,25 +1342,23 @@ export function generateSql(plan: MigrationPlan, opts: { dryRun?: boolean } = {}
     // Add all statements to the main statements array
     statements.push(...tableStatements)
 
-    // Create a single migration file for this table with all its statements
-    const combinedStatement = tableStatements.join('\n\n')
-    emit(combinedStatement, `create-${t.table}-table`)
+    // A single migration file for this table with all its statements
+    files.push({ name: `create-${t.table}-table`, sql: tableStatements.join('\n\n') })
   }
 
-  // Show summary message
-  const totalChanges = migrationsCreatedCount + migrationsUpdatedCount
-  if (totalChanges === 0) {
-    info('-- Nothing to migrate')
-  }
-  else {
-    const parts: string[] = []
-    if (migrationsCreatedCount > 0)
-      parts.push(`${migrationsCreatedCount} created`)
-    if (migrationsUpdatedCount > 0)
-      parts.push(`${migrationsUpdatedCount} updated`)
-    info(`-- Migration files: ${parts.join(', ')}`)
-  }
+  return { statements, files }
+}
 
+/**
+ * Render the full-schema SQL for a plan.
+ *
+ * Pure unless `write: true` is passed, in which case the per-table migration
+ * files are also written (see {@link writeMigrationFiles}).
+ */
+export function generateSql(plan: MigrationPlan, opts: GenerateSqlOptions = {}): string[] {
+  const { statements, files } = generateSqlFiles(plan)
+  if (opts.write === true && !opts.dryRun)
+    writeMigrationFiles(files, { deterministic: true })
   return statements
 }
 
@@ -1348,14 +1408,14 @@ function orderTablesForCreate(input: TablePlan[], dialect: SupportedDialect): { 
 }
 
 /**
- * Helper function to convert SQL statements array to a single string (for backward compatibility)
+ * The full-schema SQL for a plan as one string. Pure: writes nothing.
  */
 export function generateSqlString(plan: MigrationPlan): string {
   return generateSql(plan).join('\n')
 }
 
 /**
- * Helper function to convert diff SQL statements array to a single string (for backward compatibility)
+ * The diff SQL between two plans as one string. Pure: writes nothing.
  */
 export function generateDiffSqlString(previous: MigrationPlan | undefined, next: MigrationPlan): string {
   return generateDiffSql(previous, next).join('\n')
@@ -1731,8 +1791,15 @@ export interface DiffOptions {
    */
   applyRenames?: boolean
   /**
-   * Compute statements/operations without writing any migration files to disk.
-   * Used to PREVIEW a migration (e.g. to gate destructive changes behind
+   * Write the migration files into the configured migrations directory, in
+   * addition to returning them. Off by default: computing a diff is pure, and
+   * persisting it is the explicit job of `generateMigration` (or of a caller
+   * that writes `files` itself).
+   */
+  write?: boolean
+  /**
+   * Never write migration files, even with `write: true`. Kept for existing
+   * callers that preview a migration (e.g. to gate destructive changes behind
    * confirmation) before generating for real.
    */
   dryRun?: boolean
@@ -1771,28 +1838,27 @@ export interface DiffOptions {
  */
 export function generateDiffOperations(previous: MigrationPlan | undefined, next: MigrationPlan, opts: DiffOptions = {}): DiffResult {
   if (!previous || previous.dialect !== next.dialect) {
-    const statements = generateSql(next, { dryRun: opts.dryRun })
+    const { statements, files } = generateSqlFiles(next)
+    if (opts.write === true && !opts.dryRun)
+      writeMigrationFiles(files, { deterministic: true })
     const operations: MigrationOperation[] = next.tables.map(t => ({
       kind: 'create_table' as const,
       table: t.table,
       destructive: false,
       sql: '',
     }))
-    return { statements, operations }
+    return { statements, operations, files }
   }
 
   const applyRenames = opts.applyRenames !== false // default true (data-preserving)
   const preserveUnknownColumns = opts.preserveUnknownColumns === true
-  // In dry-run mode we don't write any migration files (preview only).
-  const emit = opts.dryRun ? (): boolean => false : createMigrationFile
-
-  // Reset migration counter for proper ordering
-  migrationCounter = 0
-  migrationsCreatedCount = 0
-  migrationsUpdatedCount = 0
-  createdMigrationFiles = []
-  existingCorpusBodies = null
-  useDeterministicNames = false // User diff migrations use timestamps
+  // Every migration file this diff amounts to, in order. Collected rather
+  // than written: the diff is pure, and only `write: true` persists it.
+  const files: GeneratedMigrationFile[] = []
+  const emit = (sql: string, name: string): void => {
+    if (sql)
+      files.push({ name, sql })
+  }
 
   const chunks: string[] = []
   const operations: MigrationOperation[] = []
@@ -2162,22 +2228,12 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
     }
   }
 
-  // Show summary message
-  const totalChanges = migrationsCreatedCount + migrationsUpdatedCount
-  if (totalChanges === 0) {
-    info('-- Nothing to migrate')
-  }
-  else {
-    const parts: string[] = []
-    if (migrationsCreatedCount > 0)
-      parts.push(`${migrationsCreatedCount} created`)
-    if (migrationsUpdatedCount > 0)
-      parts.push(`${migrationsUpdatedCount} updated`)
-    info(`-- Migration files: ${parts.join(', ')}`)
-  }
+  // User diff migrations use timestamped names: they are additive.
+  if (opts.write === true && !opts.dryRun)
+    writeMigrationFiles(files, { deterministic: false })
 
   const statements = chunks.length === 0 ? ['-- No changes detected'] : chunks
-  return { statements, operations }
+  return { statements, operations, files }
 }
 
 /**

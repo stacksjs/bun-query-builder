@@ -330,15 +330,21 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
     info('-- Full migration requested, ignoring any previous state')
   }
 
+  // This is the explicit persist path: the renderers are pure, and only a
+  // real (non-preview) generate writes the files they describe.
+  const write = !opts.dryRun
   const diff = opts.full
-    ? { statements: generateSql(plan, { dryRun: opts.dryRun }), operations: plan.tables.map((t: MigrationPlan['tables'][number]) => ({ kind: 'create_table' as const, table: t.table, destructive: false, sql: '' })) }
+    ? { statements: generateSql(plan, { write }), operations: plan.tables.map((t: MigrationPlan['tables'][number]) => ({ kind: 'create_table' as const, table: t.table, destructive: false, sql: '' })) }
     : generateDiffOperations(previous, plan, {
         applyRenames: opts.applyRenames,
-        dryRun: opts.dryRun,
+        write,
         preserveUnknownColumns: reconciledFromDatabase,
       })
   const sqlStatements = diff.statements
   const operations = diff.operations
+  // Read straight away and only for a writing run: the list describes the
+  // most recent write, which for a preview would be some earlier run's.
+  const createdFiles = write ? lastCreatedMigrationFiles() : []
 
   const sql = sqlStatements.join('\n')
 
@@ -363,7 +369,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
         const qb = createQueryBuilder()
         await qb.file(filePath)
         info('-- Migration applied')
-        await settleAppliedFiles(qb, dialect, lastCreatedMigrationFiles())
+        await settleAppliedFiles(qb, dialect, createdFiles)
       }
       else {
         info('-- No changes; nothing to apply')
