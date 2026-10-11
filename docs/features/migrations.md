@@ -319,12 +319,27 @@ function generateMigration(
 - `hasChanges`: Whether any changes were detected
 - `plan`: Generated migration plan
 
+Pass `fromDb: true` to diff the models against the live database instead of
+the model snapshot, even when a snapshot exists. Only tables the models declare
+are compared, and live columns or indexes no model declares are kept.
+
+The SQL renderers (`generateSql`, `generateSqlString`, `generateDiffOperations`,
+`generateDiffSql`) are pure: they return SQL and write nothing. Pass
+`write: true` (or call `writeMigrationFiles`) to persist the files;
+`generateMigration` does that for a non-preview run.
+
 ### executeMigration
 
 ```ts
 function executeMigration(
-  dirs?: string | string[]
+  dirs?: string | string[],
+  options?: ExecuteMigrationOptions
 ): Promise<boolean>
+
+function executeMigrationWithReport(
+  dirs?: string | string[],
+  options?: ExecuteMigrationOptions
+): Promise<{ ok: boolean, executed: string[], drift?: SchemaDrift }>
 ```
 
 **Parameters:**
@@ -332,10 +347,31 @@ function executeMigration(
 - `dirs`: Directory, or list of directories, holding the `.sql` corpus to run.
   Defaults to the configured `migrationDir`. Relative paths resolve against the
   workspace root. File names must be unique across every directory in a run.
+- `options.auditDrift`: After a run that applied files (`true`, the default),
+  on every run (`'always'`), or never (`false`), compare the live schema with
+  the model snapshot and warn about missing tables and columns. This catches a
+  `CREATE TABLE IF NOT EXISTS` that no-opped against an older table.
+- `options.strict`: Throw when that audit finds drift. Off by default.
+- `options.plan`: The plan to audit against instead of the snapshot.
 
 **Returns:**
 
-- `boolean`: Success status
+- `boolean`: Success status (`executeMigrationWithReport` also returns the files
+  it ran and the drift it found)
+
+### Model-driven column facets
+
+- `string` columns render as `varchar(n)` from the validator's `max(n)`; a
+  changed bound is an `ALTER COLUMN ... TYPE` on every dialect.
+- `decimal` columns take `precision` / `scale` on the attribute (or
+  `type: 'decimal(12,4)'`); unset is `decimal(10,2)`.
+- Adding values to a Postgres enum emits `ALTER TYPE ... ADD VALUE IF NOT EXISTS`
+  in a migration of its own; removing values rebuilds the type.
+- A partial index's `where` is part of its identity: changing it drops and
+  recreates the index.
+- A `NOT NULL` column without a default added to an existing table is emitted
+  as nullable with a `-- qb:` comment and an operation `warning`. Backfill it,
+  then add a default or regenerate with `fromDb` to apply `NOT NULL`.
 
 ## Related
 
