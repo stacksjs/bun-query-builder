@@ -3879,6 +3879,35 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
      * The callback receives a fresh builder over the same table and only its
      * WHERE state is harvested — nothing else it touches has any effect.
      */
+    /**
+     * `column [NOT] IN (subquery)`, with the subquery's bindings carried over.
+     *
+     * The subquery used to be spliced in as `toSQL()` text alone. Its own
+     * placeholders (`$1`, `?`) then pointed at nothing - or, worse, at this
+     * query's parameters - so `whereIn('id', db.selectFrom(t).select('id')
+     * .where('x', '=', v))` failed with "there is no parameter $1", or quietly
+     * filtered on the wrong value. A builder hands over its SQL and params; on
+     * Postgres its numbering is shifted to continue ours. Anything else with a
+     * `toSQL()` (a raw fragment) is spliced as before.
+     */
+    const pushInSubquery = (conn: 'AND' | 'OR', column: string, sub: any, not: boolean) => {
+      const st = typeof sub?.__sqlState === 'function'
+        ? sub.__sqlState() as { sql: string, params: unknown[] }
+        : undefined
+      let body: string
+      if (st) {
+        const offset = whereParams.length
+        body = offset > 0 && config.dialect === 'postgres'
+          ? st.sql.replace(/\$(\d+)/g, (_m: string, n: string) => `$${Number(n) + offset}`)
+          : st.sql
+        whereParams.push(...st.params)
+      }
+      else {
+        body = String(sub.toSQL())
+      }
+      pushWhere(conn, `${column} ${not ? 'NOT IN' : 'IN'} (${body})`)
+    }
+
     const addWhereGroup = (conn: 'AND' | 'OR', cb: (b: any) => unknown) => {
       const sub: any = makeSelect(table as any)
       cb(sub)
@@ -5519,6 +5548,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       __whereState() {
         return { body: renderWhereTerms(whereTerms), params: [...whereParams] }
       },
+      /** Internal: the whole statement and its params, for embedding as a subquery. */
+      __sqlState() {
+        return { sql: reorderSelectClauses(currentSql()), params: [...whereParams] }
+      },
       whereJsonContains(column: string, json: unknown) {
         // Dialect-aware JSON containment. Previously hardcoded Postgres `@>`,
         // which is a syntax error on MySQL/SQLite and ignored the configured
@@ -5765,7 +5798,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           pushWhere('AND', clause)
         }
         else {
-          pushWhere('AND', `${column} IN (${String((values as any).toSQL())})`)
+          pushInSubquery('AND', column, values, false)
         }
         return this as any
       },
@@ -5778,7 +5811,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           pushWhere('OR', clause)
         }
         else {
-          pushWhere('OR', `${column} IN (${String((values as any).toSQL())})`)
+          pushInSubquery('OR', column, values, false)
         }
         return this as any
       },
@@ -5791,7 +5824,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           pushWhere('AND', clause)
         }
         else {
-          pushWhere('AND', `${column} NOT IN (${String((values as any).toSQL())})`)
+          pushInSubquery('AND', column, values, true)
         }
         return this as any
       },
@@ -5804,7 +5837,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           pushWhere('OR', clause)
         }
         else {
-          pushWhere('OR', `${column} NOT IN (${String((values as any).toSQL())})`)
+          pushInSubquery('OR', column, values, true)
         }
         return this as any
       },
