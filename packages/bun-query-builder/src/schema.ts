@@ -53,8 +53,19 @@ export interface Attribute {
   required?: boolean
   /** Explicitly control database nullability. Takes precedence over `required`. */
   nullable?: boolean
-  /** Explicit database column type. Takes precedence over validator inference. */
+  /**
+   * Explicit database column type. Takes precedence over validator inference.
+   * `decimal(12,4)` / `numeric(12,4)` set the precision and scale too.
+   */
   type?: string
+  /**
+   * Total significant digits of a decimal column (`decimal(precision,scale)`).
+   * Declaring it (or `scale`) makes the column a decimal unless `type` names
+   * something else. Defaults to 10.
+   */
+  precision?: number
+  /** Digits after the decimal point of a decimal column. Defaults to 2. */
+  scale?: number
   default?: string | number | boolean | Date
   unique?: boolean
   order?: number

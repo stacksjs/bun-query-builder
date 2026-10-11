@@ -1,4 +1,5 @@
 import type { ColumnPlan, IndexPlan, RebuildTableSpec, TablePlan } from '../migrations'
+import { decimalTypeSql } from './decimal'
 import { qualifiedIndexName } from './index-name'
 
 export interface DialectDriver {
@@ -104,7 +105,7 @@ export class PostgresDriver implements DialectDriver {
       case 'bigint': return 'bigint'
       case 'float': return 'real'
       case 'double': return 'double precision'
-      case 'decimal': return 'decimal(10,2)'
+      case 'decimal': return decimalTypeSql(column)
       case 'date': return 'date'
       case 'datetime': return 'timestamp'
       case 'timestamptz': return 'timestamptz'

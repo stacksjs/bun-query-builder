@@ -438,6 +438,30 @@ export function pgColumnType(
   return enumValues ? { type, enumValues, enumTypeName: udtName } : { type }
 }
 
+/** Precision/scale of a numeric column as reported by information_schema. */
+export function decimalFacets(rawPrecision: unknown, rawScale: unknown): { precision?: number, scale?: number } {
+  const asInt = (raw: unknown): number | undefined => {
+    if (raw === null || raw === undefined || raw === '')
+      return undefined
+    const n = Number(raw)
+    return Number.isSafeInteger(n) && n >= 0 ? n : undefined
+  }
+  const precision = asInt(rawPrecision)
+  const scale = asInt(rawScale)
+  return {
+    ...(precision !== undefined && precision > 0 ? { precision } : {}),
+    ...(scale !== undefined ? { scale } : {}),
+  }
+}
+
+/** Precision/scale out of a MySQL COLUMN_TYPE such as `decimal(12,4)`. */
+export function mysqlDecimalFacets(columnType: unknown): { precision?: number, scale?: number } {
+  const match = String(columnType || '').trim().match(/^(?:decimal|numeric)\((\d+)(?:,(\d+))?\)/i)
+  if (!match)
+    return {}
+  return decimalFacets(match[1], match[2] ?? 0)
+}
+
 /** A Postgres `character_maximum_length`, or undefined for an unbounded column. */
 export function pgColumnMaxLength(raw: unknown): number | undefined {
   if (raw === null || raw === undefined || raw === '')
@@ -450,6 +474,7 @@ async function buildPgTable(qb: any, table: string, enumLabels?: Map<string, str
   const enums = enumLabels ?? await pgEnumLabels(qb)
   const colRows = await qb.unsafe(
     `SELECT c.column_name, c.data_type, c.udt_name, c.is_nullable, c.column_default, c.character_maximum_length,
+      c.numeric_precision, c.numeric_scale,
       (SELECT COUNT(*) FROM information_schema.table_constraints tc
           JOIN information_schema.key_column_usage k ON k.constraint_name = tc.constraint_name
         WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = c.table_name AND k.column_name = c.column_name) AS is_pk
@@ -533,6 +558,9 @@ async function buildPgTable(qb: any, table: string, enumLabels?: Map<string, str
       // The bound of a varchar/char column, so a model's `max(n)` and the live
       // column compare by length rather than as two equal `string`s.
       maxLength: columnType.type === 'string' ? pgColumnMaxLength(r.character_maximum_length) : undefined,
+      // Likewise a numeric column's precision and scale. Unconstrained
+      // `numeric` reports neither and compares as the default.
+      ...(columnType.type === 'decimal' ? decimalFacets(r.numeric_precision, r.numeric_scale) : {}),
       isPrimaryKey,
       isUnique: uniqueColumns.has(name),
       isNullable: isPrimaryKey ? false : String(r.is_nullable).toUpperCase() === 'YES',
@@ -619,6 +647,7 @@ async function buildMysqlTable(qb: any, table: string): Promise<TablePlan> {
       defaultValue: hasDefault ? (normalizeRawDefault(rawDefault) as PrimitiveDefault) : undefined,
       enumValues,
       maxLength: mysqlColumnMaxLength(columnType),
+      ...mysqlDecimalFacets(columnType),
       references: fkByColumn.get(name),
     }
   })

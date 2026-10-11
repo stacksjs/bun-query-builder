@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { config } from './config'
 import { getDialectDriver } from './drivers'
+import { decimalPrecision, decimalTypeSql } from './drivers/decimal'
 import { isNumericPlanType } from './drivers/sqlite'
 import { buildSchemaMeta } from './meta'
 import { getSqlDirectory } from './workspace'
@@ -303,6 +304,16 @@ export interface ColumnPlan {
    */
   maxLength?: number
   /**
+   * Total significant digits of a `decimal` column, from the attribute's
+   * `precision` (or a `decimal(p,s)` type / validator that carries one).
+   * Unset means the default `decimal(10,2)`, so plans and snapshots written
+   * before this was configurable render and diff exactly as they did.
+   * Ignored for every other type.
+   */
+  precision?: number
+  /** Digits after the decimal point of a `decimal` column. See `precision`. */
+  scale?: number
+  /**
    * Fully-qualified enum type name for Postgres named enum types. Stamped by
    * the migration generator as `<table>_<column>_type` so the same enum
    * column name in different tables (e.g. `status` on monitors vs incidents,
@@ -514,6 +525,65 @@ function extractMaxFromRules(ruleObj: any): number | undefined {
 
 const MAX_BOUNDED_VARCHAR_LENGTH = 767
 
+/** Parse `decimal(12,4)` / `numeric(12)` into its precision and scale. */
+function parseDecimalTypeArgs(value: unknown): { precision?: number, scale?: number } | undefined {
+  if (typeof value !== 'string')
+    return undefined
+  const match = value.trim().toLowerCase().match(/^(?:decimal|numeric)\s*\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)$/)
+  if (!match)
+    return undefined
+  return { precision: Number(match[1]), scale: match[2] === undefined ? undefined : Number(match[2]) }
+}
+
+/**
+ * Precision/scale a validator carries, if it carries any. ts-validation's
+ * `decimal()` exposes neither today; this reads the shapes a validator could
+ * reasonably expose them in (properties, or a `precision` / `scale` rule), so
+ * one that grows the option is honoured without another change here.
+ */
+function extractDecimalFromRule(rule: unknown): { precision?: number, scale?: number } {
+  const ruleObj = rule as any
+  if (!ruleObj || typeof ruleObj !== 'object')
+    return {}
+  const num = (v: unknown): number | undefined => typeof v === 'number' ? v : undefined
+  let precision = num(ruleObj.precision)
+  let scale = num(ruleObj.scale)
+  if (Array.isArray(ruleObj.rules)) {
+    for (const r of ruleObj.rules) {
+      if (r?.name === 'precision') {
+        precision ??= num(r.params?.precision) ?? num(r.args?.[0])
+        scale ??= num(r.params?.scale) ?? num(r.args?.[1])
+      }
+      else if (r?.name === 'scale') {
+        scale ??= num(r.params?.scale) ?? num(r.args?.[0])
+      }
+    }
+  }
+  return { precision, scale }
+}
+
+/**
+ * The declared precision/scale of an attribute: the attribute's own
+ * `precision` / `scale` win, then a `decimal(p,s)` type, then the validator.
+ * Throws on values no SQL engine accepts, naming the attribute, rather than
+ * emitting DDL that fails at migrate time.
+ */
+function declaredDecimal(attrName: string, attr: any): { precision?: number, scale?: number } {
+  const fromType = parseDecimalTypeArgs(attr?.type) ?? {}
+  const fromRule = extractDecimalFromRule(attr?.validation?.rule)
+  const precision = attr?.precision ?? fromType.precision ?? fromRule.precision
+  const scale = attr?.scale ?? fromType.scale ?? fromRule.scale
+
+  if (precision !== undefined && (!Number.isInteger(precision) || precision < 1 || precision > 1000))
+    throw new Error(`[migrations] Attribute "${attrName}": decimal precision must be an integer from 1 to 1000, got ${precision}`)
+  if (scale !== undefined && (!Number.isInteger(scale) || scale < 0))
+    throw new Error(`[migrations] Attribute "${attrName}": decimal scale must be a non-negative integer, got ${scale}`)
+  if (precision !== undefined && scale !== undefined && scale > precision)
+    throw new Error(`[migrations] Attribute "${attrName}": decimal scale (${scale}) cannot exceed precision (${precision})`)
+
+  return { precision, scale }
+}
+
 function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | undefined {
   if (!rule || typeof rule !== 'object')
     return undefined
@@ -617,6 +687,8 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
 function normalizeAttributeType(value: unknown): NormalizedColumnType | undefined {
   if (typeof value !== 'string')
     return undefined
+  if (parseDecimalTypeArgs(value))
+    return 'decimal'
   const type = value.trim().toLowerCase().replace(/[\s-]+/g, '_')
   switch (type) {
     case 'varchar':
@@ -776,6 +848,14 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         inferred = isPk ? 'bigint' : 'string'
       }
 
+      // A declared precision/scale says the column is a decimal: nothing
+      // else stores a fixed number of fractional digits. Only an explicit
+      // `type` naming something else overrides that.
+      const decimal = declaredDecimal(attrName, attr)
+      const declaresDecimal = decimal.precision !== undefined || decimal.scale !== undefined
+      if (declaresDecimal && inferred !== 'decimal' && normalizeAttributeType(attr.type) === undefined)
+        inferred = 'decimal'
+
       // For a bounded string, carry the max length so drivers can emit
       // varchar(n) instead of varchar(255). Only meaningful when ≤ 767 —
       // larger maxes were already promoted to `text` above.
@@ -791,6 +871,14 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
         defaultValue: normalizeDefaultValue(attr.default),
         enumValues,
         maxLength: typeof maxLen === 'number' && maxLen > 0 && maxLen <= MAX_BOUNDED_VARCHAR_LENGTH ? maxLen : undefined,
+      }
+      // Only stamped when declared, so an undeclared decimal keeps the exact
+      // plan shape (and snapshot hash) it always had.
+      if (inferred === 'decimal' && declaresDecimal) {
+        if (decimal.precision !== undefined)
+          col.precision = decimal.precision
+        if (decimal.scale !== undefined)
+          col.scale = decimal.scale
       }
 
       // Foreign key inference for *_id columns
@@ -1205,6 +1293,8 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
 
       column.type = referenced.type
       column.maxLength = referenced.maxLength
+      column.precision = referenced.precision
+      column.scale = referenced.scale
       column.enumValues = referenced.enumValues
       column.enumTypeName = referenced.enumTypeName
     }
@@ -1505,7 +1595,7 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
       case 'bigint': return 'BIGINT'
       case 'float': return 'REAL'
       case 'double': return 'DOUBLE'
-      case 'decimal': return 'DECIMAL'
+      case 'decimal': return decimalTypeSql(col).toUpperCase()
       case 'date': return 'DATE'
       case 'datetime':
       case 'timestamptz': return 'DATETIME'
@@ -1520,6 +1610,10 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
   // write then failed with "value too long for type character varying(50)".
   if (col.type === 'string')
     return `varchar(${col.maxLength ?? 255})`
+  // Likewise a decimal's precision and scale, which used to be a hard-coded
+  // (10,2) nothing could change.
+  if (col.type === 'decimal')
+    return decimalTypeSql(col)
   return col.type
 }
 
@@ -1532,6 +1626,13 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
 export function isNarrowingChange(from: ColumnPlan, to: ColumnPlan): boolean {
   if (from.type === 'string' && to.type === 'string')
     return (to.maxLength ?? 255) < (from.maxLength ?? 255)
+  if (from.type === 'decimal' && to.type === 'decimal') {
+    // Lossless only when neither the fractional digits nor the integer
+    // digits (precision - scale) shrink.
+    const a = decimalPrecision(from)
+    const b = decimalPrecision(to)
+    return b.scale < a.scale || (b.precision - b.scale) < (a.precision - a.scale)
+  }
   return false
 }
 
