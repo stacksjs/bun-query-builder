@@ -1,3 +1,32 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.6...v0.3.7)
+
+## ✨ Features
+
+- audit schema drift after applying migrations ([6dbe0fd](https://github.com/stacksjs/bun-query-builder/commit/6dbe0fd)) _(by Chris <chrisbreuer93@gmail.com>)_
+- declare decimal precision and scale on the model ([badce0b](https://github.com/stacksjs/bun-query-builder/commit/badce0b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- keep generated statements plain and return files from generate ([e0d14a4](https://github.com/stacksjs/bun-query-builder/commit/e0d14a4)) _(by Chris <chrisbreuer93@gmail.com>)_
+- add NOT NULL columns without a default as nullable ([ecae056](https://github.com/stacksjs/bun-query-builder/commit/ecae056)) _(by Chris <chrisbreuer93@gmail.com>)_
+- add new enum values to the Postgres type ([08e3b97](https://github.com/stacksjs/bun-query-builder/commit/08e3b97)) _(by Chris <chrisbreuer93@gmail.com>)_
+- diff partial indexes by their predicate ([e9bce24](https://github.com/stacksjs/bun-query-builder/commit/e9bce24)) _(by Chris <chrisbreuer93@gmail.com>)_
+- detect varchar length changes on Postgres ([7f0218e](https://github.com/stacksjs/bun-query-builder/commit/7f0218e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- honour fromDb when a model snapshot exists ([7214ee1](https://github.com/stacksjs/bun-query-builder/commit/7214ee1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- make the SQL renderers pure and write migration files explicitly ([7f55f52](https://github.com/stacksjs/bun-query-builder/commit/7f55f52)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📝 Documentation
+
+- document fromDb, pure renderers, drift audit and column facets ([9369d0e](https://github.com/stacksjs/bun-query-builder/commit/9369d0e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.7 ([4bbabf6](https://github.com/stacksjs/bun-query-builder/commit/4bbabf6)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.5...v0.3.6)
 
 ## 🐛 Bug Fixes
