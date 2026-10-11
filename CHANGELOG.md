@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.5...v0.3.6)
+
+## 🐛 Bug Fixes
+
+- render where(col, 'is', null) as IS NULL on every dialect ([ddfda07](https://github.com/stacksjs/bun-query-builder/commit/ddfda07)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.6 ([0fbc921](https://github.com/stacksjs/bun-query-builder/commit/0fbc921)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.4...v0.3.5)
 
 ## ✨ Features
