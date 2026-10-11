@@ -613,9 +613,12 @@ export interface MigrateOptions {
    */
   applyRenames?: boolean
   /**
-   * Diff against the *live database* schema instead of the `.qb` snapshot.
-   * Self-heals when the snapshot is missing/stale or the DB drifted. When the
-   * snapshot is absent this is used automatically as a fallback.
+   * Diff against the *live database* schema instead of the `.qb` snapshot —
+   * even when a snapshot exists. Self-heals when the snapshot is stale or the
+   * DB drifted. Only tables the models declare are compared, and a live
+   * column or index no model declares is kept rather than dropped. Throws when
+   * the database cannot be introspected. When the snapshot is absent this is
+   * used automatically as a (non-throwing) fallback.
    */
   fromDb?: boolean
   /**

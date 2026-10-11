@@ -264,66 +264,84 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   let reconciledFromDatabase = false
 
   if (!opts.full) {
-    // Load previous state from the snapshot file (primary source)
-    previous = loadPlanSnapshot(workspaceRoot, dialect)
+    // `fromDb` means exactly what it says: diff against the live schema, even
+    // when a snapshot exists. It used to be honoured only in the branch that
+    // runs when there is NO snapshot, so `--from-db` on a project with one —
+    // the case it exists for, a database that drifted from what the snapshot
+    // claims — silently compared against the snapshot instead and reported
+    // nothing to do.
+    if (!opts.fromDb) {
+      // Load previous state from the snapshot file (primary source)
+      previous = loadPlanSnapshot(workspaceRoot, dialect)
 
-    if (previous) {
-      info('-- Comparing with stored model snapshot')
+      if (previous) {
+        info('-- Comparing with stored model snapshot')
+      }
+      else {
+        // Fallback: Try legacy state file location
+        const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
+        const statePath = String(opts.state || defaultStatePath)
+
+        if (existsSync(statePath)) {
+          try {
+            const raw = readFileSync(statePath, 'utf8')
+            const parsed = JSON.parse(raw)
+            previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
+            if (previous) {
+              info('-- Comparing with legacy state file (will migrate to new snapshot format)')
+            }
+          }
+          catch {
+            // ignore corrupt state; treat as no previous
+          }
+        }
+      }
     }
-    else {
-      // Fallback: Try legacy state file location
-      const defaultStatePath = join(dir, `.qb-migrations.${dialect}.json`)
-      const statePath = String(opts.state || defaultStatePath)
 
-      if (existsSync(statePath)) {
-        try {
-          const raw = readFileSync(statePath, 'utf8')
-          const parsed = JSON.parse(raw)
-          previous = parsed?.plan && parsed.plan.tables ? parsed.plan : (parsed?.tables ? parsed : undefined)
-          if (previous) {
-            info('-- Comparing with legacy state file (will migrate to new snapshot format)')
-          }
+    // Self-heal: with no snapshot (fresh checkout, lost/gitignored `.qb`),
+    // or when asked to with `fromDb`, reconcile against the LIVE database
+    // schema instead of emitting a full create. The DB itself becomes the
+    // source of truth for "what already exists". The diff's storage-type
+    // canonicalization keeps the lossy reverse mapping from producing
+    // spurious ALTERs.
+    if (!previous) {
+      try {
+        const livePlan = await buildPlanFromDatabase(dialect)
+        // Only reconcile against tables the MODELS know about. The models
+        // directory is frequently a subset of the database (framework tables,
+        // other apps sharing the DB), and an introspected table absent from
+        // the models must NOT be read as "drop this table" — it's simply
+        // outside this migration's scope. Filtering to the model set keeps
+        // self-heal from emitting destructive drops for unrelated tables.
+        const modelTables = new Set(plan.tables.map(t => t.table))
+        const scoped = livePlan.tables.filter(t => modelTables.has(t.table))
+        if (scoped.length > 0) {
+          previous = { dialect: livePlan.dialect, tables: scoped }
+          // Everything in `previous` is now introspected rather than
+          // declared. The diff has to know: a column the models don't
+          // mention is evidence of nothing and must not be read as a
+          // removal (see `preserveUnknownColumns`).
+          reconciledFromDatabase = true
+          info(`-- ${opts.fromDb ? 'Diffing against the live database as requested' : 'No snapshot; reconciling against live database'} (${scoped.length} matching table${scoped.length === 1 ? '' : 's'})`)
         }
-        catch {
-          // ignore corrupt state; treat as no previous
+        else if (opts.fromDb) {
+          // An empty database is a real answer: none of the model tables
+          // exist, so the diff is a full create. Not a snapshot fallback.
+          info('-- The live database has none of the model tables; generating full migration')
         }
       }
-
-      // Self-heal: with no snapshot (fresh checkout, lost/gitignored `.qb`,
-      // or `--from-db`), reconcile against the LIVE database schema instead of
-      // emitting a full create. This keeps `buddy migrate` correct even when
-      // the snapshot is gone — the DB itself becomes the source of truth for
-      // "what already exists". The diff's storage-type canonicalization keeps
-      // the lossy reverse mapping from producing spurious ALTERs.
-      if (!previous || opts.fromDb) {
-        try {
-          const livePlan = await buildPlanFromDatabase(dialect)
-          // Only reconcile against tables the MODELS know about. The models
-          // directory is frequently a subset of the database (framework tables,
-          // other apps sharing the DB), and an introspected table absent from
-          // the models must NOT be read as "drop this table" — it's simply
-          // outside this migration's scope. Filtering to the model set keeps
-          // self-heal from emitting destructive drops for unrelated tables.
-          const modelTables = new Set(plan.tables.map(t => t.table))
-          const scoped = livePlan.tables.filter(t => modelTables.has(t.table))
-          if (scoped.length > 0) {
-            previous = { dialect: livePlan.dialect, tables: scoped }
-            // Everything in `previous` is now introspected rather than
-            // declared. The diff has to know: a column the models don't
-            // mention is evidence of nothing and must not be read as a
-            // removal (see `preserveUnknownColumns`).
-            reconciledFromDatabase = true
-            info(`-- No snapshot; reconciling against live database (${scoped.length} matching table${scoped.length === 1 ? '' : 's'})`)
-          }
-        }
-        catch (err) {
-          info(`-- Could not introspect live database, treating as no previous state: ${err instanceof Error ? err.message : String(err)}`)
-        }
+      catch (err) {
+        // Asked explicitly for the live schema and could not read it: a diff
+        // against anything else would be the silent substitution this option
+        // exists to avoid.
+        if (opts.fromDb)
+          throw new Error(`generateMigration({ fromDb: true }) could not introspect the live database: ${err instanceof Error ? err.message : String(err)}`)
+        info(`-- Could not introspect live database, treating as no previous state: ${err instanceof Error ? err.message : String(err)}`)
       }
+    }
 
-      if (!previous) {
-        info('-- No previous snapshot found, generating full migration')
-      }
+    if (!previous) {
+      info('-- No previous snapshot found, generating full migration')
     }
   }
   else {
