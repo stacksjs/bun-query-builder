@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.9...v0.3.10)
+
+## 🐛 Bug Fixes
+
+- bind Date parameters as ISO strings on every driver path ([48b3851](https://github.com/stacksjs/bun-query-builder/commit/48b3851)) _(by Chris Breuer <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.10 ([b73bf19](https://github.com/stacksjs/bun-query-builder/commit/b73bf19)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Chris Breuer <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.8...v0.3.9)
 
 ## ✨ Features
