@@ -10,6 +10,7 @@ import type { QueryBuilderOptions, QueryHooks, SupportedDialect} from './types'
 import { config, getPlaceholder, getPlaceholders, isMysqlLike, setConfig } from './config'
 import type { DriverConnection, DriverQuery } from './db'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
+import { serializeBindings, withDateBindings } from './bindings'
 import { bunSql, getOrCreateBunSql, resetConnection, resolveLibSQLTarget } from './db'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
@@ -3330,7 +3331,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
   // act on the pool itself rather than on a session, and the two-phase
   // `commitDistributed`/`rollbackDistributed`, which by design run outside the
   // transaction that prepared them.
-  const _sql: DriverConnection = (state?.sql ?? getOrCreateBunSql()) as unknown as DriverConnection
+  //
+  // Wrapped so every Date it binds, on every path below, goes out as an ISO
+  // string (bindings.ts). The cached connection is already wrapped; this
+  // covers one handed in through `state.sql` (a Bun transaction, a reserved
+  // connection, or the caller's own `new SQL()`), and is a no-op otherwise.
+  const _sql: DriverConnection = withDateBindings(state?.sql ?? getOrCreateBunSql()) as unknown as DriverConnection
   const meta = state?.meta
   const schema = state?.schema
 
@@ -6259,7 +6265,9 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // The caller owns the transaction (and thus the isolation level).
         if (opts.tx) {
           const baseSql = reorderSelectClauses(currentSql())
-          const baseParams = [...whereParams]
+          // The handle is the caller's and may be a raw driver transaction,
+          // so serialize Dates here rather than rely on the connection.
+          const baseParams = serializeBindings([...whereParams])
           const cRows = await opts.tx.unsafe(`SELECT COUNT(*) as c FROM (${baseSql}) as sub`, baseParams) as any[]
           const total = Number(cRows?.[0]?.c ?? 0)
           const lastPage = Math.max(1, Math.ceil(total / perPage))

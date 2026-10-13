@@ -32,6 +32,7 @@ import type { RelationCardinality } from './type-inference'
 import { isNumericPlanType, normalizeAttributeType, sqliteAffinityFor } from './column-types'
 import { config, isMysqlLike } from './config'
 import type { DriverConnection } from './db'
+import { serializeBindings } from './bindings'
 import { getOrCreateBunSql, resolveLibSQLTarget } from './db'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 import { createFakerCompatLayer } from './faker-compat'
@@ -756,15 +757,15 @@ class SqliteExecutor implements OrmExecutor {
   constructor(public readonly sqliteDb: Database) {}
 
   all(sql: string, params: unknown[]): Promise<Record<string, unknown>[]> {
-    return Promise.resolve(this.sqliteDb.query(sql).all(...(params as Bindings)) as Record<string, unknown>[])
+    return Promise.resolve(this.sqliteDb.query(sql).all(...(serializeBindings(params) as Bindings)) as Record<string, unknown>[])
   }
 
   get(sql: string, params: unknown[]): Promise<Record<string, unknown> | undefined> {
-    return Promise.resolve((this.sqliteDb.query(sql).get(...(params as Bindings)) as Record<string, unknown> | null) ?? undefined)
+    return Promise.resolve((this.sqliteDb.query(sql).get(...(serializeBindings(params) as Bindings)) as Record<string, unknown> | null) ?? undefined)
   }
 
   run(sql: string, params: unknown[]): Promise<RunResult> {
-    const r = this.sqliteDb.run(sql, params as Bindings)
+    const r = this.sqliteDb.run(sql, serializeBindings(params) as Bindings)
     return Promise.resolve({ changes: r.changes, lastInsertId: r.lastInsertRowid })
   }
 

@@ -2,6 +2,7 @@ import type { DatabaseConfig, PoolConfig, SupportedDialect } from './types'
 import type { SQLQueryBindings } from 'bun:sqlite'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { SQL } from 'bun'
+import { serializeBindings, withDateBindings } from './bindings'
 
 /**
  * The query object returned by `connection.unsafe(...)` / a tagged template.
@@ -30,13 +31,17 @@ export interface EmbeddedValue {
  *
  * Everything a caller interpolates arrives as `unknown` - that is honest, we
  * do not know what it is. bun:sqlite accepts a narrower set. The conversion is
- * unchecked because the driver itself is the validator: it throws a clear
- * "can't bind" for anything it cannot take, and a check here would only
+ * otherwise unchecked because the driver itself is the validator: it throws a
+ * clear "can't bind" for anything it cannot take, and a check here would only
  * duplicate that rule and drift from it. Kept as one named function so the
  * boundary is visible, rather than an `any` at each of the six call sites.
+ *
+ * The exception is `Date`, which bun:sqlite does NOT refuse: it binds it as
+ * NULL, silently. Dates are sent as ISO-8601 text instead, the same value the
+ * libSQL and Postgres paths send (see bindings.ts).
  */
 export function toBindings(params: readonly unknown[]): SQLQueryBindings[] {
-  return params as SQLQueryBindings[]
+  return serializeBindings(params) as SQLQueryBindings[]
 }
 
 /** A template value seen as a possible fragment; null when it is a plain bind param. */
@@ -912,7 +917,11 @@ export function getBunSql(): SQL {
     // code (and would have re-masked exactly the "database does not exist"
     // errors #1022 made loud). Async connection errors surface at query time
     // and via the process-level handler below. See #1039.
-    return sql
+    //
+    // Every Date this connection binds goes out as an ISO string: with
+    // `prepare: false` Bun sends `String(date)`, which Postgres refuses. A
+    // no-op for MySQL. See bindings.ts.
+    return withDateBindings(sql)
   }
   catch (error) {
     // Surface the real construction failure UNCONDITIONALLY — never gate it
@@ -1042,7 +1051,7 @@ export function resetConnection(): void {
  */
 export function setSqlInstance(sql: SQL): void {
   detachCachedConnection()
-  _bunSqlInstance = sql
+  _bunSqlInstance = withDateBindings(sql)
   _currentSignature = connectionSignature()
 }
 

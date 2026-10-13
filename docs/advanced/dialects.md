@@ -579,6 +579,18 @@ setConfig({
 - Store timestamps in UTC; convert at the application edge
 - Booleans may map to `tinyint(1)` in MySQL; ensure truthiness expectations
 
+### Date parameters
+
+Pass a JavaScript `Date` anywhere a value is bound (`values()`, `set()`, `where()`, `whereIn()`, `whereBetween()`, `paginate()`, `db.unsafe(sql, params)`, tagged templates, `db.sql([...])` IN lists, `db.sql.array()`, the model layer, and inside `db.transaction()`). On Postgres, SQLite and libSQL it is sent as `date.toISOString()`:
+
+- `timestamptz` stores that instant.
+- `timestamp` stores its UTC wall-clock time, the value Bun's prepared path stores too.
+- `date` stores its UTC calendar day. Bun reads a `date` column back as UTC midnight, so a value read and written back keeps its day in any process time zone.
+
+This holds with `pool.preparedStatements: false` as well. Bun's driver on its own sends a `Date` as `String(date)` there (`Tue Oct 13 2026 20:45:42 GMT+0000 (...)`), which Postgres refuses, and does the same for a `date` parameter or an array element even with prepared statements on. On SQLite, `bun:sqlite` would bind a `Date` as NULL.
+
+An invalid `Date` (`new Date('nope')`) throws a `RangeError` naming the parameter before anything is sent. MySQL connections are left to the driver, and model rows are reshaped to `YYYY-MM-DD HH:MM:SS` there, since a `DATETIME` literal cannot carry the ISO `T` and `Z`.
+
 ## Performance Tips Per Dialect
 
 - Postgres: leverage `EXPLAIN (ANALYZE, BUFFERS)` during tuning; create appropriate indexes for JSON paths if needed

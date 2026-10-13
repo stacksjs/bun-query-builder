@@ -1,4 +1,5 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
+import { bindingValue } from './bindings'
 
 export type DeferredInsert = (table: string, record: Readonly<Record<string, SQLQueryBindings | undefined>>) => Promise<void>
 
@@ -46,6 +47,9 @@ export class SQLiteDeferredInserts {
       const value = record[column]
       if (ArrayBuffer.isView(value))
         return new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice()
+      // bun:sqlite would bind a Date as NULL; send ISO text like every other path.
+      if (value instanceof Date)
+        return bindingValue(value) as string
       return value ?? null
     })
     const shape = JSON.stringify([table, columns])
