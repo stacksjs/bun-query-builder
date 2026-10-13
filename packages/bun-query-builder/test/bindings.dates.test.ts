@@ -72,6 +72,8 @@ describe('withDateBindings', () => {
     const { conn, calls } = fakePostgres()
     const sql: any = withDateBindings(conn)
     expect(withDateBindings(sql)).toBe(sql)
+    // The same wrapper every time, so the query cache keyed on the connection still hits.
+    expect(withDateBindings(conn)).toBe(sql)
 
     sql.unsafe('select $1', [at])
     sql`select ${at}, ${'x'}`

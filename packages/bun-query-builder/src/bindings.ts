@@ -60,6 +60,12 @@ export function serializeBindings<T extends readonly unknown[] | undefined | nul
 export function withDateBindings<T>(connection: T): T {
   if (!isPostgresConnection(connection) || wrapped.has(connection as object))
     return connection
+  // One wrapper per connection: builders created over the same connection must
+  // see the same object, or the query cache (keyed on connection identity)
+  // treats them as different connections and never hits.
+  const existing = wrappers.get(connection as object)
+  if (existing)
+    return existing as T
   const target = connection as unknown as DriverFunction
   const proxy = new Proxy(target, {
     apply(fn, _thisArg, args: unknown[]) {
@@ -91,10 +97,12 @@ export function withDateBindings<T>(connection: T): T {
     },
   })
   wrapped.add(proxy)
+  wrappers.set(connection as object, proxy)
   return proxy as unknown as T
 }
 
 const wrapped = new WeakSet<object>()
+const wrappers = new WeakMap<object, object>()
 
 /** A Bun SQL connection: callable (tagged template, helper) with methods. */
 type DriverFunction = Function & Record<PropertyKey, any>
