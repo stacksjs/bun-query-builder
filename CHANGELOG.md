@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.10...v0.3.11)
+
+## 🐛 Bug Fixes
+
+- one Date-binding wrapper per connection, so the query cache hits ([6ff1847](https://github.com/stacksjs/bun-query-builder/commit/6ff1847)) _(by Chris Breuer <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.11 ([ca35a01](https://github.com/stacksjs/bun-query-builder/commit/ca35a01)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Chris Breuer <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.9...v0.3.10)
 
 ## 🐛 Bug Fixes
