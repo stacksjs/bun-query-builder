@@ -839,10 +839,11 @@ export function resolvePoolOptions(pool?: PoolConfig): {
   idleTimeout?: number
   connectionTimeout?: number
   maxLifetime?: number
+  prepare?: boolean
 } {
   if (!pool)
     return {}
-  const out: { max?: number, idleTimeout?: number, connectionTimeout?: number, maxLifetime?: number } = {}
+  const out: { max?: number, idleTimeout?: number, connectionTimeout?: number, maxLifetime?: number, prepare?: boolean } = {}
   // Bun's pool timeouts are in seconds; convert from ms (rounded, floored at 0).
   const toSeconds = (ms: number): number => Math.max(0, Math.round(ms / 1000))
   if (typeof pool.max === 'number' && Number.isFinite(pool.max))
@@ -853,6 +854,8 @@ export function resolvePoolOptions(pool?: PoolConfig): {
     out.connectionTimeout = toSeconds(pool.acquireTimeoutMs)
   if (typeof pool.maxLifetimeMs === 'number' && Number.isFinite(pool.maxLifetimeMs))
     out.maxLifetime = toSeconds(pool.maxLifetimeMs)
+  if (typeof pool.preparedStatements === 'boolean')
+    out.prepare = pool.preparedStatements
   return out
 }
 

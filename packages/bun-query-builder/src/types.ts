@@ -333,6 +333,19 @@ export interface PoolConfig {
    * is effectively always on. Default: true.
    */
   autoReconnect?: boolean
+  /**
+   * Whether the driver keeps each query as a named prepared statement on the
+   * connection. Maps to Bun SQL `prepare`. Default: true (the driver's).
+   *
+   * A kept statement fixes its result's columns, so after a migration changes
+   * a table (a column added under `SELECT *`) PostgreSQL refuses it with
+   * "cached plan must not change result type", and that query fails on that
+   * connection until the process restarts — the window between a deploy's
+   * migration and the new release starting, or another process migrating a
+   * shared database. `false` sends unnamed statements, planned per query, so
+   * a schema change is simply seen.
+   */
+  preparedStatements?: boolean
 }
 
 export interface DatabaseConfig {
