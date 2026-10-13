@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.8...v0.3.9)
+
+## ✨ Features
+
+- **pool**: preparedStatements: false survives a migration under SELECT * ([f1d4e3f](https://github.com/stacksjs/bun-query-builder/commit/f1d4e3f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.9 ([99d263b](https://github.com/stacksjs/bun-query-builder/commit/99d263b)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.7...v0.3.8)
 
 ## 🐛 Bug Fixes
