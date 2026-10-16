@@ -55,7 +55,7 @@ export interface SchemaDrift {
  * the ones that are. What it does separate is the pairs that silently lose
  * data — text from bounded varchar, and fractional from whole.
  */
-export type TypeFamily = 'text' | 'varchar' | 'integer' | 'fractional' | 'boolean' | 'date' | 'json' | 'binary' | 'other'
+export type TypeFamily = 'text' | 'varchar' | 'integer' | 'fractional' | 'boolean' | 'date' | 'timestamptz' | 'json' | 'binary' | 'other'
 
 /** The family a model's declared type belongs to. */
 export function familyOfDeclared(type: NormalizedColumnType): TypeFamily {
@@ -76,8 +76,11 @@ export function familyOfDeclared(type: NormalizedColumnType): TypeFamily {
       return 'boolean'
     case 'date':
     case 'datetime':
-    case 'timestamptz':
       return 'date'
+    // Awareness is its own family: a naive value written into an aware column
+    // is read back as a different instant, which no widening rule covers.
+    case 'timestamptz':
+      return 'timestamptz'
     case 'json':
       return 'json'
     default:
@@ -85,8 +88,18 @@ export function familyOfDeclared(type: NormalizedColumnType): TypeFamily {
   }
 }
 
-/** The family a raw SQL type reported by a database belongs to. */
-export function familyOfSqlType(sqlType: string): TypeFamily {
+/**
+ * The family a raw SQL type reported by a database belongs to.
+ *
+ * `dialect` matters only for timestamps, and only for the bare word
+ * `timestamp`, whose awareness is not a property of the spelling: Postgres
+ * `timestamp` is naive, while MySQL's `TIMESTAMP` is converted to and from the
+ * session timezone on every read and write and `DATETIME` is the naive one. So
+ * the same four letters mean opposite things, and classifying them without
+ * knowing the server gets one dialect wrong whichever way it guesses. Omitted,
+ * it reads `timestamp` as naive, which is correct everywhere but MySQL.
+ */
+export function familyOfSqlType(sqlType: string, dialect?: SupportedDialect): TypeFamily {
   const type = String(sqlType ?? '').toLowerCase().trim()
 
   // Order matters. `tinyint(1)` is MySQL's boolean and must not read as an
@@ -99,6 +112,22 @@ export function familyOfSqlType(sqlType: string): TypeFamily {
 
   if (/^(?:bytea|blob|binary|varbinary)\b/.test(type))
     return 'binary'
+
+  // Before the generic date branch, which would otherwise swallow these.
+  //
+  // Tested against the whole string rather than a leading word, matching
+  // `normalizePlanType` in introspect-db: Postgres reports an aware column as
+  // `timestamp with time zone`, and `timestamp(6) with time zone` when it
+  // carries a precision. The bare `timestamptz` spelling needs its own test
+  // because `\b` cannot match between `timestamp` and `tz`, so the generic
+  // branch misses it and it used to fall through to `other` - where the
+  // unknown-is-not-drift rule passed it silently.
+  if (/\bwith time zone\b/.test(type) || /^timestamptz\b/.test(type))
+    return 'timestamptz'
+
+  // MySQL's aware type. `datetime` is its naive one and falls through below.
+  if (isMysqlLike(dialect) && /^timestamp\b/.test(type))
+    return 'timestamptz'
 
   if (/^(?:date|time|timestamp|datetime)\b/.test(type))
     return 'date'
@@ -141,7 +170,13 @@ export function satisfies(declared: TypeFamily, actual: TypeFamily, dialect?: Su
   if (dialect === 'sqlite') {
     if (declared === 'boolean' && actual === 'integer')
       return true
-    if ((declared === 'date' || declared === 'json') && actual === 'text')
+    if ((declared === 'date' || declared === 'timestamptz' || declared === 'json') && actual === 'text')
+      return true
+    // SQLite has no timezone-aware type and performs no session conversion, so
+    // the distinction the `timestamptz` family exists to catch cannot arise
+    // here. The driver stores every date family as TEXT; a column declared
+    // `timestamptz` by some other tool is still just text.
+    if ((declared === 'date' && actual === 'timestamptz') || (declared === 'timestamptz' && actual === 'date'))
       return true
   }
 
@@ -153,6 +188,21 @@ export function satisfies(declared: TypeFamily, actual: TypeFamily, dialect?: Su
    * database is a report people learn to scroll past.
    */
   if (isMysqlLike(dialect) && declared === 'boolean' && actual === 'integer')
+    return true
+
+  /*
+   * MySQL has no aware type a model can ask for: the driver maps BOTH
+   * `datetime` and `timestamptz` to `DATETIME` (drivers/mysql.ts), so a model
+   * declaring `timestamptz` gets a naive column from a correct migration. If
+   * that read as drift, every MySQL schema bqb itself created would be dirty -
+   * the same false positive as the boolean rule above.
+   *
+   * The opposite direction is NOT excused. A live MySQL `TIMESTAMP` under a
+   * naive model is session-converted on every read, and bqb never emits one,
+   * so it can only have come from elsewhere. That is real drift and the
+   * dangerous half.
+   */
+  if (isMysqlLike(dialect) && declared === 'timestamptz' && actual === 'date')
     return true
 
   // A bounded string fits in an unbounded one.
@@ -212,7 +262,7 @@ export async function auditSchemaDrift(
         continue
       }
 
-      const actual = familyOfSqlType(liveColumn.sqlType)
+      const actual = familyOfSqlType(liveColumn.sqlType, dialect)
 
       if (!satisfies(declared, actual, dialect)) {
         typeMismatches.push({
