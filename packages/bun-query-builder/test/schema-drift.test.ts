@@ -47,7 +47,8 @@ describe('familyOfSqlType', () => {
     ['boolean', 'boolean'],
     ['bool', 'boolean'],
     ['jsonb', 'json'],
-    ['timestamp with time zone', 'date'],
+    ['timestamp with time zone', 'timestamptz'],
+    ['timestamp without time zone', 'date'],
     ['date', 'date'],
     ['bytea', 'binary'],
   ])('reads %s as %s', (sqlType, expected) => {
@@ -183,5 +184,82 @@ describe('formatSchemaDrift', () => {
 
     expect(report).toContain('more')
     expect(report.split('\n').length).toBeLessThan(25)
+  })
+})
+
+/**
+ * Naive-vs-aware timestamps — stacksjs/bun-query-builder#1176.
+ *
+ * Both families used to collapse into `date`, so a live `timestamptz` under a
+ * model declaring `datetime` reported clean in both directions, on every
+ * dialect. It is the one drift class that silently changes every value the
+ * application writes: a naive UTC literal stored in an aware column is read
+ * back shifted by the session offset. Three Stacks applications ran 8 hours
+ * off with the auditor calling those schemas clean on every migrate.
+ */
+describe('timestamp awareness (#1176)', () => {
+  it('separates the two families at the declaration', () => {
+    expect(familyOfDeclared('timestamptz')).toBe('timestamptz')
+    expect(familyOfDeclared('datetime')).toBe('date')
+    expect(familyOfDeclared('date')).toBe('date')
+  })
+
+  it('reads every spelling Postgres and MySQL report', () => {
+    // Measured against live servers, not assumed: Postgres information_schema
+    // says `timestamp with/without time zone`, MySQL says `timestamp`/`datetime`.
+    expect(familyOfSqlType('timestamp with time zone')).toBe('timestamptz')
+    expect(familyOfSqlType('timestamp(6) with time zone')).toBe('timestamptz')
+    expect(familyOfSqlType('timestamp without time zone')).toBe('date')
+    expect(familyOfSqlType('timestamp')).toBe('date')
+    expect(familyOfSqlType('datetime')).toBe('date')
+  })
+
+  it('reads the bare timestamptz spelling, which `\\b` cannot reach', () => {
+    // `\b` matches nothing between `timestamp` and `tz`, so the generic date
+    // branch misses this and it used to fall through to `other` — where the
+    // unknown-is-not-drift rule passed it without comment. SQLite returns the
+    // declared text from PRAGMA, so this is the spelling it reports.
+    expect(familyOfSqlType('timestamptz')).toBe('timestamptz')
+  })
+
+  it('reads a bare MySQL TIMESTAMP as aware, unlike Postgres', () => {
+    // The same four letters mean opposite things. MySQL converts TIMESTAMP to
+    // and from the session timezone; DATETIME is its naive type.
+    expect(familyOfSqlType('timestamp', 'mysql')).toBe('timestamptz')
+    expect(familyOfSqlType('datetime', 'mysql')).toBe('date')
+    expect(familyOfSqlType('timestamp', 'postgres')).toBe('date')
+  })
+
+  it('refuses both directions, because neither is a widening', () => {
+    // The bug this issue is about: a naive model over an aware column.
+    expect(satisfies('date', 'timestamptz', 'postgres')).toBe(false)
+    // And the reverse, which loses the offset instead of inventing one.
+    expect(satisfies('timestamptz', 'date', 'postgres')).toBe(false)
+    expect(satisfies('timestamptz', 'timestamptz', 'postgres')).toBe(true)
+    expect(satisfies('date', 'date', 'postgres')).toBe(true)
+  })
+
+  it('still flags the dangerous direction on MySQL', () => {
+    // bqb never emits MySQL TIMESTAMP, so a live one under a naive model came
+    // from somewhere else and is session-converted on every read.
+    expect(satisfies('date', 'timestamptz', 'mysql')).toBe(false)
+  })
+
+  it('excuses declared timestamptz over a MySQL DATETIME', () => {
+    // drivers/mysql.ts maps BOTH `datetime` and `timestamptz` to DATETIME, so
+    // a correct migration produces exactly this pairing. Flagging it would
+    // make every MySQL schema bqb created report drift — the same false
+    // positive the boolean/tinyint rule exists to prevent.
+    expect(satisfies('timestamptz', 'date', 'mysql')).toBe(true)
+    expect(satisfies('timestamptz', 'date', 'singlestore')).toBe(true)
+  })
+
+  it('stays quiet on SQLite, which has no awareness to disagree about', () => {
+    // Every date family is stored as TEXT and no session conversion happens,
+    // so the distinction cannot arise. Reporting it would make every clean
+    // SQLite database look broken.
+    expect(satisfies('timestamptz', 'text', 'sqlite')).toBe(true)
+    expect(satisfies('date', 'timestamptz', 'sqlite')).toBe(true)
+    expect(satisfies('timestamptz', 'date', 'sqlite')).toBe(true)
   })
 })
