@@ -1,3 +1,23 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.11...v0.3.12)
+
+## 🐛 Bug Fixes
+
+- **postgres**: preserve explicit database targets with PGDATABASE ([11c9f2b](https://github.com/stacksjs/bun-query-builder/commit/11c9f2b)) _(by Chris Breuer <chris@stacksjs.com>)_
+- **drift**: give timezone awareness its own type family (#1178) ([9764b62](https://github.com/stacksjs/bun-query-builder/commit/9764b62)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1176](https://github.com/stacksjs/bun-query-builder/issues/1176), [#1178](https://github.com/stacksjs/bun-query-builder/issues/1178), [#1178](https://github.com/stacksjs/bun-query-builder/issues/1178))
+
+## 📝 Documentation
+
+- **mysql**: say that timestamptz is naive there, and warn once (#1180) ([dcd8e26](https://github.com/stacksjs/bun-query-builder/commit/dcd8e26)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1179](https://github.com/stacksjs/bun-query-builder/issues/1179), [#1180](https://github.com/stacksjs/bun-query-builder/issues/1180), [#1180](https://github.com/stacksjs/bun-query-builder/issues/1180))
+
+## 🔧 Chores
+
+- release v0.3.12 ([9e4af0a](https://github.com/stacksjs/bun-query-builder/commit/9e4af0a)) _(by Chris Breuer <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris Breuer <chris@stacksjs.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.10...v0.3.11)
 
 ## 🐛 Bug Fixes
