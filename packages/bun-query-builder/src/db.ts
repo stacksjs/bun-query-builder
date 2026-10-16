@@ -908,9 +908,11 @@ export function getBunSql(): SQL {
     // For other databases, use Bun's SQL class, threading through any
     // configured connection-pool options (#1014).
     const poolOptions = resolvePoolOptions(config.database.pool)
-    const sql = Object.keys(poolOptions).length > 0
-      ? new SQL(connectionString, poolOptions)
-      : new SQL(connectionString)
+    // Bun lets PGDATABASE override even an explicit URL's database. Preserve
+    // the target selected above as an explicit constructor option as well, so
+    // multiple configured databases remain isolated in service environments.
+    const database = decodeURIComponent(new URL(connectionString).pathname.slice(1))
+    const sql = new SQL(connectionString, { ...poolOptions, ...(database ? { database } : {}) })
 
     // NOTE: a Bun `SQL` instance is not a Promise and has no `.catch`, so the
     // previous `if (typeof sql.catch === 'function')` handler here was dead
