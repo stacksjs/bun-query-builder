@@ -3,6 +3,43 @@ import type { DateBucketGrain } from './postgres'
 import { decimalTypeSql } from './decimal'
 import { qualifiedIndexName } from './index-name'
 
+/**
+ * Warn, once per column per process, that `timestamptz` is not aware on MySQL.
+ *
+ * MySQL's only timezone-aware type is `TIMESTAMP`, and it cannot hold a date
+ * past 2038-01-19 - on 8.4 an insert of `2045-06-01` is rejected outright with
+ * ERROR 1292. Since `timestamptz` columns are usually the far-future ones
+ * (`expires_at`, period ends), `DATETIME` is the safer storage and is what
+ * this driver emits.
+ *
+ * That is a real loss, though, and nothing else reports it. The column is
+ * naive: the server performs no session conversion, so the value is only an
+ * instant by convention. The convention holds for anything this library
+ * writes, because `temporalLiteral` sends UTC wall-clock digits, and breaks
+ * for a raw `NOW()`, another service, or a dump restored from a tz-aware
+ * source. On Postgres the same declaration is genuinely aware, so a model
+ * that is correct on one dialect is only conventionally correct on the other.
+ *
+ * Nor does the declaration survive a round trip: MySQL reports the column as
+ * `datetime`, so regenerating model source from the database rewrites the
+ * attribute. It does not cause migration churn - `canonicalStorageType` maps
+ * both declarations to `DATETIME`, so a reconcile compares equal - which is
+ * why this warns rather than refuses. stacksjs/bun-query-builder#1179
+ */
+const warnedTimestamptzColumns = new Set<string>()
+function warnOnceTimestamptzIsNaive(columnName: string): void {
+  if (warnedTimestamptzColumns.has(columnName))
+    return
+  warnedTimestamptzColumns.add(columnName)
+  console.warn(
+    `[query-builder] ${columnName}: MySQL has no timezone-aware type that can hold a date past `
+    + `2038, so \`timestamptz\` is stored as DATETIME, which the server never converts. Values `
+    + `this library writes are UTC, so they round-trip - but the column is only an instant by `
+    + `convention, and anything writing to it directly (a raw NOW(), another service, a restored `
+    + `dump) can break that. Declare \`datetime\` to say so explicitly.`,
+  )
+}
+
 export interface DialectDriver {
   createEnumType: (enumTypeName: string, values: string[]) => string
   createTable: (table: TablePlan) => string
@@ -53,7 +90,9 @@ export class MySQLDriver implements DialectDriver {
       case 'decimal': return decimalTypeSql(column)
       case 'date': return 'date'
       case 'datetime': return 'datetime'
-      case 'timestamptz': return 'datetime'
+      case 'timestamptz':
+        warnOnceTimestamptzIsNaive(column.name)
+        return 'datetime'
       case 'json': return 'json'
       case 'enum':
         if (column.enumValues && column.enumValues.length > 0) {

@@ -591,6 +591,26 @@ This holds with `pool.preparedStatements: false` as well. Bun's driver on its ow
 
 An invalid `Date` (`new Date('nope')`) throws a `RangeError` naming the parameter before anything is sent. MySQL connections are left to the driver, and model rows are reshaped to `YYYY-MM-DD HH:MM:SS` there, since a `DATETIME` literal cannot carry the ISO `T` and `Z`.
 
+### `timestamptz` is not timezone-aware on MySQL
+
+A column declared `timestamptz` is genuinely aware on Postgres, and naive on MySQL:
+
+| declared | Postgres | MySQL |
+| --- | --- | --- |
+| `datetime` | `timestamp` (naive) | `DATETIME` (naive) |
+| `timestamptz` | `timestamptz` (aware) | `DATETIME` (**naive**) |
+
+MySQL's only aware type is `TIMESTAMP`, and it cannot hold a date past 2038-01-19 — MySQL 8.4 rejects an insert of `2045-06-01` outright. Since `timestamptz` columns are usually the far-future ones (`expires_at`, period ends), `DATETIME` is the safer storage, so that is what the driver emits. Declaring `timestamptz` under a MySQL dialect logs a warning once per column.
+
+In practice values still round-trip, because everything this library writes is UTC: `temporalLiteral` sends UTC wall-clock digits and MySQL returns them unconverted. What you lose is the server enforcing it. The column is an instant **by convention**, and the convention breaks for anything writing directly — a raw `NOW()`, another service, or a dump restored from a timezone-aware source. Nothing detects that afterwards, because the stored value looks the same either way.
+
+Two consequences worth knowing:
+
+- Regenerating model source from a MySQL database rewrites a `timestamptz` attribute to `datetime`, since that is what the column reports. It does not cause migration churn — both declarations map to the same storage type, so a reconcile compares equal.
+- `auditSchemaDrift` cannot flag a `timestamptz` model over a MySQL `DATETIME`, because that pairing is what a correct migration produces. It still flags the dangerous direction: a live MySQL `TIMESTAMP` under a naive model is session-converted on every read, and this library never emits one.
+
+If you want the server to enforce the instant and your dates stay before 2038, declare the column `TIMESTAMP` in a hand-written migration rather than through a model.
+
 ## Performance Tips Per Dialect
 
 - Postgres: leverage `EXPLAIN (ANALYZE, BUFFERS)` during tuning; create appropriate indexes for JSON paths if needed
