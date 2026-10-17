@@ -211,6 +211,10 @@ const activeUsers = await db.selectFrom('users')
   .get()
 ```
 
+### Named model relations
+
+A model's `belongsTo` array can name a link when several foreign keys point to the same model. For example, `{ model: 'User', foreignKey: 'closed_by_id', relationName: 'closedBy' }` is loaded with `.with('closedBy')`. The name preserves the declared foreign key and target table. A loaded link with a null foreign key returns `null`; an unloaded link remains `undefined`.
+
 ### Relations with Constraints
 
 ```ts

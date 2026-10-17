@@ -1301,3 +1301,19 @@ type OrmBuilder = import('../orm').ModelQueryBuilder<typeof MemberDef>
 type RB1 = Expect<Equal<RootBuilder, OrmBuilder>>
 // eslint-disable-next-line pickier/no-unused-vars
 type RB2 = Expect<Equal<import('../index').DynamoDBModelQueryBuilder<any>, import('../dynamodb').ModelQueryBuilder<any>>>
+
+
+// Explicit names keep repeated targets distinct and preserve to-one cardinality.
+const NamedLinkDef = {
+  name: 'NamedLink', table: 'named_links',
+  belongsTo: [{ model: 'User', foreignKey: 'author_id' }, { model: 'User', foreignKey: 'closed_by_id', relationName: 'closedBy' }],
+  attributes: {},
+} as const satisfies ModelDefinition
+// eslint-disable-next-line pickier/no-unused-vars
+type NamedLinkNames = Expect<Equal<InferRelationNames<typeof NamedLinkDef>, 'user' | 'closedBy'>>
+// eslint-disable-next-line pickier/no-unused-vars
+type NamedLinkCardinality = Expect<Equal<RelationCardinality<typeof NamedLinkDef, 'closedBy'>, 'one'>>
+const NamedLink = createModel(NamedLinkDef)
+NamedLink.with('closedBy')
+// @ts-expect-error Unknown aliases remain a type error.
+NamedLink.with('closed_by')

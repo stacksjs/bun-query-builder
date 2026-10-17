@@ -39,8 +39,7 @@ export type { ModelDefinition as OrmModelDefinition, ModelStatic as OrmModelStat
 // Explicit re-exports for model registry functions
 export { getModel, getAllModels, getModelRegistry, hasModel, clearModelRegistry, registerModel } from './model'
 
-// Re-export the type-inference version of InferRelationNames (supports wrapped models)
-// to resolve the ambiguity with orm.ts's InferRelationNames (which takes raw definitions)
+// Re-export the canonical relation-name inference shared with the ORM.
 export type { InferRelationNames } from './type-inference'
 
 // Explicit re-exports for type inference utilities

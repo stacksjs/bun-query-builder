@@ -10,6 +10,8 @@ import type { OnForeignKeyAction } from './schema'
  */
 export interface NormalizedRelation {
   model: string
+  /** Explicit runtime/query name when one model is related more than once. */
+  relationName?: string
   /** Custom FK column name (object form); generators default to `${snake(model)}_id`. */
   foreignKey?: string
   /** ON DELETE behaviour (object form). */
@@ -26,8 +28,8 @@ export function normalizeRelationEntry(entry: unknown): NormalizedRelation | nul
   if (typeof entry === 'string')
     return { model: entry }
   if (entry && typeof entry === 'object' && typeof (entry as any).model === 'string') {
-    const e = entry as { model: string, foreignKey?: string, onDelete?: OnForeignKeyAction }
-    return { model: e.model, foreignKey: e.foreignKey, onDelete: e.onDelete }
+    const e = entry as { model: string, foreignKey?: string, onDelete?: OnForeignKeyAction, relationName?: string }
+    return { model: e.model, foreignKey: e.foreignKey, onDelete: e.onDelete, ...(typeof e.relationName === 'string' ? { relationName: e.relationName } : {}) }
   }
   return null
 }

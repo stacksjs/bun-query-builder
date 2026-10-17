@@ -108,7 +108,7 @@ export function buildSchemaMeta(models: ModelRecord): SchemaMeta {
         for (const item of v) {
           const n = normalizeRelationEntry(item)
           if (n)
-            rec[n.model] = n.model
+            rec[n.relationName ?? n.model] = n.model
         }
         return rec
       }

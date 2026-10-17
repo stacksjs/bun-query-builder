@@ -518,7 +518,8 @@ type RelationKeyOf<V> =
     ? Lowercase<V>
     : V extends readonly (infer E)[]
       ? E extends string ? Lowercase<E>
-        : E extends { model: infer M extends string } ? Lowercase<M>
+        : E extends { relationName: infer N extends string } ? N
+          : E extends { model: infer M extends string } ? Lowercase<M>
           : never
       : V extends Readonly<Record<infer K, unknown>>
         ? K & string

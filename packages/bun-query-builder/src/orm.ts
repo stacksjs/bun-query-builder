@@ -28,7 +28,8 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { FactoryFaker } from './faker-compat'
 import type { PaginateOptions } from './client'
 import type { SupportedDialect } from './types'
-import type { RelationCardinality } from './type-inference'
+import type { InferRelationNames, RelationCardinality } from './type-inference'
+export type { InferRelationNames } from './type-inference'
 import { isNumericPlanType, normalizeAttributeType, sqliteAffinityFor } from './column-types'
 import { config, isMysqlLike } from './config'
 import type { DriverConnection } from './db'
@@ -36,7 +37,7 @@ import { serializeBindings } from './bindings'
 import { getOrCreateBunSql, resolveLibSQLTarget } from './db'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 import { createFakerCompatLayer } from './faker-compat'
-import { normalizeRelationList } from './relation-utils'
+import { normalizeRelationEntry, normalizeRelationList } from './relation-utils'
 import { singularizerFor, toTableName as sharedToTableName } from './inflect'
 import type { WhereTerm } from './sql-fragments'
 import { countPlaceholders, renderInPredicate, renderWhereTerms, toDialectPlaceholders } from './sql-fragments'
@@ -268,6 +269,8 @@ export interface ModelHookInstance extends Record<string, unknown> {
  */
 export interface BelongsToEntry {
   readonly model: string
+  /** Query/eager-load name; defaults to the lowercased model name. */
+  readonly relationName?: string
   /** FK column on THIS table. Defaults to `${snake(model)}_id`. */
   readonly foreignKey?: string
   /** ON DELETE behaviour for the generated constraint. */
@@ -568,58 +571,6 @@ type BelongsToCamelColumns<TDef extends ModelDefinition> = {
 type NumericColumns<TDef extends ModelDefinition> = {
   [K in AttributeKeys<TDef>]: InferAttributeType<TDef['attributes'][K]> extends number ? K : never
 }[AttributeKeys<TDef>]
-
-// Infer relation names from model definition (supports both array and object syntax)
-
-/**
- * Relation names of one relation declaration. Array form lowercases the
- * (unwrapped) model name; record form uses the keys. The array case MUST be
- * checked first: a tuple also structurally matches `Readonly<Record<...>>`
- * and would otherwise leak its own keys ('length', indices, ...) into the
- * relation-name union.
- */
-type RelationKeyOf<V> =
-  V extends string
-    ? Lowercase<V>
-    : V extends readonly (infer E)[]
-      ? E extends string ? Lowercase<E>
-        : E extends { model: infer M extends string } ? Lowercase<M>
-          : never
-      : V extends Readonly<Record<infer K, unknown>>
-        ? K & string
-        : never
-
-type InferBelongsToNames<TDef> = TDef extends { belongsTo: infer V } ? RelationKeyOf<V> : never
-
-type InferHasManyNames<TDef> = TDef extends { hasMany: infer V } ? RelationKeyOf<V> : never
-
-type InferHasOneNames<TDef> = TDef extends { hasOne: infer V } ? RelationKeyOf<V> : never
-
-type InferBelongsToManyNames<TDef> = TDef extends { belongsToMany: infer V } ? RelationKeyOf<V> : never
-
-type InferHasOneThroughNames<TDef> = TDef extends { hasOneThrough: infer V } ? RelationKeyOf<V> : never
-
-type InferHasManyThroughNames<TDef> = TDef extends { hasManyThrough: infer V } ? RelationKeyOf<V> : never
-
-type InferMorphOneNames<TDef> = TDef extends { morphOne: infer V } ? RelationKeyOf<V> : never
-
-type InferMorphManyNames<TDef> = TDef extends { morphMany: infer V } ? RelationKeyOf<V> : never
-
-type InferMorphToManyNames<TDef> = TDef extends { morphToMany: infer V } ? RelationKeyOf<V> : never
-
-type InferMorphedByManyNames<TDef> = TDef extends { morphedByMany: infer V } ? RelationKeyOf<V> : never
-
-export type InferRelationNames<TDef> =
-  | InferBelongsToNames<TDef>
-  | InferHasManyNames<TDef>
-  | InferHasOneNames<TDef>
-  | InferBelongsToManyNames<TDef>
-  | InferHasOneThroughNames<TDef>
-  | InferHasManyThroughNames<TDef>
-  | InferMorphOneNames<TDef>
-  | InferMorphManyNames<TDef>
-  | InferMorphToManyNames<TDef>
-  | InferMorphedByManyNames<TDef>
 
 /**
  * Cardinality-aware value of a loaded relation as returned by
@@ -1945,7 +1896,10 @@ function relationNamesFor(definition: ModelDefinition, kind: string): string[] {
   if (!rel)
     return []
   if (Array.isArray(rel))
-    return rel.map(item => (typeof item === 'string' ? item : String((item as any)?.model ?? ''))).filter(Boolean)
+    return rel.map((item) => {
+      const entry = normalizeRelationEntry(item)
+      return entry?.relationName ?? entry?.model ?? ''
+    }).filter(Boolean)
   if (typeof rel === 'object')
     return Object.keys(rel as Record<string, unknown>)
   if (typeof rel === 'string')
@@ -2001,9 +1955,9 @@ function resolveRelation(definition: ModelDefinition, relationName: string): Res
     // Array syntax: hasMany: ['Order'] → relation name is lowercased model name
     if (Array.isArray(rel)) {
       for (const item of rel) {
-        const modelName = typeof item === 'string' ? item : (item as any)?.model || ''
-        if (modelName && modelName.toLowerCase() === relationName.toLowerCase()) {
-          return modelName
+        const entry = normalizeRelationEntry(item)
+        if (entry && (entry.relationName ?? entry.model).toLowerCase() === relationName.toLowerCase()) {
+          return entry.model
         }
       }
       return null
@@ -2040,10 +1994,10 @@ function resolveRelation(definition: ModelDefinition, relationName: string): Res
       return null
     }
     if (Array.isArray(rel)) {
-      // Array form: the relation name IS the (lowercased) model name.
+      // Array form: an explicit alias wins; otherwise use the model name.
       for (const item of rel) {
         const e = unwrap(item)
-        if (e && e.model.toLowerCase() === lower) return e
+        if (e && (normalizeRelationEntry(item)?.relationName ?? e.model).toLowerCase() === lower) return e
       }
       return null
     }
@@ -3258,7 +3212,10 @@ class ModelQueryBuilder<
         if (v != null) fkSet.add(v)
       }
       const uniqueFkValues = [...fkSet]
-      if (uniqueFkValues.length === 0) return
+      if (uniqueFkValues.length === 0) {
+        for (const instance of instances) instance.setRelation(relationName, null)
+        return
+      }
 
       const placeholders = uniqueFkValues.map(() => '?').join(', ')
       const rows = await exec.all(

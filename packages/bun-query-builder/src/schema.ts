@@ -379,7 +379,7 @@ type RelationRecordOf<V> =
   [V] extends [never]
     ? {} // absent relation kind — must yield {} (not never) so intersections survive
     : V extends readonly (infer E)[]
-      ? { [K in RelationEntryModelName<E> & string]: K }
+      ? { [Entry in E as Entry extends { relationName: infer N extends string } ? N : RelationEntryModelName<Entry> & string]: RelationEntryModelName<Entry> }
       : V extends Readonly<Record<string, unknown>>
         ? { [K in keyof V & string]: RelationEntryModelName<V[K]> }
         : {}
