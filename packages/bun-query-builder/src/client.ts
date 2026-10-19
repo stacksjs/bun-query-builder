@@ -354,6 +354,50 @@ export function quoteColumnForDialect(name: string, dialect = config.dialect): s
 }
 
 /**
+ * A column reference safe to interpolate: `col`, `tbl.col`, either with
+ * `AS alias`, and `*` / `tbl.*` where a star makes sense.
+ *
+ * Deliberately the same shape `quoteColumnForDialect` already parses, because
+ * anything it cannot parse it returns verbatim - it is a MySQL quoter, not a
+ * validator, and on Postgres and SQLite it returns its argument untouched. So
+ * every caller that passed a column name through it was interpolating that
+ * name raw. stacksjs/bun-query-builder#1181
+ */
+const SAFE_COLUMN_REF = /^(?:[A-Z_][\w$]*)(?:\.(?:[A-Z_][\w$]*))?(?:\s+as\s+[A-Z_][\w$]*)?$/i
+const SAFE_COLUMN_REF_STAR = /^(?:\*|(?:[A-Z_][\w$]*)(?:\.(?:[A-Z_][\w$]*|\*))?(?:\s+as\s+[A-Z_][\w$]*)?)$/i
+
+/**
+ * Validate a caller-supplied column reference, then quote it.
+ *
+ * A sort column is the most common piece of request input that is legitimately
+ * a column name, so `?sort=` reaching `orderBy()` is the realistic path: before
+ * this, `orderBy('id; DROP TABLE users; --')` built that statement and the
+ * driver ran it. `where`, `whereIn`, `whereNull` and `join` already refused the
+ * same input through `validateIdentifier`; the ORDER BY, GROUP BY and SELECT
+ * family did not.
+ *
+ * Expressions belong in the `*Raw` methods or the `raw` tagged template, which
+ * is why this is strict rather than a best-effort sanitiser: there is an
+ * escape hatch, and a validator that tries to allow `COUNT(*) + ?` safely is a
+ * parser pretending to be a regex.
+ */
+function assertSafeColumnRef(name: unknown, context: string, options: { allowStar?: boolean } = {}): string {
+  const raw = String(name).trim()
+  const pattern = options.allowStar ? SAFE_COLUMN_REF_STAR : SAFE_COLUMN_REF
+
+  if (!pattern.test(raw)) {
+    throw new TypeError(
+      `[query-builder] ${context}: '${raw}' is not a plain column reference, so it will not be `
+      + `interpolated into SQL. Expected ${options.allowStar ? '`*`, ' : ''}\`column\`, \`table.column\`, `
+      + `optionally with \`AS alias\`. For an expression use the matching *Raw method or the \`raw\` `
+      + `tagged template, which escape what they interpolate.`,
+    )
+  }
+
+  return quoteColumnForDialect(raw)
+}
+
+/**
  * A date, in the literal shape the dialect will accept.
  *
  * `new Date().toISOString()` is `2026-08-19T04:37:11.396Z`, which Postgres
@@ -395,19 +439,31 @@ export function temporalLiteral(value: unknown, dialect = config.dialect): unkno
 }
 
 function renderSelectColumn(col: unknown): string {
+  // Only the plain-string form is validated. A SqlFragment or `raw` expression
+  // falls through untouched below, which is the escape hatch for `COUNT(*)`
+  // and friends. #1181
   if (typeof col === 'string')
-    return quoteColumnForDialect(col)
+    return assertSafeColumnRef(col, 'select(column)', { allowStar: true })
   if (isRawExpression(col))
     return col.raw
+  // `addSelect` is variadic, so `addSelect(['a', 'b'])` - the shape `select`
+  // takes - arrives as one array argument. It used to reach the `String(col)`
+  // fallback below and be spliced in whole, unvalidated: that was the one
+  // SELECT-family hole the first pass of #1181 missed. Recursing instead keeps
+  // the ergonomic and runs each element through the same check.
+  if (Array.isArray(col))
+    return col.map(renderSelectColumn).join(', ')
   if (col && typeof col === 'object') {
     const anyCol = col as { raw?: unknown, sql?: unknown }
     if (typeof anyCol.raw === 'function')
       return String((anyCol.raw as () => unknown)())
     if (typeof anyCol.sql === 'string')
       return anyCol.sql
+    // Anything else that stringifies to something is a bare name, not a
+    // fragment that opted into raw interpolation, so it is validated too.
     const str = String(col)
     if (str !== '[object Object]')
-      return str
+      return assertSafeColumnRef(str, 'select(column)', { allowStar: true })
   }
   throw new TypeError(
     `[query-builder] select(): unsupported column ${String(col)} — pass a column name, a string[], or a SQL fragment (e.g. sql\`count(*) as c\`)`,
@@ -4454,7 +4510,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       distinctOn(...columns: any[]) {
-        const colList = columns.map(String).join(', ')
+        const colList = columns.map(one => assertSafeColumnRef(one, 'distinctOn(column)')).join(', ')
         text = text.replace(/^SELECT\s+/i, `SELECT DISTINCT ON (${colList}) `)
         built = null
         return this as any
@@ -5930,7 +5986,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const dir = direction === 'asc' ? 'ASC' : 'DESC'
         // Quoted for the same reason a select list is: `ORDER BY key ASC` is a
         // syntax error on MySQL, `key` being reserved there.
-        const ordered = quoteColumnForDialect(String(column))
+        const ordered = assertSafeColumnRef(column, 'orderBy(column)')
         text = SQL_PATTERNS.ORDER_BY.test(text)
           ? `${text}, ${ordered} ${dir}`
           : `${text} ORDER BY ${ordered} ${dir}`
@@ -5938,9 +5994,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this
       },
       orderByDesc(column: string) {
+        const ordered = assertSafeColumnRef(column, 'orderByDesc(column)')
         text = SQL_PATTERNS.ORDER_BY.test(text)
-          ? `${text}, ${column} DESC`
-          : `${text} ORDER BY ${column} DESC`
+          ? `${text}, ${ordered} DESC`
+          : `${text} ORDER BY ${ordered} DESC`
         built = null
         return this as any
       },
@@ -5959,7 +6016,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       latest(column?: any) {
-        const col = column ?? config.timestamps.defaultOrderColumn
+        const col = assertSafeColumnRef(column ?? config.timestamps.defaultOrderColumn, 'latest(column)')
         text = SQL_PATTERNS.ORDER_BY.test(text)
           ? `${text}, ${col} DESC`
           : `${text} ORDER BY ${col} DESC`
@@ -5967,7 +6024,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       oldest(column?: any) {
-        const col = column ?? config.timestamps.defaultOrderColumn
+        const col = assertSafeColumnRef(column ?? config.timestamps.defaultOrderColumn, 'oldest(column)')
         text = SQL_PATTERNS.ORDER_BY.test(text)
           ? `${text}, ${col} ASC`
           : `${text} ORDER BY ${col} ASC`
@@ -6126,8 +6183,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // Compose with any existing GROUP BY so chained calls add columns
           // instead of emitting a second clause.
           text = SQL_PATTERNS.GROUP_BY.test(text)
-            ? `${text}, ${cols.map(one => quoteColumnForDialect(String(one))).join(', ')}`
-            : `${text} GROUP BY ${cols.map(one => quoteColumnForDialect(String(one))).join(', ')}`
+            ? `${text}, ${cols.map(one => assertSafeColumnRef(one, 'groupBy(column)')).join(', ')}`
+            : `${text} GROUP BY ${cols.map(one => assertSafeColumnRef(one, 'groupBy(column)')).join(', ')}`
           built = null
         }
         return this as any
@@ -6969,6 +7026,9 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       return makeSelect<any>(table, columns as string[]) as unknown as SelectQueryBuilder<DB, TTable, any, TTable>
     },
     selectFrom<TTable extends keyof DB & string>(table: TTable) {
+      // The type says `keyof DB`, but a JS caller or an `as any` can pass
+      // anything, and the name is interpolated into `FROM`. #1181
+      assertSafeColumnRef(table, 'selectFrom(table)')
       return makeSelect<TTable>(table)
     },
     selectFromSub(sub, alias) {
