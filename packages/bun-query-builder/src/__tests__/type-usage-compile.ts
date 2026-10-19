@@ -983,6 +983,16 @@ async function _clientResultShapes(
     if (row) row.email // visible again
   }
 
+  // selectAll(table) takes a table name and types the row as that table's
+  const ofTable = users.selectAll?.('users')
+  if (ofTable) {
+    const row = await ofTable.first()
+    if (row) row.email
+  }
+  users.selectAll?.(['users'])
+  // an alias or untyped name is accepted too
+  users.selectAll?.('u')
+
   // --- db.select(table, ...cols) narrows too -------------------------------------
   const narrow = db.select('users', 'id', 'email')
   const nrows = await narrow.get()

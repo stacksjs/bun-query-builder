@@ -1668,7 +1668,34 @@ export interface BaseSelectQueryBuilder<
     /** Raw/aliased select lists keep the current row type. */
     (columns: string | SqlFragment | (string | SqlFragment)[]): SelectQueryBuilder<DB, TTable, TSelected, TJoined>
   }
-  selectAll?: () => SelectQueryBuilder<DB, TTable, DB[TTable]['columns'], TJoined>
+  selectAll?: {
+    /**
+     * # `selectAll()`
+     *
+     * Select every column (`SELECT *`). With no argument the SELECT list is
+     * left as it is.
+     */
+    (): SelectQueryBuilder<DB, TTable, DB[TTable]['columns'], TJoined>
+    /**
+     * # `selectAll(table)`
+     *
+     * Select every column of the given table(s) only (`SELECT t.*`), so a
+     * joined table's columns do not collide with the main table's. As in
+     * Kysely, a later `select([...])` adds to this list instead of replacing it.
+     *
+     * @example
+     * ```ts
+     * db.selectFrom('orders')
+     *   .innerJoin('invoices', 'invoices.order_id', '=', 'orders.id')
+     *   .selectAll('orders')
+     *   .select(['invoices.number as number'])
+     * // SELECT orders.*, invoices.number as number FROM orders INNER JOIN invoices ...
+     * ```
+     */
+    <T extends TJoined & keyof DB & string>(table: T | T[]): SelectQueryBuilder<DB, TTable, DB[T]['columns'], TJoined>
+    /** Aliased or otherwise untyped table names keep the current row type. */
+    (table: string | string[]): SelectQueryBuilder<DB, TTable, TSelected, TJoined>
+  }
   /**
    * # `orderByRaw`
    *
@@ -3764,6 +3791,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     let text = (columns && columns.length > 0)
       ? `SELECT ${columns.join(', ')} FROM ${String(table)}`
       : `SELECT * FROM ${String(table)}`
+    // Set by `selectAll(table)`. Once the SELECT list holds `t.*`, a later
+    // `select([...])` adds to it (Kysely semantics) rather than replacing it,
+    // which would silently drop the table's columns.
+    let selectListAppends = false
 
     // The WHERE clause is a TERM LIST, not text appended to `text`. Each term
     // records the connector its caller asked for, and the body is rendered at
@@ -4542,12 +4573,39 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         addWindowFunction(`LAST_VALUE(${column})`, opts.alias ?? `${column}_last`, opts.partitionBy, opts.orderBy)
         return this as any
       },
-      selectAll() {
+      selectAll(tables?: string | string[]) {
+        // No argument: leave the SELECT list as it is (backwards compatible).
+        const list = tables === undefined || tables === null
+          ? []
+          : (Array.isArray(tables) ? tables : [tables])
+        if (list.length === 0)
+          return this as any
+        for (const t of list)
+          validateIdentifier(String(t), 'selectAll(table)')
+        const stars = list.map(t => `${String(t)}.*`).join(', ')
+        // Swap the implicit `*` for `t.*`, keeping any DISTINCT / DISTINCT ON
+        // prefix and anything already added after the star. An explicit list
+        // (an earlier select / selectAll(table)) is added to, as in Kysely.
+        const starMatch = /^SELECT\s+((?:DISTINCT(?:\s+ON\s+\([^)]*\))?\s+)?)\*(?=\s*,|\s+FROM\b|$)/i.exec(text)
+        if (starMatch) {
+          text = `SELECT ${starMatch[1]}${stars}${text.substring(starMatch[0].length)}`
+        }
+        else {
+          const fromIdx = text.indexOf(' FROM ')
+          text = fromIdx !== -1
+            ? `${text.substring(0, fromIdx)}, ${stars}${text.substring(fromIdx)}`
+            : `${text}, ${stars}`
+        }
+        selectListAppends = true
+        built = null
         return this as any
       },
       select(columns: string | SqlFragment | Array<string | SqlFragment>) {
         if (!columns)
           return this as any
+        // After selectAll(table) the list is explicitly chosen: add to it.
+        if (selectListAppends)
+          return (this as any).addSelect(...(Array.isArray(columns) ? columns : [columns]))
         // Normalize the single-string form so `.select('col')` works at
         // parity with `.select(['col'])`. The internal compiler calls
         // `.join(', ')` unconditionally on the argument — without this
