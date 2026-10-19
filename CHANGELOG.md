@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.15...v0.3.16)
+
+## 🐛 Bug Fixes
+
+- **security**: validate column references in window functions (#1186) ([fd0a780](https://github.com/stacksjs/bun-query-builder/commit/fd0a780)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1185](https://github.com/stacksjs/bun-query-builder/issues/1185), [#1186](https://github.com/stacksjs/bun-query-builder/issues/1186), [#1186](https://github.com/stacksjs/bun-query-builder/issues/1186), [#1183](https://github.com/stacksjs/bun-query-builder/issues/1183), [#1050](https://github.com/stacksjs/bun-query-builder/issues/1050))
+
+## 🔧 Chores
+
+- release v0.3.16 ([fffb9f7](https://github.com/stacksjs/bun-query-builder/commit/fffb9f7)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.14...v0.3.15)
 
 ## 🐛 Bug Fixes
