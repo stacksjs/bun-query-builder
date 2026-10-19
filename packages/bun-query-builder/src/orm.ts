@@ -1234,6 +1234,11 @@ class ModelInstance<
    * Plain-object snapshot of all attribute values. Method form so callers
    * can write `instance.getAttributes()` (Eloquent-style); `instance.attributes`
    * remains as a getter. Both return a shallow copy.
+   *
+   * **`hidden: true` is not applied here.** This is the raw accessor, and
+   * dirty-tracking and diffing need the whole row. Use `toArray()` or
+   * `toJSON()` for anything that leaves the process - both redact. Deliberate,
+   * unlike the `toArray()` leak in stacksjs/bun-query-builder#1182.
    */
   getAttributes(): Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>> {
     return { ...this._attributes } as any
@@ -1717,8 +1722,33 @@ class ModelInstance<
     return new ModelInstance<TDef, TSelected>(this._definition, attrs as any, false)
   }
 
+  /**
+   * The model as a plain object, with `hidden: true` attributes removed.
+   *
+   * It used to spread `_attributes` whole, so a `password` or `api_token`
+   * marked hidden came out in full while `toJSON()`, written directly beneath
+   * it, redacted the same field. Two serializers side by side with opposite
+   * behaviour is the trap: this API takes its names from Eloquent, where
+   * `toArray()` applies `$hidden` and `toJSON()` is defined in terms of it, so
+   * the expectation someone arrives with is the wrong one. Relations are
+   * serialized through `toArray()` too, which propagated the leak into every
+   * eager-loaded payload - the same shape as #1093.
+   *
+   * `toJSON()` now delegates here, so the two cannot drift apart again.
+   * stacksjs/bun-query-builder#1182
+   */
   toArray(): Record<string, unknown> {
-    const values: Record<string, unknown> = { ...this._attributes }
+    const hidden = new Set<string>()
+    for (const [key, attr] of Object.entries(this._definition.attributes)) {
+      if (attr.hidden)
+        hidden.add(key)
+    }
+
+    const values: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(this._attributes)) {
+      if (!hidden.has(key))
+        values[key] = value
+    }
 
     for (const [relName, relData] of Object.entries(this._relations)) {
       if (Array.isArray(relData)) {
@@ -1735,30 +1765,14 @@ class ModelInstance<
     return values
   }
 
+  /**
+   * Delegates to {@link toArray}, which applies the same `hidden` filter and
+   * serializes relations the same way. Kept as one implementation so the two
+   * cannot diverge again - they already had, and only `toJSON()` was redacting.
+   * stacksjs/bun-query-builder#1182
+   */
   toJSON(): Omit<Pick<ModelAttributes<TDef>, TSelected & keyof ModelAttributes<TDef>>, HiddenKeys<TDef>> {
-    const hidden = new Set<string>()
-    for (const [key, attr] of Object.entries(this._definition.attributes)) {
-      if (attr.hidden) hidden.add(key)
-    }
-
-    const json: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(this._attributes)) {
-      if (!hidden.has(key)) json[key] = value
-    }
-
-    for (const [relName, relData] of Object.entries(this._relations)) {
-      if (Array.isArray(relData)) {
-        json[relName] = relData.map(r => r.toJSON())
-      }
-      else if (relData) {
-        json[relName] = relData.toJSON()
-      }
-      else {
-        json[relName] = null
-      }
-    }
-
-    return json as any
+    return this.toArray() as any
   }
 
 }
