@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.13...v0.3.14)
+
+## 🐛 Bug Fixes
+
+- selectAll(table) selects table.* and later selects add to it ([b286946](https://github.com/stacksjs/bun-query-builder/commit/b286946)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.14 ([3bc8737](https://github.com/stacksjs/bun-query-builder/commit/3bc8737)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.12...v0.3.13)
 
 ## 🐛 Bug Fixes
