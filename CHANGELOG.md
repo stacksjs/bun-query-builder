@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.14...v0.3.15)
+
+## 🐛 Bug Fixes
+
+- **security**: toArray() now applies hidden, and toJSON() delegates to it (#1184) ([aa22f5e](https://github.com/stacksjs/bun-query-builder/commit/aa22f5e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1182](https://github.com/stacksjs/bun-query-builder/issues/1182), [#1184](https://github.com/stacksjs/bun-query-builder/issues/1184), [#1184](https://github.com/stacksjs/bun-query-builder/issues/1184), [#1093](https://github.com/stacksjs/bun-query-builder/issues/1093))
+- **security**: validate column references on the SELECT/ORDER BY family (#1183) ([1215fe4](https://github.com/stacksjs/bun-query-builder/commit/1215fe4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1181](https://github.com/stacksjs/bun-query-builder/issues/1181), [#1183](https://github.com/stacksjs/bun-query-builder/issues/1183), [#1183](https://github.com/stacksjs/bun-query-builder/issues/1183), [#1858](https://github.com/stacksjs/bun-query-builder/issues/1858))
+
+## 🔧 Chores
+
+- release v0.3.15 ([21983f4](https://github.com/stacksjs/bun-query-builder/commit/21983f4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.13...v0.3.14)
 
 ## 🐛 Bug Fixes
