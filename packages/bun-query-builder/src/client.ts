@@ -759,13 +759,31 @@ function formatSubqueryValue(val: unknown): string {
 
 // Shared OVER (...) builder for the window functions (rowNumber/rank/... and
 // lag/lead/sumOver/...). Stateless — see the note above on module-level helpers.
+/**
+ * The `OVER (...)` clause, with every column reference validated.
+ *
+ * Both halves used to be interpolated raw, so a `partitionBy` taken from
+ * request input closed the parenthesis and opened a subquery:
+ *
+ *   sumOver('amount', { partitionBy: 'team_id) AS x, (SELECT secret FROM t LIMIT 1' })
+ *   -> {"amount_sum": "hunter2"}
+ *
+ * No stacked statement needed, so it worked wherever the driver refuses
+ * multiple statements. #1183 fixed the SELECT/ORDER BY family and did not
+ * reach here. stacksjs/bun-query-builder#1185
+ *
+ * The direction is mapped through a ternary and cannot carry a payload.
+ */
 function buildOverClause(partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]): string {
   const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
   const parts: string[] = []
   if (cols.length)
-    parts.push(`PARTITION BY ${cols.join(', ')}`)
-  if (orderBy && orderBy.length)
-    parts.push(`ORDER BY ${orderBy.map(([c, d]) => `${c} ${d === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`)
+    parts.push(`PARTITION BY ${cols.map(one => assertSafeColumnRef(one, 'over(partitionBy)')).join(', ')}`)
+  if (orderBy && orderBy.length) {
+    parts.push(`ORDER BY ${orderBy
+      .map(([c, d]) => `${assertSafeColumnRef(c, 'over(orderBy)')} ${d === 'desc' ? 'DESC' : 'ASC'}`)
+      .join(', ')}`)
+  }
   return parts.length ? `OVER (${parts.join(' ')})` : 'OVER ()'
 }
 
@@ -4292,7 +4310,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     }
 
     const addWindowFunction = (fnExpr: string, alias: string, partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]): void => {
-      addToSelectClause(`${fnExpr} ${buildOverClause(partitionBy, orderBy)} AS ${alias}`)
+      // `fnExpr` is built by the caller and may legitimately be an expression
+      // (`SUM(amount)`, and `over()`'s raw escape hatch). The alias cannot:
+      // it was interpolated after `AS` and took a payload the same way. #1185
+      const safeAlias = assertSafeColumnRef(alias, 'over(alias)')
+      addToSelectClause(`${fnExpr} ${buildOverClause(partitionBy, orderBy)} AS ${safeAlias}`)
     }
 
     // Helper function to build hasOne/hasMany subquery with validation
@@ -4588,45 +4610,51 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       lag(column: string, opts: WindowOpts & { offset?: number, defaultValue?: string | number } = {}) {
-        const args = [column, String(opts.offset ?? 1)]
+        // Only the first arg is a column; the offset is stringified from a
+        // number and the default value is a caller-supplied literal. #1185
+        const args = [assertSafeColumnRef(column, 'over(column)'), String(opts.offset ?? 1)]
         if (opts.defaultValue !== undefined)
           args.push(String(opts.defaultValue))
         addWindowFunction(`LAG(${args.join(', ')})`, opts.alias ?? `${column}_lag`, opts.partitionBy, opts.orderBy)
         return this as any
       },
       lead(column: string, opts: WindowOpts & { offset?: number, defaultValue?: string | number } = {}) {
-        const args = [column, String(opts.offset ?? 1)]
+        // Only the first arg is a column; the offset is stringified from a
+        // number and the default value is a caller-supplied literal. #1185
+        const args = [assertSafeColumnRef(column, 'over(column)'), String(opts.offset ?? 1)]
         if (opts.defaultValue !== undefined)
           args.push(String(opts.defaultValue))
         addWindowFunction(`LEAD(${args.join(', ')})`, opts.alias ?? `${column}_lead`, opts.partitionBy, opts.orderBy)
         return this as any
       },
       sumOver(column: string, opts: WindowOpts = {}) {
-        addWindowFunction(`SUM(${column})`, opts.alias ?? `${column}_sum`, opts.partitionBy, opts.orderBy)
+        addWindowFunction(`SUM(${assertSafeColumnRef(column, 'over(column)')})`, opts.alias ?? `${column}_sum`, opts.partitionBy, opts.orderBy)
         return this as any
       },
       avgOver(column: string, opts: WindowOpts = {}) {
-        addWindowFunction(`AVG(${column})`, opts.alias ?? `${column}_avg`, opts.partitionBy, opts.orderBy)
+        addWindowFunction(`AVG(${assertSafeColumnRef(column, 'over(column)')})`, opts.alias ?? `${column}_avg`, opts.partitionBy, opts.orderBy)
         return this as any
       },
+      // `COUNT(*)` is the canonical window count, so the star is allowed here
+      // and nowhere else: `SUM(*)` and `AVG(*)` are not valid SQL. #1185
       countOver(column: string = '*', opts: WindowOpts = {}) {
-        addWindowFunction(`COUNT(${column})`, opts.alias ?? 'count_over', opts.partitionBy, opts.orderBy)
+        addWindowFunction(`COUNT(${assertSafeColumnRef(column, 'over(column)', { allowStar: true })})`, opts.alias ?? 'count_over', opts.partitionBy, opts.orderBy)
         return this as any
       },
       minOver(column: string, opts: WindowOpts = {}) {
-        addWindowFunction(`MIN(${column})`, opts.alias ?? `${column}_min`, opts.partitionBy, opts.orderBy)
+        addWindowFunction(`MIN(${assertSafeColumnRef(column, 'over(column)')})`, opts.alias ?? `${column}_min`, opts.partitionBy, opts.orderBy)
         return this as any
       },
       maxOver(column: string, opts: WindowOpts = {}) {
-        addWindowFunction(`MAX(${column})`, opts.alias ?? `${column}_max`, opts.partitionBy, opts.orderBy)
+        addWindowFunction(`MAX(${assertSafeColumnRef(column, 'over(column)')})`, opts.alias ?? `${column}_max`, opts.partitionBy, opts.orderBy)
         return this as any
       },
       firstValue(column: string, opts: WindowOpts = {}) {
-        addWindowFunction(`FIRST_VALUE(${column})`, opts.alias ?? `${column}_first`, opts.partitionBy, opts.orderBy)
+        addWindowFunction(`FIRST_VALUE(${assertSafeColumnRef(column, 'over(column)')})`, opts.alias ?? `${column}_first`, opts.partitionBy, opts.orderBy)
         return this as any
       },
       lastValue(column: string, opts: WindowOpts = {}) {
-        addWindowFunction(`LAST_VALUE(${column})`, opts.alias ?? `${column}_last`, opts.partitionBy, opts.orderBy)
+        addWindowFunction(`LAST_VALUE(${assertSafeColumnRef(column, 'over(column)')})`, opts.alias ?? `${column}_last`, opts.partitionBy, opts.orderBy)
         return this as any
       },
       selectAll(tables?: string | string[]) {
