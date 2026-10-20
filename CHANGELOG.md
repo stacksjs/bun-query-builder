@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.16...v0.3.17)
+
+## 🐛 Bug Fixes
+
+- **sqlite**: support transaction writer admission before reads ([b09c9f4](https://github.com/stacksjs/bun-query-builder/commit/b09c9f4)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.17 ([d39ba53](https://github.com/stacksjs/bun-query-builder/commit/d39ba53)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.15...v0.3.16)
 
 ## 🐛 Bug Fixes
