@@ -653,7 +653,7 @@ function createSQLiteSQL(filename: string): SQL {
   }
 
   // Transaction support. Bun's native `SQL` exposes `.begin(fn)` /
-  // `.begin(name, fn)`, which the query builder's `db.transaction()` calls.
+  // `.begin(options, fn)`, which the query builder's `db.transaction()` calls.
   // The SQLite wrapper previously had NO `.begin`, so `db.transaction()` threw
   // "bunSql.begin is not a function" on the sqlite dialect — transactions were
   // entirely broken there (and untested at runtime). bun:sqlite is synchronous,
@@ -664,13 +664,16 @@ function createSQLiteSQL(filename: string): SQL {
     if (typeof fn !== 'function')
       throw new TypeError('[query-builder] sqlite begin(): a transaction callback is required')
 
+    const mode = typeof fnOrName === 'string' ? fnOrName.trim().toUpperCase() : 'DEFERRED'
+    if (!['DEFERRED', 'IMMEDIATE', 'EXCLUSIVE'].includes(mode))
+      throw new TypeError('[query-builder] sqlite begin(): expected DEFERRED, IMMEDIATE or EXCLUSIVE')
     const isSavepoint = txDepth > 0
     // Unique per nesting level; savepoint names are plain identifiers.
     const spName = `qb_sp_${txDepth}`
     if (isSavepoint)
       wrapper.run(`SAVEPOINT ${spName}`)
     else
-      wrapper.run('BEGIN')
+      wrapper.run(mode === 'DEFERRED' ? 'BEGIN' : `BEGIN ${mode}`)
     txDepth++
 
     try {

@@ -4,7 +4,7 @@ for (const mode of ['sqlite', 'sqlite-wrapper', 'mysql', 'postgres'] as const) {
   const local = mode.startsWith('sqlite')
   const url = process.env[`TRANSACTION_TEST_${mode.toUpperCase()}_URL`]
   describe.skipIf(!local && !url)(`${mode} transaction completion boundary`, () => {
-    it('never retries a committed transaction when its callback fails', () => {
+    it('honors write admission and never retries a committed transaction when its callback fails', () => {
       const result = Bun.spawnSync({
         cmd: [process.execPath, `${import.meta.dir}/fixtures/transaction-completion.ts`, mode],
         env: { ...process.env, TRANSACTION_TEST_URL: url },

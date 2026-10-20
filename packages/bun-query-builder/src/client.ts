@@ -3229,6 +3229,8 @@ type TransactionIsolation = 'read committed' | 'repeatable read' | 'serializable
 interface TxBackoff { baseMs?: number, maxMs?: number, factor?: number, jitter?: boolean }
 interface TxLoggerEvent { type: 'start' | 'retry' | 'commit' | 'rollback' | 'error', attempt: number, error?: unknown, durationMs?: number }
 export interface TransactionOptions {
+  /** SQLite writer admission for the outer transaction; nested calls inherit it. */
+  sqliteMode?: 'deferred' | 'immediate' | 'exclusive'
   retries?: number
   isolation?: TransactionIsolation
   onRetry?: (attempt: number, error: unknown) => void
@@ -8634,6 +8636,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     async transaction(fn, options) {
       const defaults = state?.txDefaults
       const opts: TransactionOptions = { ...defaults, ...options }
+      if (opts.sqliteMode !== undefined) {
+        if (config.dialect !== 'sqlite')
+          throw new TypeError('[query-builder] sqliteMode requires the SQLite dialect')
+        if (!['deferred', 'immediate', 'exclusive'].includes(opts.sqliteMode))
+          throw new TypeError('[query-builder] sqliteMode must be deferred, immediate or exclusive')
+      }
       // Use THIS builder's connection (the injected one when present, the same
       // one its reads use), not the always-global `bunSql`. Otherwise a builder
       // created with `createQueryBuilder({ sql })` ran its transactions on a
@@ -8649,7 +8657,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       const runWith = async (attempt: number): Promise<any> => {
         opts.logger?.({ type: 'start', attempt })
         const start = Date.now()
-        return await (txConn as any)[txMethod](async (tx: any) => {
+        const beginOptions = !nested && opts.sqliteMode ? [opts.sqliteMode.toUpperCase()] : []
+        return await (txConn as any)[txMethod](...beginOptions, async (tx: any) => {
           const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks, inTransaction: true })
 
           // Transaction isolation + read-only mode — dialect-specific

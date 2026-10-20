@@ -617,6 +617,25 @@ If you want the server to enforce the instant and your dates stay before 2038, d
 - MySQL: ensure proper collations and indexes on text columns; beware of implicit conversions
 - SQLite: keep transactions short; consider WAL mode for concurrency
 
+## SQLite Write Transactions
+
+For a transaction that reads before replacing data, reserve the writer slot at
+entry. This avoids upgrading a stale read snapshot after another connection
+has committed:
+
+```ts
+await db.transaction(async (tx) => {
+  const account = await tx.selectFrom('accounts').where('id', '=', id).executeTakeFirst()
+  if (account)
+    await tx.updateTable('accounts').set({ active: true }).where('id', '=', id).execute()
+}, { sqliteMode: 'immediate' })
+```
+
+`sqliteMode` accepts `deferred`, `immediate`, or `exclusive`. The default remains
+deferred. Nested transactions use savepoints and inherit the outer transaction's
+admission; they cannot upgrade it. Other dialects reject this SQLite-only option.
+Keep the transaction short and perform external delivery after commit.
+
 ## Collations and Charsets
 
 - Choose a consistent collation/charset (e.g., `utf8mb4` for MySQL) to avoid comparison surprises

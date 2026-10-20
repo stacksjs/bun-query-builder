@@ -1,18 +1,24 @@
 import assert from 'node:assert/strict'
 import { SQL } from 'bun'
+import { Database } from 'bun:sqlite'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createQueryBuilder, setConfig } from '../../src'
 import { getOrCreateBunSql } from '../../src/db'
 
 const mode = process.argv[2]
 const dialect = (mode === 'sqlite-wrapper' ? 'sqlite' : mode) as 'sqlite' | 'mysql' | 'postgres'
-const url = dialect === 'sqlite' ? 'sqlite://:memory:' : process.env.TRANSACTION_TEST_URL!
+const directory = dialect === 'sqlite' ? mkdtempSync(join(tmpdir(), 'qb-transaction-admission-')) : undefined
+const databaseFile = directory ? join(directory, 'transaction.sqlite') : undefined
+const url = databaseFile ? `sqlite://${databaseFile}` : process.env.TRANSACTION_TEST_URL!
 assert.ok(url, 'An explicit disposable database URL is required')
-setConfig({ dialect, database: { database: ':memory:' }, hooks: {} })
+setConfig({ dialect, database: { database: databaseFile ?? ':memory:' }, hooks: {} })
 const connection = mode === 'sqlite-wrapper' ? getOrCreateBunSql(true) : new SQL(url, { max: 1 })
 const db = createQueryBuilder({ sql: connection })
 const table = `qb_completion_${crypto.randomUUID().replaceAll('-', '')}`
 try {
-  await connection.unsafe(`CREATE TEMPORARY TABLE ${table} (id INT PRIMARY KEY)`)
+  await connection.unsafe(`CREATE ${dialect === 'sqlite' ? '' : 'TEMPORARY '}TABLE ${table} (id INT PRIMARY KEY)`)
   for (const asyncCallback of [false, true]) {
     await db.deleteFrom(table).execute()
     let bodies = 0
@@ -60,8 +66,44 @@ try {
   assert.equal(result, 'success')
   assert.deepEqual({ attempts, committed, retried }, { attempts: 2, committed: 1, retried: 1 })
   assert.deepEqual(Array.from(await db.selectFrom(table).get(), row => row.id), [2])
+  if (databaseFile) {
+    const contender = new Database(databaseFile)
+    contender.run('PRAGMA busy_timeout = 0')
+    try {
+      await db.deleteFrom(table).execute()
+      // The default and explicit deferred modes do not reserve the writer.
+      for (const sqliteMode of [undefined, 'deferred'] as const) {
+        await db.transaction(async () => {
+          contender.run(`INSERT INTO ${table} (id) VALUES (1)`)
+        }, { sqliteMode })
+        await db.deleteFrom(table).execute()
+      }
+      // Writer modes reserve admission before any read. Nested calls retain
+      // that admission through a savepoint rather than issuing another BEGIN.
+      for (const sqliteMode of ['immediate', 'exclusive'] as const) {
+        await db.transaction(async (tx) => {
+          assert.throws(() => contender.run(`INSERT INTO ${table} (id) VALUES (2)`), /locked|busy/i)
+          await tx.transaction(async (nested) => {
+            await nested.insertInto(table).values({ id: 3 }).execute()
+          }, { sqliteMode })
+        }, { sqliteMode })
+        assert.deepEqual(Array.from(await db.selectFrom(table).get(), row => row.id), [3])
+        await db.deleteFrom(table).execute()
+      }
+      let invoked = false
+      await assert.rejects(db.transaction(async () => { invoked = true }, { sqliteMode: 'immediate; DROP TABLE users' as never }), /sqliteMode/)
+      assert.equal(invoked, false)
+    }
+    finally { contender.close() }
+  }
+  if (dialect !== 'sqlite') {
+    let invoked = false
+    await assert.rejects(db.transaction(async () => { invoked = true }, { sqliteMode: 'immediate' }), /requires the SQLite dialect/)
+    assert.equal(invoked, false)
+  }
   console.log(`${mode} transaction completion OK`)
 }
 finally {
-  await connection.close()
+  try { await connection.close() }
+  finally { if (directory) rmSync(directory, { recursive: true, force: true }) }
 }
