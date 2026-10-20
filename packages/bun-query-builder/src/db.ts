@@ -1,5 +1,5 @@
 import type { DatabaseConfig, PoolConfig, SupportedDialect } from './types'
-import type { SQLQueryBindings } from 'bun:sqlite'
+import type { SQLQueryBindings, Statement } from 'bun:sqlite'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { SQL } from 'bun'
 import { serializeBindings, withDateBindings } from './bindings'
@@ -271,25 +271,47 @@ class SQLiteWrapper {
    * This mimics the SQL tagged template literal behavior.
    */
   query(sql: string, params: SQLQueryBindings[] = []): any[] {
-    const bound = bindNumberedPlaceholders(sql, params)
-    // Statements with no parameter slots are safe to reuse without arguments.
-    // A parameterized statement retains old bindings, so omitted arguments
-    // still need a fresh statement. Let SQLite identify actual placeholders.
-    const cacheable = bound.params.length > 0 || CACHEABLE_SQLITE_STATEMENT.test(bound.sql)
-    const prepared = cacheable ? this.db.query(bound.sql) : this.db.prepare(bound.sql)
-    const stmt = cacheable && bound.params.length === 0 && prepared.paramsCount > 0 ? this.db.prepare(bound.sql) : prepared
-    return stmt.all(...bound.params)
+    return this.withStatement(sql, params, (stmt, bindings) => stmt.all(...bindings))
   }
 
   /**
    * Execute a query that doesn't return results (INSERT, UPDATE, DELETE).
    */
   run(sql: string, params: SQLQueryBindings[] = []): any {
+    return this.withStatement(sql, params, (stmt, bindings) => stmt.run(...bindings))
+  }
+
+  /**
+   * Prepare the statement for a bound query, hand it to `consume`, and finalize
+   * it afterwards unless bun:sqlite owns it.
+   *
+   * `db.query()` statements are cached on the Database and finalized with it.
+   * A `db.prepare()` statement is not: its native sqlite3_stmt stays alive
+   * until the JS wrapper is garbage collected, and while it does, it keeps the
+   * database handle alive too. So `db.close()` returns successfully and the
+   * file stays write-locked until a GC that may never arrive.
+   *
+   * Transactions hit this every time: `BEGIN`, `COMMIT`, `ROLLBACK` and
+   * `SAVEPOINT` all miss CACHEABLE_SQLITE_STATEMENT, so each one leaked a
+   * statement that outlived the connection. See stacksjs/stacks#2922.
+   */
+  private withStatement<T>(sql: string, params: SQLQueryBindings[], consume: (stmt: Statement, bindings: SQLQueryBindings[]) => T): T {
     const bound = bindNumberedPlaceholders(sql, params)
+    // Statements with no parameter slots are safe to reuse without arguments.
+    // A parameterized statement retains old bindings, so omitted arguments
+    // still need a fresh statement. Let SQLite identify actual placeholders.
     const cacheable = bound.params.length > 0 || CACHEABLE_SQLITE_STATEMENT.test(bound.sql)
     const prepared = cacheable ? this.db.query(bound.sql) : this.db.prepare(bound.sql)
-    const stmt = cacheable && bound.params.length === 0 && prepared.paramsCount > 0 ? this.db.prepare(bound.sql) : prepared
-    return stmt.run(...bound.params)
+    const reprepared = cacheable && bound.params.length === 0 && prepared.paramsCount > 0
+    const stmt = reprepared ? this.db.prepare(bound.sql) : prepared
+    try {
+      return consume(stmt, bound.params)
+    }
+    finally {
+      // Ours to finalize only when it did not come out of the Database cache.
+      if (reprepared || !cacheable)
+        stmt.finalize()
+    }
   }
 
   /**
