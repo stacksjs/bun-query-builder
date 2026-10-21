@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.18...v0.3.19)
+
+## 🐛 Bug Fixes
+
+- a multi-row insert names every column any row carries (#1189) (#1190) ([d5323db](https://github.com/stacksjs/bun-query-builder/commit/d5323db)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1189](https://github.com/stacksjs/bun-query-builder/issues/1189), [#1190](https://github.com/stacksjs/bun-query-builder/issues/1190), [#1189](https://github.com/stacksjs/bun-query-builder/issues/1189), [#1190](https://github.com/stacksjs/bun-query-builder/issues/1190), [#1097](https://github.com/stacksjs/bun-query-builder/issues/1097))
+
+## 🔧 Chores
+
+- release v0.3.19 ([b9054f2](https://github.com/stacksjs/bun-query-builder/commit/b9054f2)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.17...v0.3.18)
 
 ## 🐛 Bug Fixes
