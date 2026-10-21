@@ -263,11 +263,13 @@ function quoteInsertIdent(id: string): string {
  * stacksjs/bun-query-builder#1052.
  */
 function buildInsertClause(rows: Record<string, any>[], startIndex = 1): { colsSql: string, valuesSql: string, params: any[], nextIndex: number } {
-  const cols = Object.keys(rows[0] ?? {})
+  const { keys: cols, uniform } = insertColumns(rows)
   const params: any[] = []
   let idx = startIndex
   const tuples = rows.map((row) => {
     const phs = cols.map((c) => {
+      if (!uniform && !(c in row))
+        return absentCellSql()
       params.push(row[c])
       return getPlaceholder(idx++)
     })
@@ -279,6 +281,73 @@ function buildInsertClause(rows: Record<string, any>[], startIndex = 1): { colsS
     params,
     nextIndex: idx,
   }
+}
+
+/**
+ * The columns a multi-row INSERT has to name, and whether every row has them.
+ *
+ * The column list used to come from `Object.keys(rows[0])`, and every row was
+ * then read through it as `row[keys[c]]`. A key that appeared only in a later
+ * row had nowhere to go, so its value was dropped from the statement - from
+ * every row that carried it - with no error and the full row count reported.
+ *
+ * That shape is the realistic one, not a corner case: a timeline where a
+ * `renamed` entry carries two titles and a `labeled` entry carries one, an
+ * import where some records set an optional field, an audit log where only some
+ * events carry a reference. The reporter lost five cross-references out of forty
+ * seeded rows and found it only by running `count(reference_number)` afterwards,
+ * because nothing threw and the table was not empty.
+ * stacksjs/bun-query-builder#1189
+ *
+ * So the union of every row's keys, in first-appearance order. `uniform` says
+ * whether the callers' fast paths still apply: when every row has every column,
+ * which is the common case, nothing about the emitted statement changes and no
+ * per-cell presence check runs.
+ */
+function insertColumns(rows: Record<string, any>[]): { keys: string[], uniform: boolean } {
+  const keys = Object.keys(rows[0] ?? {})
+  if (rows.length < 2)
+    return { keys, uniform: true }
+
+  const seen = new Set(keys)
+  let uniform = true
+
+  for (let r = 1; r < rows.length; r++) {
+    const rowKeys = Object.keys(rows[r])
+    // Safe to compare against the union as it stands: the only way it grows is
+    // a key row 0 lacked, and that sets `uniform` false on the spot. So either
+    // this comparison is against the final list, or the flag is already false.
+    if (rowKeys.length !== keys.length)
+      uniform = false
+    for (const key of rowKeys) {
+      if (!seen.has(key)) {
+        seen.add(key)
+        keys.push(key)
+        uniform = false
+      }
+    }
+  }
+
+  return { keys, uniform }
+}
+
+/**
+ * What a row that lacks one of the batch's columns puts in its VALUES tuple.
+ *
+ * `DEFAULT` rather than a bound NULL, so the column's own default still applies
+ * - a timestamp default, a sequence, a non-null default would all be overridden
+ * by writing NULL, and a NOT NULL column with a default would reject the row
+ * outright. It consumes no placeholder, which is why callers advance their
+ * parameter index only on bound cells.
+ *
+ * SQLite has no `DEFAULT` keyword inside a VALUES list (`near "DEFAULT": syntax
+ * error`), so there it binds NULL and the column default is lost. That is a
+ * real difference between dialects and it is documented in `docs/`, but it is
+ * still the value the caller asked for reaching the right column, where before
+ * it reached nothing at all.
+ */
+function absentCellSql(): string {
+  return config.dialect === 'sqlite' || config.dialect === 'browser' ? 'NULL' : 'DEFAULT'
 }
 
 /** Options shared by the generalized window functions (#1050). */
@@ -7642,7 +7711,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           noRows = false
 
           const firstRow = rows[0]
-          const keys = Object.keys(firstRow)
+          // The union across every row, not just the first one's keys (#1189).
+          const { keys, uniform } = insertColumns(rows)
           const colCount = keys.length
 
           // Pre-allocate params array
@@ -7713,11 +7783,22 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
               for (let c = 0; c < colCount; c++) {
                 if (c > 0)
                   sqlText += ','
+                // A row missing this column contributes DEFAULT (or NULL on
+                // SQLite) and binds nothing, so `pidx` only advances on cells
+                // that actually carry a parameter.
+                if (!uniform && !(keys[c] in row)) {
+                  sqlText += absentCellSql()
+                  continue
+                }
                 sqlText += getPlaceholder(pidx)
                 params[pidx++] = row[keys[c]]
               }
             }
             sqlText += ')'
+            // Pre-allocated for the uniform case; the absent cells bound no
+            // parameter, so drop the unused tail rather than passing undefined.
+            if (pidx !== totalParams)
+              params.length = pidx
           }
 
           // Bound both the number of tables and each retained SQL shape. Column
@@ -9005,11 +9086,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       if (!rows?.length)
         return
 
-      const firstRow = rows[0]
-      const keys = Object.keys(firstRow)
+      // The union across every row, not just the first one's keys (#1189).
+      const { keys, uniform } = insertColumns(rows as Record<string, any>[])
       const colCount = keys.length
       const rowCount = rows.length
-      const params = Array.from({ length: rowCount * colCount })
+      const params: any[] = []
 
       // Quote table + column identifiers (#1033) — MySQL backticks, else
       // double quotes (Postgres/SQLite).
@@ -9017,17 +9098,20 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         ? (id: string): string => `\`${String(id).replace(/`/g, '``')}\``
         : (id: string): string => `"${String(id).replace(/"/g, '""')}"`
       let sql = `INSERT INTO ${quoteId(String(table))}(${keys.map(quoteId).join(',')})VALUES`
-      let pidx = 0
       for (let r = 0; r < rowCount; r++) {
         if (r > 0)
           sql += ','
         sql += '('
-        const row = rows[r]
+        const row = rows[r] as Record<string, any>
         for (let c = 0; c < colCount; c++) {
           if (c > 0)
             sql += ','
-          sql += getPlaceholder(pidx + 1)
-          params[pidx++] = row[keys[c]]
+          if (!uniform && !(keys[c] in row)) {
+            sql += absentCellSql()
+            continue
+          }
+          sql += getPlaceholder(params.length + 1)
+          params.push(row[keys[c]])
         }
         sql += ')'
       }
@@ -9038,8 +9122,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       if (!rows?.length)
         return
 
-      const firstRow = rows[0]
-      const keys = Object.keys(firstRow)
+      // The union across every row, not just the first one's keys (#1189).
+      const { keys, uniform } = insertColumns(rows as Record<string, any>[])
       const colCount = keys.length
       const rowCount = rows.length
       const totalParams = rowCount * colCount
@@ -9047,6 +9131,31 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
       // Pre-build a single row placeholder template: (?,?,?,?) or ($1,$2,$3,$4)
       const isPositional = config.dialect === 'postgres'
+
+      // Both paths below reuse one shape for every row — the `?` template
+      // literally, the Postgres one by index arithmetic — which only holds when
+      // every row carries every column. A heterogeneous batch emits its tuples
+      // one at a time instead, with DEFAULT (or NULL on SQLite) where a row
+      // lacks a column.
+      if (!uniform) {
+        const tuples = new Array<string>(rowCount)
+        const bound: any[] = []
+        for (let r = 0; r < rowCount; r++) {
+          const row = rows[r] as Record<string, any>
+          const cells = new Array<string>(colCount)
+          for (let c = 0; c < colCount; c++) {
+            if (!(keys[c] in row)) {
+              cells[c] = absentCellSql()
+              continue
+            }
+            cells[c] = isPositional ? `$${bound.length + 1}` : '?'
+            bound.push(row[keys[c]])
+          }
+          tuples[r] = `(${cells.join(',')})`
+        }
+        return prepareQuery(`INSERT INTO ${table}(${keys.join(',')})VALUES${tuples.join(',')}`, bound).execute()
+      }
+
       let rowTemplate: string
       if (!isPositional) {
         // SQLite/MySQL: all placeholders are ?, build once and reuse
