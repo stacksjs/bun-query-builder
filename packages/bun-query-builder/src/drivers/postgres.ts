@@ -104,7 +104,14 @@ export class PostgresDriver implements DialectDriver {
 
   private getColumnType(column: ColumnPlan): string {
     switch (column.type) {
-      case 'string': return `varchar(${column.maxLength ?? 255})`
+      // An unbounded `schema.string()` is `text`, not `varchar(255)`. The 255
+      // default is a MySQL idiom: there, TEXT cannot be indexed without a
+      // prefix length, so a bounded varchar is worth defaulting to. Postgres
+      // stores `text` and `varchar(n)` identically and indexes both, so the
+      // default bought nothing and cost correctness - a column the model never
+      // bounded rejected its own writes with "value too long for type
+      // character varying(255)". A declared `.max(n)` is still honoured.
+      case 'string': return column.maxLength === undefined ? 'text' : `varchar(${column.maxLength})`
       case 'text': return 'text'
       case 'boolean': return 'boolean'
       case 'integer': return 'integer'

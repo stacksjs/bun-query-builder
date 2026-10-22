@@ -1627,8 +1627,10 @@ describe('migrations - complex model attributes', () => {
 
   describe('dialect-specific SQL generation', () => {
     it('generates correct PostgreSQL types', () => {
-      // Note: validation rule { name: 'text' } maps to 'string' type (varchar(255))
-      // The 'text' column type is only inferred from long default strings (>255 chars)
+      // An unbounded string is `text` on Postgres; only a declared `.max(n)`
+      // produces `varchar(n)`. This test used to pin varchar(255) for `str`,
+      // which was the defect: a column the model never bounded rejected its
+      // own writes at 256 characters.
       const longString = 'x'.repeat(300)
       const models = defineModels({
         AllTypes: {
@@ -1637,6 +1639,7 @@ describe('migrations - complex model attributes', () => {
           attributes: {
             id: { validation: { rule: {} } },
             str: { validation: { rule: { name: 'string' } } },
+            code: { validation: { rule: { name: 'string', rules: [{ name: 'max', params: { max: 40 } }] } } },
             txt: { default: longString, validation: { rule: {} } }, // Use long default to get text type
             int_col: { validation: { rule: { name: 'integer' } } },
             big: { validation: { rule: { name: 'bigint' } } },
@@ -1654,8 +1657,9 @@ describe('migrations - complex model attributes', () => {
       const plan = buildMigrationPlan(models as any, { dialect: 'postgres' })
       const sql = generateSql(plan).join('\n').toLowerCase()
 
-      expect(sql).toContain('varchar')
-      expect(sql).toContain('text') // From long default string
+      expect(sql).toContain('"str" text') // unbounded: no varchar(255) default
+      expect(sql).toContain('"code" varchar(40)') // bounded: the declared max
+      expect(sql).toContain('"txt" text') // From long default string
       expect(sql).toContain('integer')
       expect(sql).toContain('bigint')
       expect(sql).toContain('timestamp')
