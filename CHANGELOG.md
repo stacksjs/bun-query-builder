@@ -1,3 +1,28 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.19...v0.3.20)
+
+## 🐛 Bug Fixes
+
+- **ci**: pin Bun, and assert what the prepared-statement guard really protects ([f56bdfe](https://github.com/stacksjs/bun-query-builder/commit/f56bdfe)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1187](https://github.com/stacksjs/bun-query-builder/issues/1187), [#1188](https://github.com/stacksjs/bun-query-builder/issues/1188))
+- an unbounded string column is text on Postgres, not varchar(255) ([63336b3](https://github.com/stacksjs/bun-query-builder/commit/63336b3)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#2965](https://github.com/stacksjs/bun-query-builder/issues/2965))
+
+## ✅ Tests
+
+- **cli**: run the CLI in one process instead of two (#1192) ([8720073](https://github.com/stacksjs/bun-query-builder/commit/8720073)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1192](https://github.com/stacksjs/bun-query-builder/issues/1192), [#1192](https://github.com/stacksjs/bun-query-builder/issues/1192))
+
+## 🔧 Chores
+
+- release v0.3.20 ([70cffb1](https://github.com/stacksjs/bun-query-builder/commit/70cffb1)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- track AGENTS.md ([c383141](https://github.com/stacksjs/bun-query-builder/commit/c383141)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- **deps**: update all non-major dependencies (updated) (#1175) ([505c771](https://github.com/stacksjs/bun-query-builder/commit/505c771)) _(by [github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>](https://github.com/github-actions[bot]))_ ([#1175](https://github.com/stacksjs/bun-query-builder/issues/1175), [#1175](https://github.com/stacksjs/bun-query-builder/issues/1175))
+
+## 🎉 Miscellaneous
+
+- Merge branch 'main' into fix/postgres-unbounded-string-is-text ([0be0ef7](https://github.com/stacksjs/bun-query-builder/commit/0be0ef7)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.18...v0.3.19)
 
 ## 🐛 Bug Fixes
