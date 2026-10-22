@@ -87,7 +87,7 @@
     "dynamodb-tooling": "^0.3.6"
   },
   "devDependencies": {
-    "bunfig": "^0.15.19"
+    "bunfig": "^0.15.21"
   },
   "git-hooks": {
     "pre-commit": {
