@@ -22,6 +22,13 @@ jobs:
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
+        with:
+          # Pinned deliberately. With no version here the action installs whatever
+          # Bun is latest at run time, so a Bun release can flip this workflow from
+          # green to red on a commit nobody touched - which is exactly what 1.4.4
+          # did to the prepared-statement guard in config-pool-prepare.test.ts.
+          # Raising this is a deliberate commit, and CI then tests what it claims.
+          bun-version: 1.4.4
 
       - name: Use cached node_modules
         uses: actions/cache@v6.1.0
@@ -45,6 +52,13 @@ jobs:
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
+        with:
+          # Pinned deliberately. With no version here the action installs whatever
+          # Bun is latest at run time, so a Bun release can flip this workflow from
+          # green to red on a commit nobody touched - which is exactly what 1.4.4
+          # did to the prepared-statement guard in config-pool-prepare.test.ts.
+          # Raising this is a deliberate commit, and CI then tests what it claims.
+          bun-version: 1.4.4
 
       - name: Use cached node_modules
         uses: actions/cache@v6.1.0
@@ -113,6 +127,13 @@ jobs:
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
+        with:
+          # Pinned deliberately. With no version here the action installs whatever
+          # Bun is latest at run time, so a Bun release can flip this workflow from
+          # green to red on a commit nobody touched - which is exactly what 1.4.4
+          # did to the prepared-statement guard in config-pool-prepare.test.ts.
+          # Raising this is a deliberate commit, and CI then tests what it claims.
+          bun-version: 1.4.4
 
       - name: Use cached node_modules
         uses: actions/cache@v6.1.0
