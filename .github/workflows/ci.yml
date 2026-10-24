@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
@@ -123,7 +123,7 @@ jobs:
       POSTGRES_DB: test_db
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
@@ -165,12 +165,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
       - name: Setup Pantry
-        uses: pantry-pm/pantry/packages/action@main
+        uses: pantry-pm/pantry/packages/action@v0.11.126
 
       - name: Install Dependencies
         run: bun install --frozen-lockfile --ignore-scripts
