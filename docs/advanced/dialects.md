@@ -611,6 +611,33 @@ Two consequences worth knowing:
 
 If you want the server to enforce the instant and your dates stay before 2038, declare the column `TIMESTAMP` in a hand-written migration rather than through a model.
 
+### A multi-row insert with uneven rows loses column defaults on SQLite
+
+A multi-row insert names the union of every row's keys, so a column only some rows set is still written for the rows that set it:
+
+```ts
+await db.insertInto('timeline_entries').values([
+  { kind: 'labeled', subject_text: 'first' },
+  { kind: 'renamed', subject_text: 'second', previous_text: 'kept' },
+]).execute()
+```
+
+A row that lacks one of those columns has to put *something* in its tuple, and that is where the dialects differ:
+
+| dialect | emitted for the gap | effect |
+| --- | --- | --- |
+| Postgres, MySQL | `DEFAULT` | the column's own default applies |
+| SQLite | `NULL` | the column default is **bypassed** |
+
+SQLite has no `DEFAULT` keyword inside a `VALUES` list — it answers `near "DEFAULT": syntax error` — so there is nothing to emit that means "use the default". A column with a non-null default therefore stores `NULL` for the rows that omitted it, and a `NOT NULL` column with a default fails the insert.
+
+This only bites when the rows are uneven *and* the missing column has a default. Two ways out, both explicit:
+
+- set the key on every row, so the batch is uniform and nothing has to be filled in
+- group the rows by shape and insert each group separately, so a column no row sets is simply not named
+
+Uniform batches are unaffected on every dialect, and so is the single-row form.
+
 ## Performance Tips Per Dialect
 
 - Postgres: leverage `EXPLAIN (ANALYZE, BUFFERS)` during tuning; create appropriate indexes for JSON paths if needed

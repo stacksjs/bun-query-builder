@@ -25,7 +25,22 @@ const handle = (plan: MigrationPlan): ColumnPlan => plan.tables[0].columns.find(
 describe('postgres varchar length', () => {
   it('carries the bound into the canonical storage type', () => {
     expect(canonicalStorageType(handle(modelPlan(50)), 'postgres')).toBe('varchar(50)')
-    expect(canonicalStorageType(handle(modelPlan()), 'postgres')).toBe('varchar(255)')
+  })
+
+  // An unbounded column is `text` here, so the model side has to say `text`
+  // too. A live `text` column introspects back as `type: 'text'`; reporting
+  // `varchar(255)` for the model would diff against that on every run and
+  // re-ALTER a column nobody touched.
+  it('an unbounded string is text, and agrees with what the driver emits', () => {
+    expect(canonicalStorageType(handle(modelPlan()), 'postgres')).toBe('text')
+    expect(canonicalStorageType({ name: 'handle', type: 'text' } as ColumnPlan, 'postgres')).toBe('text')
+  })
+
+  // MySQL keeps the 255 default: TEXT there cannot be indexed without a
+  // prefix length, so the bound is worth having.
+  it('leaves the MySQL default alone', () => {
+    expect(canonicalStorageType(handle(modelPlan()), 'mysql')).toBe('VARCHAR(255)')
+    expect(canonicalStorageType(handle(modelPlan(50)), 'mysql')).toBe('VARCHAR(50)')
   })
 
   it('widening max(50) -> max(100) emits ALTER COLUMN ... TYPE varchar(100), non-destructively', () => {
@@ -48,9 +63,26 @@ describe('postgres varchar length', () => {
     expect(operations).toEqual([])
   })
 
-  it('an unbounded string and varchar(255) are the same column', () => {
+  // These used to be the same column, which is what made an unbounded
+  // `schema.string()` reject its own writes at 256 characters. They are now
+  // different, and dropping the bound widens to text rather than narrowing.
+  it('dropping a bound widens varchar(255) to text, non-destructively', () => {
+    const { operations } = generateDiffOperations(modelPlan(255), modelPlan())
+    const change = operations.find(op => op.kind === 'modify_column' && op.column === 'handle')
+    expect(change).toBeDefined()
+    expect(change!.sql).toContain('ALTER COLUMN "handle" TYPE text')
+    expect(change!.destructive).toBe(false)
+  })
+
+  it('adding a bound to an unbounded column is destructive, since text may not fit', () => {
     const { operations } = generateDiffOperations(modelPlan(), modelPlan(255))
-    expect(operations).toEqual([])
+    const change = operations.find(op => op.kind === 'modify_column' && op.column === 'handle')
+    expect(change!.sql).toContain('TYPE varchar(255)')
+    expect(change!.destructive).toBe(true)
+  })
+
+  it('an unchanged unbounded column produces no change', () => {
+    expect(generateDiffOperations(modelPlan(), modelPlan()).operations).toEqual([])
   })
 
   it('introspection reads the live bound so a live diff compares lengths too', () => {

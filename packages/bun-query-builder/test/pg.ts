@@ -26,6 +26,7 @@
 
 import { SQL } from 'bun'
 import process from 'node:process'
+import { gateUnavailable, requiredInCi } from './gate'
 
 export const PG_URL: string
   = process.env.DATABASE_URL
@@ -41,15 +42,41 @@ export const PG_URL: string
  * trade. Callers await it at the top of their own `.test.ts`, where the rule
  * does not apply. The URL above is the part that was wrong and the part worth
  * sharing; this is three lines of probe.
+ *
+ * It no longer answers `false` unconditionally. Fixing the URL fixed the cause
+ * of the incident above but not its mechanism: `catch { return false }` reads
+ * every possible failure — a rotated password, a service that never came up,
+ * an exhausted connection limit — as "this machine has no Postgres", and the
+ * 14 files gated on it disappear. Measured on the suite as it stands, a
+ * Postgres that does not answer takes 30 passing live-Postgres assertions down
+ * to 11 and still exits 0. So where the environment is one that supplies
+ * Postgres, an unreachable server raises; see `gate.ts`.
  */
 export async function probePostgres(): Promise<boolean> {
-  try {
-    const probe = new SQL(PG_URL)
-    await probe.unsafe('SELECT 1')
-    await probe.end()
-    return true
+  // Only where a failure is fatal, and only then: locally the connection is
+  // refused immediately and retrying three times per file for a developer who
+  // has no Postgres is pure latency. In CI the workflow already waits for
+  // `pg_isready`, so this is for a blip after that point rather than for boot.
+  const attempts = requiredInCi() ? 3 : 1
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const probe = new SQL(PG_URL)
+      await probe.unsafe('SELECT 1')
+      await probe.end()
+      return true
+    }
+    catch (error) {
+      lastError = error
+      if (attempt < attempts)
+        await Bun.sleep(attempt * 250)
+    }
   }
-  catch {
-    return false
-  }
+
+  return gateUnavailable(
+    'live Postgres',
+    `${PG_URL} did not answer after ${attempts} attempt${attempts === 1 ? '' : 's'} (${(lastError as Error)?.message ?? lastError})`,
+    'Start Postgres, or point DATABASE_URL at one.',
+  )
 }

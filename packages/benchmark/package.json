@@ -1,7 +1,7 @@
 {
   "name": "@bun-query-builder/benchmark",
   "type": "module",
-  "version": "0.3.17",
+  "version": "0.3.20",
   "private": true,
   "description": "Performance benchmarks for bun-query-builder vs popular query builders",
   "scripts": {
@@ -13,21 +13,21 @@
     "clean": "bun run src/clean.ts"
   },
   "dependencies": {
-    "@prisma/adapter-better-sqlite3": "^7.10.0",
+    "@prisma/adapter-better-sqlite3": "^7.10.1",
     "@prisma/client": "6.19.3",
     "better-sqlite3": "^12.11.1",
     "bun-query-builder": "workspace:*",
     "chalk": "^6.0.1",
     "cli-table3": "^0.6.5",
-    "drizzle-orm": "^0.45.3",
+    "drizzle-orm": "^0.45.4",
     "kysely": "^0.28.14",
     "kysely-bun-sqlite": "^0.4.0",
     "mitata": "^1.0.34",
     "prisma": "6.19.3",
-    "typeorm": "^1.1.1"
+    "typeorm": "^1.1.2"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.2",
+    "@types/bun": "^1.4.3",
     "typescript": "^7.0.2"
   }
 }

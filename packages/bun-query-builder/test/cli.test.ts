@@ -1,5 +1,26 @@
 import { spawnSync } from 'node:child_process'
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from 'bun:test'
+
+/*
+ * Raised from bun:test's 5000ms default, which this file is not slow enough to
+ * need and was failing against anyway.
+ *
+ * Every case here does real I/O — spawns the compiled CLI as a child process — so its duration tracks machine load
+ * rather than the code under test. Normally about 295ms per test, 64 of them. Under load these crossed
+ * the line and failed at 5001–5242ms, and the failing SET changed from run to
+ * run, which is the signature of a budget rather than a bug: the runs that
+ * produced them took 126–199s against a ~35s baseline.
+ *
+ * 30s absorbs that inflation while staying bounded enough that a genuine hang
+ * fails instead of stalling CI. It governs hooks as well as test bodies, which
+ * matters because a timed-out `beforeAll` fails the whole file rather than one
+ * case — that is how one slow run here took out the next file too.
+ *
+ * Deliberately per-file rather than `--timeout` on the test script: that would
+ * raise the budget for all 2552 tests, including the pure unit ones where
+ * 5000ms is a useful signal that something is wrong.
+ */
+setDefaultTimeout(30_000)
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -19,39 +40,51 @@ afterAll(async () => {
   await deleteMigrationFiles(EXAMPLES_MODELS_PATH, undefined, { dialect: 'postgres' })
 })
 
-function runCli(args: string[]) {
-  const outputDir = mkdtempSync(join(tmpdir(), 'qb-cli-output-'))
-  const runnerPath = join(outputDir, 'runner.ts')
-  const resultPath = join(outputDir, 'result.json')
-  writeFileSync(runnerPath, `
-const proc = Bun.spawnSync({
-  cmd: ${JSON.stringify([CLI_PATH, ...args])},
-  cwd: ${JSON.stringify(process.cwd())},
-  env: { ...process.env },
-  stdout: 'pipe',
-  stderr: 'pipe',
-})
-const decoder = new TextDecoder()
-await Bun.write(${JSON.stringify(resultPath)}, JSON.stringify({
-  code: proc.exitCode,
-  stdout: decoder.decode(proc.stdout).trim(),
-  stderr: decoder.decode(proc.stderr).trim(),
-}))
-`)
-  const runner = spawnSync(process.execPath, [runnerPath], {
+/**
+ * Run the compiled CLI and return its exit code and captured output.
+ *
+ * One process. This used to be two: it wrote a runner script to a temp dir,
+ * spawned Bun to execute it, had that process `Bun.spawnSync` the CLI and write
+ * the result to a JSON file, then read the file back and deleted the directory.
+ * Every one of the 64 tests here paid a whole extra Bun startup plus a
+ * filesystem round-trip for it, under bun:test's default 5000ms budget and with
+ * no explicit timeout anywhere in the file.
+ *
+ * That is what made this the suite's flakiest file. Under load the budget
+ * killed the OUTER process mid-flight, so the failure surfaced as
+ * `CLI test runner exited null` - a message about the harness, naming neither
+ * the command nor the timeout - and `bin/qbx --version` was never the thing
+ * that was slow.
+ *
+ * The indirection bought nothing. It arrived in 8b227d0, the commit that also
+ * switched CLI_PATH from `bin/cli.ts` to the compiled `bin/qbx`, with a
+ * one-line message and no comment, so it reads as scaffolding for that switch
+ * rather than a workaround: `bin/qbx` is a native executable, and node's
+ * `spawnSync` runs it directly from inside bun:test without complaint.
+ *
+ * `status` is null when a signal killed the process, which no longer happens
+ * here but would otherwise be reported as a passing exit code by callers that
+ * check `[0, 1]`, so it is surfaced rather than coerced.
+ */
+function runCli(args: string[]): { code: number | null, stdout: string, stderr: string } {
+  const out = spawnSync(CLI_PATH, args, {
     cwd: process.cwd(),
     encoding: 'utf8',
     env: { ...process.env },
   })
 
-  try {
-    if (runner.status !== 0)
-      throw new Error(`CLI test runner exited ${runner.status}: ${runner.stderr || runner.stdout}`)
+  // ENOENT means nobody built the CLI. Worth separating from a non-zero exit:
+  // `bun run test` builds first, a bare `bun test` does not.
+  if (out.error)
+    throw new Error(`CLI did not run (${CLI_PATH}): ${out.error.message}. Run \`bun run build\`.`)
 
-    return JSON.parse(readFileSync(resultPath, 'utf8')) as { code: number, stdout: string, stderr: string }
-  }
-  finally {
-    rmSync(outputDir, { recursive: true, force: true })
+  if (out.signal)
+    throw new Error(`CLI was killed by ${out.signal}: ${args.join(' ')}`)
+
+  return {
+    code: out.status,
+    stdout: (out.stdout ?? '').trim(),
+    stderr: (out.stderr ?? '').trim(),
   }
 }
 

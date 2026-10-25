@@ -48,7 +48,39 @@ describe.skipIf(!pgAvailable)('a schema change under a repeated query (live Post
     expect(await afterMigration(false)).toEqual(['id', 'a', 'b'])
   })
 
-  it('is refused with prepared statements kept, which is what the option is for', async () => {
-    expect(await afterMigration(true)).toContain('cached plan must not change result type')
+  /**
+   * With prepared statements kept, the driver may refuse OR recover — but it
+   * must never answer with the pre-migration column set.
+   *
+   * This used to assert the refusal text outright, which was true of Bun 1.4.3
+   * and stopped being true in 1.4.4: the driver now re-prepares and returns the
+   * new column list. Reproduced both ways against the same live Postgres, so
+   * this is a driver change rather than anything about this library:
+   *
+   *     bun 1.4.3   3 pass
+   *     bun 1.4.4   1 fail   Expected to contain: "cached plan must not change
+   *                          result type"   Received: [ "id", "a", "b" ]
+   *
+   * CI found it before any of us did, on a commit nobody had touched, because
+   * `setup-bun` pinned no version — so a Bun release flipped main from green to
+   * red with no change in the repository. The pin in ci.yml is the other half
+   * of this fix.
+   *
+   * So the assertion is now the invariant that actually matters, and it holds on
+   * both versions. `['id', 'a']` is the dangerous answer: a stale plan served as
+   * if current, which would hand an application a row shape its schema no longer
+   * has. Refusing is safe and recovering is safe; silently going stale is not.
+   */
+  it('never serves the pre-migration column set with prepared statements kept', async () => {
+    const result = await afterMigration(true)
+
+    if (typeof result === 'string') {
+      // Bun 1.4.3 and earlier: PostgreSQL's refusal reaches the caller.
+      expect(result).toContain('cached plan must not change result type')
+      return
+    }
+
+    // Bun 1.4.4 and later: re-prepared, so the new column is visible.
+    expect(result).toEqual(['id', 'a', 'b'])
   })
 })

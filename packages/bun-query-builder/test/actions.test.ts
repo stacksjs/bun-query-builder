@@ -1,4 +1,25 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from 'bun:test'
+
+/*
+ * Raised from bun:test's 5000ms default, which this file is not slow enough to
+ * need and was failing against anyway.
+ *
+ * Every case here does real I/O — reaches the database through the action layer — so its duration tracks machine load
+ * rather than the code under test. Normally about 21ms per test, 48 of them. Under load these crossed
+ * the line and failed at 5001–5242ms, and the failing SET changed from run to
+ * run, which is the signature of a budget rather than a bug: the runs that
+ * produced them took 126–199s against a ~35s baseline.
+ *
+ * 30s absorbs that inflation while staying bounded enough that a genuine hang
+ * fails instead of stalling CI. It governs hooks as well as test bodies, which
+ * matters because a timed-out `beforeAll` fails the whole file rather than one
+ * case — that is how one slow run here took out the next file too.
+ *
+ * Deliberately per-file rather than `--timeout` on the test script: that would
+ * raise the budget for all 2552 tests, including the pure unit ones where
+ * 5000ms is a useful signal that something is wrong.
+ */
+setDefaultTimeout(30_000)
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

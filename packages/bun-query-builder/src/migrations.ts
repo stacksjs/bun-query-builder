@@ -1615,13 +1615,35 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
   // invisible: both are `string`, the diff saw nothing, and the column stayed
   // varchar(50) while the validator accepted 100 characters - every longer
   // write then failed with "value too long for type character varying(50)".
+  // Must agree with PostgresDriver.getColumnType: an unbounded string is
+  // `text` there, and a live `text` column introspects back as `type: 'text'`.
+  // Reporting `varchar(255)` for the model side would diff against that
+  // forever, re-ALTERing an unchanged column on every reconciliation.
   if (col.type === 'string')
-    return `varchar(${col.maxLength ?? 255})`
+    return dialect === 'postgres' && col.maxLength === undefined
+      ? 'text'
+      : `varchar(${col.maxLength ?? 255})`
   // Likewise a decimal's precision and scale, which used to be a hard-coded
   // (10,2) nothing could change.
   if (col.type === 'decimal')
     return decimalTypeSql(col)
   return col.type
+}
+
+/**
+ * How many characters a string column accepts.
+ *
+ * "No bound declared" is not one number across dialects: on Postgres it is
+ * `text`, which has no limit, and on MySQL it is `varchar(255)`, because
+ * MySQL TEXT cannot be indexed without a prefix length. Folding both into 255
+ * made dropping a bound on Postgres look like a narrowing to 255 when it is
+ * really a widening to `text`, which would have flagged a safe ALTER
+ * destructive. A caller that passes no dialect keeps the single old default.
+ */
+function stringCharacterBound(col: ColumnPlan, dialect?: SupportedDialect): number {
+  if (col.maxLength !== undefined)
+    return col.maxLength
+  return dialect === 'postgres' ? Number.POSITIVE_INFINITY : 255
 }
 
 /**
@@ -1631,9 +1653,9 @@ export function canonicalStorageType(col: ColumnPlan, dialect: SupportedDialect)
  * Postgres and strict MySQL refuse the ALTER when a row is too long; MySQL in
  * a permissive mode truncates. Either way it is not a free change.
  */
-export function isNarrowingChange(from: ColumnPlan, to: ColumnPlan): boolean {
+export function isNarrowingChange(from: ColumnPlan, to: ColumnPlan, dialect?: SupportedDialect): boolean {
   if (from.type === 'string' && to.type === 'string')
-    return (to.maxLength ?? 255) < (from.maxLength ?? 255)
+    return stringCharacterBound(to, dialect) < stringCharacterBound(from, dialect)
   if (from.type === 'decimal' && to.type === 'decimal') {
     // Lossless only when neither the fractional digits nor the integer
     // digits (precision - scale) shrink.
@@ -2425,7 +2447,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
         kind: 'modify_column',
         table: curr.table,
         column: colName,
-        destructive: (prevCol.type !== currCol.type && !isLosslessTypeChange(prevCol.type, currCol.type)) || isNarrowingChange(prevCol, currCol),
+        destructive: (prevCol.type !== currCol.type && !isLosslessTypeChange(prevCol.type, currCol.type)) || isNarrowingChange(prevCol, currCol, dialect),
         sql: modifyColumnStatement,
       })
       info(`-- Detected column change: ${curr.table}.${colName} (${prevCol.type} -> ${currCol.type})`)
