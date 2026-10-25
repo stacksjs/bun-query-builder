@@ -1,3 +1,26 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.20...v0.3.21)
+
+## 🐛 Bug Fixes
+
+- scope PostgreSQL primary key introspection to its relation ([b6a5d1a](https://github.com/stacksjs/bun-query-builder/commit/b6a5d1a)) _(by Chris <chris@stacksjs.com>)_
+
+## ✅ Tests
+
+- give the I/O-bound files a budget that reflects what they do ([493d4cb](https://github.com/stacksjs/bun-query-builder/commit/493d4cb)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1191](https://github.com/stacksjs/bun-query-builder/issues/1191))
+
+## 🔧 Chores
+
+- release v0.3.21 ([9a579c5](https://github.com/stacksjs/bun-query-builder/commit/9a579c5)) _(by Chris <chris@stacksjs.com>)_
+
+## 🎉 Miscellaneous
+
+- Merge remote-tracking branch 'origin/main' ([a76ec42](https://github.com/stacksjs/bun-query-builder/commit/a76ec42)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.19...v0.3.20)
 
 ## 🐛 Bug Fixes
