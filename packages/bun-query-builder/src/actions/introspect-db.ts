@@ -28,6 +28,14 @@ export interface IntrospectedModel {
   source: string
 }
 
+// Match the relation and physical attribute number. Joining constraint names
+// across information_schema views is expensive and names can repeat by schema.
+const PG_PRIMARY_KEY_COLUMN = `EXISTS (
+  SELECT 1 FROM pg_catalog.pg_constraint pk
+  WHERE pk.conrelid = to_regclass(format('%I.%I', c.table_schema, c.table_name))
+    AND pk.contype = 'p' AND c.ordinal_position = ANY(pk.conkey)
+)`
+
 /** The attribute `type` we map a raw SQL column type to. */
 export type AttrType = 'string' | 'number' | 'boolean' | 'datetime' | 'json'
 
@@ -96,9 +104,7 @@ async function readColumns(qb: any, dialect: SupportedDialect, table: string): P
   if (dialect === 'postgres') {
     const rows = await qb.unsafe(
       `SELECT c.column_name, c.data_type, c.is_nullable,
-        (SELECT COUNT(*) FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage k ON k.constraint_name = tc.constraint_name
-          WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = c.table_name AND k.column_name = c.column_name) AS is_pk
+        ${PG_PRIMARY_KEY_COLUMN} AS is_pk
       FROM information_schema.columns c
       WHERE c.table_name = $1 AND c.table_schema = 'public'
       ORDER BY c.ordinal_position`,
@@ -475,9 +481,7 @@ async function buildPgTable(qb: any, table: string, enumLabels?: Map<string, str
   const colRows = await qb.unsafe(
     `SELECT c.column_name, c.data_type, c.udt_name, c.is_nullable, c.column_default, c.character_maximum_length,
       c.numeric_precision, c.numeric_scale,
-      (SELECT COUNT(*) FROM information_schema.table_constraints tc
-          JOIN information_schema.key_column_usage k ON k.constraint_name = tc.constraint_name
-        WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = c.table_name AND k.column_name = c.column_name) AS is_pk
+      ${PG_PRIMARY_KEY_COLUMN} AS is_pk
     FROM information_schema.columns c
     WHERE c.table_name = $1 AND c.table_schema = 'public'
     ORDER BY c.ordinal_position`,
