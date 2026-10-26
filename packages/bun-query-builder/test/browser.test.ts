@@ -34,6 +34,27 @@ import {
   type TerritoryStatsRecord,
 } from './fixtures/seed'
 
+/*
+ * A note on the `expect(x.length).toBeGreaterThan(...)` guards in this file.
+ *
+ * `generateSeedData` is not seeded: it draws each trail's rating, each
+ * activity's trail and distance, and much else from `Math.random()`. Several
+ * cases here assert only inside a `for` loop over a query result, so an empty
+ * result means the body never runs and the case reports success having checked
+ * nothing. Measured over 5000 generations: trails, territories and contested
+ * territories are never empty, but `trail_id === 1` comes back empty 2.62% of
+ * the time and `rating > 4` 0.02%.
+ *
+ * So each of those loops is preceded by a length assertion, and the two filters
+ * that could legitimately match nothing take their value from the data rather
+ * than a constant - a bare guard on those would have swapped a silent pass for
+ * a 2.6% flake. Same shape as the live-Postgres gates in #1187 and the orphaned
+ * test file in #1188: a green tick over tests that did not execute.
+ *
+ * Seeding the fixture would close the whole class, at the cost of freezing
+ * every generated value in this file's 65 cases.
+ */
+
 // Import model definitions to verify structure
 import UserModel from './fixtures/models/User'
 import TrailModel from './fixtures/models/Trail'
@@ -709,6 +730,8 @@ describe('Ordering', () => {
     const trails = await browserQuery<TrailRecord>('trails')
       .orderBy('distance', 'asc')
       .get()
+    expect(trails.length).toBeGreaterThan(1)
+
     for (let i = 1; i < trails.length; i++) {
       expect(trails[i].distance).toBeGreaterThanOrEqual(trails[i - 1].distance)
     }
@@ -718,6 +741,9 @@ describe('Ordering', () => {
     const territories = await browserQuery<TerritoryRecord>('territories')
       .orderBy('area_size', 'desc')
       .get()
+
+    expect(territories.length).toBeGreaterThan(1)
+
     for (let i = 1; i < territories.length; i++) {
       expect(territories[i].area_size).toBeLessThanOrEqual(territories[i - 1].area_size)
     }
@@ -899,14 +925,21 @@ describe('Complex Relational Queries', () => {
   })
 
   it('should get activities for a specific trail with user info', async () => {
+    // A trail the fixture actually put activities on, rather than trail 1,
+    // which it leaves empty 2.62% of the time.
+    const anyActivity = await browserQuery<ActivityRecord>('activities').first()
+    const trailId = anyActivity!.trail_id
+
     const activities = await browserQuery<ActivityRecord & { user: UserRecord }>('activities')
-      .where('trail_id', 1)
+      .where('trail_id', trailId)
       .with('user')
       .orderBy('completed_at', 'desc')
       .get()
 
+    expect(activities.length).toBeGreaterThan(0)
+
     for (const activity of activities) {
-      expect(activity.trail_id).toBe(1)
+      expect(activity.trail_id).toBe(trailId)
       expect(activity.user).toBeDefined()
     }
   })
@@ -916,6 +949,8 @@ describe('Complex Relational Queries', () => {
       .where('status', 'contested')
       .with('user', 'history')
       .get()
+
+    expect(contested.length).toBeGreaterThan(0)
 
     for (const territory of contested) {
       expect(territory.status).toBe('contested')
@@ -982,14 +1017,22 @@ describe('Complex Relational Queries', () => {
   })
 
   it('should get reviews for highly rated trails', async () => {
+    // Threshold below the best rating in the data, so the filter always matches
+    // something. A fixed `> 4` comes back empty 0.02% of the time, since the
+    // fixture draws ratings from 3.5-5.0 at random.
+    const all = await browserQuery<TrailRecord>('trails').get()
+    const threshold = Math.max(...all.map(t => t.rating)) - 0.01
+
     const trails = await browserQuery<TrailRecord & { reviews: ReviewRecord[] }>('trails')
-      .where('rating', '>', 4)
+      .where('rating', '>', threshold)
       .with('reviews')
       .orderBy('rating', 'desc')
       .get()
 
+    expect(trails.length).toBeGreaterThan(0)
+
     for (const trail of trails) {
-      expect(trail.rating).toBeGreaterThan(4)
+      expect(trail.rating).toBeGreaterThan(threshold)
       if (trail.reviews && trail.reviews.length > 0) {
         expect(trail.reviews[0]).toHaveProperty('rating')
       }
