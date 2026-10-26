@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.21...v0.3.22)
+
+## ✨ Features
+
+- **client**: let a join alias its table, so a self-join can be written ([b20a06e](https://github.com/stacksjs/bun-query-builder/commit/b20a06e)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1195](https://github.com/stacksjs/bun-query-builder/issues/1195))
+
+## 🐛 Bug Fixes
+
+- **migrations**: generate a unix timestamp attribute as bigint ([19e235b](https://github.com/stacksjs/bun-query-builder/commit/19e235b)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#1194](https://github.com/stacksjs/bun-query-builder/issues/1194))
+
+## Contributors
+
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.20...v0.3.21)
 
 ## 🐛 Bug Fixes
