@@ -926,20 +926,59 @@ describe('Complex Relational Queries', () => {
     }
   })
 
+  /**
+   * Asserts the ordering, not who wins it.
+   *
+   * This used to end `expect(leaderboard[0].name).toBe('Alex Runner')`, which
+   * is a coin flip the suite loses about once in a hundred runs. `total_distance`
+   * is `userActivities.reduce((sum, a) => sum + a.distance, 0)` over activities
+   * whose distance is `3 + Math.random() * 15` scaled by another random factor,
+   * and the fixture is not seeded. Alex gets 15 activities against Sam's 10, so
+   * the lead is structural but only about 2.4 sigma - enough to usually hold and
+   * not enough to rely on. Measured by generating the fixture directly:
+   *
+   *     over 5000 generations
+   *       top 3 has 3 entries            100.00%
+   *       top 3 is sorted descending     100.00%
+   *       Alex is #1                      98.98%   <- the old assertion
+   *       Alex is anywhere in the top 3  100.00%
+   *
+   *     smallest observed gap between Alex and the runner-up: 0.00
+   *
+   * That 1% is what reds CI on a commit that touched nothing near it - it
+   * failed on #1191's CI, then passed when the same code was re-run, which is
+   * the worst kind of failure to chase because the diff looks guilty.
+   *
+   * So the hard assertions are the ones that hold by construction: three
+   * entries, descending, and the top one really is the maximum. Alex is still
+   * expected to place, which keeps the fixture's intent that the 15-activity
+   * user dominates, but as top-3 membership rather than first place - that is
+   * the part the measurement says is safe, since falling out of the top 3 would
+   * mean losing to Sam AND two of the five-activity users at once.
+   */
   it('should get user leaderboard by total distance', async () => {
     const users = await browserQuery<UserRecord & { stats: UserStatsRecord }>('users')
       .where('active', true)
       .with('stats')
       .get()
 
-    const leaderboard = users
-      .filter(u => u.stats)
+    const ranked = users.filter(u => u.stats)
+    const leaderboard = ranked
       .sort((a, b) => b.stats.total_distance - a.stats.total_distance)
       .slice(0, 3)
 
     expect(leaderboard.length).toBe(3)
-    // Alex should be first with most distance
-    expect(leaderboard[0].name).toBe('Alex Runner')
+
+    for (let i = 1; i < leaderboard.length; i++) {
+      expect(leaderboard[i - 1].stats.total_distance)
+        .toBeGreaterThanOrEqual(leaderboard[i].stats.total_distance)
+    }
+
+    // The ordering is only meaningful if the head of it is the actual maximum.
+    expect(leaderboard[0].stats.total_distance)
+      .toBe(Math.max(...ranked.map(u => u.stats.total_distance)))
+
+    expect(leaderboard.map(u => u.name)).toContain('Alex Runner')
   })
 
   it('should get reviews for highly rated trails', async () => {
