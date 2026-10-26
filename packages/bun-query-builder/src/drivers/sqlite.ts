@@ -220,11 +220,7 @@ export class SQLiteDriver implements DialectDriver {
       .map(c => c.name)
       .filter(name => columnSource[name] !== undefined)
 
-    const statements: string[] = [
-      'PRAGMA foreign_keys=OFF;',
-      'BEGIN;',
-      createTmp,
-    ]
+    const statements: string[] = spec.externalTransaction ? [createTmp] : ['PRAGMA foreign_keys=OFF;', 'BEGIN;', createTmp]
 
     if (carried.length > 0) {
       const insertCols = carried.map(q).join(', ')
@@ -239,9 +235,11 @@ export class SQLiteDriver implements DialectDriver {
     for (const idx of target.indexes)
       statements.push(this.createIndex(target.table, idx))
 
-    statements.push('PRAGMA foreign_key_check;')
-    statements.push('COMMIT;')
-    statements.push('PRAGMA foreign_keys=ON;')
+    if (!spec.externalTransaction) {
+      statements.push('PRAGMA foreign_key_check;')
+      statements.push('COMMIT;')
+      statements.push('PRAGMA foreign_keys=ON;')
+    }
 
     return statements.join('\n')
   }

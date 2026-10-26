@@ -368,6 +368,8 @@ export interface MigrationPlan {
  * the new one into place. See `SQLiteDriver.rebuildTable`.
  */
 export interface RebuildTableSpec {
+  /** Caller owns BEGIN/COMMIT, foreign-key configuration and integrity checks. */
+  externalTransaction?: boolean
   /** The full desired schema of the table after the change. */
   target: TablePlan
   /** Temp table name to build under, e.g. `_qb_tmp_<table>` (collision-checked). */
@@ -2018,6 +2020,10 @@ function mapIndexesByKey(indexes: IndexPlan[], table: string): Record<string, In
 }
 
 export interface DiffOptions {
+  /** Compose SQLite rebuilds into a caller-owned transaction. The caller must
+   * disable foreign keys before BEGIN, check them before COMMIT and restore
+   * enforcement after completion. Standalone migration SQL remains the default. */
+  externalTransaction?: boolean
   /**
    * Emit data-preserving `RENAME COLUMN` for unambiguous detected renames
    * (default). Set false to force the literal `DROP` + `ADD` interpretation
@@ -2381,7 +2387,7 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
           tempName = `_qb_tmp_${curr.table}_${guard}`
         }
 
-        const rebuildStatement = driver.rebuildTable({ target, tempName, columnSource })
+        const rebuildStatement = driver.rebuildTable({ target, tempName, columnSource, externalTransaction: opts.externalTransaction })
         chunks.push(rebuildStatement)
         const typeChanged = modifiedCols.some(n => prevCols[n].type !== currCols[n].type)
         operations.push({

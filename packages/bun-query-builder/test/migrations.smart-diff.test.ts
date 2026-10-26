@@ -13,7 +13,8 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { generateMigration } from '../src/actions/migrate'
 import { buildPlanFromDatabase, mysqlColumnMaxLength, mysqlColumnType, sqlTypeToNormalized } from '../src/actions/introspect-db'
-import { config } from '../src/config'
+import { config, setConfig } from '../src/config'
+import { resetConnection } from '../src/db'
 import { generateDiffOperations, generateSql, isLosslessTypeChange } from '../src/migrations'
 
 function col(name: string, type: any, extra: Record<string, any> = {}): any {
@@ -261,8 +262,8 @@ describe('live-DB introspection round-trip', () => {
   const prevDatabase = config.database
 
   afterEach(() => {
-    config.dialect = prevDialect
-    config.database = prevDatabase
+    resetConnection()
+    setConfig({ dialect: prevDialect, database: prevDatabase })
   })
 
   it('introspects a freshly-created schema back to a zero-churn diff', async () => {
@@ -289,8 +290,7 @@ describe('live-DB introspection round-trip', () => {
     db.close()
 
     // Point the query builder at that file and introspect.
-    config.dialect = 'sqlite'
-    config.database = { ...prevDatabase, database: dbFile }
+    setConfig({ dialect: 'sqlite', database: { ...prevDatabase, database: dbFile } })
     const livePlan = await buildPlanFromDatabase('sqlite')
 
     // Diffing the models against the introspected live schema should be a no-op.
@@ -326,8 +326,7 @@ describe('live-DB introspection round-trip', () => {
 }
 `)
 
-    config.dialect = 'sqlite'
-    config.database = { ...prevDatabase, database: dbFile }
+    setConfig({ dialect: 'sqlite', database: { ...prevDatabase, database: dbFile } })
 
     const res = await generateMigration(modelsDir, { dialect: 'sqlite', fromDb: true, dryRun: true })
     const ops = res.operations ?? []
