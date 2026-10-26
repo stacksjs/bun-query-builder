@@ -623,6 +623,12 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
         return 'integer'
       case 'bigint':
         return 'bigint'
+      // A Unix timestamp: `Date.now()` is ~1.7e12, past any 32-bit integer,
+      // and seconds overflow one in 2038. SQLite's 64-bit INTEGER hid this,
+      // so Postgres and MySQL failed the first real write instead
+      // (stacksjs/bun-query-builder#1194). Must agree with column-types.ts.
+      case 'unix':
+        return 'bigint'
       case 'float':
         return 'float'
       case 'number':
@@ -670,7 +676,7 @@ function detectTypeFromValidationRule(rule: unknown): NormalizedColumnType | und
       return 'string'
     if (type === 'integer' || type === 'int')
       return 'integer'
-    if (type === 'bigint')
+    if (type === 'bigint' || type === 'unix')
       return 'bigint'
     if (type === 'float')
       return 'float'
@@ -705,7 +711,8 @@ function normalizeAttributeType(value: unknown): NormalizedColumnType | undefine
     case 'boolean': return 'boolean'
     case 'int':
     case 'integer': return 'integer'
-    case 'bigint': return 'bigint'
+    case 'bigint':
+    case 'unix': return 'bigint'
     case 'float': return 'float'
     case 'double': return 'double'
     case 'number':

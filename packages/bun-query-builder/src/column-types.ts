@@ -59,6 +59,10 @@ export function normalizeAttributeType(raw: unknown): NormalizedColumnType | und
     // into one column type and is created as another.
     case 'number': return 'integer'
     case 'bigint': return 'bigint'
+    // A Unix timestamp. Seconds fit a 32-bit integer until 2038 and
+    // milliseconds never do, so it is a bigint either way. Both normalizers
+    // have to agree, as with `number` above (stacksjs/bun-query-builder#1194).
+    case 'unix': return 'bigint'
     case 'float': return 'float'
     case 'double': return 'double'
     case 'decimal': return 'decimal'

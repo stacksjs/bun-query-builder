@@ -4,6 +4,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateMigration } from '../src/actions/migrate'
+import { normalizeAttributeType } from '../src/column-types'
 import { buildMigrationPlan, generateDiffSql, generateSql } from '../src/migrations'
 import { defineModels } from '../src/schema'
 
@@ -327,6 +328,33 @@ describe('migrations - complex model attributes', () => {
       // `text` used to collapse to `string`, which made the validator a no-op
       // for schema generation and put JSON blobs in varchar(255).
       expect(getColumn(plan, 'users', 'bio')?.type).toBe('text')
+    })
+
+    // A Unix timestamp in milliseconds (Date.now(), ~1.7e12) overflows a
+    // 32-bit integer, which Postgres and MySQL then reject with "integer out
+    // of range" on the first real write. SQLite's 64-bit INTEGER hid it
+    // (stacksjs/bun-query-builder#1194).
+    it('plans a unix rule as bigint on every dialect', () => {
+      const models = defineModels({
+        Device: {
+          name: 'Device',
+          table: 'devices',
+          attributes: {
+            id: { validation: { rule: {} } },
+            last_ping: { validation: { rule: { name: 'unix' } } },
+            seen_at_ms: { validation: { rule: { type: 'unix' } } },
+            expires: { type: 'unix' },
+          },
+        },
+      })
+
+      for (const dialect of ['postgres', 'mysql', 'sqlite'] as const) {
+        const plan = buildMigrationPlan(models as any, { dialect })
+        expect(getColumn(plan, 'devices', 'last_ping')?.type).toBe('bigint')
+        expect(getColumn(plan, 'devices', 'seen_at_ms')?.type).toBe('bigint')
+        expect(getColumn(plan, 'devices', 'expires')?.type).toBe('bigint')
+      }
+      expect(normalizeAttributeType('unix')).toBe('bigint')
     })
 
     it('keeps a text rule as TEXT even with no max', () => {
