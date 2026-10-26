@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.23...v0.3.24)
+
+## ✅ Tests
+
+- **fixtures**: seed generateSeedData, so the data is the same every run ([d98864b](https://github.com/stacksjs/bun-query-builder/commit/d98864b)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1191](https://github.com/stacksjs/bun-query-builder/issues/1191))
+- **browser**: stop five cases from passing without asserting anything ([f395a68](https://github.com/stacksjs/bun-query-builder/commit/f395a68)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1187](https://github.com/stacksjs/bun-query-builder/issues/1187), [#1188](https://github.com/stacksjs/bun-query-builder/issues/1188))
+
+## 🔧 Chores
+
+- release v0.3.24 ([ba2d972](https://github.com/stacksjs/bun-query-builder/commit/ba2d972)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.22...v0.3.23)
 
 ## ✅ Tests
