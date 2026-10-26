@@ -8,9 +8,10 @@
 
 import { describe, expect, it } from 'bun:test'
 import { buildMigrationPlan, generateDiffSql } from '../src/migrations'
+import type { SupportedDialect } from '../src/types'
 import { defineModels } from '../src/schema'
 
-function plan(postBelongsTo: any) {
+function plan(postBelongsTo: any, dialect: SupportedDialect = 'postgres') {
   const models = defineModels({
     User: { name: 'User', table: 'users', primaryKey: 'id', attributes: { id: { validation: { rule: {} } } } },
     Post: {
@@ -21,10 +22,18 @@ function plan(postBelongsTo: any) {
       belongsTo: postBelongsTo,
     },
   } as any)
-  return buildMigrationPlan(models as any, { dialect: 'postgres' })
+  return buildMigrationPlan(models as any, { dialect })
 }
 
 describe('migration diff detects FK reference changes (#1037)', () => {
+  it.each(['mysql', 'postgres'] as const)('replaces a snapshot relationship before changing its delete action on %s', (dialect) => {
+    const previous = plan([{ model: 'User', onDelete: 'cascade' }], dialect)
+    const next = plan([{ model: 'User', onDelete: 'set null' }], dialect)
+    const sql = generateDiffSql(previous, next).join('\n')
+    expect(sql).toContain(dialect === 'mysql' ? 'DROP FOREIGN KEY `posts_user_id_fk`' : 'DROP CONSTRAINT "posts_user_id_fk"')
+    expect(sql).toContain('ON DELETE SET NULL')
+    expect(sql.indexOf('DROP')).toBeLessThan(sql.indexOf('ADD CONSTRAINT'))
+  })
   it('adding onDelete to a belongsTo FK emits an FK statement (was: no diff)', () => {
     const prev = plan(['User']) // user_id references users(id), no onDelete
     const next = plan([{ model: 'User', onDelete: 'cascade' }]) // + ON DELETE CASCADE

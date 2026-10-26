@@ -2474,7 +2474,13 @@ export function generateDiffOperations(previous: MigrationPlan | undefined, next
         currCol.references.column,
         currCol.references.onDelete,
         currCol.references.onUpdate,
-        prevCols[colName].references?.constraintNames,
+        // Model snapshots know the generated relationship but do not carry
+        // live introspection's constraintNames. Replace its deterministic name
+        // too, or an onDelete change only re-adds the existing constraint and
+        // leaves its old behavior in place.
+        prevCols[colName].references?.constraintNames?.length
+          ? prevCols[colName].references!.constraintNames
+          : prevCols[colName].references ? [`${curr.table}_${currCol.name}_fk`] : [],
       )
       if (!addFkStatement)
         continue
