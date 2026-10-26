@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.22...v0.3.23)
+
+## ✅ Tests
+
+- **browser**: assert the leaderboard's ordering, not who wins it ([62910aa](https://github.com/stacksjs/bun-query-builder/commit/62910aa)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1](https://github.com/stacksjs/bun-query-builder/issues/1), [#1191](https://github.com/stacksjs/bun-query-builder/issues/1191))
+
+## 🔧 Chores
+
+- release v0.3.23 ([cac9c28](https://github.com/stacksjs/bun-query-builder/commit/cac9c28)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.21...v0.3.22)
 
 ## ✨ Features
