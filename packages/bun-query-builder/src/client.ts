@@ -603,6 +603,28 @@ function validateIdentifier(name: string, context?: string): void {
   }
 }
 
+/**
+ * A join's table, optionally aliased: `categories` or `categories as parent`.
+ *
+ * Joining a table to itself needs a second name for it, and `selectFrom`
+ * already accepted `table as alias`, so every join takes the same form
+ * (stacksjs/bun-query-builder#1195). Both parts are validated as identifiers,
+ * the alias without a dot, and anything else is rejected as before. `name` is
+ * what the rest of the query refers to the table by.
+ */
+function joinTableRef(table: string, context: string): { sql: string, name: string } {
+  const aliased = /^\s*(\S+)\s+as\s+(\S+)\s*$/i.exec(table)
+  if (!aliased) {
+    validateIdentifier(table, context)
+    return { sql: table, name: table }
+  }
+  const [, name, alias] = aliased
+  validateIdentifier(name!, context)
+  if (!/^[A-Z_]\w*$/i.test(alias!))
+    throw new Error(`[query-builder] Invalid identifier in ${context}: '${table}'. An alias must start with a letter or underscore and contain only alphanumeric characters and underscores.`)
+  return { sql: `${name} AS ${alias}`, name: alias! }
+}
+
 // The helpers below are module-level on purpose: they are stateless, and
 // declaring them inside makeSelect() allocated a fresh closure for each of
 // them on EVERY selectFrom() call — pure per-query overhead.
@@ -6161,12 +6183,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // plain (optionally table-qualified) identifier or allow-listed
         // operator. Compile-time types already constrain these; this guards
         // the `as any` / dynamic-string escape hatch.
-        validateIdentifier(table2, 'join(table)')
+        const joined = joinTableRef(table2, 'join(table)')
         validateQualifiedIdentifier(onLeft, 'join(onLeft)')
         validateQualifiedIdentifier(onRight, 'join(onRight)')
         assertSafeWhereOperator(operator, 'join(operator)')
-        insertJoin(`JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
-        joinedTables.add(table2)
+        insertJoin(`JOIN ${joined.sql} ON ${onLeft} ${operator} ${onRight}`)
+        joinedTables.add(joined.name)
         return this as any
       },
       joinSub(sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) {
@@ -6186,21 +6208,21 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        validateIdentifier(table2, 'innerJoin(table)')
+        const joined = joinTableRef(table2, 'innerJoin(table)')
         validateQualifiedIdentifier(onLeft, 'innerJoin(onLeft)')
         validateQualifiedIdentifier(onRight, 'innerJoin(onRight)')
         assertSafeWhereOperator(operator, 'innerJoin(operator)')
-        insertJoin(`INNER JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
-        joinedTables.add(table2)
+        insertJoin(`INNER JOIN ${joined.sql} ON ${onLeft} ${operator} ${onRight}`)
+        joinedTables.add(joined.name)
         return this as any
       },
       leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        validateIdentifier(table2, 'leftJoin(table)')
+        const joined = joinTableRef(table2, 'leftJoin(table)')
         validateQualifiedIdentifier(onLeft, 'leftJoin(onLeft)')
         validateQualifiedIdentifier(onRight, 'leftJoin(onRight)')
         assertSafeWhereOperator(operator, 'leftJoin(operator)')
-        insertJoin(`LEFT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
-        joinedTables.add(table2)
+        insertJoin(`LEFT JOIN ${joined.sql} ON ${onLeft} ${operator} ${onRight}`)
+        joinedTables.add(joined.name)
         return this as any
       },
       leftJoinSub(sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) {
@@ -6213,18 +6235,18 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
-        validateIdentifier(table2, 'rightJoin(table)')
+        const joined = joinTableRef(table2, 'rightJoin(table)')
         validateQualifiedIdentifier(onLeft, 'rightJoin(onLeft)')
         validateQualifiedIdentifier(onRight, 'rightJoin(onRight)')
         assertSafeWhereOperator(operator, 'rightJoin(operator)')
-        insertJoin(`RIGHT JOIN ${table2} ON ${onLeft} ${operator} ${onRight}`)
-        joinedTables.add(table2)
+        insertJoin(`RIGHT JOIN ${joined.sql} ON ${onLeft} ${operator} ${onRight}`)
+        joinedTables.add(joined.name)
         return this as any
       },
       crossJoin(table2: string) {
-        validateIdentifier(table2, 'crossJoin(table)')
-        insertJoin(`CROSS JOIN ${table2}`)
-        joinedTables.add(table2)
+        const joined = joinTableRef(table2, 'crossJoin(table)')
+        insertJoin(`CROSS JOIN ${joined.sql}`)
+        joinedTables.add(joined.name)
         return this as any
       },
       crossJoinSub(sub: { toSQL: () => any }, alias: string) {
