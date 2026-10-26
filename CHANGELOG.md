@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.24...v0.3.25)
+
+## 🐛 Bug Fixes
+
+- **migrations**: replace foreign keys declared by model snapshots ([a7153f3](https://github.com/stacksjs/bun-query-builder/commit/a7153f3)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.25 ([dad2482](https://github.com/stacksjs/bun-query-builder/commit/dad2482)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.23...v0.3.24)
 
 ## ✅ Tests
