@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.25...v0.3.26)
+
+## ✨ Features
+
+- **migrations**: compose SQLite rebuilds in external transactions ([a3207da](https://github.com/stacksjs/bun-query-builder/commit/a3207da)) _(by Chris Breuer <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.26 ([91709a7](https://github.com/stacksjs/bun-query-builder/commit/91709a7)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Chris Breuer <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.24...v0.3.25)
 
 ## 🐛 Bug Fixes
