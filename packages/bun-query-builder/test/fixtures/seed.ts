@@ -170,8 +170,57 @@ function roundOneDecimal(value: number): number {
 /**
  * Generate complete seed data with proper relationships
  */
-export function generateSeedData() {
-  const now = new Date()
+/**
+ * The fixture's randomness, made reproducible.
+ *
+ * Every value below used to come from `random()`, which made this fixture
+ * a quiet source of flakes in the one file that consumes it. Two were measured
+ * before this change, both in browser.test.ts:
+ *
+ *  - `leaderboard[0].name` is 'Alex Runner' only 98.98% of the time, because
+ *    `total_distance` is a sum over randomly drawn activity distances and
+ *    Alex's 15-activity lead over Sam's 10 is about 2.4 sigma (see 62910aa)
+ *  - five cases assert only inside a `for` loop over a query result, and
+ *    `trail_id === 1` came back empty 2.62% of runs, so they reported success
+ *    having checked nothing (see f395a68)
+ *
+ * A seeded generator makes the data identical on every run and every machine,
+ * so an assertion that holds once holds always, and a failure means the code
+ * changed rather than the dice. mulberry32: 32-bit state, one multiply-xorshift
+ * round, good enough for fixtures and short enough to read.
+ *
+ * `generateSeedData(seed)` takes an override for anything that wants a
+ * different-but-still-reproducible shape - pass a literal, not `Date.now()`,
+ * or the determinism this exists for is gone.
+ */
+const DEFAULT_SEED = 0x5EED
+
+/** The instant activity timestamps are measured back from. */
+const FIXED_NOW = '2026-06-15T12:00:00.000Z'
+
+let rngState = DEFAULT_SEED
+
+function random(): number {
+  rngState = (rngState + 0x6D2B79F5) | 0
+  let t = rngState
+  t = Math.imul(t ^ (t >>> 15), t | 1)
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+}
+
+export function generateSeedData(seed: number = DEFAULT_SEED) {
+  // Reset per call, so the data does not depend on how many times this has
+  // been called before - two calls in one process return identical fixtures.
+  rngState = seed | 0
+
+  // Frozen, for the same reason the generator is seeded: with `new Date()` here
+  // two calls in the same process returned different fixtures, so "seeded" would
+  // have been only half true. Activity timestamps are `now - dayOffset days`, and
+  // every test that touches them asserts relative order (`latest()`, `oldest()`,
+  // `orderBy('completed_at')`) or just `toBeDefined()`, so a fixed instant
+  // changes nothing they check. The one exact date assertion in browser.test.ts
+  // is against a user's hardcoded '2024-01-01T00:00:00Z', not this.
+  const now = new Date(FIXED_NOW)
 
   // === USERS ===
   const users: UserRecord[] = [
@@ -245,16 +294,16 @@ export function generateSeedData() {
       id: index + 1,
       name,
       location: `${loc.city}, ${loc.state}`,
-      distance: roundOneDecimal(3 + Math.random() * 15),
-      elevation: Math.round(200 + Math.random() * 2000),
+      distance: roundOneDecimal(3 + random() * 15),
+      elevation: Math.round(200 + random() * 2000),
       difficulty: (['easy', 'moderate', 'hard'] as const)[index % 3],
-      rating: roundOneDecimal(3.5 + Math.random() * 1.5),
-      review_count: Math.floor(50 + Math.random() * 500),
-      estimated_time: `${Math.floor(1 + Math.random() * 4)}h ${Math.floor(Math.random() * 4) * 15}m`,
+      rating: roundOneDecimal(3.5 + random() * 1.5),
+      review_count: Math.floor(50 + random() * 500),
+      estimated_time: `${Math.floor(1 + random() * 4)}h ${Math.floor(random() * 4) * 15}m`,
       image: `https://images.unsplash.com/photo-155163281156${index}?w=800`,
       tags: ['forest', 'views', 'dog-friendly', 'running', 'family'].slice(0, 2 + (index % 3)).join(','),
-      latitude: loc.lat + (Math.random() - 0.5) * 0.1,
-      longitude: loc.lng + (Math.random() - 0.5) * 0.1,
+      latitude: loc.lat + (random() - 0.5) * 0.1,
+      longitude: loc.lng + (random() - 0.5) * 0.1,
       description: `Beautiful trail near ${loc.city} with amazing ${index % 2 === 0 ? 'mountain' : 'coastal'} views.`,
       created_at: `2024-01-${String(1 + index).padStart(2, '0')}T00:00:00Z`,
       updated_at: `2024-01-${String(10 + index).padStart(2, '0')}T00:00:00Z`,
@@ -270,19 +319,19 @@ export function generateSeedData() {
   for (const user of users.filter(u => u.active)) {
     const activityCount = user.id === 1 ? 15 : user.id === 2 ? 10 : 5
     for (let i = 0; i < activityCount; i++) {
-      const trail = trails[Math.floor(Math.random() * trails.length)]
-      const type = activityTypes[Math.floor(Math.random() * activityTypes.length)]
-      const dayOffset = Math.floor(Math.random() * 30)
-      const distanceVariation = 0.8 + Math.random() * 0.4
+      const trail = trails[Math.floor(random() * trails.length)]
+      const type = activityTypes[Math.floor(random() * activityTypes.length)]
+      const dayOffset = Math.floor(random() * 30)
+      const distanceVariation = 0.8 + random() * 0.4
       const activityDistance = roundOneDecimal(trail.distance * distanceVariation)
       const activityElevation = Math.round(trail.elevation * distanceVariation)
-      const durationHours = Math.floor(Math.random() * 3)
-      const durationMins = String(Math.floor(Math.random() * 60)).padStart(2, '0')
-      const durationSecs = String(Math.floor(Math.random() * 60)).padStart(2, '0')
-      const paceRaw = 6 + Math.random() * 10
+      const durationHours = Math.floor(random() * 3)
+      const durationMins = String(Math.floor(random() * 60)).padStart(2, '0')
+      const durationSecs = String(Math.floor(random() * 60)).padStart(2, '0')
+      const paceRaw = 6 + random() * 10
       const paceBase = Math.floor(paceRaw)
-      const paceMins = String(Math.floor(Math.random() * 60)).padStart(2, '0')
-      const kudosCount = Math.floor(Math.random() * 50)
+      const paceMins = String(Math.floor(random() * 60)).padStart(2, '0')
+      const kudosCount = Math.floor(random() * 50)
       activities.push({
         id: activityId++,
         user_id: user.id,
@@ -327,10 +376,10 @@ export function generateSeedData() {
       bounding_box: `${loc.lat - 0.01},${loc.lng - 0.01},${loc.lat + 0.01},${loc.lng + 0.01}`,
       center_lat: loc.lat,
       center_lng: loc.lng,
-      area_size: 50000 + Math.floor(Math.random() * 100000),
-      perimeter: 2000 + Math.floor(Math.random() * 1000),
+      area_size: 50000 + Math.floor(random() * 100000),
+      perimeter: 2000 + Math.floor(random() * 1000),
       status: 'active',
-      conquest_count: Math.floor(Math.random() * 5),
+      conquest_count: Math.floor(random() * 5),
       claimed_at: `2024-01-${String(5 + i).padStart(2, '0')}T12:00:00Z`,
       created_at: `2024-01-${String(5 + i).padStart(2, '0')}T12:00:00Z`,
       updated_at: `2024-01-${String(10 + i).padStart(2, '0')}T12:00:00Z`,
@@ -358,10 +407,10 @@ export function generateSeedData() {
       }),
       center_lat: loc.lat,
       center_lng: loc.lng,
-      area_size: 80000 + Math.floor(Math.random() * 50000),
-      perimeter: 3000 + Math.floor(Math.random() * 500),
+      area_size: 80000 + Math.floor(random() * 50000),
+      perimeter: 3000 + Math.floor(random() * 500),
       status: i === 0 ? 'contested' : 'active',
-      conquest_count: Math.floor(Math.random() * 3),
+      conquest_count: Math.floor(random() * 3),
       claimed_at: `2024-01-${String(10 + i).padStart(2, '0')}T14:00:00Z`,
       created_at: `2024-01-${String(10 + i).padStart(2, '0')}T14:00:00Z`,
       updated_at: `2024-01-${String(15 + i).padStart(2, '0')}T14:00:00Z`,
@@ -411,7 +460,7 @@ export function generateSeedData() {
     const reviewCount = user.id === 1 ? 5 : 3
     for (let i = 0; i < reviewCount; i++) {
       const trail = trails[(user.id + i) % trails.length]
-      const ratingBase = 3 + Math.random() * 3
+      const ratingBase = 3 + random() * 3
       const reviewRating = Math.floor(ratingBase)
       reviews.push({
         id: reviewId++,
@@ -422,7 +471,7 @@ export function generateSeedData() {
         content: `This is a ${trail.difficulty} trail that I really enjoyed. The views from the top are incredible and the path is well maintained.`,
         visit_date: `2024-01-${String(10 + i).padStart(2, '0')}`,
         conditions: (['excellent', 'good', 'fair'] as const)[i % 3],
-        helpful_count: Math.floor(Math.random() * 50),
+        helpful_count: Math.floor(random() * 50),
         created_at: `2024-01-${String(15 + i).padStart(2, '0')}T09:00:00Z`,
         updated_at: `2024-01-${String(15 + i).padStart(2, '0')}T09:00:00Z`,
       })
@@ -436,7 +485,7 @@ export function generateSeedData() {
   // Users give kudos to each other's activities
   for (const activity of activities.slice(0, 20)) {
     const potentialGivers = users.filter(u => u.id !== activity.user_id && u.active)
-    const giverCount = Math.floor(Math.random() * Math.min(3, potentialGivers.length))
+    const giverCount = Math.floor(random() * Math.min(3, potentialGivers.length))
     for (let i = 0; i < giverCount; i++) {
       kudos.push({
         id: kudosId++,
