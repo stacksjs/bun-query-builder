@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.26...v0.3.27)
+
+## ✅ Tests
+
+- **db**: raise the isolation child's budget, and say when it is the one that tripped ([fd130ba](https://github.com/stacksjs/bun-query-builder/commit/fd130ba)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.27 ([ab6350d](https://github.com/stacksjs/bun-query-builder/commit/ab6350d)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.25...v0.3.26)
 
 ## ✨ Features
