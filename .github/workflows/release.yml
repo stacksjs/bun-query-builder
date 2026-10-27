@@ -4,7 +4,14 @@ on:
   push:
     tags:
       - 'v*'
+  # Releases a tag that npm already has: its binaries and GitHub Release,
+  # without publishing it again. Uploading an accepted version a second time
+  # can stage a conflicting copy, so a manual run never publishes.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing release tag already on npm, such as v0.3.27
+        required: true
 
 jobs:
   npm:
@@ -12,12 +19,32 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
+
+      # The readback script runs from this commit, since an older tag predates it.
+      - name: Check out the tag to release
+        run: |
+          cp .github/scripts/npm-publication-readback.ts "$RUNNER_TEMP/"
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+            exit 0
+          fi
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$RELEASE_TAG' is not a release tag"
+            exit 1
+          fi
+          git checkout --detach "refs/tags/$RELEASE_TAG"
+          version=$(jq -r .version packages/bun-query-builder/package.json)
+          if [ "v$version" != "$RELEASE_TAG" ]; then
+            echo "::error::$RELEASE_TAG carries version $version"
+            exit 1
+          fi
 
       - name: Setup Pantry
         uses: pantry-pm/pantry/packages/action@main
@@ -26,51 +53,59 @@ jobs:
         run: bun install --ignore-scripts
 
       - name: Build Package
+        if: github.event_name == 'push'
         working-directory: packages/bun-query-builder
         run: bun --bun build.ts
 
       - name: Verify Package
+        if: github.event_name == 'push'
         run: >-
           bun -e "import { isLosslessTypeChange } from './packages/bun-query-builder/dist/src/index.js';
           if (!isLosslessTypeChange('integer', 'bigint') || !isLosslessTypeChange('string', 'text'))
           throw new Error('published package build is stale')"
 
-      # `pantry publish` exits 1 when npm accepts the upload but its public
-      # readback has not completed inside the 120s window it waits. The package
-      # IS published in that case - the tool says so itself, "Upload accepted;
-      # publication is pending public metadata and verified tarball
-      # availability. Do not upload this version again." - and v0.3.14, 0.3.18,
-      # 0.3.20, 0.3.25, 0.3.27 and 0.3.28 all reached npm that way.
+      # Publish once and keep the outcome; the readback below decides it.
       #
-      # The cost was not the red tick. A failed step skips the two below it, so
-      # every one of those versions has no GitHub Release and none of the five
-      # platform binaries: v0.3.19 and v0.3.26 have 5 assets each, the rest have
-      # nothing. It also trained us to ignore a red Releaser, which is fine
-      # until one fails for a real reason.
-      #
-      # So only that exact message passes through. Any other non-zero exit still
-      # fails the job and still stops the release being published.
+      # `pantry publish` exits 1 when npm accepts the upload but its own public
+      # readback has not finished inside the 120s it waits, and npm often takes
+      # three or four minutes to serve a new version. Failing there skipped the
+      # binaries and the GitHub Release: v0.3.14, 0.3.18, 0.3.20, 0.3.24, 0.3.25,
+      # 0.3.27 and 0.3.28 all reached npm with neither (#1197).
       - name: Publish
+        id: publish
+        if: github.event_name == 'push'
         working-directory: packages/bun-query-builder
         run: |
+          mkdir -p ../../artifacts/npm-publication
           set +e
-          pantry publish --npm --access public 2>&1 | tee publish.log
-          status=${PIPESTATUS[0]}
+          pantry publish --npm --access public 2>&1 | tee ../../artifacts/npm-publication/publish.log
+          statuses=("${PIPESTATUS[@]}")
           set -e
-
-          if [ "$status" -eq 0 ]; then
-            exit 0
+          if [ "${statuses[1]}" -ne 0 ]; then
+            exit "${statuses[1]}"
           fi
-
-          if grep -qF 'Upload accepted; publication is pending' publish.log; then
-            echo "::notice title=npm readback pending::npm accepted the upload and pantry exited $status waiting for public readback. The version is published; continuing so the GitHub Release and binaries are still created. Do not re-run this job."
-            exit 0
-          fi
-
-          echo "::error title=publish failed::pantry publish exited $status without npm accepting the upload."
-          exit "$status"
+          echo "exit_code=${statuses[0]}" >> "$GITHUB_OUTPUT"
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Waits up to 15 minutes for npm to serve the version, then checks that
+      # its metadata, tarball bytes and the manifest inside the tarball match
+      # the archive the publish log says npm accepted. A rejected upload, a
+      # missing or conflicting receipt, or a mismatch fails the release here.
+      # It never uploads. On a manual run it confirms npm already has the tag.
+      - name: Read the release back from npm
+        id: readback
+        run: bun "$RUNNER_TEMP/npm-publication-readback.ts"
+        env:
+          PANTRY_NPM_PUBLISH_EXIT_CODE: ${{ steps.publish.outputs.exit_code }}
+
+      - name: Retain the npm publication evidence
+        if: always() && steps.readback.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-publication-proof
+          path: artifacts/npm-publication/
+          if-no-files-found: error
 
       - name: Build Release Binaries
         run: cd packages/bun-query-builder && bun run compile:all && bun run zip
@@ -78,6 +113,7 @@ jobs:
       - name: Create GitHub Release
         uses: stacksjs/action-releaser@v1.2.11
         with:
+          tag: ${{ env.RELEASE_TAG }}
           files: |
             packages/bun-query-builder/bin/qbx-linux-x64.zip
             packages/bun-query-builder/bin/qbx-linux-arm64.zip
