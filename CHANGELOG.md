@@ -1,3 +1,20 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.29...v0.3.30)
+
+## 🐛 Bug Fixes
+
+- **orm**: validate the column and operator on the belongsToMany filters ([64c9269](https://github.com/stacksjs/bun-query-builder/commit/64c9269)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1858](https://github.com/stacksjs/bun-query-builder/issues/1858))
+- **client**: validate the column on the LIKE family, reorder and the aggregates ([760c6ef](https://github.com/stacksjs/bun-query-builder/commit/760c6ef)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1181](https://github.com/stacksjs/bun-query-builder/issues/1181), [#1185](https://github.com/stacksjs/bun-query-builder/issues/1185), [#1181](https://github.com/stacksjs/bun-query-builder/issues/1181))
+- **ci**: keep the newest version marked latest after releasing an old tag ([b00976d](https://github.com/stacksjs/bun-query-builder/commit/b00976d)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1197](https://github.com/stacksjs/bun-query-builder/issues/1197))
+- **ci**: read a release back from npm before giving up on it ([26cc976](https://github.com/stacksjs/bun-query-builder/commit/26cc976)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1197](https://github.com/stacksjs/bun-query-builder/issues/1197))
+
+## 🔧 Chores
+
+- release v0.3.30 ([4e112b4](https://github.com/stacksjs/bun-query-builder/commit/4e112b4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.28...v0.3.29)
 
 ## 🐛 Bug Fixes
