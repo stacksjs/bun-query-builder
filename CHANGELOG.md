@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.28...v0.3.29)
+
+## 🐛 Bug Fixes
+
+- **ci**: a publish npm accepted should not skip the GitHub release ([10a4d65](https://github.com/stacksjs/bun-query-builder/commit/10a4d65)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.29 ([6fcac26](https://github.com/stacksjs/bun-query-builder/commit/6fcac26)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.27...v0.3.28)
 
 ## 🐛 Bug Fixes
