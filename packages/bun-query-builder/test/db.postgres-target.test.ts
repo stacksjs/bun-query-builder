@@ -4,6 +4,17 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PG_URL, probePostgres } from './pg'
 
+/**
+ * How long the isolation child gets.
+ *
+ * Its work - create two databases, exercise four connection configurations
+ * against them, write a marker table, drop both - is under 2s on an idle
+ * machine and up to ~9s on a busy one. 90s is generous on purpose: the old 30s
+ * was ~3x the loaded cost and ran out twice, and the only thing a tight bound
+ * buys is a faster failure on a hang this has never had.
+ */
+const CHILD_TIMEOUT_MS = 90_000
+
 const available = await probePostgres()
 
 test.skipIf(!available)('explicit PostgreSQL targets remain isolated with PGDATABASE exported', () => {
@@ -55,9 +66,39 @@ try {
 }
 `)
   try {
-    const child = Bun.spawnSync([process.execPath, script], { stdout: 'pipe', stderr: 'pipe', timeout: 30_000 })
+    /*
+     * Two budgets, and the inner one is what bites.
+     *
+     * The child creates two databases, exercises four connection
+     * configurations against them, writes a marker table, then drops both.
+     * The old `timeout: 30_000` was about 3x its loaded cost, and it ran out
+     * twice on a busy machine, surfacing as
+     * `expect(child.exitCode).toBe(0)` failing at just over 30s. The 35s test
+     * budget was never reached, so raising only that would have changed
+     * nothing: spawnSync kills the child first and the assertion fails on the
+     * corpse.
+     *
+     * The test budget stays comfortably above CHILD_TIMEOUT_MS so the child's
+     * own timeout is always the one that reports, with its stdout and stderr
+     * attached, rather than bun:test killing the case first and saying nothing.
+     */
+    const child = Bun.spawnSync([process.execPath, script], { stdout: 'pipe', stderr: 'pipe', timeout: CHILD_TIMEOUT_MS })
+
+    // Say so when the child was killed rather than finished. Without this a
+    // timeout reads as `expected null to be 0`, which looks like the isolation
+    // logic broke when nothing ran long enough to have an opinion.
+    if (child.signalCode) {
+      throw new Error(
+        `the isolation child was killed by ${child.signalCode} after ${CHILD_TIMEOUT_MS}ms, so it `
+        + `did not finish. That is a timeout, not an isolation failure - the work is under 2s `
+        + `idle and ~9s loaded, so suspect machine load or an unreachable Postgres before `
+        + `suspecting the code.\n`
+        + `stdout: ${child.stdout}\nstderr: ${child.stderr}`,
+      )
+    }
+
     expect(child.exitCode, `${child.stdout}\n${child.stderr}`).toBe(0)
     expect(child.stdout.toString()).toContain('PostgreSQL target isolation verified')
   }
   finally { rmSync(directory, { recursive: true, force: true }) }
-}, 35_000)
+}, 120_000)
