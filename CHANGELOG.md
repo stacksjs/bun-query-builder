@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.27...v0.3.28)
+
+## 🐛 Bug Fixes
+
+- **orm**: assign updated_at once when an update sets it ([77c42d9](https://github.com/stacksjs/bun-query-builder/commit/77c42d9)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1196](https://github.com/stacksjs/bun-query-builder/issues/1196))
+
+## 🔧 Chores
+
+- release v0.3.28 ([7ac0975](https://github.com/stacksjs/bun-query-builder/commit/7ac0975)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.26...v0.3.27)
 
 ## ✅ Tests
