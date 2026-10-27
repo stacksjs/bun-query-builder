@@ -122,3 +122,15 @@ jobs:
             packages/bun-query-builder/bin/qbx-darwin-arm64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The releaser marks what it creates as the latest release, which is
+      # wrong for an older tag released by hand: v0.3.28 took the badge from
+      # v0.3.29. Hand it back to the highest version that has a release.
+      - name: Keep the newest version marked latest
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          newest=$(gh release list --limit 1000 --json tagName --jq '.[].tagName' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          gh release edit "$newest" --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
