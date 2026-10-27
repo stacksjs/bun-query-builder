@@ -35,9 +35,40 @@ jobs:
           if (!isLosslessTypeChange('integer', 'bigint') || !isLosslessTypeChange('string', 'text'))
           throw new Error('published package build is stale')"
 
+      # `pantry publish` exits 1 when npm accepts the upload but its public
+      # readback has not completed inside the 120s window it waits. The package
+      # IS published in that case - the tool says so itself, "Upload accepted;
+      # publication is pending public metadata and verified tarball
+      # availability. Do not upload this version again." - and v0.3.14, 0.3.18,
+      # 0.3.20, 0.3.25, 0.3.27 and 0.3.28 all reached npm that way.
+      #
+      # The cost was not the red tick. A failed step skips the two below it, so
+      # every one of those versions has no GitHub Release and none of the five
+      # platform binaries: v0.3.19 and v0.3.26 have 5 assets each, the rest have
+      # nothing. It also trained us to ignore a red Releaser, which is fine
+      # until one fails for a real reason.
+      #
+      # So only that exact message passes through. Any other non-zero exit still
+      # fails the job and still stops the release being published.
       - name: Publish
         working-directory: packages/bun-query-builder
-        run: pantry publish --npm --access public
+        run: |
+          set +e
+          pantry publish --npm --access public 2>&1 | tee publish.log
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+
+          if grep -qF 'Upload accepted; publication is pending' publish.log; then
+            echo "::notice title=npm readback pending::npm accepted the upload and pantry exited $status waiting for public readback. The version is published; continuing so the GitHub Release and binaries are still created. Do not re-run this job."
+            exit 0
+          fi
+
+          echo "::error title=publish failed::pantry publish exited $status without npm accepting the upload."
+          exit "$status"
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
