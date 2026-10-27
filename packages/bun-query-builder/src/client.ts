@@ -4643,16 +4643,24 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         built = null
         return this as any
       },
+      // These three predate addWindowFunction() and built the OVER clause by
+      // hand, so #1185 — which routed every other window function through
+      // buildOverClause() — did not reach them. partitionBy and alias were
+      // both interpolated raw, and a partitionBy from request input closed the
+      // parenthesis and projected a subquery:
+      //
+      //   rowNumber('rn', 'id) OVER () , (SELECT token FROM secrets LIMIT 1')
+      //   -> SELECT *, ROW_NUMBER() OVER (PARTITION BY id) OVER () ,
+      //      (SELECT token FROM secrets LIMIT 1) AS rn FROM users
+      //
+      // buildOverClause() emits the same SQL for a legitimate column, so this
+      // shares the hardened path rather than repeating it a fourth time. The
+      // insertion below is left alone: addWindowFunction() also rewrites
+      // `built` eagerly, and these set `built = null` to rebuild from text.
       rowNumber(alias = 'row_number', partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) {
-        const overParts: string[] = []
-        if (partitionBy) {
-          const cols = Array.isArray(partitionBy) ? partitionBy : [partitionBy]
-          overParts.push(`PARTITION BY ${cols.join(', ')}`)
-        }
-        if (orderBy && orderBy.length)
-          overParts.push(`ORDER BY ${orderBy.map(([c, d]) => `${c} ${d === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`)
-        const overClause = overParts.length ? `OVER (${overParts.join(' ')})` : 'OVER ()'
-        const windowExpr = `ROW_NUMBER() ${overClause} AS ${alias}`
+        const safeAlias = assertSafeColumnRef(alias, 'rowNumber(alias)')
+        const overClause = buildOverClause(partitionBy, orderBy)
+        const windowExpr = `ROW_NUMBER() ${overClause} AS ${safeAlias}`
         const fromIdx = text.indexOf(' FROM ')
         if (fromIdx !== -1)
           text = `${text.substring(0, fromIdx)}, ${windowExpr}${text.substring(fromIdx)}`
@@ -4662,14 +4670,9 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       denseRank(alias = 'dense_rank', partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) {
-        const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
-        const overParts: string[] = []
-        if (cols.length)
-          overParts.push(`PARTITION BY ${cols.join(', ')}`)
-        if (orderBy && orderBy.length)
-          overParts.push(`ORDER BY ${orderBy.map(([c, d]) => `${c} ${d === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`)
-        const overClause = overParts.length ? `OVER (${overParts.join(' ')})` : 'OVER ()'
-        const windowExpr = `DENSE_RANK() ${overClause} AS ${alias}`
+        const safeAlias = assertSafeColumnRef(alias, 'denseRank(alias)')
+        const overClause = buildOverClause(partitionBy, orderBy)
+        const windowExpr = `DENSE_RANK() ${overClause} AS ${safeAlias}`
         const fromIdx = text.indexOf(' FROM ')
         if (fromIdx !== -1)
           text = `${text.substring(0, fromIdx)}, ${windowExpr}${text.substring(fromIdx)}`
@@ -4679,14 +4682,9 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       rank(alias = 'rank', partitionBy?: string | string[], orderBy?: [string, 'asc' | 'desc'][]) {
-        const cols = Array.isArray(partitionBy) ? partitionBy : (partitionBy ? [partitionBy] : [])
-        const overParts: string[] = []
-        if (cols.length)
-          overParts.push(`PARTITION BY ${cols.join(', ')}`)
-        if (orderBy && orderBy.length)
-          overParts.push(`ORDER BY ${orderBy.map(([c, d]) => `${c} ${d === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`)
-        const overClause = overParts.length ? `OVER (${overParts.join(' ')})` : 'OVER ()'
-        const windowExpr = `RANK() ${overClause} AS ${alias}`
+        const safeAlias = assertSafeColumnRef(alias, 'rank(alias)')
+        const overClause = buildOverClause(partitionBy, orderBy)
+        const windowExpr = `RANK() ${overClause} AS ${safeAlias}`
         const fromIdx = text.indexOf(' FROM ')
         if (fromIdx !== -1)
           text = `${text.substring(0, fromIdx)}, ${windowExpr}${text.substring(fromIdx)}`
