@@ -1040,6 +1040,26 @@ function timestampsEnabled(definition: ModelDefinition): boolean {
 }
 
 /**
+ * The SET list of an UPDATE on a timestamped model: the caller's columns, then
+ * `updated_at` stamped with the time of the write.
+ *
+ * The write owns `updated_at`, as it does on insert, so a caller's own
+ * `updated_at` is left out rather than sent next to the managed one. Sent both,
+ * SQLite kept the rightmost and MySQL applied them in order, so the managed
+ * time won quietly there, while Postgres refused the whole statement:
+ * "multiple assignments to same column". An update naming only `updated_at`
+ * still writes it, as the time of the write.
+ */
+function managedUpdateSet(entries: [string, unknown][], column: (name: string) => string): { sets: string, values: unknown[] } {
+  // By column, so `updatedAt` (which the builder snake-cases) is caught too.
+  const own = entries.filter(([k]) => column(k) !== 'updated_at')
+  return {
+    sets: [...own.map(([k]) => `${column(k)} = ?`), 'updated_at = ?'].join(', '),
+    values: [...own.map(([, v]) => v), formatNow()],
+  }
+}
+
+/**
  * Collect every `belongsToMany` relation key declared on a model definition.
  * Used by ModelInstance's Proxy to know which property reads should resolve
  * to a callable RelationBuilder.
@@ -1536,18 +1556,18 @@ class ModelInstance<
         // This used to take the INSERT branch and write a copy of the row.
         if (this._attributes[pk] == null)
           throw new Error(`Cannot save a model without a primary key: '${pk}' was not selected`)
-        const sets = changeKeys.map(k => `${k} = ?`).join(', ')
-        const values = [...Object.values(changes), this._attributes[pk]]
-
         if (timestampsEnabled(this._definition)) {
-          const now = formatNow()
+          // The write owns updated_at, so a changed one is not sent as well:
+          // Postgres refuses a column assigned twice (see managedUpdateSet).
+          const { sets, values } = managedUpdateSet(Object.entries(changes), k => k)
           await exec.run(
-            `UPDATE ${this._definition.table} SET ${sets}, updated_at = ? WHERE ${pk} = ?`,
-            [...Object.values(changes), now, this._attributes[pk]]
+            `UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`,
+            [...values, this._attributes[pk]]
           )
         }
         else {
-          await exec.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, values)
+          const sets = changeKeys.map(k => `${k} = ?`).join(', ')
+          await exec.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, [...Object.values(changes), this._attributes[pk]])
         }
       }
 
@@ -3741,14 +3761,12 @@ class ModelQueryBuilder<
     this.assertNoUnappliedClauses('update')
     const exec = getExecutor()
     const entries = Object.entries(data)
-    const sets = entries.map(([k]) => `${sqlColumn(k)} = ?`).join(', ')
-    const params: unknown[] = entries.map(([, v]) => v)
+    const { sets, values } = timestampsEnabled(this._definition)
+      ? managedUpdateSet(entries, sqlColumn)
+      : { sets: entries.map(([k]) => `${sqlColumn(k)} = ?`).join(', '), values: entries.map(([, v]) => v) }
+    const params: unknown[] = [...values]
 
-    if (timestampsEnabled(this._definition)) {
-      params.push(formatNow())
-    }
-
-    let sql = `UPDATE ${this._definition.table} SET ${sets}${timestampsEnabled(this._definition) ? ', updated_at = ?' : ''}`
+    let sql = `UPDATE ${this._definition.table} SET ${sets}`
 
     // See delete(): composeWhere is the only path that adds the soft-delete
     // predicate, so a scoped update has to go through it. #1111.
