@@ -338,3 +338,36 @@ async function getAnalytics() {
 getAnalytics().then(console.log)
 
 ```
+
+## The aggregate column must be a plain column reference
+
+`sum()`, `avg()`, `max()` and `min()` interpolate their argument into the
+statement they build, so each one accepts a column name — `amount`,
+`orders.amount`, optionally with `AS alias` — and refuses anything else:
+
+```ts
+await db.selectFrom('orders').sum('amount') // fine
+await db.selectFrom('orders').sum('price * quantity')
+// TypeError: sum(column): 'price * quantity' is not a plain column reference
+```
+
+The reason is that `max()` and `min()` hand their result back untouched, which
+made the column slot a way to read any table the connection can see:
+`max('(SELECT token FROM secrets LIMIT 1)')` returned that token. So the
+argument is validated the way `orderBy` and `groupBy` already validate theirs.
+
+For an expression, select it instead — `raw` escapes what it interpolates:
+
+```ts
+const row = await db
+  .selectFrom('order_items')
+  .select([raw('SUM(price * quantity) AS total')])
+  .first()
+
+row.total // 40
+```
+
+The same rule applies to `whereLike`/`whereILike` and their `or`/`not`
+spellings, to `reorder`, and to the `where`/`wherePivot*` filters on a
+`belongsToMany` relation. A search term still goes in the *value* slot, which
+is parameterized as always — only the column name is constrained.

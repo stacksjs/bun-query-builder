@@ -82,6 +82,28 @@ function assertValidIdentifier(name: unknown, context: string): asserts name is 
 }
 
 /**
+ * Comparison operators a caller may put in the `op` slot of a relation
+ * filter. `wherePivot(column, op, value)` interpolates that slot raw, so
+ * without this an operator is a second SQL hole through the same call. Same
+ * set as the builder's own `SAFE_WHERE_OPERATORS` in `client.ts`, duplicated
+ * rather than imported because `orm.ts` depends on `client.ts` for types
+ * only and a value import would make that a runtime dependency.
+ */
+const SAFE_COMPARISON_OPERATORS = new Set([
+  '=', '!=', '<>', '<', '<=', '>', '>=',
+  'like', 'not like', 'ilike', 'not ilike',
+  'in', 'not in', 'is', 'is not', 'between', 'not between',
+])
+
+function assertValidComparisonOperator(op: unknown, context: string): string {
+  if (typeof op !== 'string')
+    throw new TypeError(`[bun-query-builder] ${context}: operator must be a string, got ${typeof op}`)
+  if (!SAFE_COMPARISON_OPERATORS.has(op.toLowerCase().trim()))
+    throw new TypeError(`[bun-query-builder] ${context}: refusing to use '${op}' as a SQL operator — not in the allowed set (${[...SAFE_COMPARISON_OPERATORS].join(', ')})`)
+  return op
+}
+
+/**
  * Validate an ORDER BY target column. Like `assertValidIdentifier` but
  * additionally accepts the table-qualified `table.column` form by
  * validating each side of a single dot with the same strict rule. Any
@@ -2338,29 +2360,44 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
 
   // --- query side -----------------------------------------------------------
 
-  /** Filter by a column on the related table. */
+  /**
+   * Filter by a column on the related table.
+   *
+   * Both slots are validated. The SQL below already qualifies the column with
+   * the table, so it must be a bare name, and the operator is interpolated
+   * raw. Unvalidated, the column slot escaped the relation's own parent
+   * scope: `wherePivot("role = 'primary' OR 1=1 OR role", 'primary')` returned
+   * another parent's rows, with the placeholder count preserved so nothing
+   * downstream noticed. `orderBy` below has validated since stacksjs/stacks#1858;
+   * this family was left out.
+   */
   where(column: string, opOrValue: unknown, value?: unknown): this {
+    assertValidIdentifier(column, 'where(column)')
     if (value === undefined) {
       this._wheres.push({ sql: `${this.relatedTable}.${column} = ?`, params: [opOrValue] })
     }
     else {
-      this._wheres.push({ sql: `${this.relatedTable}.${column} ${String(opOrValue)} ?`, params: [value] })
+      const op = assertValidComparisonOperator(opOrValue, 'where(operator)')
+      this._wheres.push({ sql: `${this.relatedTable}.${column} ${op} ?`, params: [value] })
     }
     return this
   }
 
   /** Filter by a column on the pivot table. */
   wherePivot(column: string, opOrValue: unknown, value?: unknown): this {
+    assertValidIdentifier(column, 'wherePivot(column)')
     if (value === undefined) {
       this._pivotWheres.push({ sql: `${this.pivotTable}.${column} = ?`, params: [opOrValue] })
     }
     else {
-      this._pivotWheres.push({ sql: `${this.pivotTable}.${column} ${String(opOrValue)} ?`, params: [value] })
+      const op = assertValidComparisonOperator(opOrValue, 'wherePivot(operator)')
+      this._pivotWheres.push({ sql: `${this.pivotTable}.${column} ${op} ?`, params: [value] })
     }
     return this
   }
 
   wherePivotIn(column: string, values: unknown[]): this {
+    assertValidIdentifier(column, 'wherePivotIn(column)')
     if (!values.length) return this
     const placeholders = values.map(() => '?').join(', ')
     this._pivotWheres.push({ sql: `${this.pivotTable}.${column} IN (${placeholders})`, params: [...values] })
@@ -2368,6 +2405,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
   }
 
   wherePivotNotIn(column: string, values: unknown[]): this {
+    assertValidIdentifier(column, 'wherePivotNotIn(column)')
     if (!values.length) return this
     const placeholders = values.map(() => '?').join(', ')
     this._pivotWheres.push({ sql: `${this.pivotTable}.${column} NOT IN (${placeholders})`, params: [...values] })
@@ -2375,11 +2413,13 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
   }
 
   wherePivotNull(column: string): this {
+    assertValidIdentifier(column, 'wherePivotNull(column)')
     this._pivotWheres.push({ sql: `${this.pivotTable}.${column} IS NULL`, params: [] })
     return this
   }
 
   wherePivotNotNull(column: string): this {
+    assertValidIdentifier(column, 'wherePivotNotNull(column)')
     this._pivotWheres.push({ sql: `${this.pivotTable}.${column} IS NOT NULL`, params: [] })
     return this
   }
