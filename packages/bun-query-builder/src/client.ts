@@ -5873,6 +5873,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         whereParams.push(value)
         return this as any
       },
+      // Every column below goes through assertSafeColumnRef for the reason
+      // given on that function: this family is what a search box reaches, so
+      // its column slot is request input as often as `orderBy`'s is. #1181
+      // fixed ORDER BY / GROUP BY / SELECT and #1185 the window functions;
+      // these were missed, and `whereLike('name) IS NOT NULL OR TRUE OR LOWER(name', …)`
+      // appended a disjunction that defeated every filter already on the
+      // query, returning rows a tenant scope excluded.
+      //
       // The LIKE/ILIKE family records the clause in `text` + `whereParams`
       // (dialect-aware placeholder) and invalidates `built` so the next
       // ensureBuilt() rebuilds from text. The previous version ALSO built a
@@ -5882,69 +5890,77 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       // connector; building from text keeps the two representations in sync.
       // See stacksjs/bun-query-builder#1028.
       whereLike(column: string, pattern: string, caseSensitive = false) {
+        const col = assertSafeColumnRef(column, 'whereLike(column)')
         const ph = getPlaceholder(whereParams.length + 1)
-        addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
+        addWhereText('WHERE', `${caseSensitive ? col : `LOWER(${col})`} LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
         whereParams.push(pattern)
         built = null
         return this as any
       },
       whereILike(column: string, pattern: string) {
+        const col = assertSafeColumnRef(column, 'whereILike(column)')
         const ph = getPlaceholder(whereParams.length + 1)
         if (config.dialect === 'postgres')
-          addWhereText('WHERE', `${String(column)} ILIKE ${ph}`)
+          addWhereText('WHERE', `${col} ILIKE ${ph}`)
         else
-          addWhereText('WHERE', `LOWER(${String(column)}) LIKE LOWER(${ph})`)
+          addWhereText('WHERE', `LOWER(${col}) LIKE LOWER(${ph})`)
         whereParams.push(pattern)
         built = null
         return this as any
       },
       orWhereLike(column: string, pattern: string, caseSensitive = false) {
+        const col = assertSafeColumnRef(column, 'orWhereLike(column)')
         const ph = getPlaceholder(whereParams.length + 1)
-        addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
+        addWhereText('OR', `${caseSensitive ? col : `LOWER(${col})`} LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
         whereParams.push(pattern)
         built = null
         return this as any
       },
       orWhereILike(column: string, pattern: string) {
+        const col = assertSafeColumnRef(column, 'orWhereILike(column)')
         const ph = getPlaceholder(whereParams.length + 1)
         if (config.dialect === 'postgres')
-          addWhereText('OR', `${String(column)} ILIKE ${ph}`)
+          addWhereText('OR', `${col} ILIKE ${ph}`)
         else
-          addWhereText('OR', `LOWER(${String(column)}) LIKE LOWER(${ph})`)
+          addWhereText('OR', `LOWER(${col}) LIKE LOWER(${ph})`)
         whereParams.push(pattern)
         built = null
         return this as any
       },
       whereNotLike(column: string, pattern: string, caseSensitive = false) {
+        const col = assertSafeColumnRef(column, 'whereNotLike(column)')
         const ph = getPlaceholder(whereParams.length + 1)
-        addWhereText('WHERE', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
+        addWhereText('WHERE', `${caseSensitive ? col : `LOWER(${col})`} NOT LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
         whereParams.push(pattern)
         built = null
         return this as any
       },
       whereNotILike(column: string, pattern: string) {
+        const col = assertSafeColumnRef(column, 'whereNotILike(column)')
         const ph = getPlaceholder(whereParams.length + 1)
         if (config.dialect === 'postgres')
-          addWhereText('WHERE', `${String(column)} NOT ILIKE ${ph}`)
+          addWhereText('WHERE', `${col} NOT ILIKE ${ph}`)
         else
-          addWhereText('WHERE', `LOWER(${String(column)}) NOT LIKE LOWER(${ph})`)
+          addWhereText('WHERE', `LOWER(${col}) NOT LIKE LOWER(${ph})`)
         whereParams.push(pattern)
         built = null
         return this as any
       },
       orWhereNotLike(column: string, pattern: string, caseSensitive = false) {
+        const col = assertSafeColumnRef(column, 'orWhereNotLike(column)')
         const ph = getPlaceholder(whereParams.length + 1)
-        addWhereText('OR', `${caseSensitive ? String(column) : `LOWER(${String(column)})`} NOT LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
+        addWhereText('OR', `${caseSensitive ? col : `LOWER(${col})`} NOT LIKE ${caseSensitive ? ph : `LOWER(${ph})`}`)
         whereParams.push(pattern)
         built = null
         return this as any
       },
       orWhereNotILike(column: string, pattern: string) {
+        const col = assertSafeColumnRef(column, 'orWhereNotILike(column)')
         const ph = getPlaceholder(whereParams.length + 1)
         if (config.dialect === 'postgres')
-          addWhereText('OR', `${String(column)} NOT ILIKE ${ph}`)
+          addWhereText('OR', `${col} NOT ILIKE ${ph}`)
         else
-          addWhereText('OR', `LOWER(${String(column)}) NOT LIKE LOWER(${ph})`)
+          addWhereText('OR', `LOWER(${col}) NOT LIKE LOWER(${ph})`)
         whereParams.push(pattern)
         built = null
         return this as any
@@ -6131,8 +6147,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return this as any
       },
       reorder(column: string, direction: 'asc' | 'desc' = 'asc') {
+        // Same job as latest()/oldest() below, which #1181 fixed; this one was
+        // left interpolating raw, so it took that issue's payload verbatim:
+        // `ORDER BY id; DROP TABLE users; -- ASC`.
+        const col = assertSafeColumnRef(column, 'reorder(column)')
         text = text.replace(/ORDER BY[\s\S]*$/i, '')
-        text += ` ORDER BY ${column} ${direction === 'asc' ? 'ASC' : 'DESC'}`
+        text += ` ORDER BY ${col} ${direction === 'asc' ? 'ASC' : 'DESC'}`
         built = null
         return this as any
       },
@@ -6914,12 +6934,19 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return Number(row?.c ?? 0)
       },
       async avg(column: string) {
+        // max()/min() hand `row.m` back to the caller untouched, so an
+        // unvalidated column here is a read primitive over the whole
+        // connection: `max('(SELECT token FROM secrets LIMIT 1)')` returned
+        // that token. avg()/sum() coerce through Number(), which narrows the
+        // leak to numeric columns rather than closing it. All four build the
+        // statement by interpolation, so all four validate. #1181
+        const col = assertSafeColumnRef(column, 'avg(column)')
         // Build optimized AVG query without subquery or helpers
         const src = currentSql()
         const fromIdx = src.indexOf(' FROM ')
         const avgText = fromIdx !== -1
-          ? `SELECT AVG(${column}) as a${src.substring(fromIdx)}`
-          : `SELECT AVG(${column}) as a FROM ${table}`
+          ? `SELECT AVG(${col}) as a${src.substring(fromIdx)}`
+          : `SELECT AVG(${col}) as a FROM ${table}`
 
         // Ultra-fast path
         const aHooks = activeHooks()
@@ -6941,11 +6968,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return Number(row?.a ?? 0)
       },
       async sum(column: string) {
+        const col = assertSafeColumnRef(column, 'sum(column)')
         const src = currentSql()
         const fromIdx = src.indexOf(' FROM ')
         const sumText = fromIdx !== -1
-          ? `SELECT SUM(${column}) as s${src.substring(fromIdx)}`
-          : `SELECT SUM(${column}) as s FROM ${table}`
+          ? `SELECT SUM(${col}) as s${src.substring(fromIdx)}`
+          : `SELECT SUM(${col}) as s FROM ${table}`
         const q = whereParams.length > 0
           ? prepareQuery(sumText, whereParams)
           : prepareQuery(sumText)
@@ -6954,11 +6982,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return Number(row?.s ?? 0)
       },
       async max(column: string) {
+        const col = assertSafeColumnRef(column, 'max(column)')
         const src = currentSql()
         const fromIdx = src.indexOf(' FROM ')
         const maxText = fromIdx !== -1
-          ? `SELECT MAX(${column}) as m${src.substring(fromIdx)}`
-          : `SELECT MAX(${column}) as m FROM ${table}`
+          ? `SELECT MAX(${col}) as m${src.substring(fromIdx)}`
+          : `SELECT MAX(${col}) as m FROM ${table}`
         const q = whereParams.length > 0
           ? prepareQuery(maxText, whereParams)
           : prepareQuery(maxText)
@@ -6967,11 +6996,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return row?.m
       },
       async min(column: string) {
+        const col = assertSafeColumnRef(column, 'min(column)')
         const src = currentSql()
         const fromIdx = src.indexOf(' FROM ')
         const minText = fromIdx !== -1
-          ? `SELECT MIN(${column}) as m${src.substring(fromIdx)}`
-          : `SELECT MIN(${column}) as m FROM ${table}`
+          ? `SELECT MIN(${col}) as m${src.substring(fromIdx)}`
+          : `SELECT MIN(${col}) as m FROM ${table}`
         const q = whereParams.length > 0
           ? prepareQuery(minText, whereParams)
           : prepareQuery(minText)
