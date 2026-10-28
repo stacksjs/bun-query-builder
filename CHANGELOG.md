@@ -1,3 +1,19 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.30...v0.3.31)
+
+## 🐛 Bug Fixes
+
+- retain qualified cursor values through joined queries ([e799cee](https://github.com/stacksjs/bun-query-builder/commit/e799cee)) _(by Chris <chris@stacksjs.com>)_
+- **client**: route rowNumber/denseRank/rank through the validated OVER clause ([5e5f610](https://github.com/stacksjs/bun-query-builder/commit/5e5f610)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1185](https://github.com/stacksjs/bun-query-builder/issues/1185))
+
+## 🔧 Chores
+
+- release v0.3.31 ([1ab59d1](https://github.com/stacksjs/bun-query-builder/commit/1ab59d1)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.29...v0.3.30)
 
 ## 🐛 Bug Fixes
