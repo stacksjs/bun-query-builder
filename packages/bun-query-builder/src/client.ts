@@ -6626,10 +6626,18 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const hasMore = rows.length > perPage
         const data = rows.slice(0, perPage)
         const lastRow = data[data.length - 1]
+        // SQL returns an unaliased `table.id` as `id`. Reading the qualified
+        // key dropped the next cursor and silently hid every later page.
+        const cursorValue = (row: any, name: string) => {
+          const key = Object.prototype.hasOwnProperty.call(row, name) ? name : name.split('.').at(-1)!
+          if (!Object.prototype.hasOwnProperty.call(row, key))
+            throw new TypeError(`[query-builder] cursorPaginate(): select cursor column ${name} in the result`)
+          return row[key]
+        }
         const next = hasMore && lastRow
-          ? (Array.isArray(column) ? column.map(c => lastRow[c]) : lastRow[column])
+          ? (Array.isArray(column) ? column.map(c => cursorValue(lastRow, c)) : cursorValue(lastRow, column))
           : null
-        const prevCursor = data.length ? (Array.isArray(column) ? column.map(c => data[0]?.[c]) : data[0]?.[column]) : null
+        const prevCursor = data.length ? (Array.isArray(column) ? column.map(c => cursorValue(data[0], c)) : cursorValue(data[0], column)) : null
         return { data, meta: { perPage, nextCursor: next ?? null, prevCursor } }
       },
       async chunk(size: number, handler: (rows: any[]) => Promise<void> | void) {

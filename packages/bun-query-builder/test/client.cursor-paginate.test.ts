@@ -50,6 +50,39 @@ afterAll(async () => {
 const q = () => createQueryBuilder<typeof schema>({ schema, sql }).selectFrom('cp_rows').selectAll() as any
 
 describe('cursorPaginate continues an existing WHERE (#1090)', () => {
+  it('walks every page when cursor columns are table-qualified', async () => {
+    const seen: number[] = []
+    let cursor: number | undefined
+    do {
+      const page = await q().where('b', '=', 1).cursorPaginate(3, cursor, 'cp_rows.id', 'desc')
+      seen.push(...page.data.map((row: any) => row.id))
+      expect(page.meta.prevCursor).toBe(page.data[0].id)
+      cursor = page.meta.nextCursor ?? undefined
+    } while (cursor !== undefined)
+    expect(seen).toEqual([19, 17, 15, 13, 11, 9, 7, 5, 3, 1])
+  })
+
+  it('retains qualified composite cursor values rather than undefined entries', async () => {
+    const first = await q().cursorPaginate(3, undefined, ['cp_rows.g', 'cp_rows.id'])
+    expect(first.meta.nextCursor).toEqual([1, 3])
+    expect(first.meta.prevCursor).toEqual([1, 1])
+    const next = await q().cursorPaginate(3, first.meta.nextCursor, ['cp_rows.g', 'cp_rows.id'])
+    expect(next.data.map((row: any) => row.id)).toEqual([4, 5, 6])
+  })
+
+  it('retains the cursor through joins whose result exposes the bare column name', async () => {
+    const joined = () => q().innerJoin('cp_rows as parent', 'parent.id', '=', 'cp_rows.g').select(['cp_rows.id', 'parent.g as parent_group'])
+    const first = await joined().cursorPaginate(3, undefined, 'cp_rows.id')
+    expect(first.meta.nextCursor).toBe(3)
+    const next = await joined().cursorPaginate(3, first.meta.nextCursor, 'cp_rows.id')
+    expect(next.data.map((row: any) => row.id)).toEqual([4, 5, 6])
+  })
+
+  it('refuses to silently end pagination when the cursor column was not selected', async () => {
+    await expect(createQueryBuilder<typeof schema>({ schema, sql }).selectFrom('cp_rows').select(['b']).cursorPaginate(3))
+      .rejects.toThrow(/select cursor column id/)
+  })
+
   it('pages a filtered query instead of throwing', async () => {
     const page = await q().where('b', '=', 1).cursorPaginate(3, 5, 'id')
 
