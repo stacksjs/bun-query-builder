@@ -47,7 +47,7 @@ jobs:
           fi
 
       - name: Setup Pantry
-        uses: pantry-pm/pantry/packages/action@main
+        uses: pantry-pm/pantry/packages/action@v0.11.145
 
       - name: Install Dependencies
         run: bun install --ignore-scripts
