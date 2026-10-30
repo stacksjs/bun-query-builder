@@ -1076,7 +1076,7 @@ function managedUpdateSet(entries: [string, unknown][], column: (name: string) =
   // By column, so `updatedAt` (which the builder snake-cases) is caught too.
   const own = entries.filter(([k]) => column(k) !== 'updated_at')
   return {
-    sets: [...own.map(([k]) => `${column(k)} = ?`), 'updated_at = ?'].join(', '),
+    sets: [...own.map(([k]) => `${quoteSqlColumn(column(k))} = ?`), 'updated_at = ?'].join(', '),
     values: [...own.map(([, v]) => v), formatNow()],
   }
 }
@@ -1588,7 +1588,7 @@ class ModelInstance<
           )
         }
         else {
-          const sets = changeKeys.map(k => `${k} = ?`).join(', ')
+          const sets = changeKeys.map(k => `${quoteSqlColumn(k)} = ?`).join(', ')
           await exec.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, [...Object.values(changes), this._attributes[pk]])
         }
       }
@@ -1602,7 +1602,7 @@ class ModelInstance<
       const placeholders = columns.map(() => '?').join(', ')
 
       const result = await exec.insert(
-        `INSERT INTO ${this._definition.table} (${columns.join(', ')}) VALUES (${placeholders})`,
+        `INSERT INTO ${this._definition.table} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${placeholders})`,
         Object.values(data),
         pk,
       )
@@ -1843,6 +1843,29 @@ const RELATION_CACHE_MAX = 1000
  */
 function sqlColumn(name: string): string {
   return toSnakeCase(name)
+}
+
+/**
+ * A column reference as it is written into a statement. MySQL reserves words a
+ * model has every right to use as a column (`when`, `repeat`, `key`, `order`,
+ * `group`), and an unquoted one is a syntax error that names neither the model
+ * nor the column. Backticks change nothing else on MySQL, where identifiers are
+ * case-insensitive; Postgres and SQLite are left alone because quoting there
+ * makes a name case-sensitive. `table.column` is quoted on each side, and
+ * anything that is not a plain identifier (a function call, `*`) is untouched.
+ */
+function quoteSqlColumn(name: string): string {
+  if (!isMysqlLike(config.dialect))
+    return name
+
+  return /^[A-Z_][\w$]*(?:\.[A-Z_][\w$]*)?$/i.test(name)
+    ? name.split('.').map(part => `\`${part}\``).join('.')
+    : name
+}
+
+/** `sqlColumn`, quoted for the dialect: what WHERE, ORDER BY, SELECT and SET interpolate. */
+function quotedColumn(name: string): string {
+  return quoteSqlColumn(sqlColumn(name))
 }
 
 /**
@@ -2975,7 +2998,7 @@ class ModelQueryBuilder<
     // Using a raw grouped clause keeps the operator inside its own
     // parenthesised scope. See stacksjs/stacks#1862 #10.
     assertValidIdentifier(column, 'whereNotBetween(column)')
-    const col = sqlColumn(column as string)
+    const col = quotedColumn(column as string)
     this._wheres.push({
       raw: `(${col} < ? OR ${col} > ?)`,
       rawParams: [range[0], range[1]],
@@ -3088,7 +3111,7 @@ class ModelQueryBuilder<
         if (w.rawParams && w.rawParams.length > 0) params.push(...w.rawParams)
       }
       else if (w.value === null) {
-        const col = sqlColumn(w.column!)
+        const col = quotedColumn(w.column!)
         clause = w.operator === '=' ? `${col} IS NULL` : `${col} IS NOT NULL`
       }
       else if (w.operator === 'in' || w.operator === 'not in') {
@@ -3096,11 +3119,11 @@ class ModelQueryBuilder<
         // it, so the empty case renders as a constant predicate instead — see
         // renderInPredicate for why the NOT IN mirror is TRUE, not FALSE.
         const arr = w.value as unknown[]
-        clause = renderInPredicate(sqlColumn(w.column!), arr, w.operator === 'not in', arr.map(() => '?').join(', '))
+        clause = renderInPredicate(quotedColumn(w.column!), arr, w.operator === 'not in', arr.map(() => '?').join(', '))
         params.push(...arr)
       }
       else {
-        clause = `${sqlColumn(w.column!)} ${w.operator} ?`
+        clause = `${quotedColumn(w.column!)} ${w.operator} ?`
         params.push(w.value)
       }
 
@@ -3167,7 +3190,7 @@ class ModelQueryBuilder<
 
   private buildQuery(): { sql: string; params: unknown[] } {
     const params: unknown[] = []
-    const cols = this._select.map(c => (c === '*' ? c : sqlColumn(c)))
+    const cols = this._select.map(c => (c === '*' ? c : quotedColumn(c)))
     let sql = `SELECT ${cols.join(', ')} FROM ${this._definition.table}`
 
     const whereBody = this.composeWhere(params)
@@ -3176,7 +3199,7 @@ class ModelQueryBuilder<
     }
 
     if (this._orderBy.length > 0) {
-      sql += ` ORDER BY ${this._orderBy.map(o => `${sqlColumn(o.column)} ${o.direction.toUpperCase()}`).join(', ')}`
+      sql += ` ORDER BY ${this._orderBy.map(o => `${quotedColumn(o.column)} ${o.direction.toUpperCase()}`).join(', ')}`
     }
 
     if (this._limit !== undefined) sql += ` LIMIT ${this._limit}`
@@ -3659,7 +3682,7 @@ class ModelQueryBuilder<
       sql += ` WHERE ${whereBody}`
     }
     if (this._orderBy.length > 0) {
-      sql += ` ORDER BY ${this._orderBy.map(o => `${sqlColumn(o.column)} ${o.direction.toUpperCase()}`).join(', ')}`
+      sql += ` ORDER BY ${this._orderBy.map(o => `${quotedColumn(o.column)} ${o.direction.toUpperCase()}`).join(', ')}`
     }
     if (this._limit !== undefined) sql += ` LIMIT ${this._limit}`
     if (this._offset !== undefined) sql += ` OFFSET ${this._offset}`
@@ -3803,7 +3826,7 @@ class ModelQueryBuilder<
     const entries = Object.entries(data)
     const { sets, values } = timestampsEnabled(this._definition)
       ? managedUpdateSet(entries, sqlColumn)
-      : { sets: entries.map(([k]) => `${sqlColumn(k)} = ?`).join(', '), values: entries.map(([, v]) => v) }
+      : { sets: entries.map(([k]) => `${quotedColumn(k)} = ?`).join(', '), values: entries.map(([, v]) => v) }
     const params: unknown[] = [...values]
 
     let sql = `UPDATE ${this._definition.table} SET ${sets}`
@@ -4087,7 +4110,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
             const cols = Object.keys(row)
             const result = await exec.insert(
               cols.length
-                ? `INSERT INTO ${definition.table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
+                ? `INSERT INTO ${definition.table} (${cols.map(quoteSqlColumn).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
                 : `INSERT INTO ${definition.table} DEFAULT VALUES`,
               Object.values(row),
               pk,
@@ -4143,7 +4166,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
           const size = Math.min(perStatement, floorPowerOfTwo(indexes.length - start))
           const chunk = indexes.slice(start, start + size)
           start += size
-          const sql = `INSERT INTO ${definition.table} (${columns.join(', ')}) VALUES ${chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ')}`
+          const sql = `INSERT INTO ${definition.table} (${columns.map(quoteSqlColumn).join(', ')}) VALUES ${chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ')}`
           const params = chunk.flatMap(i => columns.map(c => rows[i]![c]))
 
           if (!generated) {
@@ -4410,7 +4433,7 @@ catch {
 
     const columns = Object.keys(data)
     await exec.run(
-      `INSERT INTO ${definition.table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+      `INSERT INTO ${definition.table} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
       Object.values(data)
     )
   }
