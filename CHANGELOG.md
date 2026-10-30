@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.31...v0.3.32)
+
+## 🐛 Bug Fixes
+
+- **orm**: quote MySQL reserved-word columns in model queries ([7ab07bc](https://github.com/stacksjs/bun-query-builder/commit/7ab07bc)) _(by Chris Breuer <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.32 ([c8adc9e](https://github.com/stacksjs/bun-query-builder/commit/c8adc9e)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Chris Breuer <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.30...v0.3.31)
 
 ## 🐛 Bug Fixes
