@@ -5,8 +5,9 @@
  * The client layer already quoted columns for MySQL, but the model builder only
  * snake-cased them, so `Todo.where('when', 'today')` went out as
  * `WHERE when = ?` and MySQL answered with a syntax error that named neither
- * the model nor the column. Postgres and SQLite must stay unquoted: quoting
- * makes a name case-sensitive there.
+ * the model nor the column. SQLite and Postgres reject `when` too (`near
+ * "when": syntax error`), so their reserved words are quoted as well, and only
+ * those: quoting an ordinary name there would make it case-sensitive.
  */
 
 import { Database } from 'bun:sqlite'
@@ -53,12 +54,29 @@ describe('MySQL reserved-word columns', () => {
     expect(Todo.orderBy('rc_todos.when').toSql().sql).toContain('ORDER BY `rc_todos`.`when` ASC')
   })
 
-  it('leaves SQLite and Postgres identifiers unquoted', () => {
+  it('quotes only the reserved words on SQLite and Postgres', () => {
     for (const name of ['sqlite', 'postgres']) {
       config.dialect = name as any
-      const { sql } = Todo.where('when', 'today').orderBy('repeat').toSql()
-      expect(sql).toContain('when = ?')
+      const { sql } = Todo.where('when', 'today').where('title', 'x').orderBy('repeat').toSql()
+      expect(sql).toContain('"when" = ?')
+      expect(sql).toContain('title = ?')
+      expect(sql).toContain('ORDER BY repeat ASC')
       expect(sql).not.toContain('`')
     }
+  })
+
+  it('quotes a reserved table.column part by part on SQLite', () => {
+    config.dialect = 'sqlite' as any
+    expect(Todo.orderBy('rc_todos.when').toSql().sql).toContain('ORDER BY rc_todos."when" ASC')
+  })
+
+  it('writes a reserved column into INSERT and UPDATE on SQLite', async () => {
+    config.dialect = 'sqlite' as any
+    const db = new Database(':memory:', { create: true })
+    db.run('CREATE TABLE rc_todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, "when" TEXT, repeat TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT)')
+    configureOrm({ database: db })
+    const row = await Todo.create({ title: 'a', when: 'today', repeat: 'daily' })
+    await Todo.where('id', row.id).update({ when: 'someday' })
+    expect((await Todo.find(row.id)).get('when')).toBe('someday')
   })
 })

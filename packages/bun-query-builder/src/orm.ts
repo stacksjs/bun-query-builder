@@ -1846,21 +1846,45 @@ function sqlColumn(name: string): string {
 }
 
 /**
+ * Words SQLite and Postgres refuse as a bare column name: SQLite's keyword list
+ * plus Postgres's reserved words. A model may still call a column `when`,
+ * `order` or `user`, and an unquoted one is a syntax error that names neither
+ * the model nor the column (`near "when": syntax error`). Only these words are
+ * quoted on those dialects; everything else stays bare, because the column was
+ * created lower-case and quoting a mixed-case name would make it case-sensitive.
+ */
+const ANSI_RESERVED_WORDS: ReadonlySet<string> = new Set((
+  'abort action add after all alter always analyse analyze and any array as asc asymmetric attach autoincrement before begin '
+  + 'between both by cascade case cast check collate column commit conflict constraint create cross current current_catalog '
+  + 'current_date current_role current_time current_timestamp current_user database default deferrable deferred delete desc '
+  + 'detach distinct do drop each else end escape except exclude exclusive exists explain fail false fetch filter first '
+  + 'following for foreign from full generated glob grant group groups having if ignore immediate in index indexed initially '
+  + 'inner insert instead intersect into is isnull join key lateral last leading left like limit localtime localtimestamp '
+  + 'match materialized natural no not nothing notnull null nulls of offset on only or order others outer over partition '
+  + 'placing plan pragma preceding primary query raise range recursive references regexp reindex release rename replace '
+  + 'restrict returning right rollback row rows savepoint select session_user set some symmetric table temp temporary then '
+  + 'ties to trailing transaction trigger true unbounded union unique update user using vacuum values variadic view virtual '
+  + 'when where window with without'
+).split(' '))
+
+/**
  * A column reference as it is written into a statement. MySQL reserves words a
  * model has every right to use as a column (`when`, `repeat`, `key`, `order`,
  * `group`), and an unquoted one is a syntax error that names neither the model
  * nor the column. Backticks change nothing else on MySQL, where identifiers are
- * case-insensitive; Postgres and SQLite are left alone because quoting there
- * makes a name case-sensitive. `table.column` is quoted on each side, and
- * anything that is not a plain identifier (a function call, `*`) is untouched.
+ * case-insensitive, so every plain identifier is quoted there. SQLite and
+ * Postgres quote only the words in {@link ANSI_RESERVED_WORDS}. `table.column`
+ * is handled on each side, and anything that is not a plain identifier (a
+ * function call, `*`) is untouched.
  */
 function quoteSqlColumn(name: string): string {
-  if (!isMysqlLike(config.dialect))
+  if (!/^[A-Z_][\w$]*(?:\.[A-Z_][\w$]*)?$/i.test(name))
     return name
 
-  return /^[A-Z_][\w$]*(?:\.[A-Z_][\w$]*)?$/i.test(name)
-    ? name.split('.').map(part => `\`${part}\``).join('.')
-    : name
+  if (isMysqlLike(config.dialect))
+    return name.split('.').map(part => `\`${part}\``).join('.')
+
+  return name.split('.').map(part => ANSI_RESERVED_WORDS.has(part.toLowerCase()) ? `"${part}"` : part).join('.')
 }
 
 /** `sqlColumn`, quoted for the dialect: what WHERE, ORDER BY, SELECT and SET interpolate. */
