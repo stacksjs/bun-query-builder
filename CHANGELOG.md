@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.32...v0.3.33)
+
+## 🐛 Bug Fixes
+
+- **orm**: quote SQLite and Postgres reserved-word columns in model queries ([f21e468](https://github.com/stacksjs/bun-query-builder/commit/f21e468)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.33 ([e611114](https://github.com/stacksjs/bun-query-builder/commit/e611114)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.31...v0.3.32)
 
 ## 🐛 Bug Fixes
