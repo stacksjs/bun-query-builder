@@ -793,10 +793,10 @@ export function resolveDatabaseName(dbConfig: DatabaseConfig = config.database a
 }
 
 /** Encode credentials and database names as URL components, never URL syntax. */
-function networkConnectionString(scheme: 'postgres' | 'mysql', options: DatabaseConfig): string {
+function networkConnectionString(scheme: 'postgres' | 'mysql', options: Omit<DatabaseConfig, 'port'> & { port?: number | string }): string {
   const host = options.host || 'localhost'
   const authority = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
-  const url = new URL(`${scheme}://${authority}${options.port ? `:${options.port}` : ''}`)
+  const url = new URL(`${scheme}://${authority}${options.port === undefined ? '' : `:${options.port}`}`)
   url.username = encodeURIComponent(options.username ?? '')
   url.password = encodeURIComponent(options.password ?? '')
   url.pathname = `/${encodeURIComponent(options.database ?? '')}`
@@ -827,7 +827,7 @@ export function createConnectionString(dialect: SupportedDialect, dbConfig: Data
     // Managed SingleStore (Helios) and many hosted MySQL/Postgres require TLS —
     // append `?ssl=true` when DB_SSL is set (or the config asks for it).
     const ssl = e.DB_SSL === 'true' || e.DB_SSL === '1' || dbConfig.ssl
-    return networkConnectionString(scheme, { database: envDb, username: envUser, password: envPass, host: envHost, port: envPort ? Number(envPort) : undefined, ssl })
+    return networkConnectionString(scheme, { database: envDb, username: envUser, password: envPass, host: envHost, port: envPort, ssl })
   }
 
   // If a full URL is provided, use it directly

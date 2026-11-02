@@ -153,6 +153,17 @@ describe('createConnectionString DB_* env preference', () => {
     })).toBe('postgres://cfg_user:cfg_pass@cfg-host:5433/cfgdb')
   })
   for (const dialect of ['postgres', 'mysql', 'singlestore', 'vitess'] as const) {
+    it(`rejects malformed ${dialect} ports instead of connecting to the default port`, () => {
+      process.env.DB_CONNECTION = dialect
+      process.env.DB_DATABASE = 'training'
+      for (const port of ['abc', '0oops', '65536', '-1', '3.5', 'NaN']) {
+        process.env.DB_PORT = port
+        expect(() => createConnectionString(dialect, defaultLikeConfig)).toThrow(TypeError)
+      }
+      delete process.env.DB_CONNECTION
+      expect(() => createConnectionString(dialect, { ...defaultLikeConfig, port: Number.NaN })).toThrow(TypeError)
+    })
+
     for (const fromEnv of [false, true]) {
       it(`encodes network components for ${dialect} from ${fromEnv ? 'environment' : 'configuration'}`, () => {
         const credentials = { username: 'user@:/?#%', password: 'pass@:/?#%', database: 'db/?#%' }
