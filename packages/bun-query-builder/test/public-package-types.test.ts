@@ -120,6 +120,45 @@ export const age: number = row.age
     invalid: 'export const rejected: number = row.name',
   },
   {
+    name: 'browser model factory inference',
+    source: `import { createBrowserModel } from 'bun-query-builder/browser'
+import type { BrowserModelStatic } from 'bun-query-builder/browser'
+const definition = {
+  name: 'PublicUser', table: 'public_users', traits: { useTimestamps: true, useUuid: true },
+  attributes: {
+    name: { type: 'string', fillable: true }, age: { type: 'number', fillable: true },
+    role: { type: ['admin', 'user'], fillable: true },
+    nickname: { type: 'string', nullable: true }, password: { type: 'string', hidden: true },
+  },
+} as const
+const User = createBrowserModel(definition)
+export const model: BrowserModelStatic<typeof definition> = User
+const query = User.where('age', '>', 18).select('name', 'age')
+declare const selected: NonNullable<Awaited<ReturnType<typeof query.first>>>
+declare const found: NonNullable<Awaited<ReturnType<typeof User.find>>>
+export const name: string = selected.get('name')
+export const age: number = selected.get('age')
+export const role: 'admin' | 'user' = found.get('role')
+export const nickname: string | null = found.get('nickname')
+export const uuid: string = found.get('uuid')
+export const created: string = found.get('created_at')
+export const named = User.whereName('Ada')
+export const byAge = User.whereAge(42)
+export const definitionName: 'PublicUser' = User.getDefinition().name
+// @ts-expect-error name is a string column
+User.whereName(42)
+// @ts-expect-error age is a number column
+User.where('age', 'too old')
+// @ts-expect-error selection excludes role
+selected.get('role')
+// @ts-expect-error hidden password is excluded from JSON
+found.toJSON().password
+// @ts-expect-error nullable fields cannot be used as a non-null string
+export const notNullable: string = found.get('nickname')
+`,
+    invalid: "export const rejected: number = selected.get('name')",
+  },
+  {
     name: 'dynamodb generic results',
     source: `import { createDynamo } from 'bun-query-builder/dynamodb'
 import type { DynamoConnectionConfig, DynamoDBQueryResult } from 'bun-query-builder/dynamodb'

@@ -1136,6 +1136,25 @@ catch {
   }
 }
 
+/** The inferred static browser API produced from a model definition. */
+export type BrowserModelStatic<TDef extends BrowserModelDefinition> = Pick<
+  BrowserModelQueryBuilder<TDef>,
+  | 'where' | 'orWhere' | 'whereIn' | 'whereNotIn' | 'whereNull' | 'whereNotNull' | 'whereLike'
+  | 'orderBy' | 'orderByDesc' | 'select' | 'limit' | 'take' | 'skip' | 'latest' | 'oldest'
+  | 'find' | 'findOrFail' | 'first' | 'firstOrFail' | 'count' | 'exists' | 'paginate' | 'pluck'
+> & {
+  query: () => BrowserModelQueryBuilder<TDef>
+  all: () => Promise<BrowserModelInstance<TDef>[]>
+  create: (data: Partial<Pick<InferBrowserModelAttributes<TDef>, BrowserFillableKeys<TDef>>>) => Promise<BrowserModelInstance<TDef>>
+  update: (id: number | string, data: Partial<Pick<InferBrowserModelAttributes<TDef>, BrowserFillableKeys<TDef>>>) => Promise<BrowserModelInstance<TDef>>
+  delete: (id: number | string) => Promise<boolean>
+  destroy: (id: number | string) => Promise<boolean>
+  getDefinition: () => TDef
+  getTable: () => string
+} & {
+  [K in BrowserAttributeKeys<TDef> as `where${Capitalize<K>}`]: (value: K extends keyof BrowserModelAttributes<TDef> ? BrowserModelAttributes<TDef>[K] : unknown) => BrowserModelQueryBuilder<TDef>
+}
+
 /**
  * Create a browser model from a definition with full type inference
  *
@@ -1165,7 +1184,7 @@ catch {
  * // type: ('admin' | 'user' | 'moderator')[]
  * ```
  */
-export function createBrowserModel<const TDef extends BrowserModelDefinition>(definition: TDef) {
+export function createBrowserModel<const TDef extends BrowserModelDefinition>(definition: TDef): BrowserModelStatic<TDef> {
   type Attrs = BrowserModelAttributes<TDef>
   type Cols = BrowserColumnName<TDef>
   type AttrKeys = BrowserAttributeKeys<TDef>
