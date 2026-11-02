@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.33...v0.3.34)
+
+## 🐛 Bug Fixes
+
+- encode database credentials and classify native SQLSTATE retries ([14e8bf2](https://github.com/stacksjs/bun-query-builder/commit/14e8bf2)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.34 ([107e7b8](https://github.com/stacksjs/bun-query-builder/commit/107e7b8)) _(by Chris Breuer <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Chris Breuer <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.32...v0.3.33)
 
 ## 🐛 Bug Fixes
