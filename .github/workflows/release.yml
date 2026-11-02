@@ -64,6 +64,10 @@ jobs:
           if (!isLosslessTypeChange('integer', 'bigint') || !isLosslessTypeChange('string', 'text'))
           throw new Error('published package build is stale')"
 
+      - name: Verify Public Package Types
+        if: github.event_name == 'push'
+        run: bun run test:public-types
+
       # Publish once and keep the outcome; the readback below decides it.
       #
       # `pantry publish` exits 1 when npm accepts the upload but its own public

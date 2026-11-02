@@ -4,6 +4,11 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { dts } from 'bun-plugin-dtsx'
 
+// Packing includes all of dist. Bun.build does not remove old hashed chunks or
+// deleted entrypoints, so each build must own a fresh publication directory.
+// eslint-disable-next-line ts/no-top-level-await -- build script, not shipped
+await rm('./dist', { recursive: true, force: true })
+
 // `ts/no-top-level-await` guards the SHIPPED entry, because a top-level await
 // anywhere in the bundle makes `bun build --compile` refuse every consumer that
 // requires it — which is the exact failure `assertCompilable()` below exists to

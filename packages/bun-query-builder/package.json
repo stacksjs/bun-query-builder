@@ -70,6 +70,7 @@
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
     "prepublishOnly": "bun --bun run build",
     "test": "bun test",
+    "test:public-types": "bun test ./test/public-package-types.test.ts",
     "lint": "bunx --bun pickier lint .",
     "lint:fix": "bunx --bun pickier lint . --fix",
     "changelog": "bunx @stacksjs/logsmith --verbose",
@@ -84,10 +85,8 @@
     "@stacksjs/clapp": "^0.2.16",
     "@stacksjs/ts-faker": "^0.1.8",
     "@stacksjs/ts-validation": "^0.5.6",
+    "bunfig": "^0.15.21",
     "dynamodb-tooling": "^0.3.6"
-  },
-  "devDependencies": {
-    "bunfig": "^0.15.21"
   },
   "git-hooks": {
     "pre-commit": {

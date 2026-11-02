@@ -63,6 +63,7 @@
     "zip:darwin-arm64": "zip -j bin/qbx-darwin-arm64.zip bin/qbx-darwin-arm64",
     "fresh": "bun x rimraf node_modules/ bun.lock && bun i",
     "test": "bun run build && bun test --max-concurrency=1 packages/bun-query-builder",
+    "test:public-types": "cd ./packages/bun-query-builder && bun run test:public-types",
     "lint": "bun x --bun pickier .",
     "lint:fix": "bun x --bun pickier . --fix",
     "format": "bun x --bun pickier . --format",
@@ -88,7 +89,6 @@
     "@stacksjs/launchpad": "^0.6.4",
     "@stacksjs/ts-faker": "^0.1.8",
     "better-dx": "^0.2.38",
-    "pickier": "^0.1.76",
     "ts-pantry": "^0.11.114"
   },
   "workspaces": [
