@@ -792,6 +792,19 @@ export function resolveDatabaseName(dbConfig: DatabaseConfig = config.database a
   return String(raw).replace(/^['"]|['"]$/g, '')
 }
 
+/** Encode credentials and database names as URL components, never URL syntax. */
+function networkConnectionString(scheme: 'postgres' | 'mysql', options: DatabaseConfig): string {
+  const host = options.host || 'localhost'
+  const authority = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+  const url = new URL(`${scheme}://${authority}${options.port ? `:${options.port}` : ''}`)
+  url.username = encodeURIComponent(options.username ?? '')
+  url.password = encodeURIComponent(options.password ?? '')
+  url.pathname = `/${encodeURIComponent(options.database ?? '')}`
+  if (options.ssl)
+    url.searchParams.set('ssl', 'true')
+  return url.href
+}
+
 export function createConnectionString(dialect: SupportedDialect, dbConfig: DatabaseConfig): string {
   // When the host process declares a matching connection via env, prefer it.
   // Consumers that bundle multiple bun-query-builder instances (e.g. the
@@ -813,8 +826,8 @@ export function createConnectionString(dialect: SupportedDialect, dbConfig: Data
     const scheme = dialect === 'postgres' ? 'postgres' : 'mysql'
     // Managed SingleStore (Helios) and many hosted MySQL/Postgres require TLS —
     // append `?ssl=true` when DB_SSL is set (or the config asks for it).
-    const ssl = e.DB_SSL === 'true' || e.DB_SSL === '1' || dbConfig.ssl ? '?ssl=true' : ''
-    return `${scheme}://${envUser}:${envPass}@${envHost}${envPort ? `:${envPort}` : ''}/${envDb}${ssl}`
+    const ssl = e.DB_SSL === 'true' || e.DB_SSL === '1' || dbConfig.ssl
+    return networkConnectionString(scheme, { database: envDb, username: envUser, password: envPass, host: envHost, port: envPort ? Number(envPort) : undefined, ssl })
   }
 
   // If a full URL is provided, use it directly
@@ -829,11 +842,11 @@ export function createConnectionString(dialect: SupportedDialect, dbConfig: Data
 
   const { database, username, password, host = 'localhost', port, ssl } = dbConfig
   // TLS suffix for the network dialects (honored by Bun's SQL driver).
-  const sslQ = (ssl || process.env.DB_SSL === 'true' || process.env.DB_SSL === '1') ? '?ssl=true' : ''
+  const secure = ssl || process.env.DB_SSL === 'true' || process.env.DB_SSL === '1'
 
   switch (dialect) {
     case 'postgres':
-      return `postgres://${username}:${password}@${host}${port ? `:${port}` : ''}/${database}${sslQ}`
+      return networkConnectionString('postgres', { database, username, password, host, port, ssl: secure })
 
     case 'mysql':
     // SingleStore and Vitess are MySQL wire-compatible; both connect through
@@ -841,7 +854,7 @@ export function createConnectionString(dialect: SupportedDialect, dbConfig: Data
     // its `database` is a keyspace.
     case 'singlestore':
     case 'vitess':
-      return `mysql://${username}:${password}@${host}${port ? `:${port}` : ''}/${database}${sslQ}`
+      return networkConnectionString('mysql', { database, username, password, host, port, ssl: secure })
 
     case 'sqlite':
       // For SQLite, database is treated as the filename

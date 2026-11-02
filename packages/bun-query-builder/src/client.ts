@@ -3306,7 +3306,8 @@ interface InternalState {
 function isRetriableTxError(err: any): boolean {
   const msg = String(err?.message || '').toLowerCase()
   return (
-    msg.includes('deadlock')
+    matchesSqlState(err, ['40001', '40P01'])
+    || msg.includes('deadlock')
     || msg.includes('serialization failure')
     || msg.includes('could not serialize access')
     || msg.includes('deadlock found when trying to get lock') // MySQL
@@ -3341,10 +3342,11 @@ export interface TransactionOptions {
 function matchesSqlState(err: any, states?: string[]): boolean {
   if (!states || states.length === 0)
     return false
-  const code = (err && (err.code || err.sqlState || err.sqlstate)) as string | undefined
-  if (!code)
-    return false
-  return states.includes(code)
+  // Bun PostgreSQL puts SQLSTATE in errno and a generic driver label in code.
+  // MySQL and other drivers expose sqlState; inspect every candidate rather
+  // than letting a generic code hide the actual server state.
+  return [err?.code, err?.sqlState, err?.sqlstate, err?.errno]
+    .some(code => code != null && states.includes(String(code)))
 }
 
 function sleep(ms: number): Promise<void> {

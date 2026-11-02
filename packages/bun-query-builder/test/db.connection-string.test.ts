@@ -152,4 +152,29 @@ describe('createConnectionString DB_* env preference', () => {
       port: 5433,
     })).toBe('postgres://cfg_user:cfg_pass@cfg-host:5433/cfgdb')
   })
+  for (const dialect of ['postgres', 'mysql', 'singlestore', 'vitess'] as const) {
+    for (const fromEnv of [false, true]) {
+      it(`encodes network components for ${dialect} from ${fromEnv ? 'environment' : 'configuration'}`, () => {
+        const credentials = { username: 'user@:/?#%', password: 'pass@:/?#%', database: 'db/?#%' }
+        if (fromEnv) {
+          process.env.DB_CONNECTION = dialect
+          process.env.DB_USERNAME = credentials.username
+          process.env.DB_PASSWORD = credentials.password
+          process.env.DB_DATABASE = credentials.database
+          process.env.DB_HOST = '::1'
+          process.env.DB_PORT = '5438'
+          process.env.DB_SSL = 'true'
+        }
+        const url = new URL(createConnectionString(dialect, { ...credentials, host: '::1', port: 5438, ssl: true }))
+        expect(decodeURIComponent(url.username)).toBe(credentials.username)
+        expect(decodeURIComponent(url.password)).toBe(credentials.password)
+        expect(decodeURIComponent(url.pathname.slice(1))).toBe(credentials.database)
+        expect(url.hostname).toBe('[::1]')
+        expect(url.port).toBe('5438')
+        expect(url.search).toBe('?ssl=true')
+        expect(url.hash).toBe('')
+      })
+    }
+  }
+
 })
