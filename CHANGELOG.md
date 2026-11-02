@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.36...v0.3.37)
+
+## 🐛 Bug Fixes
+
+- **types**: preserve browser model factory inference ([6014115](https://github.com/stacksjs/bun-query-builder/commit/6014115)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.37 ([7e20cb9](https://github.com/stacksjs/bun-query-builder/commit/7e20cb9)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.35...v0.3.36)
 
 ## 🐛 Bug Fixes
