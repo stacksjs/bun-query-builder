@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.35...v0.3.36)
+
+## 🐛 Bug Fixes
+
+- **types**: verify portable declarations from clean package builds ([5656a7e](https://github.com/stacksjs/bun-query-builder/commit/5656a7e)) _(by Chris <chris@stacksjs.com>)_ ([#1201](https://github.com/stacksjs/bun-query-builder/issues/1201), [#1203](https://github.com/stacksjs/bun-query-builder/issues/1203))
+
+## 🔧 Chores
+
+- release v0.3.36 ([943af40](https://github.com/stacksjs/bun-query-builder/commit/943af40)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.34...v0.3.35)
 
 ## 🐛 Bug Fixes
