@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.34...v0.3.35)
+
+## 🐛 Bug Fixes
+
+- **database**: reject malformed connection ports ([22baa1f](https://github.com/stacksjs/bun-query-builder/commit/22baa1f)) _(by Chris Breuer <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.35 ([bbef899](https://github.com/stacksjs/bun-query-builder/commit/bbef899)) _(by Chris Breuer <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris Breuer <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.33...v0.3.34)
 
 ## 🐛 Bug Fixes
