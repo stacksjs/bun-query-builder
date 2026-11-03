@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.37...v0.3.38)
+
+## ✨ Features
+
+- **orm**: add simplePaginate and cursorPaginate to the model builder ([94d9f66](https://github.com/stacksjs/bun-query-builder/commit/94d9f66)) _(by Chris <chris@stacksjs.com>)_ ([#3119](https://github.com/stacksjs/bun-query-builder/issues/3119))
+
+## 🔧 Chores
+
+- release v0.3.38 ([50d59f7](https://github.com/stacksjs/bun-query-builder/commit/50d59f7)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.36...v0.3.37)
 
 ## 🐛 Bug Fixes
