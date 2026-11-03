@@ -2734,6 +2734,71 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
 }
 
 /**
+ * Cursors for `ModelQueryBuilder.cursorPaginate()`.
+ *
+ * A cursor handed to a client is an opaque token, not a raw column value, for
+ * three reasons that raw values cannot meet:
+ *
+ * - **Direction.** A "previous page" link has to run the query backwards from
+ *   the first row of this page. A bare value cannot say which way to go, so the
+ *   old prev cursor (the first row's value) re-ran the forward query and
+ *   returned this page less one row rather than the page before it.
+ * - **Types.** A timestamp comes back as a Date under Postgres. Stringified
+ *   with `JSON.stringify` it keeps its quotes and the next page compared the
+ *   column with a quoted string. The token tags dates and bigints so they come
+ *   back as what they were.
+ * - **Ordering.** The token records the columns and direction it was issued
+ *   for, so replaying it against a different ordering fails loudly instead of
+ *   skipping or repeating rows.
+ *
+ * A raw value (or tuple, for several columns) is still accepted as a forward
+ * cursor, which keeps `cursorPaginate(15, lastId)` working.
+ */
+type CursorDirection = 'next' | 'prev'
+
+interface CursorToken {
+  values: unknown[]
+  direction: CursorDirection
+  columns: string[]
+  order: 'asc' | 'desc'
+}
+
+const CURSOR_PREFIX = 'c1.'
+
+function encodeCursor(token: CursorToken): string {
+  const json = JSON.stringify({ v: token.values, d: token.direction, c: token.columns, o: token.order }, function (this: any, key: string, value: unknown) {
+    const original = this[key]
+    if (original instanceof Date) return { $date: original.toISOString() }
+    if (typeof original === 'bigint') return { $bigint: original.toString() }
+    return value
+  })
+  return CURSOR_PREFIX + Buffer.from(json, 'utf8').toString('base64url')
+}
+
+function decodeCursor(cursor: unknown): CursorToken | null {
+  if (typeof cursor !== 'string' || !cursor.startsWith(CURSOR_PREFIX)) return null
+  const body = cursor.slice(CURSOR_PREFIX.length)
+  if (!/^[\w-]+$/.test(body)) return null
+  try {
+    const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'), (_key, value) => {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        if (typeof value.$date === 'string') return new Date(value.$date)
+        if (typeof value.$bigint === 'string') return BigInt(value.$bigint)
+      }
+      return value
+    })
+    if (!parsed || !Array.isArray(parsed.v) || !Array.isArray(parsed.c)) return null
+    if (parsed.d !== 'next' && parsed.d !== 'prev') return null
+    if (parsed.o !== 'asc' && parsed.o !== 'desc') return null
+    return { values: parsed.v, direction: parsed.d, columns: parsed.c.map(String), order: parsed.o }
+  }
+  catch {
+    return null
+  }
+}
+
+
+/**
  * Query builder with precise type narrowing
  */
 class ModelQueryBuilder<
@@ -3691,6 +3756,212 @@ class ModelQueryBuilder<
     }
   }
 
+  /**
+   * A copy of this query that can take its own LIMIT, OFFSET, ORDER BY and
+   * WHERE without touching the original, which the caller may still be
+   * holding. `paginate()` sets its limit on the builder itself; the two
+   * methods below do not.
+   */
+  private fork(): ModelQueryBuilder<TDef, TSelected> {
+    const copy = new ModelQueryBuilder<TDef, TSelected>(this._definition)
+    copy._wheres = [...this._wheres]
+    copy._orderBy = [...this._orderBy]
+    copy._limit = this._limit
+    copy._offset = this._offset
+    copy._select = [...this._select]
+    copy._withRelations = [...this._withRelations]
+    copy._trashed = this._trashed
+    return copy
+  }
+
+  /**
+   * One page without the COUNT: fetches `perPage + 1` rows to learn whether a
+   * next page exists. Use it where the total is expensive or not wanted.
+   *
+   * Arguments follow the query builder (`perPage`, then `page`); the options
+   * form names them, so they cannot be transposed.
+   *
+   * @example
+   * ```ts
+   * const { data, hasMorePages } = await Post.where('published', true).simplePaginate(15, 2)
+   * await Post.query().simplePaginate({ perPage: 15, page: 2 })
+   * ```
+   */
+  async simplePaginate(perPage: number | PaginateOptions = 15, page = 1): Promise<{
+    data: ModelRecord<TDef, TSelected>[]
+    page: number
+    perPage: number
+    hasMorePages: boolean
+    isEmpty: boolean
+    from: number | null
+    to: number | null
+    meta: { perPage: number, page: number, hasMore: boolean }
+  }> {
+    if (typeof perPage === 'object' && perPage !== null) {
+      const options = perPage
+      page = options.page ?? 1
+      perPage = options.perPage ?? 15
+    }
+    if (!Number.isInteger(perPage) || perPage <= 0)
+      throw new TypeError(`[orm] simplePaginate(perPage): expected positive integer, got ${perPage}`)
+    if (!Number.isInteger(page) || page < 1)
+      throw new TypeError(`[orm] simplePaginate(page): expected integer >= 1, got ${page}`)
+
+    const query = this.fork()
+    query._limit = perPage + 1
+    query._offset = (page - 1) * perPage
+    const rows = await query.get()
+    const hasMore = rows.length > perPage
+    const data = hasMore ? rows.slice(0, perPage) : rows
+    return {
+      data,
+      page,
+      perPage,
+      hasMorePages: hasMore,
+      isEmpty: data.length === 0,
+      from: data.length > 0 ? (page - 1) * perPage + 1 : null,
+      to: data.length > 0 ? (page - 1) * perPage + data.length : null,
+      meta: { perPage, page, hasMore },
+    }
+  }
+
+  /**
+   * Keyset pagination: each page continues after the last row of the one
+   * before, so it stays correct while rows are inserted or deleted and costs
+   * the same on page 10,000 as on page 1.
+   *
+   * The query is ordered by `column` (one name, or several for a composite
+   * order) in `direction`; the cursor is only meaningful in that order, so a
+   * query that already has `orderBy()` is refused rather than silently
+   * re-ordered. The columns together must identify a row (end a composite with
+   * the primary key) and cannot be NULL, or rows at a page boundary are
+   * skipped or repeated.
+   *
+   * `nextCursor` and `prevCursor` are opaque strings: hand them back as
+   * `cursor` for the following or the preceding page. `null` means there is no
+   * such page. A raw column value (or tuple) is also accepted and continues
+   * forward.
+   *
+   * @example
+   * ```ts
+   * const first = await Post.where('published', true).cursorPaginate(15)
+   * const second = await Post.where('published', true).cursorPaginate(15, first.meta.nextCursor)
+   * const back = await Post.where('published', true).cursorPaginate(15, second.meta.prevCursor)
+   *
+   * // newest first, with the id as tie-breaker
+   * await Post.query().cursorPaginate(15, cursor, ['created_at', 'id'], 'desc')
+   * ```
+   */
+  async cursorPaginate(
+    perPage: number = 15,
+    cursor?: unknown,
+    column: string | string[] = this._definition.primaryKey || 'id',
+    direction: 'asc' | 'desc' = 'asc',
+  ): Promise<{
+    data: ModelRecord<TDef, TSelected>[]
+    perPage: number
+    hasMorePages: boolean
+    isEmpty: boolean
+    meta: { perPage: number, nextCursor: string | null, prevCursor: string | null }
+  }> {
+    if (!Number.isInteger(perPage) || perPage <= 0)
+      throw new TypeError(`[orm] cursorPaginate(perPage): expected positive integer, got ${perPage}`)
+    if (direction !== 'asc' && direction !== 'desc')
+      throw new TypeError(`[orm] cursorPaginate(direction): expected 'asc' or 'desc', got ${String(direction)}`)
+    const columns = (Array.isArray(column) ? column : [column]).map(String)
+    if (columns.length === 0)
+      throw new TypeError('[orm] cursorPaginate(column): expected at least one column')
+    for (const name of columns) assertValidIdentifier(name, 'cursorPaginate(column)')
+    if (this._orderBy.length > 0) {
+      throw new TypeError(
+        `[orm] cursorPaginate() cannot be combined with orderBy(): it orders by ${columns.map(c => `${c} ${direction}`).join(', ')} itself, `
+        + `and a cursor is only meaningful in that order. Remove the orderBy(), or pass the column and direction to cursorPaginate().`,
+      )
+    }
+    if (!this._select.includes('*')) {
+      for (const name of columns) {
+        if (!this._select.includes(name))
+          throw new TypeError(`[orm] cursorPaginate(): select cursor column ${name} in the result`)
+      }
+    }
+
+    // Work out which way this cursor points and which values it carries.
+    let backwards = false
+    let values: unknown[] | null = null
+    const token = decodeCursor(cursor)
+    if (token) {
+      if (token.columns.length !== columns.length || token.columns.some((c, i) => c !== columns[i]) || token.order !== direction) {
+        throw new TypeError(
+          `[orm] cursorPaginate(): this cursor was issued for ${token.columns.join(', ')} ${token.order}, `
+          + `not ${columns.join(', ')} ${direction}. Request the first page again.`,
+        )
+      }
+      backwards = token.direction === 'prev'
+      values = token.values
+    }
+    else if (cursor !== undefined && cursor !== null) {
+      values = Array.isArray(cursor) ? cursor : [cursor]
+      if (values.length !== columns.length) {
+        throw new TypeError(`[orm] cursorPaginate(): expected ${columns.length} cursor value(s) for ${columns.join(', ')}, got ${values.length}`)
+      }
+    }
+
+    // Forwards in `direction`, or the opposite way when paging back; a backward
+    // page is read in reverse and put back in order afterwards.
+    const reading: 'asc' | 'desc' = backwards ? (direction === 'asc' ? 'desc' : 'asc') : direction
+    const compare = reading === 'asc' ? '>' : '<'
+    const params: unknown[] = []
+    const existing = this.composeWhere(params)
+    const query = new ModelQueryBuilder<TDef, TSelected>(this._definition)
+    query._select = [...this._select]
+    query._withRelations = [...this._withRelations]
+    // composeWhere has already applied the soft-delete scope.
+    query._trashed = 'include'
+    if (existing) query._wheres.push({ raw: `(${existing})`, rawParams: params, boolean: 'and' })
+    if (values) {
+      const quoted = columns.map(quotedColumn)
+      const marks = values.map(() => '?').join(', ')
+      const predicate = quoted.length === 1 ? `${quoted[0]} ${compare} ?` : `(${quoted.join(', ')}) ${compare} (${marks})`
+      query._wheres.push({ raw: predicate, rawParams: values, boolean: 'and' })
+    }
+    query._orderBy = columns.map(name => ({ column: name, direction: reading }))
+    query._limit = perPage + 1
+
+    const rows = await query.get()
+    const more = rows.length > perPage
+    const page = more ? rows.slice(0, perPage) : rows
+    if (backwards) page.reverse()
+
+    const cursorFor = (row: ModelRecord<TDef, TSelected>, pointing: CursorDirection): string => {
+      const picked = columns.map((name) => {
+        const value = (row as any).getAttribute(name)
+        if (value === undefined)
+          throw new TypeError(`[orm] cursorPaginate(): select cursor column ${name} in the result`)
+        return value
+      })
+      return encodeCursor({ values: picked, direction: pointing, columns, order: direction })
+    }
+    const first = page[0]
+    const last = page[page.length - 1]
+
+    // Reading forwards, "more" is the next page and a prior page exists whenever
+    // a cursor brought us here. Reading backwards it is the other way round, and
+    // the page we came from is always after this one.
+    const hasNext = backwards ? page.length > 0 : more
+    const hasPrev = backwards ? more : values !== null && page.length > 0
+    return {
+      data: page,
+      perPage,
+      hasMorePages: hasNext,
+      isEmpty: page.length === 0,
+      meta: {
+        perPage,
+        nextCursor: hasNext && last ? cursorFor(last, 'next') : null,
+        prevCursor: hasPrev && first ? cursorFor(first, 'prev') : null,
+      },
+    }
+  }
+
   async pluck<K extends ColumnName<TDef>>(
     column: K
   ): Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]> {
@@ -3939,6 +4210,23 @@ export type ModelStatic<TDef extends ModelDefinition> = StaticWhereOverloads<TDe
     from: number | null
     to: number | null
   }>
+  simplePaginate: (perPage?: number | PaginateOptions, page?: number) => Promise<{
+    data: ModelRecord<TDef>[]
+    page: number
+    perPage: number
+    hasMorePages: boolean
+    isEmpty: boolean
+    from: number | null
+    to: number | null
+    meta: { perPage: number, page: number, hasMore: boolean }
+  }>
+  cursorPaginate: (perPage?: number, cursor?: unknown, column?: string | string[], direction?: 'asc' | 'desc') => Promise<{
+    data: ModelRecord<TDef>[]
+    perPage: number
+    hasMorePages: boolean
+    isEmpty: boolean
+    meta: { perPage: number, nextCursor: string | null, prevCursor: string | null }
+  }>
   whereBetween: <K extends ColumnName<TDef>>(column: K, range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown]) => ModelQueryBuilder<TDef>
   whereNotBetween: <K extends ColumnName<TDef>>(column: K, range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown]) => ModelQueryBuilder<TDef>
   create: (data: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
@@ -4070,6 +4358,8 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
     exists: () => new ModelQueryBuilder<TDef>(definition).exists(),
     doesntExist: () => new ModelQueryBuilder<TDef>(definition).doesntExist(),
     paginate: (page?: number | PaginateOptions, perPage?: number) => new ModelQueryBuilder<TDef>(definition).paginate(page as any, perPage),
+    simplePaginate: (perPage?: number | PaginateOptions, page?: number) => new ModelQueryBuilder<TDef>(definition).simplePaginate(perPage as any, page),
+    cursorPaginate: (perPage?: number, cursor?: unknown, column?: string | string[], direction?: 'asc' | 'desc') => new ModelQueryBuilder<TDef>(definition).cursorPaginate(perPage, cursor, column, direction),
 
     whereBetween<K extends Cols>(column: K, range: [min: K extends keyof Attrs ? Attrs[K] : unknown, max: K extends keyof Attrs ? Attrs[K] : unknown]) {
       return new ModelQueryBuilder<TDef>(definition).whereBetween(column, range as any)

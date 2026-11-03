@@ -79,6 +79,34 @@ const page = await db
 - Default is `id`. Use a monotonically increasing column (e.g., timestamps or numeric ids)
 - Avoid volatile columns that can reorder between requests
 
+## Pagination on models
+
+`Model.paginate()`, `simplePaginate()` and `cursorPaginate()` are on the model builder too, and chain after `where()`, `query()` and `select()`.
+
+```ts
+const page = await Post.where('published', true).paginate({ page: 2, perPage: 15 })
+
+// No COUNT: fetches one extra row to learn whether another page follows.
+const simple = await Post.simplePaginate({ perPage: 15, page: 2 })
+simple.hasMorePages // boolean
+
+// Keyset pagination. The cursors are opaque strings; null means there is no such page.
+const first = await Post.cursorPaginate(15)
+const next = await Post.cursorPaginate(15, first.meta.nextCursor)
+const back = await Post.cursorPaginate(15, next.meta.prevCursor) // the page before `next`, not `next` minus a row
+
+// Newest first. End a composite order with the primary key so rows that share a timestamp keep a place.
+await Post.cursorPaginate(15, cursor, ['created_at', 'id'], 'desc')
+```
+
+Notes that differ from the query builder:
+
+- `cursorPaginate` owns the ordering. A query that already has `orderBy()` throws, because a cursor only means something in the order it was issued for. Pass the column and direction instead.
+- A cursor records its direction, the columns and the order it was issued for. Handing it to a query with another ordering throws rather than skipping or repeating rows. A raw column value (or a tuple, for several columns) is still accepted and continues forward.
+- Dates and bigints survive the round trip, so a `Date` timestamp column pages correctly under Postgres.
+- The cursor columns together must identify a row and cannot be NULL.
+- The methods do not narrow the builder they are called on; it can be reused afterwards.
+
 ## Chunking: chunk, chunkById, eachById
 
 ### chunk(size, handler)
