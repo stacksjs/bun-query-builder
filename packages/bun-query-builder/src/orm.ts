@@ -2756,7 +2756,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
  */
 type CursorDirection = 'next' | 'prev'
 
-interface CursorToken {
+export interface CursorToken {
   values: unknown[]
   direction: CursorDirection
   columns: string[]
@@ -2765,7 +2765,8 @@ interface CursorToken {
 
 const CURSOR_PREFIX = 'c1.'
 
-function encodeCursor(token: CursorToken): string {
+/** @internal Exported for tests. */
+export function encodeCursor(token: CursorToken): string {
   const json = JSON.stringify({ v: token.values, d: token.direction, c: token.columns, o: token.order }, function (this: any, key: string, value: unknown) {
     const original = this[key]
     if (original instanceof Date) return { $date: original.toISOString() }
@@ -2775,7 +2776,8 @@ function encodeCursor(token: CursorToken): string {
   return CURSOR_PREFIX + Buffer.from(json, 'utf8').toString('base64url')
 }
 
-function decodeCursor(cursor: unknown): CursorToken | null {
+/** @internal Exported for tests. */
+export function decodeCursor(cursor: unknown): CursorToken | null {
   if (typeof cursor !== 'string' || !cursor.startsWith(CURSOR_PREFIX)) return null
   const body = cursor.slice(CURSOR_PREFIX.length)
   if (!/^[\w-]+$/.test(body)) return null

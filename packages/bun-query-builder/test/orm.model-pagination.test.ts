@@ -15,6 +15,7 @@
 import { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { clearModelRegistry, configureOrm, createModel, createTableFromModel } from '../src'
+import { decodeCursor, encodeCursor } from '../src/orm'
 
 let db: Database
 let Post: any
@@ -269,5 +270,32 @@ describe('cursorPaginate', () => {
     const looksLikeOne = await Post.cursorPaginate(2, 'c1.not-a-real-token', 'title')
     // 'c1.not-a-real-token' sorts before every title, so this is page one.
     expect(looksLikeOne.data).toHaveLength(2)
+  })
+})
+
+describe('cursor tokens', () => {
+  it('carry dates and bigints back as what they were, not as quoted strings', () => {
+    // Postgres hands a timestamp column back as a Date. JSON.stringify would
+    // have kept its quotes and the next page would have compared the column with
+    // a quoted string.
+    const when = new Date('2026-03-04T05:06:07.890Z')
+    const token = encodeCursor({ values: [when, 9007199254740993n, 'text', 7, null], direction: 'prev', columns: ['at', 'big', 's', 'n', 'z'], order: 'desc' })
+    expect(token.startsWith('c1.')).toBe(true)
+    const back = decodeCursor(token)!
+    expect(back.direction).toBe('prev')
+    expect(back.order).toBe('desc')
+    expect(back.columns).toEqual(['at', 'big', 's', 'n', 'z'])
+    expect(back.values[0]).toBeInstanceOf(Date)
+    expect((back.values[0] as Date).getTime()).toBe(when.getTime())
+    expect(back.values[1]).toBe(9007199254740993n)
+    expect(back.values.slice(2)).toEqual(['text', 7, null])
+  })
+
+  it('is URL-safe and rejects anything that is not a token', () => {
+    const token = encodeCursor({ values: ['a/b+c=', '?&#'], direction: 'next', columns: ['x', 'y'], order: 'asc' })
+    expect(token).toMatch(/^c1\.[\w-]+$/)
+    expect(decodeCursor(token)!.values).toEqual(['a/b+c=', '?&#'])
+    for (const bad of [undefined, null, 5, [1], 'plain', 'c1.', 'c1.@@@', 'c1.e30', `c1.${Buffer.from('{"v":[1],"d":"sideways","c":["id"],"o":"asc"}').toString('base64url')}`])
+      expect(decodeCursor(bad)).toBeNull()
   })
 })
