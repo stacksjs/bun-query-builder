@@ -450,6 +450,34 @@ const SAFE_COLUMN_REF_STAR = /^(?:\*|(?:[A-Z_][\w$]*)(?:\.(?:[A-Z_][\w$]*|\*))?(
  * escape hatch, and a validator that tries to allow `COUNT(*) + ?` safely is a
  * parser pretending to be a regex.
  */
+/**
+ * Validate every column a `returning()` was given, without substituting the
+ * quoted form.
+ *
+ * `returning()` interpolated `cols.join(', ')` straight into the RETURNING
+ * clause on all three of insert, update and delete, and into the `SELECT` the
+ * MySQL read-back issues. The clause hands its columns back to the caller, so
+ * that slot was a read primitive the same way `max()` was before #1181:
+ *
+ *   .returning('id, (SELECT token FROM secrets LIMIT 1)')
+ *   -> INSERT INTO "users"("name")VALUES($1) RETURNING id, (SELECT token FROM secrets LIMIT 1)
+ *
+ * Two shapes have to survive. `returningAll()` IS `returning('*')` and must
+ * stay that way (see client.returning-all.test.ts), hence `allowStar`. And
+ * `.returning(['id', 'uuid'])` arrives as one array argument rather than two,
+ * which is why this flattens the way `mysqlReturningBuilder` already does.
+ *
+ * It validates and discards the quoted result rather than returning it,
+ * because `mysqlReturningBuilder` applies `quoteId` to each name itself —
+ * handing it a backtick-quoted name would double-quote it on MySQL.
+ */
+function assertSafeReturningColumns(cols: unknown[], context: string): string[] {
+  const names = (cols as unknown[]).flat(2).map(String).filter(Boolean)
+  for (const name of names)
+    assertSafeColumnRef(name, context, { allowStar: true })
+  return names
+}
+
 function assertSafeColumnRef(name: unknown, context: string, options: { allowStar?: boolean } = {}): string {
   const raw = String(name).trim()
   const pattern = options.allowStar ? SAFE_COLUMN_REF_STAR : SAFE_COLUMN_REF
@@ -7880,6 +7908,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           return this
         },
         returning(...cols: (keyof any & string)[]) {
+          // Ahead of the empty-batch guard below, so an injected column is
+          // refused even when there is nothing to return.
+          const safeCols = assertSafeReturningColumns(cols, 'returning(column)')
+
           // Nothing was inserted, so there is nothing to return. Without this
           // the RETURNING clause was appended to the `SELECT 1` stand-in and
           // the statement failed to parse.
@@ -7905,7 +7937,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             return mysqlReturningBuilder(cols)
 
           // Append RETURNING clause to the existing SQL
-          const returningSql = `${sqlText} RETURNING ${cols.join(', ')}`
+          const returningSql = `${sqlText} RETURNING ${safeCols.join(', ')}`
           const q = prepareQuery(returningSql, params)
           // The return type is SelectQueryBuilder, so the row-fetching methods
           // (get/first/firstOrFail/executeTakeFirst) must exist at runtime —
@@ -8196,6 +8228,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           return this
         },
         returning(...cols) {
+          const safeCols = assertSafeReturningColumns(cols, 'returning(column)')
           const parent: any = this
           // Render at execute time, not here.
           //
@@ -8209,7 +8242,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           //
           // Deferring also fixes the aliasing form, where the returning handle
           // is held while the parent gains a predicate.
-          const retText = () => `${sqlText} RETURNING ${cols.join(', ')}`
+          const retText = () => `${sqlText} RETURNING ${safeCols.join(', ')}`
           const build = () => (params.length > 0 ? prepareQuery(retText(), params) : prepareQuery(retText()))
 
           /*
@@ -8251,7 +8284,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             if (ids.length === 0)
               return []
 
-            const selected = `SELECT ${cols.join(', ')} FROM ${quoteId(String(table))} WHERE ${key} IN (${ids.map(() => '?').join(', ')})`
+            const selected = `SELECT ${safeCols.join(', ')} FROM ${quoteId(String(table))} WHERE ${key} IN (${ids.map(() => '?').join(', ')})`
             const rows = await prepareQuery(selected, ids).execute()
 
             return Array.isArray(rows) ? rows : []
@@ -8498,12 +8531,13 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           return this
         },
         returning(...cols) {
+          const safeCols = assertSafeReturningColumns(cols, 'returning(column)')
           const parent: any = this
           // Rendered at execute time. The frozen-text form, with the no-op
           // filter stubs below it, meant `.returning('id').where({ id: 1 })`
           // emptied the table and returned every deleted row as though the
           // filter had applied. See #1110.
-          const retText = () => `${sqlText} RETURNING ${cols.join(', ')}`
+          const retText = () => `${sqlText} RETURNING ${safeCols.join(', ')}`
           const build = () => (delParams.length > 0 ? prepareQuery(retText(), delParams) : prepareQuery(retText()))
           // Fire the same delete hooks execute() does. Without this, adding
           // `.returning(...)` to a delete skipped beforeDelete/afterDelete
@@ -8521,7 +8555,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const rows = isMysqlLike(config.dialect)
               ? await (async (): Promise<any[]> => {
                   const from = sqlText.slice(sqlText.search(/\sFROM\s/i) + 1)
-                  const selected = `SELECT ${cols.join(', ')} ${from}`
+                  const selected = `SELECT ${safeCols.join(', ')} ${from}`
                   const found = await (delParams.length > 0 ? prepareQuery(selected, delParams) : prepareQuery(selected)).execute()
 
                   await runWithHooks<any>(delParams.length > 0 ? prepareQuery(sqlText, delParams) : prepareQuery(sqlText), 'delete')
