@@ -1,3 +1,23 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.38...v0.3.39)
+
+## 🐛 Bug Fixes
+
+- **client**: validate the columns returning() interpolates ([0ec59f8](https://github.com/stacksjs/bun-query-builder/commit/0ec59f8)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1181](https://github.com/stacksjs/bun-query-builder/issues/1181), [#1185](https://github.com/stacksjs/bun-query-builder/issues/1185))
+
+## ✅ Tests
+
+- **orm**: cover the cursor token codec for dates, bigints and malformed tokens ([d4e8ce9](https://github.com/stacksjs/bun-query-builder/commit/d4e8ce9)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.39 ([dae2e20](https://github.com/stacksjs/bun-query-builder/commit/dae2e20)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- **deps**: bump actions/upload-artifact from 4 to 7 (#1204) ([90cd439](https://github.com/stacksjs/bun-query-builder/commit/90cd439)) _(by [dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>](https://github.com/dependabot[bot]))_ ([#1204](https://github.com/stacksjs/bun-query-builder/issues/1204), [#1204](https://github.com/stacksjs/bun-query-builder/issues/1204))
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.37...v0.3.38)
 
 ## ✨ Features
