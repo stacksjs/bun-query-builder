@@ -1,5 +1,5 @@
 import type { DatabaseConfig, PoolConfig, SupportedDialect } from './types'
-import type { SQLQueryBindings, Statement } from 'bun:sqlite'
+import type { Changes, SQLQueryBindings, Statement } from 'bun:sqlite'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { SQL } from 'bun'
 import { serializeBindings, withDateBindings } from './bindings'
@@ -243,6 +243,7 @@ class SQLiteWrapper {
       const queue = this.deferredInserts = new SQLiteDeferredInserts(this.db)
       const query = this.query.bind(this)
       const run = this.run.bind(this)
+      const execute = this.execute.bind(this)
       const beforeStatement = (sql: string) => {
         if (queue.hasPending && !CACHEABLE_SQLITE_STATEMENT.test(sql))
           queue.flush()
@@ -257,6 +258,13 @@ class SQLiteWrapper {
       this.run = (sql, params) => {
         beforeStatement(sql)
         return run(sql, params)
+      }
+      // execute() reaches sqlite the same way query()/run() do, so it needs
+      // the same flush barrier — without it a deferred insert could still be
+      // queued when a read that depends on it runs.
+      this.execute = (sql, params) => {
+        beforeStatement(sql)
+        return execute(sql, params)
       }
     }
     return this.deferredInserts.append(table, record)
@@ -279,6 +287,29 @@ class SQLiteWrapper {
    */
   run(sql: string, params: SQLQueryBindings[] = []): any {
     return this.withStatement(sql, params, (stmt, bindings) => stmt.run(...bindings))
+  }
+
+  /**
+   * Run a statement and return whatever it actually produces: its rows when it
+   * has a result set, a change count when it has none.
+   *
+   * The caller used to choose by the statement's first word — `SELECT`,
+   * `PRAGMA`, or a `RETURNING` anywhere in the text — which is not the same
+   * question. A read that opens with a CTE or a comment failed that test and
+   * went to `run`, so `WITH t AS (...) SELECT ...` came back as
+   * `{ changes: 0, lastInsertRowid: 0 }` on SQLite and as rows on Postgres.
+   * Destructuring that, as code written against Postgres does, threw
+   * `TypeError: {} is not iterable` far from the cause. `VALUES (...)` and
+   * `EXPLAIN` were wrong the same way. See stacksjs/bun-query-builder#1205.
+   *
+   * `columnNames` is sqlite's own answer, so there is no keyword list to keep
+   * up to date: `WITH ... INSERT` without `RETURNING` reports no columns and
+   * keeps its change count, `INSERT ... RETURNING` reports its columns, and a
+   * pragma that reads reports one while a pragma that only sets reports none.
+   */
+  execute(sql: string, params: SQLQueryBindings[] = []): unknown[] | Changes {
+    return this.withStatement<unknown[] | Changes>(sql, params, (stmt, bindings) =>
+      (stmt.columnNames.length > 0 ? stmt.all(...bindings) : stmt.run(...bindings)))
   }
 
   /**
@@ -478,11 +509,9 @@ function createSQLiteSQL(filename: string): SQL {
   const wrapper = new SQLiteWrapper(filename)
 
   function executeStatement(sql: string, params: unknown[]): any {
-    const trimmed = sql.trim().toUpperCase()
-    // RETURNING statements produce rows, just like SELECT and PRAGMA.
-    if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA') || /\bRETURNING\b/.test(trimmed))
-      return wrapper.query(sql, toBindings(params))
-    return wrapper.run(sql, toBindings(params))
+    // Decided by the prepared statement's own column list rather than by the
+    // first word of the text. See SQLiteWrapper.execute and #1205.
+    return wrapper.execute(sql, toBindings(params))
   }
 
   /**
