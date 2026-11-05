@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.39...v0.3.40)
+
+## 🐛 Bug Fixes
+
+- **orm**: make the model builder's whereLike case-insensitive, as the query builder's is ([2969f2b](https://github.com/stacksjs/bun-query-builder/commit/2969f2b)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1206](https://github.com/stacksjs/bun-query-builder/issues/1206), [#3202](https://github.com/stacksjs/bun-query-builder/issues/3202), [#1083](https://github.com/stacksjs/bun-query-builder/issues/1083))
+- **sqlite**: dispatch a statement by its columns, not its first word ([ad250d5](https://github.com/stacksjs/bun-query-builder/commit/ad250d5)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1205](https://github.com/stacksjs/bun-query-builder/issues/1205), [#3195](https://github.com/stacksjs/bun-query-builder/issues/3195))
+
+## 🔧 Chores
+
+- release v0.3.40 ([726d5b6](https://github.com/stacksjs/bun-query-builder/commit/726d5b6)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.38...v0.3.39)
 
 ## 🐛 Bug Fixes
