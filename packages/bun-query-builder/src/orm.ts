@@ -104,6 +104,34 @@ function assertValidComparisonOperator(op: unknown, context: string): string {
 }
 
 /**
+ * Render a LIKE-family predicate for the configured dialect.
+ *
+ * The two builders disagreed about case on PostgreSQL: the query builder's
+ * `whereLike` renders `LOWER(col) LIKE LOWER(?)` and is case-insensitive by
+ * default, while the model builder pushed a plain `like`, which PostgreSQL
+ * treats case-sensitively. SQLite and MySQL hid it, because their `LIKE`
+ * ignores case anyway, so a search box built on a model silently stopped
+ * matching when the app moved to PostgreSQL — `donald` did not find `Donald`
+ * (stacksjs/stacks#3202). See stacksjs/bun-query-builder#1206.
+ *
+ * The model builder now matches the query builder: case-insensitive unless the
+ * caller opts out with `caseSensitive`. The generic `where(col, 'like', v)`
+ * form is untouched and stays case-sensitive, exactly as it is on the query
+ * builder — only the dedicated `whereLike` family carries the default.
+ */
+function renderLikePredicate(column: string, operator: WhereOperator, caseInsensitive: boolean): string {
+  const negated = operator === 'not like' || operator === 'not ilike'
+  const native = operator === 'ilike' || operator === 'not ilike'
+
+  // Postgres has a real ILIKE; everywhere else the lowered comparison is it.
+  if (native && config.dialect === 'postgres')
+    return `${column} ${negated ? 'NOT ILIKE' : 'ILIKE'} ?`
+  if (native || caseInsensitive)
+    return `LOWER(${column}) ${negated ? 'NOT LIKE' : 'LIKE'} LOWER(?)`
+  return `${column} ${negated ? 'NOT LIKE' : 'LIKE'} ?`
+}
+
+/**
  * Validate an ORDER BY target column. Like `assertValidIdentifier` but
  * additionally accepts the table-qualified `table.column` form by
  * validating each side of a single dot with the same strict rule. Any
@@ -616,7 +644,7 @@ export type ModelRecord<
   & Pick<ModelAttributes<TDef>, Extract<TSelected, keyof ModelAttributes<TDef>>>
   & { [R in InferRelationNames<TDef>]?: LoadedRelationValue<TDef, R> }
 
-type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' | 'in' | 'not in'
+type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' | 'ilike' | 'not ilike' | 'in' | 'not in'
 
 // --- Dialect-aware execution layer -------------------------------------------
 //
@@ -2808,7 +2836,7 @@ class ModelQueryBuilder<
   TSelected extends ColumnName<TDef> = ColumnName<TDef>
 > {
   private _definition: TDef
-  private _wheres: { column?: string; operator?: WhereOperator; value?: unknown; boolean: 'and' | 'or'; raw?: string; rawParams?: unknown[] }[] = []
+  private _wheres: { column?: string; operator?: WhereOperator; value?: unknown; boolean: 'and' | 'or'; raw?: string; rawParams?: unknown[]; caseInsensitive?: boolean }[] = []
   private _orderBy: { column: string; direction: 'asc' | 'desc' }[] = []
   private _limit?: number
   private _offset?: number
@@ -2966,23 +2994,44 @@ class ModelQueryBuilder<
     return this
   }
 
-  whereLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
-    this._wheres.push({ column: column as string, operator: 'like', value: pattern, boolean: 'and' })
+  whereLike<K extends ColumnName<TDef>>(column: K, pattern: string, caseSensitive = false): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'like', value: pattern, boolean: 'and', caseInsensitive: !caseSensitive })
     return this
   }
 
-  orWhereLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
-    this._wheres.push({ column: column as string, operator: 'like', value: pattern, boolean: 'or' })
+  orWhereLike<K extends ColumnName<TDef>>(column: K, pattern: string, caseSensitive = false): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'like', value: pattern, boolean: 'or', caseInsensitive: !caseSensitive })
     return this
   }
 
-  whereNotLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
-    this._wheres.push({ column: column as string, operator: 'not like', value: pattern, boolean: 'and' })
+  /** Case-insensitive LIKE: native `ILIKE` on PostgreSQL, `LOWER()` elsewhere. */
+  whereILike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'ilike', value: pattern, boolean: 'and' })
     return this
   }
 
-  orWhereNotLike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
-    this._wheres.push({ column: column as string, operator: 'not like', value: pattern, boolean: 'or' })
+  orWhereILike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'ilike', value: pattern, boolean: 'or' })
+    return this
+  }
+
+  whereNotILike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'not ilike', value: pattern, boolean: 'and' })
+    return this
+  }
+
+  orWhereNotILike<K extends ColumnName<TDef>>(column: K, pattern: string): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'not ilike', value: pattern, boolean: 'or' })
+    return this
+  }
+
+  whereNotLike<K extends ColumnName<TDef>>(column: K, pattern: string, caseSensitive = false): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'not like', value: pattern, boolean: 'and', caseInsensitive: !caseSensitive })
+    return this
+  }
+
+  orWhereNotLike<K extends ColumnName<TDef>>(column: K, pattern: string, caseSensitive = false): ModelQueryBuilder<TDef, TSelected> {
+    this._wheres.push({ column: column as string, operator: 'not like', value: pattern, boolean: 'or', caseInsensitive: !caseSensitive })
     return this
   }
 
@@ -3212,6 +3261,10 @@ class ModelQueryBuilder<
         const arr = w.value as unknown[]
         clause = renderInPredicate(quotedColumn(w.column!), arr, w.operator === 'not in', arr.map(() => '?').join(', '))
         params.push(...arr)
+      }
+      else if (w.operator === 'like' || w.operator === 'not like' || w.operator === 'ilike' || w.operator === 'not ilike') {
+        clause = renderLikePredicate(quotedColumn(w.column!), w.operator, w.caseInsensitive === true)
+        params.push(w.value)
       }
       else {
         clause = `${quotedColumn(w.column!)} ${w.operator} ?`

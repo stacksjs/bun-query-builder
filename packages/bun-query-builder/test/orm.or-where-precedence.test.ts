@@ -55,7 +55,11 @@ describe('ORM orWhere grouping (#1083)', () => {
       .toSql()
 
     // Was `batch = ? AND name like ? OR name like ?`.
-    expect(sql).toContain('batch = ? AND (name like ? OR name like ?)')
+    //
+    // The LIKE terms render lowered because the model builder's whereLike is
+    // case-insensitive by default since #1206; the bracketing is what this
+    // asserts, and it is unchanged.
+    expect(sql).toContain('batch = ? AND (LOWER(name) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?))')
   })
 
   it('returns the bounded rows, not the superset', async () => {
@@ -86,8 +90,12 @@ describe('ORM orWhere grouping (#1083)', () => {
   it('leaves a two-term OR chain unbracketed', () => {
     const { sql } = Row.query().where('batch', 1).orWhereLike('name', '%alter%').toSql()
 
-    expect(sql).toContain('batch = ? OR name like ?')
-    expect(sql).not.toContain('(')
+    expect(sql).toContain('batch = ? OR LOWER(name) LIKE LOWER(?)')
+    // Was `not.toContain('(')`, which stopped meaning "no grouping" once
+    // whereLike started emitting LOWER(...) for #1206. The claim is that the
+    // OR run was not wrapped, so assert that the WHERE body does not open
+    // with a bracket rather than that no bracket exists anywhere.
+    expect(sql).not.toMatch(/WHERE\s*\(/)
   })
 
   it('does not emit a leading OR when orWhere is the first term', () => {
@@ -105,7 +113,7 @@ describe('ORM orWhere grouping (#1083)', () => {
       .whereLike('name', '%create%')
       .toSql()
 
-    expect(sql).toContain('(batch = ? OR batch = ?) AND name like ?')
+    expect(sql).toContain('(batch = ? OR batch = ?) AND LOWER(name) LIKE LOWER(?)')
     expect(sql).not.toContain('((')
   })
 
