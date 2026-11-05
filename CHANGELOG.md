@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.40...v0.3.41)
+
+## 🐛 Bug Fixes
+
+- **orm**: quote reserved-word columns in the four paths that still emitted them bare ([9b08b5f](https://github.com/stacksjs/bun-query-builder/commit/9b08b5f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.41 ([d4ccd4f](https://github.com/stacksjs/bun-query-builder/commit/d4ccd4f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.39...v0.3.40)
 
 ## 🐛 Bug Fixes
