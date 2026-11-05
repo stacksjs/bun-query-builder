@@ -3701,7 +3701,9 @@ class ModelQueryBuilder<
     const exec = getExecutor()
     const params: unknown[] = [amount]
 
-    const incCol = sqlColumn(column as string)
+    // quotedColumn, not sqlColumn: a column the model has every right to name
+    // `order` or `group` is a syntax error unquoted. See quoteSqlColumn.
+    const incCol = quotedColumn(column as string)
     let sql = `UPDATE ${this._definition.table} SET ${incCol} = ${incCol} + ?`
 
     if (timestampsEnabled(this._definition)) {
@@ -4024,8 +4026,11 @@ class ModelQueryBuilder<
     // Raw query — avoid creating ModelInstance objects just to extract one column
     const exec = getExecutor()
     const params: unknown[] = []
+    // Two spellings of the same column: the statement needs it quoted (an
+    // `order` or `group` column is a syntax error bare), while the result key
+    // every driver hands back is the unquoted name.
     const pluckCol = sqlColumn(column as string)
-    let sql = `SELECT ${pluckCol} FROM ${this._definition.table}`
+    let sql = `SELECT ${quotedColumn(column as string)} FROM ${this._definition.table}`
 
     const whereBody = this.composeWhere(params)
     if (whereBody) {
@@ -4048,7 +4053,8 @@ class ModelQueryBuilder<
     assertValidIdentifier(column, `${fn}(column)`)
     const exec = getExecutor()
     const params: unknown[] = []
-    let sql = `SELECT ${fn}(${sqlColumn(column)}) as v FROM ${this._definition.table}`
+    // quotedColumn: `MAX(order)` is a syntax error, `MAX("order")` is not.
+    let sql = `SELECT ${fn}(${quotedColumn(column)}) as v FROM ${this._definition.table}`
 
     const whereBody = this.composeWhere(params)
     if (whereBody) {
@@ -4694,9 +4700,15 @@ export async function createTableFromModel(definition: ModelDefinition): Promise
   const columns: string[] = []
   const emitted = new Set<string>([pk])
 
+  // Every column name is quoted for the dialect, as the migration drivers
+  // already do (see SQLiteDriver.createTable). This helper emitted them bare,
+  // so a model with an `order`, `group` or `when` column — names the read and
+  // write paths quote and therefore support — could not have its table created
+  // at all: `near "order": syntax error`. `emitted` still keys off the
+  // UNQUOTED name, since that is what the column is called.
   columns.push(definition.autoIncrement !== false
-    ? `${pk} INTEGER PRIMARY KEY AUTOINCREMENT`
-    : `${pk} INTEGER PRIMARY KEY`)
+    ? `${quoteSqlColumn(pk)} INTEGER PRIMARY KEY AUTOINCREMENT`
+    : `${quoteSqlColumn(pk)} INTEGER PRIMARY KEY`)
 
   if (definition.traits?.useUuid) {
     columns.push('uuid TEXT UNIQUE')
@@ -4726,12 +4738,12 @@ export async function createTableFromModel(definition: ModelDefinition): Promise
     // keeps the old INTEGER default rather than silently changing shape.
     if (name.endsWith('_id') && (declaredType === undefined || isNumericPlanType(declaredType)))
       colType = 'INTEGER'
-    let colDef = `${name} ${colType}`
+    let colDef = `${quoteSqlColumn(name)} ${colType}`
     if (attr.unique) colDef += ' UNIQUE'
     // Inline FK constraints for SQLite CREATE TABLE
     if (typeof attr.foreignKey === 'object' && attr.foreignKey !== null) {
       const fk = attr.foreignKey as import('./schema').ForeignKeyConfig
-      colDef += ` REFERENCES ${fk.table}(${fk.column ?? 'id'})`
+      colDef += ` REFERENCES ${fk.table}(${quoteSqlColumn(fk.column ?? 'id')})`
       if (fk.onDelete)
         colDef += ` ON DELETE ${fk.onDelete.toUpperCase()}`
       if (fk.onUpdate)
@@ -4748,7 +4760,7 @@ export async function createTableFromModel(definition: ModelDefinition): Promise
     const name = rel.foreignKey ?? `${toSnakeCase(rel.model)}_id`
     if (emitted.has(name)) continue
     emitted.add(name)
-    columns.push(`${name} INTEGER`)
+    columns.push(`${quoteSqlColumn(name)} INTEGER`)
   }
 
   if (timestampsEnabled(definition)) {
