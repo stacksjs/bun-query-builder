@@ -22,6 +22,12 @@ A fully-typed, model-driven SQL query builder for Bun's native database drivers 
 - **better-dx** provides shared dev tooling as peer dependencies — do not install its peers (e.g., `typescript`, `pickier`, `bun-plugin-dtsx`) separately if `better-dx` is already in `package.json`
 - If `better-dx` is in `package.json`, ensure `bunfig.toml` includes `linker = "hoisted"`
 
+## Worktrees
+
+- **Never create a git worktree.** One project is always one agent here, so there is nothing to isolate from. Do not run `git worktree add`, do not pass `isolation: "worktree"` to a subagent, and do not offer background-task chips (each one opens a fresh worktree)
+- Do follow-up work in the current checkout. A branch is the right unit when isolation is wanted
+- Stale worktrees under `/private/tmp` outlive their session and clutter the filesystem; `git worktree prune` clears a dead record
+
 ## Commits
 
 - Use conventional commit messages (e.g., `fix:`, `feat:`, `chore:`)
