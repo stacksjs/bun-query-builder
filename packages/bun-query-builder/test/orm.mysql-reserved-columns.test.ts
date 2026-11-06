@@ -42,7 +42,9 @@ describe('MySQL reserved-word columns', () => {
   it('quotes them in WHERE, ORDER BY and the select list', () => {
     config.dialect = 'mysql' as any
     const { sql } = Todo.where('when', 'today').whereIn('repeat', ['daily']).orderBy('when').select('title', 'when').toSql()
-    expect(sql).toContain('SELECT `title`, `when` FROM rc_todos')
+    // The table is back-quoted too since #1207 — MySQL quotes every plain
+    // identifier, tables included, so `order` or `user` works as a table name.
+    expect(sql).toContain('SELECT `title`, `when` FROM `rc_todos`')
     expect(sql).toContain('`when` = ?')
     expect(sql).toContain('`repeat` IN')
     expect(sql).toContain('ORDER BY `when` ASC')

@@ -1611,13 +1611,13 @@ class ModelInstance<
           // Postgres refuses a column assigned twice (see managedUpdateSet).
           const { sets, values } = managedUpdateSet(Object.entries(changes), k => k)
           await exec.run(
-            `UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`,
+            `UPDATE ${quotedTable(this._definition.table)} SET ${sets} WHERE ${pk} = ?`,
             [...values, this._attributes[pk]]
           )
         }
         else {
           const sets = changeKeys.map(k => `${quoteSqlColumn(k)} = ?`).join(', ')
-          await exec.run(`UPDATE ${this._definition.table} SET ${sets} WHERE ${pk} = ?`, [...Object.values(changes), this._attributes[pk]])
+          await exec.run(`UPDATE ${quotedTable(this._definition.table)} SET ${sets} WHERE ${pk} = ?`, [...Object.values(changes), this._attributes[pk]])
         }
       }
 
@@ -1630,7 +1630,7 @@ class ModelInstance<
       const placeholders = columns.map(() => '?').join(', ')
 
       const result = await exec.insert(
-        `INSERT INTO ${this._definition.table} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${placeholders})`,
+        `INSERT INTO ${quotedTable(this._definition.table)} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${placeholders})`,
         Object.values(data),
         pk,
       )
@@ -1664,7 +1664,7 @@ class ModelInstance<
     const pk = this._definition.primaryKey || 'id'
     const id = this._attributes[pk]
     if (id == null) return null
-    const row = await exec.get(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`, [id])
+    const row = await exec.get(`SELECT * FROM ${quotedTable(this._definition.table)} WHERE ${pk} = ?`, [id])
     if (!row) return null
     return new ModelInstance(this._definition, row as Partial<ModelAttributes<TDef>>, true)
   }
@@ -1684,7 +1684,7 @@ class ModelInstance<
     if (softDeletesEnabled(this._definition)) {
       const now = formatNow()
       await exec.run(
-        `UPDATE ${this._definition.table} SET deleted_at = ? WHERE ${pk} = ?`,
+        `UPDATE ${quotedTable(this._definition.table)} SET deleted_at = ? WHERE ${pk} = ?`,
         [now, pkValue]
       )
       // Reflect the soft delete on the in-memory instance so `trashed()` and
@@ -1692,7 +1692,7 @@ class ModelInstance<
       this._attributes[SOFT_DELETE_COLUMN] = now
     }
     else {
-      await exec.run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue])
+      await exec.run(`DELETE FROM ${quotedTable(this._definition.table)} WHERE ${pk} = ?`, [pkValue])
     }
 
     await hooks?.afterDelete?.(this as unknown as ModelHookInstance)
@@ -1716,7 +1716,7 @@ class ModelInstance<
     if (pkValue == null) throw new Error('Cannot delete a model without a primary key')
 
     await hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
-    await getExecutor().run(`DELETE FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue])
+    await getExecutor().run(`DELETE FROM ${quotedTable(this._definition.table)} WHERE ${pk} = ?`, [pkValue])
     await hooks?.afterDelete?.(this as unknown as ModelHookInstance)
 
     return true
@@ -1733,7 +1733,7 @@ class ModelInstance<
     const pkValue = this._attributes[pk]
     if (!pkValue) throw new Error('Cannot restore a model without a primary key')
     await getExecutor().run(
-      `UPDATE ${this._definition.table} SET ${SOFT_DELETE_COLUMN} = ? WHERE ${pk} = ?`,
+      `UPDATE ${quotedTable(this._definition.table)} SET ${SOFT_DELETE_COLUMN} = ? WHERE ${pk} = ?`,
       [null, pkValue],
     )
     this._attributes[SOFT_DELETE_COLUMN] = null
@@ -1764,7 +1764,7 @@ class ModelInstance<
 
     if (!pkValue) throw new Error('Cannot refresh a model without a primary key')
 
-    const row = await exec.get(`SELECT * FROM ${this._definition.table} WHERE ${pk} = ?`, [pkValue])
+    const row = await exec.get(`SELECT * FROM ${quotedTable(this._definition.table)} WHERE ${pk} = ?`, [pkValue])
     if (!row) return null
     this._attributes = row
     this._original = null // post-refresh, nothing is dirty
@@ -1918,6 +1918,26 @@ function quoteSqlColumn(name: string): string {
 /** `sqlColumn`, quoted for the dialect: what WHERE, ORDER BY, SELECT and SET interpolate. */
 function quotedColumn(name: string): string {
   return quoteSqlColumn(sqlColumn(name))
+}
+
+/**
+ * A table reference as a statement writes it.
+ *
+ * Tables take the same rule as columns ({@link quoteSqlColumn}): a model is
+ * entitled to be backed by a table named `order` or `group`, or — Postgres
+ * reserves it, SQLite does not — `user`. The migration drivers have quoted
+ * table names all along (`SQLiteDriver.createTable` and its siblings), so the
+ * generator would create a `"user"` table that every statement here then
+ * failed to address: `near "order": syntax error` on each read and write, and
+ * on Postgres a `table: 'user'` model that no query could touch. See #1207.
+ *
+ * NOT snake-cased on the way through, unlike `quotedColumn`: a table name is
+ * taken from the definition verbatim (`table: 'user_profiles'`), and
+ * `toTableName` has already done the conversion where one was derived from a
+ * model name.
+ */
+function quotedTable(name: string): string {
+  return quoteSqlColumn(name)
 }
 
 /**
@@ -2449,11 +2469,11 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
   where(column: string, opOrValue: unknown, value?: unknown): this {
     assertValidIdentifier(column, 'where(column)')
     if (value === undefined) {
-      this._wheres.push({ sql: `${this.relatedTable}.${column} = ?`, params: [opOrValue] })
+      this._wheres.push({ sql: `${quotedTable(this.relatedTable)}.${quoteSqlColumn(column)} = ?`, params: [opOrValue] })
     }
     else {
       const op = assertValidComparisonOperator(opOrValue, 'where(operator)')
-      this._wheres.push({ sql: `${this.relatedTable}.${column} ${op} ?`, params: [value] })
+      this._wheres.push({ sql: `${quotedTable(this.relatedTable)}.${quoteSqlColumn(column)} ${op} ?`, params: [value] })
     }
     return this
   }
@@ -2462,11 +2482,11 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
   wherePivot(column: string, opOrValue: unknown, value?: unknown): this {
     assertValidIdentifier(column, 'wherePivot(column)')
     if (value === undefined) {
-      this._pivotWheres.push({ sql: `${this.pivotTable}.${column} = ?`, params: [opOrValue] })
+      this._pivotWheres.push({ sql: `${quotedTable(this.pivotTable)}.${quoteSqlColumn(column)} = ?`, params: [opOrValue] })
     }
     else {
       const op = assertValidComparisonOperator(opOrValue, 'wherePivot(operator)')
-      this._pivotWheres.push({ sql: `${this.pivotTable}.${column} ${op} ?`, params: [value] })
+      this._pivotWheres.push({ sql: `${quotedTable(this.pivotTable)}.${quoteSqlColumn(column)} ${op} ?`, params: [value] })
     }
     return this
   }
@@ -2475,7 +2495,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     assertValidIdentifier(column, 'wherePivotIn(column)')
     if (!values.length) return this
     const placeholders = values.map(() => '?').join(', ')
-    this._pivotWheres.push({ sql: `${this.pivotTable}.${column} IN (${placeholders})`, params: [...values] })
+    this._pivotWheres.push({ sql: `${quotedTable(this.pivotTable)}.${quoteSqlColumn(column)} IN (${placeholders})`, params: [...values] })
     return this
   }
 
@@ -2483,19 +2503,19 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     assertValidIdentifier(column, 'wherePivotNotIn(column)')
     if (!values.length) return this
     const placeholders = values.map(() => '?').join(', ')
-    this._pivotWheres.push({ sql: `${this.pivotTable}.${column} NOT IN (${placeholders})`, params: [...values] })
+    this._pivotWheres.push({ sql: `${quotedTable(this.pivotTable)}.${quoteSqlColumn(column)} NOT IN (${placeholders})`, params: [...values] })
     return this
   }
 
   wherePivotNull(column: string): this {
     assertValidIdentifier(column, 'wherePivotNull(column)')
-    this._pivotWheres.push({ sql: `${this.pivotTable}.${column} IS NULL`, params: [] })
+    this._pivotWheres.push({ sql: `${quotedTable(this.pivotTable)}.${quoteSqlColumn(column)} IS NULL`, params: [] })
     return this
   }
 
   wherePivotNotNull(column: string): this {
     assertValidIdentifier(column, 'wherePivotNotNull(column)')
-    this._pivotWheres.push({ sql: `${this.pivotTable}.${column} IS NOT NULL`, params: [] })
+    this._pivotWheres.push({ sql: `${quotedTable(this.pivotTable)}.${quoteSqlColumn(column)} IS NOT NULL`, params: [] })
     return this
   }
 
@@ -2503,7 +2523,9 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     assertValidOrderByColumn(column, 'orderBy(column)')
     if (direction !== 'asc' && direction !== 'desc')
       throw new TypeError(`[bun-query-builder] orderBy(direction): expected 'asc' or 'desc', got '${direction}'`)
-    this._orderBy.push(`${column} ${direction.toUpperCase()}`)
+    // assertValidOrderByColumn accepts a qualified `table.column`, which
+    // quoteSqlColumn splits and quotes on each side.
+    this._orderBy.push(`${quoteSqlColumn(column)} ${direction.toUpperCase()}`)
     return this
   }
 
@@ -2542,11 +2564,11 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     // Aliasing the related side avoids depending on the pivot's declared
     // columns (empty for `through:` models). See #1036.
     const relatedSelect = this.relatedSelectColumns()
-      .map(c => `${this.relatedTable}.${c} AS ${BTM_RELATED_ALIAS}${c}`)
+      .map(c => `${quotedTable(this.relatedTable)}.${quoteSqlColumn(c)} AS ${BTM_RELATED_ALIAS}${c}`)
       .join(', ')
-    let sql = `SELECT ${relatedSelect}, ${this.pivotTable}.* FROM ${this.relatedTable}`
-    sql += ` INNER JOIN ${this.pivotTable} ON ${this.pivotTable}.${this.fkRelated} = ${this.relatedTable}.${this.relatedPk}`
-    sql += ` WHERE ${this.pivotTable}.${this.fkParent} = ?`
+    let sql = `SELECT ${relatedSelect}, ${quotedTable(this.pivotTable)}.* FROM ${quotedTable(this.relatedTable)}`
+    sql += ` INNER JOIN ${quotedTable(this.pivotTable)} ON ${quotedTable(this.pivotTable)}.${quoteSqlColumn(this.fkRelated)} = ${quotedTable(this.relatedTable)}.${quoteSqlColumn(this.relatedPk)}`
+    sql += ` WHERE ${quotedTable(this.pivotTable)}.${quoteSqlColumn(this.fkParent)} = ?`
     params.push(this.parentId)
     for (const w of this._pivotWheres) {
       sql += ` AND ${w.sql}`
@@ -2597,7 +2619,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
 
   async count(): Promise<number> {
     const exec = getExecutor()
-    let sql = `SELECT COUNT(*) as count FROM ${this.pivotTable} WHERE ${this.fkParent} = ?`
+    let sql = `SELECT COUNT(*) as count FROM ${quotedTable(this.pivotTable)} WHERE ${quoteSqlColumn(this.fkParent)} = ?`
     const params: unknown[] = [this.parentId]
     for (const w of this._pivotWheres) {
       sql += ` AND ${w.sql}`
@@ -2640,7 +2662,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
       }
       const cols = Object.keys(row)
       const placeholders = cols.map(() => '?').join(', ')
-      const sql = `INSERT INTO ${this.pivotTable} (${cols.join(', ')}) VALUES (${placeholders})`
+      const sql = `INSERT INTO ${quotedTable(this.pivotTable)} (${cols.map(quoteSqlColumn).join(', ')}) VALUES (${placeholders})`
       const params = cols.map(c => row[c])
       await exec.run(sql, params)
       inserted++
@@ -2654,13 +2676,13 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
    */
   async detach(idOrIds?: unknown | unknown[]): Promise<number> {
     const exec = getExecutor()
-    let sql = `DELETE FROM ${this.pivotTable} WHERE ${this.fkParent} = ?`
+    let sql = `DELETE FROM ${quotedTable(this.pivotTable)} WHERE ${quoteSqlColumn(this.fkParent)} = ?`
     const params: unknown[] = [this.parentId]
     if (idOrIds !== undefined && idOrIds !== null) {
       const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
       if (ids.length === 0) return 0
       const placeholders = ids.map(() => '?').join(', ')
-      sql += ` AND ${this.fkRelated} IN (${placeholders})`
+      sql += ` AND ${quoteSqlColumn(this.fkRelated)} IN (${placeholders})`
       params.push(...ids)
     }
     return (await exec.run(sql, params)).changes
@@ -2678,8 +2700,8 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     }
     const cols = Object.keys(updates)
     if (cols.length === 0) return 0
-    const setClause = cols.map(c => `${c} = ?`).join(', ')
-    const sql = `UPDATE ${this.pivotTable} SET ${setClause} WHERE ${this.fkParent} = ? AND ${this.fkRelated} = ?`
+    const setClause = cols.map(c => `${quoteSqlColumn(c)} = ?`).join(', ')
+    const sql = `UPDATE ${quotedTable(this.pivotTable)} SET ${setClause} WHERE ${quoteSqlColumn(this.fkParent)} = ? AND ${quoteSqlColumn(this.fkRelated)} = ?`
     const params = [...cols.map(c => updates[c]), this.parentId, relatedId]
     return (await exec.run(sql, params)).changes
   }
@@ -2707,7 +2729,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
 
     // Read current pivot rows for this parent.
     const current = await exec.all(
-      `SELECT * FROM ${this.pivotTable} WHERE ${this.fkParent} = ?`,
+      `SELECT * FROM ${quotedTable(this.pivotTable)} WHERE ${quoteSqlColumn(this.fkParent)} = ?`,
       [this.parentId],
     )
     const currentIds = new Set(current.map(r => r[this.fkRelated]))
@@ -2748,7 +2770,7 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     if (ids.length === 0) return { attached: [], detached: [] }
     const placeholders = ids.map(() => '?').join(', ')
     const present = await exec.all(
-      `SELECT ${this.fkRelated} FROM ${this.pivotTable} WHERE ${this.fkParent} = ? AND ${this.fkRelated} IN (${placeholders})`,
+      `SELECT ${quoteSqlColumn(this.fkRelated)} FROM ${quotedTable(this.pivotTable)} WHERE ${quoteSqlColumn(this.fkParent)} = ? AND ${quoteSqlColumn(this.fkRelated)} IN (${placeholders})`,
       [this.parentId, ...ids],
     )
     const presentIds = new Set(present.map(r => r[this.fkRelated]))
@@ -3335,7 +3357,7 @@ class ModelQueryBuilder<
   private buildQuery(): { sql: string; params: unknown[] } {
     const params: unknown[] = []
     const cols = this._select.map(c => (c === '*' ? c : quotedColumn(c)))
-    let sql = `SELECT ${cols.join(', ')} FROM ${this._definition.table}`
+    let sql = `SELECT ${cols.join(', ')} FROM ${quotedTable(this._definition.table)}`
 
     const whereBody = this.composeWhere(params)
     if (whereBody) {
@@ -3651,7 +3673,7 @@ class ModelQueryBuilder<
   async count(): Promise<number> {
     const exec = getExecutor()
     const params: unknown[] = []
-    let sql = `SELECT COUNT(*) as count FROM ${this._definition.table}`
+    let sql = `SELECT COUNT(*) as count FROM ${quotedTable(this._definition.table)}`
 
     const whereBody = this.composeWhere(params)
     if (whereBody) {
@@ -3704,7 +3726,7 @@ class ModelQueryBuilder<
     // quotedColumn, not sqlColumn: a column the model has every right to name
     // `order` or `group` is a syntax error unquoted. See quoteSqlColumn.
     const incCol = quotedColumn(column as string)
-    let sql = `UPDATE ${this._definition.table} SET ${incCol} = ${incCol} + ?`
+    let sql = `UPDATE ${quotedTable(this._definition.table)} SET ${incCol} = ${incCol} + ?`
 
     if (timestampsEnabled(this._definition)) {
       sql += `, updated_at = ?`
@@ -4030,7 +4052,7 @@ class ModelQueryBuilder<
     // `order` or `group` column is a syntax error bare), while the result key
     // every driver hands back is the unquoted name.
     const pluckCol = sqlColumn(column as string)
-    let sql = `SELECT ${quotedColumn(column as string)} FROM ${this._definition.table}`
+    let sql = `SELECT ${quotedColumn(column as string)} FROM ${quotedTable(this._definition.table)}`
 
     const whereBody = this.composeWhere(params)
     if (whereBody) {
@@ -4054,7 +4076,7 @@ class ModelQueryBuilder<
     const exec = getExecutor()
     const params: unknown[] = []
     // quotedColumn: `MAX(order)` is a syntax error, `MAX("order")` is not.
-    let sql = `SELECT ${fn}(${quotedColumn(column)}) as v FROM ${this._definition.table}`
+    let sql = `SELECT ${fn}(${quotedColumn(column)}) as v FROM ${quotedTable(this._definition.table)}`
 
     const whereBody = this.composeWhere(params)
     if (whereBody) {
@@ -4122,7 +4144,7 @@ class ModelQueryBuilder<
 
   private async deleteMatching(mark: boolean): Promise<number> {
     const exec = getExecutor()
-    const table = this._definition.table
+    const table = quotedTable(this._definition.table)
     const hooks = this._definition.hooks
 
     // composeWhere, not buildWhereClauses: the soft-delete predicate is added
@@ -4185,7 +4207,7 @@ class ModelQueryBuilder<
       : { sets: entries.map(([k]) => `${quotedColumn(k)} = ?`).join(', '), values: entries.map(([, v]) => v) }
     const params: unknown[] = [...values]
 
-    let sql = `UPDATE ${this._definition.table} SET ${sets}`
+    let sql = `UPDATE ${quotedTable(this._definition.table)} SET ${sets}`
 
     // See delete(): composeWhere is the only path that adds the soft-delete
     // predicate, so a scoped update has to go through it. #1111.
@@ -4393,7 +4415,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
       const pk = definition.primaryKey || 'id'
       // Exclude soft-deleted rows by default (use withTrashed()/query() to override).
       const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
-      const row = await exec.get(`SELECT * FROM ${definition.table} WHERE ${pk} = ?${sd}`, [id])
+      const row = await exec.get(`SELECT * FROM ${quotedTable(definition.table)} WHERE ${pk} = ?${sd}`, [id])
       return row ? new ModelInstance<TDef>(definition, row as any, true) as ModelRecord<TDef> : undefined
     },
 
@@ -4407,7 +4429,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
       const exec = getExecutor()
       const pk = definition.primaryKey || 'id'
       const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
-      const rows = await exec.all(`SELECT * FROM ${definition.table} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})${sd}`, ids)
+      const rows = await exec.all(`SELECT * FROM ${quotedTable(definition.table)} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})${sd}`, ids)
       return rows.map(row => new ModelInstance<TDef>(definition, row as any, true) as ModelRecord<TDef>)
     },
 
@@ -4485,8 +4507,8 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
             const cols = Object.keys(row)
             const result = await exec.insert(
               cols.length
-                ? `INSERT INTO ${definition.table} (${cols.map(quoteSqlColumn).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
-                : `INSERT INTO ${definition.table} DEFAULT VALUES`,
+                ? `INSERT INTO ${quotedTable(definition.table)} (${cols.map(quoteSqlColumn).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
+                : `INSERT INTO ${quotedTable(definition.table)} DEFAULT VALUES`,
               Object.values(row),
               pk,
             )
@@ -4504,8 +4526,11 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
         // statements on one connection and grew its Postgres backend past
         // 1.8 GB. One jsonb parameter is one signature per column shape.
         if (exec.dialect === 'postgres' && jsonBatchable(definition, columns, indexes.map(i => rows[i]!))) {
-          const table = definition.table
-          const list = columns.join(', ')
+          const table = quotedTable(definition.table)
+          // Quoted on both sides of the statement: the INSERT target list and
+          // the SELECT off the record set name the same columns, and a reserved
+          // one has to be spelled the same way in each.
+          const list = columns.map(quoteSqlColumn).join(', ')
           // Bound as text and cast on the server: typed as jsonb, the driver
           // JSON-encodes the parameter itself and the batch arrives as one
           // JSON string rather than an array.
@@ -4541,7 +4566,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
           const size = Math.min(perStatement, floorPowerOfTwo(indexes.length - start))
           const chunk = indexes.slice(start, start + size)
           start += size
-          const sql = `INSERT INTO ${definition.table} (${columns.map(quoteSqlColumn).join(', ')}) VALUES ${chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ')}`
+          const sql = `INSERT INTO ${quotedTable(definition.table)} (${columns.map(quoteSqlColumn).join(', ')}) VALUES ${chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ')}`
           const params = chunk.flatMap(i => columns.map(c => rows[i]![c]))
 
           if (!generated) {
@@ -4645,7 +4670,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
     },
 
     async truncate(): Promise<void> {
-      await getExecutor().run(`DELETE FROM ${definition.table}`, [])
+      await getExecutor().run(`DELETE FROM ${quotedTable(definition.table)}`, [])
     },
 
     getDefinition: () => definition,
@@ -4775,7 +4800,7 @@ export async function createTableFromModel(definition: ModelDefinition): Promise
     columns.push('deleted_at TEXT')
   }
 
-  await exec.run(`CREATE TABLE IF NOT EXISTS ${definition.table} (${columns.join(', ')})`, [])
+  await exec.run(`CREATE TABLE IF NOT EXISTS ${quotedTable(definition.table)} (${columns.join(', ')})`, [])
 }
 
 export async function seedModel(definition: ModelDefinition, count?: number, faker?: Record<string, unknown>): Promise<void> {
@@ -4814,7 +4839,7 @@ catch {
 
     const columns = Object.keys(data)
     await exec.run(
-      `INSERT INTO ${definition.table} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+      `INSERT INTO ${quotedTable(definition.table)} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
       Object.values(data)
     )
   }
