@@ -1,3 +1,23 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.41...v0.3.42)
+
+## 🐛 Bug Fixes
+
+- **client**: quote identifiers in the relation sugar and the bulk helpers ([4d8cf76](https://github.com/stacksjs/bun-query-builder/commit/4d8cf76)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1207](https://github.com/stacksjs/bun-query-builder/issues/1207), [#1033](https://github.com/stacksjs/bun-query-builder/issues/1033))
+- **client**: quote the select builder's table and its join references ([dfc3049](https://github.com/stacksjs/bun-query-builder/commit/dfc3049)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1207](https://github.com/stacksjs/bun-query-builder/issues/1207))
+- **orm**: quote table names, so a reserved-word table can be read and written ([515e93d](https://github.com/stacksjs/bun-query-builder/commit/515e93d)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1207](https://github.com/stacksjs/bun-query-builder/issues/1207), [#1207](https://github.com/stacksjs/bun-query-builder/issues/1207))
+
+## 📝 Documentation
+
+- **claude**: never create git worktrees — one project is one agent here ([75a4276](https://github.com/stacksjs/bun-query-builder/commit/75a4276)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.3.42 ([073296c](https://github.com/stacksjs/bun-query-builder/commit/073296c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.40...v0.3.41)
 
 ## 🐛 Bug Fixes
