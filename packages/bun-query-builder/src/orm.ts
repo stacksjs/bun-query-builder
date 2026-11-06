@@ -40,7 +40,7 @@ import { createFakerCompatLayer } from './faker-compat'
 import { normalizeRelationEntry, normalizeRelationList } from './relation-utils'
 import { singularizerFor, toTableName as sharedToTableName } from './inflect'
 import type { WhereTerm } from './sql-fragments'
-import { countPlaceholders, renderInPredicate, renderWhereTerms, toDialectPlaceholders } from './sql-fragments'
+import { countPlaceholders, quoteIdentifierForDialect, renderInPredicate, renderWhereTerms, toDialectPlaceholders } from './sql-fragments'
 
 /**
  * Current timestamp formatted for the active dialect.
@@ -1874,45 +1874,16 @@ function sqlColumn(name: string): string {
 }
 
 /**
- * Words SQLite and Postgres refuse as a bare column name: SQLite's keyword list
- * plus Postgres's reserved words. A model may still call a column `when`,
- * `order` or `user`, and an unquoted one is a syntax error that names neither
- * the model nor the column (`near "when": syntax error`). Only these words are
- * quoted on those dialects; everything else stays bare, because the column was
- * created lower-case and quoting a mixed-case name would make it case-sensitive.
- */
-const ANSI_RESERVED_WORDS: ReadonlySet<string> = new Set((
-  'abort action add after all alter always analyse analyze and any array as asc asymmetric attach autoincrement before begin '
-  + 'between both by cascade case cast check collate column commit conflict constraint create cross current current_catalog '
-  + 'current_date current_role current_time current_timestamp current_user database default deferrable deferred delete desc '
-  + 'detach distinct do drop each else end escape except exclude exclusive exists explain fail false fetch filter first '
-  + 'following for foreign from full generated glob grant group groups having if ignore immediate in index indexed initially '
-  + 'inner insert instead intersect into is isnull join key lateral last leading left like limit localtime localtimestamp '
-  + 'match materialized natural no not nothing notnull null nulls of offset on only or order others outer over partition '
-  + 'placing plan pragma preceding primary query raise range recursive references regexp reindex release rename replace '
-  + 'restrict returning right rollback row rows savepoint select session_user set some symmetric table temp temporary then '
-  + 'ties to trailing transaction trigger true unbounded union unique update user using vacuum values variadic view virtual '
-  + 'when where window with without'
-).split(' '))
-
-/**
- * A column reference as it is written into a statement. MySQL reserves words a
- * model has every right to use as a column (`when`, `repeat`, `key`, `order`,
- * `group`), and an unquoted one is a syntax error that names neither the model
- * nor the column. Backticks change nothing else on MySQL, where identifiers are
- * case-insensitive, so every plain identifier is quoted there. SQLite and
- * Postgres quote only the words in {@link ANSI_RESERVED_WORDS}. `table.column`
- * is handled on each side, and anything that is not a plain identifier (a
- * function call, `*`) is untouched.
+ * A column reference as it is written into a statement.
+ *
+ * Delegates to {@link quoteIdentifierForDialect}, which `client.ts` uses for
+ * the same job: the rule (back-quote everything on MySQL, quote only
+ * ANSI_RESERVED_WORDS on SQLite and Postgres) and the word list used to live
+ * here, and the two builders disagreed about which identifiers they would
+ * quote. See #1207 and the header of `sql-fragments.ts`.
  */
 function quoteSqlColumn(name: string): string {
-  if (!/^[A-Z_][\w$]*(?:\.[A-Z_][\w$]*)?$/i.test(name))
-    return name
-
-  if (isMysqlLike(config.dialect))
-    return name.split('.').map(part => `\`${part}\``).join('.')
-
-  return name.split('.').map(part => ANSI_RESERVED_WORDS.has(part.toLowerCase()) ? `"${part}"` : part).join('.')
+  return quoteIdentifierForDialect(name, config.dialect)
 }
 
 /** `sqlColumn`, quoted for the dialect: what WHERE, ORDER BY, SELECT and SET interpolate. */

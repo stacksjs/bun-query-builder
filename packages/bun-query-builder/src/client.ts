@@ -15,7 +15,7 @@ import { bunSql, getOrCreateBunSql, resetConnection, resolveLibSQLTarget } from 
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
 import type { WhereTerm } from './sql-fragments'
-import { countPlaceholders, FALSE_PREDICATE, mapPlaceholders, renderInPredicate, renderWhereTerms, scanTopLevelKeywords } from './sql-fragments'
+import { countPlaceholders, FALSE_PREDICATE, mapPlaceholders, quoteIdentifierForDialect, renderInPredicate, renderWhereTerms, scanTopLevelKeywords } from './sql-fragments'
 
 export { resetConnection, resolveLibSQLTarget }
 
@@ -637,20 +637,25 @@ function validateIdentifier(name: string, context?: string): void {
  * Joining a table to itself needs a second name for it, and `selectFrom`
  * already accepted `table as alias`, so every join takes the same form
  * (stacksjs/bun-query-builder#1195). Both parts are validated as identifiers,
- * the alias without a dot, and anything else is rejected as before. `name` is
- * what the rest of the query refers to the table by.
+ * the alias without a dot, and anything else is rejected as before.
+ *
+ * The two fields differ on purpose: `sql` is what the JOIN interpolates, and
+ * it is quoted, because `JOIN order` and `JOIN user` are syntax errors and the
+ * write builders beside this one have always quoted their table. `name` is what
+ * the rest of the query refers to the table by — the `joinedTables` set, the
+ * schema lookups — so it stays the name the caller wrote. See #1207.
  */
 function joinTableRef(table: string, context: string): { sql: string, name: string } {
   const aliased = /^\s*(\S+)\s+as\s+(\S+)\s*$/i.exec(table)
   if (!aliased) {
     validateIdentifier(table, context)
-    return { sql: table, name: table }
+    return { sql: quoteIdentifierForDialect(table, config.dialect), name: table }
   }
   const [, name, alias] = aliased
   validateIdentifier(name!, context)
   if (!/^[A-Z_]\w*$/i.test(alias!))
     throw new Error(`[query-builder] Invalid identifier in ${context}: '${table}'. An alias must start with a letter or underscore and contain only alphanumeric characters and underscores.`)
-  return { sql: `${name} AS ${alias}`, name: alias! }
+  return { sql: `${quoteIdentifierForDialect(name!, config.dialect)} AS ${alias}`, name: alias! }
 }
 
 // The helpers below are module-level on purpose: they are stateless, and
@@ -703,6 +708,20 @@ function validateQualifiedIdentifier(value: unknown, context: string): void {
     if (!/^[A-Z_][A-Z0-9_]*$/i.test(part))
       throw new TypeError(`[query-builder] ${context}: identifier segment '${part}' contains characters outside [A-Za-z0-9_]`)
   }
+}
+
+/**
+ * An ON-clause reference: validated, then quoted for the dialect.
+ *
+ * Validation and quoting go together because the join methods did the first
+ * and not the second, and `ON order.user_id = user.id` is a syntax error on
+ * whichever half names a reserved table or column. `table.column` is the usual
+ * shape here and {@link quoteIdentifierForDialect} quotes each side of the dot
+ * independently. See #1207.
+ */
+function joinOnRef(value: string, context: string): string {
+  validateQualifiedIdentifier(value, context)
+  return quoteIdentifierForDialect(value, config.dialect)
 }
 
 /**
@@ -3984,10 +4003,23 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
   function makeSelect<TTable extends keyof DB & string>(table: TTable, columns?: string[]): any {
     // Use the sql instance from state (allows tests to inject mockSql)
     const sql = _sql
+    /**
+     * The table as every statement this builder writes must spell it.
+     *
+     * `insertInto`, `updateTable` and `deleteFrom` have always quoted theirs;
+     * this builder interpolated the raw name, so `selectFrom('order')` went out
+     * as `SELECT * FROM order` and every read off a reserved-word table — the
+     * select, its WHERE, its ORDER BY, the aggregates — failed with
+     * `near "order": syntax error`. See #1207.
+     *
+     * Computed once, like `text` below, so one dialect governs the whole
+     * statement. `String(table)` stays the lookup key for `schema` and `meta`.
+     */
+    const tableRef = quoteIdentifierForDialect(String(table), config.dialect)
     // Build query using unsafe for better performance
     let text = (columns && columns.length > 0)
-      ? `SELECT ${columns.join(', ')} FROM ${String(table)}`
-      : `SELECT * FROM ${String(table)}`
+      ? `SELECT ${columns.join(', ')} FROM ${tableRef}`
+      : `SELECT * FROM ${tableRef}`
     // Set by `selectAll(table)`. Once the SELECT list holds `t.*`, a later
     // `select([...])` adds to it (Kysely semantics) rather than replacing it,
     // which would silently drop the table's columns.
@@ -4837,7 +4869,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           text = `SELECT ${distinctPrefix}${rendered.join(', ')}${text.substring(fromIndex)}`
         }
         else {
-          text = `SELECT ${distinctPrefix}${rendered.join(', ')} FROM ${table}`
+          text = `SELECT ${distinctPrefix}${rendered.join(', ')} FROM ${tableRef}`
         }
         built = null
         return this as any
@@ -6232,10 +6264,10 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // operator. Compile-time types already constrain these; this guards
         // the `as any` / dynamic-string escape hatch.
         const joined = joinTableRef(table2, 'join(table)')
-        validateQualifiedIdentifier(onLeft, 'join(onLeft)')
-        validateQualifiedIdentifier(onRight, 'join(onRight)')
+        const safeLeft = joinOnRef(onLeft, 'join(onLeft)')
+        const safeRight = joinOnRef(onRight, 'join(onRight)')
         assertSafeWhereOperator(operator, 'join(operator)')
-        insertJoin(`JOIN ${joined.sql} ON ${onLeft} ${operator} ${onRight}`)
+        insertJoin(`JOIN ${joined.sql} ON ${safeLeft} ${operator} ${safeRight}`)
         joinedTables.add(joined.name)
         return this as any
       },
@@ -6248,46 +6280,46 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // allows one optional `table.` prefix. See
         // stacksjs/stacks#1858 #20.
         validateIdentifier(alias, 'joinSub(alias)')
-        validateQualifiedIdentifier(onLeft, 'joinSub(onLeft)')
-        validateQualifiedIdentifier(onRight, 'joinSub(onRight)')
+        const safeLeft = joinOnRef(onLeft, 'joinSub(onLeft)')
+        const safeRight = joinOnRef(onRight, 'joinSub(onRight)')
         assertSafeWhereOperator(operator, 'joinSub(operator)')
-        insertJoin(`JOIN (${String(sub.toSQL())}) AS ${alias} ON ${onLeft} ${operator} ${onRight}`)
+        insertJoin(`JOIN (${String(sub.toSQL())}) AS ${alias} ON ${safeLeft} ${operator} ${safeRight}`)
         joinedTables.add(alias)
         return this as any
       },
       innerJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         const joined = joinTableRef(table2, 'innerJoin(table)')
-        validateQualifiedIdentifier(onLeft, 'innerJoin(onLeft)')
-        validateQualifiedIdentifier(onRight, 'innerJoin(onRight)')
+        const safeLeft = joinOnRef(onLeft, 'innerJoin(onLeft)')
+        const safeRight = joinOnRef(onRight, 'innerJoin(onRight)')
         assertSafeWhereOperator(operator, 'innerJoin(operator)')
-        insertJoin(`INNER JOIN ${joined.sql} ON ${onLeft} ${operator} ${onRight}`)
+        insertJoin(`INNER JOIN ${joined.sql} ON ${safeLeft} ${operator} ${safeRight}`)
         joinedTables.add(joined.name)
         return this as any
       },
       leftJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         const joined = joinTableRef(table2, 'leftJoin(table)')
-        validateQualifiedIdentifier(onLeft, 'leftJoin(onLeft)')
-        validateQualifiedIdentifier(onRight, 'leftJoin(onRight)')
+        const safeLeft = joinOnRef(onLeft, 'leftJoin(onLeft)')
+        const safeRight = joinOnRef(onRight, 'leftJoin(onRight)')
         assertSafeWhereOperator(operator, 'leftJoin(operator)')
-        insertJoin(`LEFT JOIN ${joined.sql} ON ${onLeft} ${operator} ${onRight}`)
+        insertJoin(`LEFT JOIN ${joined.sql} ON ${safeLeft} ${operator} ${safeRight}`)
         joinedTables.add(joined.name)
         return this as any
       },
       leftJoinSub(sub: { toSQL: () => any }, alias: string, onLeft: string, operator: WhereOperator, onRight: string) {
         validateIdentifier(alias, 'leftJoinSub(alias)')
-        validateQualifiedIdentifier(onLeft, 'leftJoinSub(onLeft)')
-        validateQualifiedIdentifier(onRight, 'leftJoinSub(onRight)')
+        const safeLeft = joinOnRef(onLeft, 'leftJoinSub(onLeft)')
+        const safeRight = joinOnRef(onRight, 'leftJoinSub(onRight)')
         assertSafeWhereOperator(operator, 'leftJoinSub(operator)')
-        insertJoin(`LEFT JOIN (${String(sub.toSQL())}) AS ${alias} ON ${onLeft} ${operator} ${onRight}`)
+        insertJoin(`LEFT JOIN (${String(sub.toSQL())}) AS ${alias} ON ${safeLeft} ${operator} ${safeRight}`)
         joinedTables.add(alias)
         return this as any
       },
       rightJoin(table2: string, onLeft: string, operator: WhereOperator, onRight: string) {
         const joined = joinTableRef(table2, 'rightJoin(table)')
-        validateQualifiedIdentifier(onLeft, 'rightJoin(onLeft)')
-        validateQualifiedIdentifier(onRight, 'rightJoin(onRight)')
+        const safeLeft = joinOnRef(onLeft, 'rightJoin(onLeft)')
+        const safeRight = joinOnRef(onRight, 'rightJoin(onRight)')
         assertSafeWhereOperator(operator, 'rightJoin(operator)')
-        insertJoin(`RIGHT JOIN ${joined.sql} ON ${onLeft} ${operator} ${onRight}`)
+        insertJoin(`RIGHT JOIN ${joined.sql} ON ${safeLeft} ${operator} ${safeRight}`)
         joinedTables.add(joined.name)
         return this as any
       },
@@ -6342,7 +6374,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           if (fromIdx !== -1)
             text = `SELECT ${allCols}${text.substring(fromIdx)}`
           else
-            text = `SELECT ${allCols} FROM ${parent}`
+            text = `SELECT ${allCols} FROM ${tableRef}`
           built = null
         }
         return this as any
@@ -6947,7 +6979,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           countText = `SELECT COUNT(*) as c${src.substring(fromIdx)}`
         }
         else {
-          countText = `SELECT COUNT(*) as c FROM ${table}`
+          countText = `SELECT COUNT(*) as c FROM ${tableRef}`
         }
 
         // Ultra-fast path
@@ -6982,7 +7014,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const fromIdx = src.indexOf(' FROM ')
         const avgText = fromIdx !== -1
           ? `SELECT AVG(${col}) as a${src.substring(fromIdx)}`
-          : `SELECT AVG(${col}) as a FROM ${table}`
+          : `SELECT AVG(${col}) as a FROM ${tableRef}`
 
         // Ultra-fast path
         const aHooks = activeHooks()
@@ -7009,7 +7041,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const fromIdx = src.indexOf(' FROM ')
         const sumText = fromIdx !== -1
           ? `SELECT SUM(${col}) as s${src.substring(fromIdx)}`
-          : `SELECT SUM(${col}) as s FROM ${table}`
+          : `SELECT SUM(${col}) as s FROM ${tableRef}`
         const q = whereParams.length > 0
           ? prepareQuery(sumText, whereParams)
           : prepareQuery(sumText)
@@ -7023,7 +7055,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const fromIdx = src.indexOf(' FROM ')
         const maxText = fromIdx !== -1
           ? `SELECT MAX(${col}) as m${src.substring(fromIdx)}`
-          : `SELECT MAX(${col}) as m FROM ${table}`
+          : `SELECT MAX(${col}) as m FROM ${tableRef}`
         const q = whereParams.length > 0
           ? prepareQuery(maxText, whereParams)
           : prepareQuery(maxText)
@@ -7037,7 +7069,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const fromIdx = src.indexOf(' FROM ')
         const minText = fromIdx !== -1
           ? `SELECT MIN(${col}) as m${src.substring(fromIdx)}`
-          : `SELECT MIN(${col}) as m FROM ${table}`
+          : `SELECT MIN(${col}) as m FROM ${tableRef}`
         const q = whereParams.length > 0
           ? prepareQuery(minText, whereParams)
           : prepareQuery(minText)

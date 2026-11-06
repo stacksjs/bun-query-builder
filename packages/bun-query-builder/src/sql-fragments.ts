@@ -370,3 +370,57 @@ export function scanTopLevelKeywords(
 
   return hits
 }
+
+/**
+ * Words SQLite and Postgres refuse as a bare identifier: SQLite's keyword list
+ * plus Postgres's reserved words.
+ *
+ * A schema may legitimately use one as a column or a table name — `order` for a
+ * sort position, `group`, `when` for a schedule, `values`, `key`, and `user`,
+ * which Postgres reserves and SQLite does not. Unquoted, each is a syntax error
+ * that names neither the table nor the column (`near "order": syntax error`).
+ */
+export const ANSI_RESERVED_WORDS: ReadonlySet<string> = new Set((
+  'abort action add after all alter always analyse analyze and any array as asc asymmetric attach autoincrement before begin '
+  + 'between both by cascade case cast check collate column commit conflict constraint create cross current current_catalog '
+  + 'current_date current_role current_time current_timestamp current_user database default deferrable deferred delete desc '
+  + 'detach distinct do drop each else end escape except exclude exclusive exists explain fail false fetch filter first '
+  + 'following for foreign from full generated glob grant group groups having if ignore immediate in index indexed initially '
+  + 'inner insert instead intersect into is isnull join key lateral last leading left like limit localtime localtimestamp '
+  + 'match materialized natural no not nothing notnull null nulls of offset on only or order others outer over partition '
+  + 'placing plan pragma preceding primary query raise range recursive references regexp reindex release rename replace '
+  + 'restrict returning right rollback row rows savepoint select session_user set some symmetric table temp temporary then '
+  + 'ties to trailing transaction trigger true unbounded union unique update user using vacuum values variadic view virtual '
+  + 'when where window with without'
+).split(' '))
+
+/**
+ * An identifier — a column or a table — as a statement writes it.
+ *
+ * MySQL reserves words a schema has every right to use (`when`, `repeat`,
+ * `key`, `order`, `group`), and its identifiers are case-insensitive on every
+ * platform this runs on, so every plain identifier is back-quoted there:
+ * quoting changes nothing but the parse.
+ *
+ * SQLite and Postgres quote only {@link ANSI_RESERVED_WORDS}. Quoting an
+ * ordinary name on Postgres makes it case-*sensitive*, so `createdAt` would
+ * stop matching the `createdat` the server actually stored — a fix that breaks
+ * a working query. The narrowness is deliberate.
+ *
+ * `table.column` is handled on each side. Anything that is not a plain
+ * identifier — a function call, an expression, `*`, something already quoted —
+ * is returned untouched, because quoting those would break them.
+ *
+ * Shared by `client.ts` and `orm.ts` for the reason this module exists: each
+ * had its own partial answer, and the halves disagreed about whether a
+ * reserved-word table could be addressed at all. See #1207.
+ */
+export function quoteIdentifierForDialect(name: string, dialect: SupportedDialect): string {
+  if (!/^[A-Z_][\w$]*(?:\.[A-Z_][\w$]*)?$/i.test(name))
+    return name
+
+  if (dialect === 'mysql' || dialect === 'singlestore' || dialect === 'vitess')
+    return name.split('.').map(part => `\`${part}\``).join('.')
+
+  return name.split('.').map(part => ANSI_RESERVED_WORDS.has(part.toLowerCase()) ? `"${part}"` : part).join('.')
+}
