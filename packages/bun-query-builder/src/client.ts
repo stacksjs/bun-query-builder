@@ -721,7 +721,20 @@ function validateQualifiedIdentifier(value: unknown, context: string): void {
  */
 function joinOnRef(value: string, context: string): string {
   validateQualifiedIdentifier(value, context)
-  return quoteIdentifierForDialect(value, config.dialect)
+  return sqlIdent(value)
+}
+
+/**
+ * {@link quoteIdentifierForDialect} against the dialect in force — the common
+ * case, and short enough to use inline in the relation JOIN templates, which
+ * name four or five identifiers each.
+ *
+ * It takes the name as written and returns the spelling a statement needs; the
+ * callers keep the raw name for `meta` and `schema` lookups, which are keyed by
+ * the unquoted table. See #1207.
+ */
+function sqlIdent(name: string): string {
+  return quoteIdentifierForDialect(name, config.dialect)
 }
 
 /**
@@ -4433,8 +4446,9 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       validateIdentifier(parentTable, 'wherePivot auto-join (parent table)')
       validateIdentifier(parentPk, 'wherePivot auto-join (parent PK)')
       built = sql`${ensureBuilt()} LEFT JOIN ${sql(resolved.pivotTable)} ON ${sql(`${resolved.pivotTable}.${resolved.fkParent}`)} = ${sql(`${parentTable}.${parentPk}`)}`
-      // Reflect in text so toSQL() sees it
-      text = `${text} LEFT JOIN ${resolved.pivotTable} ON ${resolved.pivotTable}.${resolved.fkParent} = ${parentTable}.${parentPk}`
+      // Reflect in text so toSQL() sees it. The `built` branch above gets its
+      // quoting from Bun's `sql(ident)` helper; this one has to do its own.
+      text = `${text} LEFT JOIN ${sqlIdent(resolved.pivotTable)} ON ${sqlIdent(resolved.pivotTable)}.${sqlIdent(resolved.fkParent)} = ${sqlIdent(parentTable)}.${sqlIdent(parentPk)}`
       joinedTables.add(resolved.pivotTable)
     }
 
@@ -4481,13 +4495,13 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
       validateIdentifier(fk, 'relationship subquery (foreign key)')
 
-      let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk}`
+      let subquerySQL = `SELECT 1 FROM ${sqlIdent(targetTable)} WHERE ${sqlIdent(targetTable)}.${sqlIdent(fk)} = ${sqlIdent(parentTable)}.${sqlIdent(pk)}`
 
       if (callback) {
         const subQb = {
           where: (col: string, op: string, val: any) => {
             validateIdentifier(col, 'relationship subquery condition')
-            return `${targetTable}.${col} ${assertSafeWhereOperator(op, 'whereHas callback')} ${formatSubqueryValue(val)}`
+            return `${sqlIdent(targetTable)}.${sqlIdent(col)} ${assertSafeWhereOperator(op, 'whereHas callback')} ${formatSubqueryValue(val)}`
           },
         }
         const condition = callback(subQb)
@@ -4508,7 +4522,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       const fk = `${targetTable.endsWith('s') ? targetTable.slice(0, -1) : targetTable}_id`
       validateIdentifier(fk, 'relationship subquery (foreign key)')
 
-      let subquerySQL = `SELECT 1 FROM ${targetTable} WHERE ${targetTable}.${pk} = ${parentTable}.${fk}`
+      let subquerySQL = `SELECT 1 FROM ${sqlIdent(targetTable)} WHERE ${sqlIdent(targetTable)}.${sqlIdent(pk)} = ${sqlIdent(parentTable)}.${sqlIdent(fk)}`
 
       if (callback) {
         const subQb = {
@@ -4518,7 +4532,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // literal — a whereHas(belongsTo, cb) injection vector.
           where: (col: string, op: string, val: any) => {
             validateIdentifier(col, 'relationship subquery condition')
-            return `${targetTable}.${col} ${assertSafeWhereOperator(op, 'whereHas callback')} ${formatSubqueryValue(val)}`
+            return `${sqlIdent(targetTable)}.${sqlIdent(col)} ${assertSafeWhereOperator(op, 'whereHas callback')} ${formatSubqueryValue(val)}`
           },
         }
         const condition = callback(subQb)
@@ -4551,7 +4565,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       validateIdentifier(fkA, 'relationship subquery (foreign key A)')
       validateIdentifier(fkB, 'relationship subquery (foreign key B)')
 
-      let subquerySQL = `SELECT 1 FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${fkB} WHERE ${pivot}.${fkA} = ${parentTable}.${pk}`
+      let subquerySQL = `SELECT 1 FROM ${sqlIdent(pivot)} JOIN ${sqlIdent(targetTable)} ON ${sqlIdent(targetTable)}.${sqlIdent(targetPk)} = ${sqlIdent(pivot)}.${sqlIdent(fkB)} WHERE ${sqlIdent(pivot)}.${sqlIdent(fkA)} = ${sqlIdent(parentTable)}.${sqlIdent(pk)}`
 
       if (callback) {
         const subQb = {
@@ -4559,7 +4573,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // buildBelongsToSubquery above for why.
           where: (col: string, op: string, val: any) => {
             validateIdentifier(col, 'relationship subquery condition')
-            return `${targetTable}.${col} ${assertSafeWhereOperator(op, 'whereHas callback')} ${formatSubqueryValue(val)}`
+            return `${sqlIdent(targetTable)}.${sqlIdent(col)} ${assertSafeWhereOperator(op, 'whereHas callback')} ${formatSubqueryValue(val)}`
           },
         }
         const condition = callback(subQb)
@@ -4580,7 +4594,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
       validateIdentifier(fk, 'withCount (foreign key)')
 
-      return `(SELECT COUNT(*) FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk})`
+      return `(SELECT COUNT(*) FROM ${sqlIdent(targetTable)} WHERE ${sqlIdent(targetTable)}.${sqlIdent(fk)} = ${sqlIdent(parentTable)}.${sqlIdent(pk)})`
     }
 
     // Helper function to build count subquery for belongsToMany with validation
@@ -4600,7 +4614,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       validateIdentifier(pivot, 'withCount (pivot table)')
       validateIdentifier(fkA, 'withCount (foreign key)')
 
-      return `(SELECT COUNT(*) FROM ${pivot} WHERE ${pivot}.${fkA} = ${parentTable}.${pk})`
+      return `(SELECT COUNT(*) FROM ${sqlIdent(pivot)} WHERE ${sqlIdent(pivot)}.${sqlIdent(fkA)} = ${sqlIdent(parentTable)}.${sqlIdent(pk)})`
     }
 
     // Add an aggregate of a related column as a correlated subquery column —
@@ -4623,12 +4637,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       const targetTable = meta.modelToTable[targetModel] || targetModel
       const pk = meta.primaryKeys[parentTable] ?? 'id'
       validateIdentifier(targetTable, `with${fn} (target table)`)
-      const aggExpr = `${fn}(${targetTable}.${column})`
+      const aggExpr = `${fn}(${sqlIdent(targetTable)}.${sqlIdent(column)})`
       let sub: string
       if (type === 'hasMany' || type === 'hasOne') {
         const fk = `${parentTable.endsWith('s') ? parentTable.slice(0, -1) : parentTable}_id`
         validateIdentifier(fk, `with${fn} (foreign key)`)
-        sub = `(SELECT ${aggExpr} FROM ${targetTable} WHERE ${targetTable}.${fk} = ${parentTable}.${pk})`
+        sub = `(SELECT ${aggExpr} FROM ${sqlIdent(targetTable)} WHERE ${sqlIdent(targetTable)}.${sqlIdent(fk)} = ${sqlIdent(parentTable)}.${sqlIdent(pk)})`
       }
       else if (type === 'belongsToMany') {
         const resolved = meta
@@ -4643,7 +4657,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         validateIdentifier(pivot, `with${fn} (pivot table)`)
         validateIdentifier(fkA, `with${fn} (foreign key)`)
         validateIdentifier(fkB, `with${fn} (related key)`)
-        sub = `(SELECT ${aggExpr} FROM ${pivot} JOIN ${targetTable} ON ${targetTable}.${targetPk} = ${pivot}.${fkB} WHERE ${pivot}.${fkA} = ${parentTable}.${pk})`
+        sub = `(SELECT ${aggExpr} FROM ${sqlIdent(pivot)} JOIN ${sqlIdent(targetTable)} ON ${sqlIdent(targetTable)}.${sqlIdent(targetPk)} = ${sqlIdent(pivot)}.${sqlIdent(fkB)} WHERE ${sqlIdent(pivot)}.${sqlIdent(fkA)} = ${sqlIdent(parentTable)}.${sqlIdent(pk)})`
       }
       else {
         return
@@ -4995,7 +5009,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const addCmp = (col: unknown, op: unknown, val: unknown): void => {
               validateIdentifier(String(col), 'with() constraint column')
               const operator = assertSafeWhereOperator(op, 'with() constraint operator')
-              frags.push(`${targetTbl}.${String(col)} ${operator} ${formatSubqueryValue(val)}`)
+              frags.push(`${sqlIdent(targetTbl)}.${sqlIdent(String(col))} ${operator} ${formatSubqueryValue(val)}`)
             }
             const unsupported = (m: string) => () => {
               throw new Error(`[query-builder] with('${relationKey}', ...): ${m} is not supported inside a constraint callback on the JOIN-based builder — apply it to the outer query, or use the model layer's eager loading. (Silently ignoring it would return wrong data.)`)
@@ -5093,7 +5107,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             // rebuilds from text) — the previous `built = sql\`...\`` + a
             // `text = computeSqlText(built)` resync produced "[object Promise]"
             // text on real drivers, whose query objects can't be stringified.
-            insertJoin(`LEFT JOIN ${throughTable} ON ${throughTable}.${fkInThrough} = ${fromTable}.${fromPk} LEFT JOIN ${finalTable} ON ${finalTable}.${fkInFinal} = ${throughTable}.${throughPk}`)
+            insertJoin(`LEFT JOIN ${sqlIdent(throughTable)} ON ${sqlIdent(throughTable)}.${sqlIdent(fkInThrough)} = ${sqlIdent(fromTable)}.${sqlIdent(fromPk)} LEFT JOIN ${sqlIdent(finalTable)} ON ${sqlIdent(finalTable)}.${sqlIdent(fkInFinal)} = ${sqlIdent(throughTable)}.${sqlIdent(throughPk)}`)
             joinedTables.add(throughTable)
             joinedTables.add(finalTable)
             return finalTable
@@ -5109,7 +5123,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const childPk = meta.primaryKeys[childTable] ?? 'id'
             const fkA = resolved?.fkParent ?? `${singularize(fromTable)}_id`
             const fkB = resolved?.fkRelated ?? `${singularize(childTable)}_id`
-            insertJoin(`LEFT JOIN ${pivot} ON ${pivot}.${fkA} = ${fromTable}.${fromPk} LEFT JOIN ${childTable} ON ${childTable}.${childPk} = ${pivot}.${fkB}${buildJoinConstraint(childTable)}`)
+            insertJoin(`LEFT JOIN ${sqlIdent(pivot)} ON ${sqlIdent(pivot)}.${sqlIdent(fkA)} = ${sqlIdent(fromTable)}.${sqlIdent(fromPk)} LEFT JOIN ${sqlIdent(childTable)} ON ${sqlIdent(childTable)}.${sqlIdent(childPk)} = ${sqlIdent(pivot)}.${sqlIdent(fkB)}${buildJoinConstraint(childTable)}`)
 
             joinedTables.add(pivot)
             joinedTables.add(childTable)
@@ -5127,7 +5141,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const morphId = `${morphName}_id`
             const targetFk = `${singularize(childTable)}_id`
             const morphVal = formatSubqueryValue(meta.tableToModel[fromTable] || fromTable)
-            insertJoin(`LEFT JOIN ${pivotTable} ON ${pivotTable}.${morphId} = ${fromTable}.${fromPk} AND ${pivotTable}.${morphType} = ${morphVal} LEFT JOIN ${childTable} ON ${childTable}.${childPk} = ${pivotTable}.${targetFk}`)
+            insertJoin(`LEFT JOIN ${sqlIdent(pivotTable)} ON ${sqlIdent(pivotTable)}.${sqlIdent(morphId)} = ${sqlIdent(fromTable)}.${sqlIdent(fromPk)} AND ${sqlIdent(pivotTable)}.${sqlIdent(morphType)} = ${morphVal} LEFT JOIN ${sqlIdent(childTable)} ON ${sqlIdent(childTable)}.${sqlIdent(childPk)} = ${sqlIdent(pivotTable)}.${sqlIdent(targetFk)}`)
             joinedTables.add(pivotTable)
             joinedTables.add(childTable)
             return childTable
@@ -5146,7 +5160,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const morphId = `${morphName}_id`
             const relatedFk = `${singularize(relatedTable)}_id`
             const morphVal = formatSubqueryValue(meta.tableToModel[relatedTable] || relatedTable)
-            insertJoin(`LEFT JOIN ${pivotTable} ON ${pivotTable}.${relatedFk} = ${fromTable}.${fromPk} LEFT JOIN ${relatedTable} ON ${relatedTable}.${relatedPk} = ${pivotTable}.${morphId} AND ${pivotTable}.${morphType} = ${morphVal}`)
+            insertJoin(`LEFT JOIN ${sqlIdent(pivotTable)} ON ${sqlIdent(pivotTable)}.${sqlIdent(relatedFk)} = ${sqlIdent(fromTable)}.${sqlIdent(fromPk)} LEFT JOIN ${sqlIdent(relatedTable)} ON ${sqlIdent(relatedTable)}.${sqlIdent(relatedPk)} = ${sqlIdent(pivotTable)}.${sqlIdent(morphId)} AND ${sqlIdent(pivotTable)}.${sqlIdent(morphType)} = ${morphVal}`)
             joinedTables.add(pivotTable)
             joinedTables.add(relatedTable)
             return relatedTable
@@ -5157,7 +5171,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           if (isBt) {
             const fkInParent = `${singularize(childTable)}_id`
             const childPk = meta.primaryKeys[childTable] ?? 'id'
-            insertJoin(`LEFT JOIN ${childTable} ON ${fromTable}.${fkInParent} = ${childTable}.${childPk}${buildJoinConstraint(childTable)}`)
+            insertJoin(`LEFT JOIN ${sqlIdent(childTable)} ON ${sqlIdent(fromTable)}.${sqlIdent(fkInParent)} = ${sqlIdent(childTable)}.${sqlIdent(childPk)}${buildJoinConstraint(childTable)}`)
             joinedTables.add(childTable)
             return childTable
           }
@@ -5170,7 +5184,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const morphId = `${relationKey}_id`
             const fromPk = meta.primaryKeys[fromTable] ?? 'id'
             const morphVal = formatSubqueryValue(meta.tableToModel[fromTable] || fromTable)
-            insertJoin(`LEFT JOIN ${childTable} ON ${childTable}.${morphId} = ${fromTable}.${fromPk} AND ${childTable}.${morphType} = ${morphVal}`)
+            insertJoin(`LEFT JOIN ${sqlIdent(childTable)} ON ${sqlIdent(childTable)}.${sqlIdent(morphId)} = ${sqlIdent(fromTable)}.${sqlIdent(fromPk)} AND ${sqlIdent(childTable)}.${sqlIdent(morphType)} = ${morphVal}`)
             joinedTables.add(childTable)
             return childTable
           }
@@ -5179,7 +5193,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           const fkInChild = `${singularize(fromTable)}_id`
           const pk = meta.primaryKeys[fromTable] ?? 'id'
           const extraOn = `${addSoftDeleteCheck(childTable)}${buildJoinConstraint(childTable)}`
-          insertJoin(`LEFT JOIN ${childTable} ON ${childTable}.${fkInChild} = ${fromTable}.${pk}${extraOn}`)
+          insertJoin(`LEFT JOIN ${sqlIdent(childTable)} ON ${sqlIdent(childTable)}.${sqlIdent(fkInChild)} = ${sqlIdent(fromTable)}.${sqlIdent(pk)}${extraOn}`)
           joinedTables.add(childTable)
           return childTable
         }
@@ -6356,7 +6370,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         }
         if (parts.length > 0) {
           // Build column list as text
-          const parentPart = parentCols.length > 0 ? `${parent}.*` : ''
+          const parentPart = parentCols.length > 0 ? `${sqlIdent(parent)}.*` : ''
           const joinParts: string[] = []
           for (const jt of joinedTables) {
             const cols = Object.keys((schema as any)[jt]?.columns ?? {})
@@ -6366,7 +6380,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
                 : config.aliasing.relationColumnAliasFormat === 'table.dot.column'
                   ? `${jt}.${c}`
                   : `${jt}_${c}`
-              joinParts.push(`${jt}.${c} AS ${alias}`)
+              joinParts.push(`${sqlIdent(`${jt}.${c}`)} AS ${alias}`)
             }
           }
           const allCols = [parentPart, ...joinParts].filter(Boolean).join(', ')
@@ -9279,7 +9293,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           }
           tuples[r] = `(${cells.join(',')})`
         }
-        return prepareQuery(`INSERT INTO ${table}(${keys.join(',')})VALUES${tuples.join(',')}`, bound).execute()
+        return prepareQuery(`INSERT INTO ${sqlIdent(String(table))}(${keys.map(k => sqlIdent(String(k))).join(',')})VALUES${tuples.join(',')}`, bound).execute()
       }
 
       let rowTemplate: string
@@ -9295,7 +9309,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
       // Build SQL and collect params
       const sqlParts = new Array(rowCount + 2)
-      sqlParts[0] = `INSERT INTO ${table}(${keys.join(',')})VALUES`
+      sqlParts[0] = `INSERT INTO ${sqlIdent(String(table))}(${keys.map(k => sqlIdent(String(k))).join(',')})VALUES`
       let pidx = 0
 
       if (!isPositional) {
@@ -9335,11 +9349,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       // Build SET clause using array join
       const setClauses: string[] = Array.from({ length: dataLen })
       for (let i = 0; i < dataLen; i++) {
-        setClauses[i] = `${dataKeys[i]}=${getPlaceholder(i + 1)}`
+        setClauses[i] = `${sqlIdent(String(dataKeys[i]))}=${getPlaceholder(i + 1)}`
         params.push((data as any)[dataKeys[i]])
       }
 
-      let sql = `UPDATE ${table} SET ${setClauses.join(',')}`
+      let sql = `UPDATE ${sqlIdent(String(table))} SET ${setClauses.join(',')}`
 
       // Build WHERE clause.
       //
@@ -9355,7 +9369,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // which is fine for `=` and `>=` and produces `namelike?` for every
         // word operator the allowed set contains.
         const safeOperator = assertSafeWhereOperator(String(conditions[1]), 'updateMany')
-        sql += ` WHERE ${conditions[0]} ${safeOperator} ${getPlaceholder(params.length + 1)}`
+        sql += ` WHERE ${sqlIdent(String(conditions[0]))} ${safeOperator} ${getPlaceholder(params.length + 1)}`
         params.push(conditions[2])
       }
       // A fragment is inside the declared `WhereExpression` type (through
@@ -9372,7 +9386,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       }
       else if (conditions && typeof conditions === 'object' && Object.keys(conditions).length > 0) {
         const whereClauses = Object.keys(conditions).map(key =>
-          renderColumnCondition(key, (conditions as any)[key], params))
+          renderColumnCondition(sqlIdent(key), (conditions as any)[key], params))
         sql += ` WHERE ${whereClauses.join(' AND ')}`
       }
       // The empty object is the one that bites in production: `conditions` is
@@ -9397,12 +9411,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       if (config.dialect === 'postgres') {
         const placeholders = new Array(len)
         for (let i = 0; i < len; i++) placeholders[i] = `$${i + 1}`
-        return prepareQuery(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
+        return prepareQuery(`DELETE FROM ${sqlIdent(String(table))} WHERE ${sqlIdent(String(pk))} IN (${placeholders.join(',')})`, ids).execute()
       }
       // SQLite/MySQL: use ? placeholders
       const placeholders = new Array(len)
       for (let i = 0; i < len; i++) placeholders[i] = '?'
-      return prepareQuery(`DELETE FROM ${table} WHERE ${pk} IN (${placeholders.join(',')})`, ids).execute()
+      return prepareQuery(`DELETE FROM ${sqlIdent(String(table))} WHERE ${sqlIdent(String(pk))} IN (${placeholders.join(',')})`, ids).execute()
     },
     async firstOrCreate(table, match, defaults) {
       const existing = await (this as any).selectFrom(table).where(match as any).first()

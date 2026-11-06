@@ -161,6 +161,30 @@ describe('joins across reserved-word tables (#1207)', () => {
   })
 })
 
+describe('the bulk helpers on a reserved-word table (#1207)', () => {
+  // `createMany` was quoted by #1033 and its three siblings were left behind,
+  // so the fix landing on one of four is the recurring shape of this bug.
+  it('createMany already quoted and still does', async () => {
+    await qb().createMany('order', [{ id: 4, total: 40, user_id: 1 }])
+    expect(rows('order').map(r => r.id)).toEqual([1, 2, 3, 4])
+  })
+
+  it('insertMany quotes the table and the column list', async () => {
+    await qb().insertMany('order', [{ id: 5, total: 50, user_id: 1 }, { id: 6, total: 60, user_id: 2 }])
+    expect(rows('order').map(r => r.id)).toEqual([1, 2, 3, 5, 6])
+  })
+
+  it('updateMany quotes the table, the SET list and the WHERE keys', async () => {
+    await qb().updateMany('order', { user_id: 1 }, { total: 77 })
+    expect(rows('order').map(r => r.total)).toEqual([77, 77, 30])
+  })
+
+  it('deleteMany quotes the table and the key column', async () => {
+    await qb().deleteMany('order', [2, 3])
+    expect(rows('order').map(r => r.id)).toEqual([1])
+  })
+})
+
 describe('the write builders are unchanged (#1207)', () => {
   it('insertInto, updateTable and deleteFrom already quoted and still do', async () => {
     await qb().insertInto('order').values({ id: 9, total: 99, user_id: 1 }).execute()
