@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.42...v0.3.43)
+
+## 🐛 Bug Fixes
+
+- run migrations on their reserved lock session ([0c947db](https://github.com/stacksjs/bun-query-builder/commit/0c947db)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.3.43 ([c17e0ea](https://github.com/stacksjs/bun-query-builder/commit/c17e0ea)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.41...v0.3.42)
 
 ## 🐛 Bug Fixes
