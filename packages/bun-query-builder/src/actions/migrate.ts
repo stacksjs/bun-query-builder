@@ -546,25 +546,26 @@ function supportsTransactionalDdl(dialect: SupportedDialect): boolean {
  * SQLite has no advisory-lock primitive and a single-writer file, so it runs
  * unlocked rather than throwing.
  */
-async function withMigrationLock<T>(dialect: SupportedDialect, fn: () => Promise<T>): Promise<T> {
+async function withMigrationLock<T>(dialect: SupportedDialect, fn: (qb: ReturnType<typeof createQueryBuilder>) => Promise<T>): Promise<T> {
+  const qb = createQueryBuilder()
   if (dialect === 'sqlite')
-    return await fn()
+    return await fn(qb)
 
-  const qb = createQueryBuilder() as any
-  let reserved: any
-  try {
-    reserved = await qb.reserve()
-  }
-  catch {
-    // A driver that cannot reserve (or a mock) should not block migrating.
-    return await fn()
+  // Reservation failures must not turn a serialized migration into an
+  // unlocked one. Every statement below uses this session, including ledger
+  // work and per-file transactions; asking the pool for another connection
+  // while holding its only one deadlocks a max:1 pool.
+  const reserved = await qb.reserve()
+  if (!reserved.advisoryLock || !reserved.advisoryUnlock) {
+    reserved.release()
+    throw new Error('The database driver must support advisory locks to run migrations safely')
   }
 
   let held = false
   try {
     await reserved.advisoryLock(MIGRATION_LOCK_KEY)
     held = true
-    return await fn()
+    return await fn(reserved)
   }
   finally {
     try {
@@ -725,8 +726,6 @@ async function auditAfterMigrating(workspaceRoot: string, dialect: SupportedDial
 /** Apply every file not yet in the ledger, in order, under the migration lock. */
 async function applyPendingMigrations(scriptFiles: Array<{ name: string, path: string }>, dialect: SupportedDialect, executed: string[]): Promise<void> {
   try {
-    const qb = createQueryBuilder()
-
     // Everything from here runs under the migration lock, INCLUDING creating
     // the ledger table and reading it.
     //
@@ -739,7 +738,7 @@ async function applyPendingMigrations(scriptFiles: Array<{ name: string, path: s
     // Leaving it outside the lock meant the very scenario the lock exists for,
     // two concurrent boots, still had a way to fail. Caught by the locking
     // regression test failing intermittently in CI while passing locally.
-    await withMigrationLock(dialect, async () => {
+    await withMigrationLock(dialect, async (qb) => {
       // Create migrations table if it doesn't exist
       await createMigrationsTable(qb, dialect)
 
