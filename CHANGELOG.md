@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.43...v0.3.44)
+
+## 🐛 Bug Fixes
+
+- **migrations**: stop a column's unique flag from asking for an ALTER ([d22724e](https://github.com/stacksjs/bun-query-builder/commit/d22724e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1210](https://github.com/stacksjs/bun-query-builder/issues/1210))
+- **migrations**: converge the Postgres defaults that fromDb kept re-ALTERing ([30b8dfb](https://github.com/stacksjs/bun-query-builder/commit/30b8dfb)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1210](https://github.com/stacksjs/bun-query-builder/issues/1210))
+
+## 🔧 Chores
+
+- release v0.3.44 ([decf6ae](https://github.com/stacksjs/bun-query-builder/commit/decf6ae)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.42...v0.3.43)
 
 ## 🐛 Bug Fixes
