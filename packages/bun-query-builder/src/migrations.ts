@@ -1698,6 +1698,142 @@ export function isNarrowingChange(from: ColumnPlan, to: ColumnPlan, dialect?: Su
 export const UTC_CLOCK_DEFAULT = 'UTC_TIMESTAMP'
 
 /**
+ * Drop every Postgres `::type` cast from an expression, wherever it sits.
+ *
+ * Postgres rewrites the default it was given and reports *its* spelling back
+ * through `information_schema.columns.column_default`, casts included - and
+ * not only at the end. `DEFAULT (now() AT TIME ZONE 'utc')` comes back as
+ * `(now() AT TIME ZONE 'utc'::text)`, with the cast buried before the closing
+ * parenthesis. Anchoring the strip to the end of the string missed that one,
+ * so the live default never matched the model's and `fromDb` re-emitted
+ * `ALTER COLUMN ... SET default` for every timestamp column on every run.
+ *
+ * String literals are skipped, so a default that legitimately contains `::`
+ * (`'a::b'::text`) keeps its own text. The type name may carry a length or
+ * precision (`::varchar(255)`, `::numeric(10,2)`), array brackets (`::text[]`)
+ * or the multi-word spellings Postgres uses (`::timestamp without time zone`,
+ * `::double precision`); only those continuation words are consumed, so an
+ * expression like `'x'::text AND y` does not lose its tail.
+ */
+function stripPostgresCasts(expr: string): string {
+  // The multi-word type names are spelled out rather than looped over, so the
+  // pattern holds no quantifier inside a quantifier - that shape backtracks
+  // catastrophically on a long non-match.
+  const castAtCursor = /^::\s*(?:(?:timestamp|time)\s+with(?:out)?\s+time\s+zone|double\s+precision|(?:character|bit)\s+varying|"[^"]+"|\w+)(?:\(\s*\d+(?:\s*,\s*\d+)?\s*\))?(?:\[\])*/i
+  let out = ''
+  let i = 0
+  while (i < expr.length) {
+    const ch = expr[i]
+    // Copy a quoted literal through untouched, `''`/`""` escapes included.
+    if (ch === '\'' || ch === '"') {
+      out += ch
+      i++
+      while (i < expr.length) {
+        if (expr[i] === ch) {
+          out += ch
+          i++
+          if (expr[i] === ch) {
+            out += ch
+            i++
+            continue
+          }
+          break
+        }
+        out += expr[i]
+        i++
+      }
+      continue
+    }
+    if (ch === ':' && expr[i + 1] === ':') {
+      const cast = castAtCursor.exec(expr.slice(i))
+      if (cast) {
+        i += cast[0].length
+        continue
+      }
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
+ * Drop parentheses that wrap the whole expression and change nothing.
+ *
+ * Postgres brackets the default it stored - a `decimal` column declared
+ * `DEFAULT 0` reports back as `(0)::numeric(10,2)`, and the UTC clock as
+ * `(now() AT TIME ZONE 'utc')` - while a model says plain `0`. Only a pair
+ * that really does enclose the entire expression is removed, so `(a) || (b)`
+ * keeps both of its own, and quoted text is skipped so a literal parenthesis
+ * is not mistaken for a grouping one.
+ */
+function stripRedundantParens(expr: string): string {
+  let s = expr.trim()
+  while (s.startsWith('(') && s.endsWith(')')) {
+    let depth = 0
+    let quote: string | undefined
+    let wrapsAll = true
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i]
+      if (quote) {
+        if (ch === quote) {
+          // A doubled quote is an escaped one, so the literal carries on.
+          if (s[i + 1] === quote)
+            i++
+          else
+            quote = undefined
+        }
+        continue
+      }
+      if (ch === '\'' || ch === '"') {
+        quote = ch
+        continue
+      }
+      if (ch === '(') {
+        depth++
+      }
+      else if (ch === ')') {
+        depth--
+        // Closed before the end, so the opening paren was not the outer one.
+        if (depth === 0 && i !== s.length - 1) {
+          wrapsAll = false
+          break
+        }
+      }
+    }
+    if (!wrapsAll || depth !== 0)
+      break
+    s = s.slice(1, -1).trim()
+  }
+  return s
+}
+
+/**
+ * Unwrap an expression that is nothing but one quoted literal, undoubling the
+ * quotes the engine escaped inside it (`'it''s'` -> `it's`).
+ *
+ * The check that the literal spans the whole expression matters: stripping the
+ * first and last character of `'x' || 'y'` - which is what a live default looks
+ * like once its casts are gone - would hand back the mangled `x' || 'y`.
+ */
+function stripOuterQuotes(expr: string): string {
+  const quote = expr[0]
+  if ((quote !== '\'' && quote !== '"') || expr.length < 2 || !expr.endsWith(quote))
+    return expr
+  const inner = expr.slice(1, -1)
+  for (let i = 0; i < inner.length; i++) {
+    if (inner[i] !== quote)
+      continue
+    // A doubled quote is one escaped character; a lone one ends the literal
+    // early, so the expression is more than a single literal.
+    if (inner[i + 1] !== quote)
+      return expr
+    i++
+  }
+  return inner.split(quote + quote).join(quote)
+}
+
+/**
  * Canonical string form of a column default, so equivalent defaults expressed
  * differently by a live DB vs a model (quoting, casts, `now()` vs
  * `CURRENT_TIMESTAMP`, `0` vs `'0'`) compare equal.
@@ -1714,12 +1850,11 @@ export function canonicalizeDefault(col: ColumnPlan, dialect?: SupportedDialect)
   if (typeof dv === 'bigint' || typeof dv === 'number')
     return String(dv)
 
-  let s = String(dv).trim()
-  // Strip Postgres `::type` casts (e.g. `'active'::text`).
-  s = s.replace(/::[\w ]+$/i, '').trim()
-  // Strip one layer of surrounding quotes.
-  if ((s.startsWith('\'') && s.endsWith('\'')) || (s.startsWith('"') && s.endsWith('"')))
-    s = s.slice(1, -1)
+  // Peel off everything the engine added when it stored the expression: its
+  // `::type` casts, the parentheses it wrapped the whole thing in, and the
+  // quotes around a plain literal. What is left is comparable with the model's
+  // own spelling of the same default.
+  let s = stripOuterQuotes(stripRedundantParens(stripPostgresCasts(String(dv).trim())))
 
   const upper = s.toUpperCase()
 
@@ -1757,17 +1892,26 @@ export function canonicalizeDefault(col: ColumnPlan, dialect?: SupportedDialect)
   if (dialect === 'sqlite' && upper === 'CURRENT_TIMESTAMP')
     return UTC_CLOCK_DEFAULT
 
-  const sqlFns = ['CURRENT_TIMESTAMP', 'NOW()', 'CURRENT_DATE', 'CURRENT_TIME', 'NULL', 'TRUE', 'FALSE']
-  if (sqlFns.includes(upper))
-    return upper === 'NOW()' ? 'CURRENT_TIMESTAMP' : upper
-
-  // For boolean columns the DB may echo 0/1/'t'/'f'; normalize to 1/0.
+  /*
+   * For boolean columns the DB may echo 0/1/'t'/'f'/true/false; normalize to
+   * 1/0, which is what a model's JS `true`/`false` already canonicalizes to.
+   *
+   * This has to run *before* the `sqlFns` check below: Postgres reports a
+   * boolean default as the text `true`, which that check used to return as
+   * `TRUE` while the model side said `1`, so the two never compared equal and
+   * `fromDb` re-emitted `ALTER COLUMN ... SET default true` for every boolean
+   * column on every run.
+   */
   if (col.type === 'boolean') {
     if (/^(?:1|t|true|yes)$/i.test(s))
       return '1'
     if (/^(?:0|f|false|no)$/i.test(s))
       return '0'
   }
+
+  const sqlFns = ['CURRENT_TIMESTAMP', 'NOW()', 'CURRENT_DATE', 'CURRENT_TIME', 'NULL', 'TRUE', 'FALSE']
+  if (sqlFns.includes(upper))
+    return upper === 'NOW()' ? 'CURRENT_TIMESTAMP' : upper
 
   // Numeric literal -> canonical number form (`0.00` === `0`).
   if (/^-?\d+(?:\.\d+)?$/.test(s))
