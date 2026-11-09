@@ -1930,8 +1930,27 @@ function columnsAreDifferent(col1: ColumnPlan, col2: ColumnPlan, dialect: Suppor
     return true
   if (canonicalizeDefault(col1, dialect) !== canonicalizeDefault(col2, dialect))
     return true
-  if (col1.isUnique !== col2.isUnique)
-    return true
+  /*
+   * Uniqueness is deliberately NOT compared here. No dialect expresses it in a
+   * column definition - every driver emits it as `CREATE UNIQUE INDEX`, and a
+   * model's `unique: true` is turned into an index entry in the plan
+   * (`<table>_<column>_unique`) - so the index diff is what creates and drops
+   * it, on both sides.
+   *
+   * Counting it as a column difference meant a disagreement nothing could act
+   * on: `modifyColumn` would be asked for a statement, find none of its own
+   * three facets changed, and fall through to restating the column as it
+   * already was. Against a live Postgres that is
+   *
+   *   ALTER TABLE "usage_events" ALTER COLUMN "idempotency_key" DROP DEFAULT;
+   *   ALTER TABLE "usage_events" ALTER COLUMN "idempotency_key" TYPE varchar(255) ...;
+   *   ALTER TABLE "usage_events" ALTER COLUMN "idempotency_key" SET NOT NULL;
+   *
+   * for a column that was already `varchar(255) NOT NULL` - an ACCESS
+   * EXCLUSIVE lock on the table for no change, and, because the ALTER could
+   * never move the flag it was triggered by, the same statements again on the
+   * next `fromDb` run, forever.
+   */
 
   // Compare enum values for enum types
   if (col1.type === 'enum' && col2.type === 'enum') {

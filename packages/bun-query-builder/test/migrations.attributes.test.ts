@@ -1375,9 +1375,12 @@ describe('migrations - complex model attributes', () => {
       const nextPlan = buildMigrationPlan(after as any, { dialect: 'postgres' })
       const sql = generateDiffSql(prevPlan, nextPlan)
 
-      expect(sql.join('\n')).toContain('ALTER')
-      // Should also create unique index
-      expect(sql.join('\n').toLowerCase()).toContain('unique')
+      // Uniqueness is an index, not part of a column definition, so this is a
+      // `CREATE UNIQUE INDEX` and nothing else. It used to come with an
+      // `ALTER COLUMN` restating the column exactly as it already was - see
+      // migrations.postgres-unique-flag-churn.test.ts.
+      expect(sql.join('\n')).toContain('CREATE UNIQUE INDEX')
+      expect(sql.join('\n')).not.toContain('ALTER COLUMN')
     })
 
     it('detects unique constraint removals', () => {
