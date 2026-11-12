@@ -73,22 +73,28 @@ describe('unknown eager-load relations (#1068)', () => {
   it('throws on a misspelled relation instead of loading nothing', async () => {
     // Previously: resolved to undefined, returned, and produced a result with no
     // `boks` property and no complaint.
-    await expect(Author.with('boks').get()).rejects.toThrow(/no relation 'boks'/)
+    expect(() => Author.with('boks').get()).toThrow(/no relation 'boks'/)
   })
 
   it('lists the relations that do exist, so the typo is obvious', async () => {
-    await expect(Author.with('boks').get()).rejects.toThrow(/Available: books/)
+    expect(() => Author.with('boks').get()).toThrow(/Available: books/)
   })
 
   it('says so plainly when the model declares no relations at all', async () => {
-    await expect(Loner.with('anything').get()).rejects.toThrow(/declares no relations at all/)
+    expect(() => Loner.with('anything').get()).toThrow(/declares no relations at all/)
   })
 
   it('distinguishes a declared-but-unsupported kind from a typo', async () => {
     // `annotations` IS declared — as morphToMany, which the loader cannot
     // resolve. Telling the user "no such relation" here would send them looking
     // for a misspelling that isn't there.
-    const err = await Author.with('annotations').get().catch((e: Error) => e)
+    let err: unknown
+    try {
+      Author.with('annotations').get()
+    }
+    catch (thrown) {
+      err = thrown
+    }
     expect(err).toBeInstanceOf(Error)
     expect((err as Error).message).toMatch(/declares 'annotations' as morphToMany/)
     expect((err as Error).message).toMatch(/does not support yet/)
@@ -100,6 +106,6 @@ describe('unknown eager-load relations (#1068)', () => {
     // resolution is cached per model+name, so this also covers the cache.
     const rows = await Author.with('books').get()
     expect(rows.length).toBe(1)
-    await expect(Author.with('books').get()).resolves.toBeDefined()
+    expect(Author.with('books').get()).toBeDefined()
   })
 })

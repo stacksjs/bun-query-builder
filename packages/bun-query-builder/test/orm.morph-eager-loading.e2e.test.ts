@@ -129,6 +129,6 @@ describe('polymorphic eager loading (real sqlite)', () => {
   })
 
   it('still refuses a relation that genuinely is not declared', async () => {
-    expect(User.with('nonsense').first()).rejects.toThrow(/has no relation/)
+    expect(() => User.with('nonsense').first()).toThrow(/has no relation/)
   })
 })

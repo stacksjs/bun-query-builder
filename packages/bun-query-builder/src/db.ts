@@ -3,6 +3,7 @@ import type { Changes, SQLQueryBindings, Statement } from 'bun:sqlite'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { SQL } from 'bun'
 import { serializeBindings, withDateBindings } from './bindings'
+import { closeSyncDriver } from './sync-driver'
 
 /**
  * The query object returned by `connection.unsafe(...)` / a tagged template.
@@ -954,6 +955,22 @@ export function resolveLibSQLTarget(dbConfig: DatabaseConfig = config.database a
   return { url, authToken: dbConfig.authToken || undefined }
 }
 
+/**
+ * What a network connection is opened with: the URL and Bun's `SQL` options.
+ *
+ * One place, because two things open that connection: the shared async one
+ * below, and the model layer's own (see sync-driver.ts), which has to be the
+ * same database in every detail or a model would read from somewhere else.
+ */
+export function networkConnectionTarget(connectionString: string = createConnectionString(config.dialect, config.database)): { url: string, options: Record<string, unknown> } {
+  const poolOptions = resolvePoolOptions(config.database.pool)
+  // Bun lets PGDATABASE override even an explicit URL's database. Preserve
+  // the target selected above as an explicit constructor option as well, so
+  // multiple configured databases remain isolated in service environments.
+  const database = decodeURIComponent(new URL(connectionString).pathname.slice(1))
+  return { url: connectionString, options: { ...poolOptions, ...(database ? { database } : {}) } }
+}
+
 export function getBunSql(): SQL {
   const dialect = config.dialect
 
@@ -974,12 +991,8 @@ export function getBunSql(): SQL {
 
     // For other databases, use Bun's SQL class, threading through any
     // configured connection-pool options (#1014).
-    const poolOptions = resolvePoolOptions(config.database.pool)
-    // Bun lets PGDATABASE override even an explicit URL's database. Preserve
-    // the target selected above as an explicit constructor option as well, so
-    // multiple configured databases remain isolated in service environments.
-    const database = decodeURIComponent(new URL(connectionString).pathname.slice(1))
-    const sql = new SQL(connectionString, { ...poolOptions, ...(database ? { database } : {}) })
+    const target = networkConnectionTarget(connectionString)
+    const sql = new SQL(target.url, target.options)
 
     // NOTE: a Bun `SQL` instance is not a Promise and has no `.catch`, so the
     // previous `if (typeof sql.catch === 'function')` handler here was dead
@@ -1019,6 +1032,17 @@ export function getBunSql(): SQL {
 // Note: Connection is created lazily on first access, not at module load time
 let _bunSqlInstance: SQL | null = null
 let _currentSignature: string | null = null
+/** Whether the cached instance was handed in by a caller (`setSqlInstance`) rather than opened from the config. */
+let _bunSqlInjected = false
+
+/**
+ * Whether a caller supplied the connection. Such a connection lives on this
+ * thread and answers with promises, so nothing can run a query through it
+ * synchronously: the model layer keeps its promise-returning path for it.
+ */
+export function hasInjectedSqlInstance(): boolean {
+  return _bunSqlInjected && _bunSqlInstance !== null
+}
 
 /**
  * Signature of every config field that affects the connection — so a
@@ -1027,7 +1051,7 @@ let _currentSignature: string | null = null
  * dialect + database.database were compared, so e.g. pointing at a new host
  * via setConfig kept the stale connection. See stacksjs/bun-query-builder#1041.
  */
-function connectionSignature(): string {
+export function connectionSignature(): string {
   const d = config.database
   return JSON.stringify({
     dialect: config.dialect,
@@ -1078,6 +1102,7 @@ function detachCachedConnection(): SQL | null {
   ;(connection as unknown as DriverConnection | null)?.flushDeferredInserts?.()
   _bunSqlInstance = null
   _currentSignature = null
+  _bunSqlInjected = false
   return connection
 }
 
@@ -1095,6 +1120,7 @@ async function closeSqlConnection(connection: SQL | null): Promise<void> {
  * opening another connection, such as test teardown or a graceful shutdown.
  */
 export async function closeConnection(): Promise<void> {
+  closeSyncDriver()
   await closeSqlConnection(detachCachedConnection())
 }
 
@@ -1103,6 +1129,7 @@ export async function closeConnection(): Promise<void> {
  * Call this after changing config via setConfig() to ensure the new config is used.
  */
 export function resetConnection(): void {
+  closeSyncDriver()
   const closing = closeSqlConnection(detachCachedConnection())
   void closing.catch((error) => {
     console.error(`[query-builder] Failed to close database connection: ${(error as Error).message}`)
@@ -1122,6 +1149,7 @@ export function setSqlInstance(sql: SQL): void {
   detachCachedConnection()
   _bunSqlInstance = withDateBindings(sql)
   _currentSignature = connectionSignature()
+  _bunSqlInjected = true
 }
 
 // Wrapper that catches "Connection closed" errors and retries with a fresh connection

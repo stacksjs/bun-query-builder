@@ -183,6 +183,6 @@ describe('createModel registration is internal (#1093)', () => {
       hasMany: ['Lkchild'],
     } as any)
 
-    await expect((Owner2 as any).query().with('lkchild').get()).rejects.toThrow(/lkchilds/)
+    expect(() => (Owner2 as any).query().with('lkchild').get()).toThrow(/lkchilds/)
   })
 })

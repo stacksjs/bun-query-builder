@@ -27,7 +27,8 @@ describe.skipIf(!pgAvailable)('createMany() against live Postgres', () => {
     writeFileSync(scriptPath, `
 import { SQL } from 'bun'
 import { setConfig, resetConnection, defineModel, clearModelRegistry } from ${JSON.stringify(srcEntry)}
-import { getOrCreateBunSql } from ${JSON.stringify(resolve(import.meta.dir, '../src/db.ts'))}
+import { connectionSignature, networkConnectionTarget } from ${JSON.stringify(resolve(import.meta.dir, '../src/db.ts'))}
+import { syncDriverFor } from ${JSON.stringify(resolve(import.meta.dir, '../src/sync-driver.ts'))}
 
 const URL = ${JSON.stringify(PG_URL)}
 const failures = []
@@ -71,8 +72,10 @@ await raw.unsafe('CREATE TABLE _qb_cm_hits (id text primary key, a text, b integ
 const Hit = defineModel({ name: 'CmPgHit', table: '_qb_cm_hits', primaryKey: 'id', traits: { useTimestamps: false },
   attributes: { id: { type: 'string', fillable: true }, a: { type: 'string', fillable: true }, b: { type: 'integer', fillable: true },
     c: { type: 'boolean', fillable: true }, d: { type: 'bigint', fillable: true }, e: { type: 'datetime', fillable: true }, f: { type: 'double', fillable: true } } })
-const conn = getOrCreateBunSql()
-const before = (await conn.unsafe('SELECT count(*)::int AS n FROM pg_prepared_statements'))[0].n
+// The connection the model layer writes through: prepared statements are
+// per connection, so counting them on any other one would always read zero.
+const conn = syncDriverFor(connectionSignature(), networkConnectionTarget)
+const before = conn.unsafe('SELECT count(*)::int AS n FROM pg_prepared_statements')[0].n
 let hits = 0
 for (let batch = 1; batch <= 40; batch++) {
   await Hit.createMany(Array.from({ length: 25 + batch }, () => {
@@ -81,7 +84,7 @@ for (let batch = 1; batch <= 40; batch++) {
       d: m & 8 ? null : 9007199254740993n, e: m & 16 ? null : new Date(Date.UTC(2026, 0, 2, 3, 4, 5)), f: m & 32 ? null : 0.125 }
   }))
 }
-const after = (await conn.unsafe('SELECT count(*)::int AS n FROM pg_prepared_statements'))[0].n
+const after = conn.unsafe('SELECT count(*)::int AS n FROM pg_prepared_statements')[0].n
 if (after - before > 4) failures.push('batches left ' + (after - before) + ' prepared statements on the connection')
 check('every hit written', (await raw.unsafe('SELECT count(*)::int AS n FROM _qb_cm_hits'))[0].n, hits)
 const sample = (await raw.unsafe("SELECT a, b, c, d::text AS d, to_char(e, 'YYYY-MM-DD HH24:MI:SS') AS e, f FROM _qb_cm_hits WHERE id = 'h1'"))[0]

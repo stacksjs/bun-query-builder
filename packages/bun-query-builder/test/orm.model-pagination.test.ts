@@ -92,8 +92,8 @@ describe('simplePaginate', () => {
   })
 
   it('refuses nonsense arguments', async () => {
-    await expect(Post.simplePaginate(0)).rejects.toThrow(/perPage/)
-    await expect(Post.simplePaginate(10, 0)).rejects.toThrow(/page/)
+    expect(() => Post.simplePaginate(0)).toThrow(/perPage/)
+    expect(() => Post.simplePaginate(10, 0)).toThrow(/page/)
   })
 })
 
@@ -245,23 +245,23 @@ describe('cursorPaginate', () => {
 
   it('refuses a cursor issued for a different ordering', async () => {
     const first = await Post.cursorPaginate(5, undefined, 'id', 'asc')
-    await expect(Post.cursorPaginate(5, first.meta.nextCursor, 'id', 'desc')).rejects.toThrow(/issued for id asc/)
-    await expect(Post.cursorPaginate(5, first.meta.nextCursor, ['day', 'id'])).rejects.toThrow(/issued for id asc/)
+    expect(() => Post.cursorPaginate(5, first.meta.nextCursor, 'id', 'desc')).toThrow(/issued for id asc/)
+    expect(() => Post.cursorPaginate(5, first.meta.nextCursor, ['day', 'id'])).toThrow(/issued for id asc/)
   })
 
   it('refuses orderBy, which a cursor cannot honour', async () => {
-    await expect(Post.query().orderBy('title').cursorPaginate(5)).rejects.toThrow(/orderBy/)
+    expect(() => Post.query().orderBy('title').cursorPaginate(5)).toThrow(/orderBy/)
   })
 
   it('refuses a selection that leaves out the cursor column', async () => {
-    await expect(Post.query().select('title').cursorPaginate(5)).rejects.toThrow(/select cursor column id/)
+    expect(() => Post.query().select('title').cursorPaginate(5)).toThrow(/select cursor column id/)
   })
 
   it('refuses nonsense arguments', async () => {
-    await expect(Post.cursorPaginate(0)).rejects.toThrow(/perPage/)
-    await expect(Post.cursorPaginate(5, undefined, 'id; drop table pg_posts')).rejects.toThrow()
-    await expect(Post.cursorPaginate(5, undefined, 'id', 'sideways' as any)).rejects.toThrow(/direction/)
-    await expect(Post.cursorPaginate(5, 1, ['day', 'id'])).rejects.toThrow(/cursor value/)
+    expect(() => Post.cursorPaginate(0)).toThrow(/perPage/)
+    expect(() => Post.cursorPaginate(5, undefined, 'id; drop table pg_posts')).toThrow()
+    expect(() => Post.cursorPaginate(5, undefined, 'id', 'sideways' as any)).toThrow(/direction/)
+    expect(() => Post.cursorPaginate(5, 1, ['day', 'id'])).toThrow(/cursor value/)
   })
 
   it('treats a string that merely looks like a token as a plain value', async () => {

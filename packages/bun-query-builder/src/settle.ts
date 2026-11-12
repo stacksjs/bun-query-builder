@@ -1,0 +1,89 @@
+/**
+ * Code that is synchronous when everything it touches is.
+ *
+ * A model method runs a query, and may run hooks. On `bun:sqlite`, and on the
+ * network dialects through sync-driver.ts, the query answers where it is
+ * called, so the method can return a plain value: `const user =
+ * User.where(...).first()` is the row. But a hook may be an async function, a
+ * caller may have supplied a connection that answers with promises, and
+ * `models.execution: 'async'` asks for promises on purpose. The same method
+ * then has to wait.
+ *
+ * Writing every method twice is how the two would drift apart. So each is
+ * written once, as a generator that yields whatever it needs the value of:
+ *
+ * ```ts
+ * get(): Row[] {
+ *   return settle(function* () {
+ *     const rows = yield* wait(exec.all(sql, params))
+ *     return rows.map(hydrate)
+ *   })
+ * }
+ * ```
+ *
+ * `settle` runs it. While every yielded value is plain it runs straight
+ * through and returns the result. At the first promise it switches to waiting
+ * and returns a promise of the result, exactly as an `async` function would.
+ * A method therefore never returns a promise that it did not need.
+ */
+
+export function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return value !== null
+    && (typeof value === 'object' || typeof value === 'function')
+    && typeof (value as { then?: unknown }).then === 'function'
+}
+
+/**
+ * The value of `value`, inside a `settle` body: itself, or what it resolves
+ * to. Stands where `await` would.
+ */
+export function* wait<T>(value: T): Generator<unknown, Awaited<T>, unknown> {
+  return (yield value) as Awaited<T>
+}
+
+async function settleLater<R>(body: Generator<unknown, R, unknown>, pending: PromiseLike<unknown>): Promise<R> {
+  let next: unknown = pending
+  for (;;) {
+    let input: unknown
+    let failure: { error: unknown } | undefined
+    try {
+      input = await next
+    }
+    catch (error) {
+      failure = { error }
+    }
+    // A rejection is thrown into the body where it was waiting, so a
+    // try/catch around the `yield*` sees it. Uncaught, it rejects this.
+    const step = failure ? body.throw(failure.error) : body.next(input)
+    if (step.done)
+      return step.value
+    next = step.value
+  }
+}
+
+/**
+ * Run a body to its result. Returns the result when nothing it yielded was a
+ * promise, and a promise of the result otherwise.
+ *
+ * Typed as the plain result: that is what the configured, synchronous path
+ * returns, and `await` accepts either.
+ */
+export function settle<R>(body: () => Generator<unknown, R, unknown>): R {
+  const running = body()
+  let step = running.next()
+  while (!step.done) {
+    if (isThenable(step.value))
+      return settleLater(running, step.value) as unknown as R
+    step = running.next(step.value)
+  }
+  return step.value
+}
+
+/**
+ * Every value in a list, in order: the list itself when none is a promise,
+ * `Promise.all` of it otherwise. For work that was started together and may
+ * be waited for together.
+ */
+export function waitAll<T>(values: T[]): Awaited<T>[] | Promise<Awaited<T>[]> {
+  return values.some(isThenable) ? Promise.all(values) : values as Awaited<T>[]
+}

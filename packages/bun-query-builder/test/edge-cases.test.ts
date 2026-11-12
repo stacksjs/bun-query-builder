@@ -168,21 +168,21 @@ describe('Edge Cases', () => {
 
   describe('Error Handling', () => {
     it('findOrFail() throws when record not found', async () => {
-      await expect(TestModel.findOrFail(999)).rejects.toThrow('TestModel with id 999 not found')
+      expect(() => TestModel.findOrFail(999)).toThrow('TestModel with id 999 not found')
     })
 
     it('firstOrFail() throws when no records match', async () => {
-      await expect(TestModel.where('name', 'nonexistent').firstOrFail()).rejects.toThrow()
+      expect(() => TestModel.where('name', 'nonexistent').firstOrFail()).toThrow()
     })
 
     it('refresh() throws when model has no primary key', async () => {
       const instance = TestModel.make({ name: 'test' })
-      await expect(instance.refresh()).rejects.toThrow('Cannot refresh a model without a primary key')
+      expect(() => instance.refresh()).toThrow('Cannot refresh a model without a primary key')
     })
 
     it('delete() throws for unsaved model', async () => {
       const instance = TestModel.make({ name: 'test' })
-      await expect(instance.delete()).rejects.toThrow('Cannot delete a model without a primary key')
+      expect(() => instance.delete()).toThrow('Cannot delete a model without a primary key')
     })
   })
 
@@ -265,7 +265,7 @@ describe('Edge Cases', () => {
       })
       expect(item.get('name')).toBe(injection)
       // Table should still exist
-      await expect(TestModel.count()).resolves.toBeDefined()
+      expect(TestModel.count()).toBeDefined()
       await item.delete()
     })
   })

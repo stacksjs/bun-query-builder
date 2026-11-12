@@ -172,6 +172,6 @@ describe('instance.forceDelete()', () => {
   })
 
   it('refuses an instance with no primary key', async () => {
-    await expect(Post.make({ title: 'unsaved' }).forceDelete()).rejects.toThrow('Cannot delete a model without a primary key')
+    expect(() => Post.make({ title: 'unsaved' }).forceDelete()).toThrow('Cannot delete a model without a primary key')
   })
 })

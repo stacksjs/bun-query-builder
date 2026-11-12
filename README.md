@@ -189,6 +189,25 @@ const db = createQueryBuilder<typeof schema>({
 })
 ```
 
+### Models answer in place
+
+A model call returns its value where it is written, on SQLite, MySQL and
+Postgres. `await` still works, because `await` on a value is that value.
+
+```ts
+const user = User.where('email', 'like', '%@example.com').orderByDesc('created_at').first()
+user.get('email')
+
+const total = User.count()
+const created = User.create({ email: 'ada@example.com' })
+```
+
+SQLite runs the query in place. MySQL and Postgres run it on a worker thread
+that the caller waits on, so nothing else runs on the calling thread during a
+query. `setConfig({ models: { execution: 'async' } })` gives promises back
+instead. A write on a model with `async` hooks returns a promise, because the
+hook has to be waited for. See [Models answer in place](docs/features/models.md).
+
 ### Query Scopes
 
 ```ts

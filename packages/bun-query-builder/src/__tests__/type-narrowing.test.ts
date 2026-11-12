@@ -209,7 +209,7 @@ describe('type narrowing', () => {
   })
 
   test('findOrFail throws on missing', async () => {
-    await expect(User.findOrFail(99999)).rejects.toThrow()
+    expect(() => User.findOrFail(99999)).toThrow()
   })
 
   // ---------------------------------------------------------------

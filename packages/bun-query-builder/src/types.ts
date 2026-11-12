@@ -423,6 +423,23 @@ export interface BrowserConfig {
  * - `features`: Optional feature flags.
  * - `debug.captureText`: When true, the builder exposes a `toText()` method to capture SQL text in memory for debugging.
  */
+export interface ModelsConfig {
+  /**
+   * `'sync'` (the default): a model call returns its value where it is
+   * written. `const user = User.where(...).first()` is the row, and
+   * `await` on it still works. SQLite runs the query in place; MySQL and
+   * Postgres run it on a worker thread while the caller waits. Nothing else
+   * runs on the calling thread during a query, as with `bun:sqlite`.
+   *
+   * `'async'`: MySQL and Postgres model calls return promises and other work
+   * proceeds while a query is in flight. Every model call then has to be
+   * awaited. SQLite is synchronous either way.
+   *
+   * @default 'sync'
+   */
+  execution?: 'sync' | 'async'
+}
+
 export interface QueryBuilderConfig {
   /** Enables extra logging/diagnostics from the builder. */
   verbose: boolean
@@ -452,6 +469,9 @@ export interface QueryBuilderConfig {
   dialect: SupportedDialect
 
   database: DatabaseConfig
+
+  /** How the model layer runs its queries. */
+  models?: ModelsConfig
 
   /** Browser-mode configuration for fetch()-based API calls */
   browser?: BrowserConfig

@@ -181,7 +181,7 @@ describe('Dynamic ORM', () => {
     })
 
     it('throws on findOrFail for non-existent id', async () => {
-      await expect(User.findOrFail(99999)).rejects.toThrow('User with id 99999 not found')
+      expect(() => User.findOrFail(99999)).toThrow('User with id 99999 not found')
     })
 
     it('updates a user', async () => {

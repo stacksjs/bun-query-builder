@@ -135,7 +135,7 @@ describe('save() on a loaded row', () => {
     await Post.create({ title: 'a' })
     const partial = await Post.query().select('title').first()
     partial.set('title', 'b')
-    await expect(partial.save()).rejects.toThrow(`Cannot save a model without a primary key: 'id' was not selected`)
+    expect(() => partial.save()).toThrow(`Cannot save a model without a primary key: 'id' was not selected`)
     expect(posts()).toEqual([{ id: 1, title: 'a' }])
   })
 

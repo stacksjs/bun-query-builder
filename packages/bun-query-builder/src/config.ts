@@ -30,6 +30,9 @@ export const defaultConfig: QueryBuilderConfig = {
   vitess: {
     sharded: true,
   },
+  models: {
+    execution: 'sync',
+  },
   timestamps: {
     createdAt: 'created_at',
     updatedAt: 'updated_at',

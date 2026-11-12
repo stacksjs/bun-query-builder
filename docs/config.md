@@ -60,6 +60,17 @@ config.aliasing.relationColumnAliasFormat = 'table_column'
 Note that assigning a whole section (`config.sql = { … }`) replaces it rather than
 merging — prefer `setConfig()` unless you mean to drop the other keys.
 
+### How models run their queries
+
+```ts
+setConfig({ models: { execution: 'async' } })
+```
+
+`'sync'` is the default: a model call returns its value where it is written,
+and nothing else runs on the calling thread while a MySQL or Postgres query is
+in flight. `'async'` makes those calls return promises instead. See
+[Models answer in place](./features/models.md).
+
 ## The two config types
 
 | Type | Role |

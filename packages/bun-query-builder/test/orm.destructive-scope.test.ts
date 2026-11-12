@@ -129,23 +129,23 @@ describe('clauses a write cannot emit are refused (#1111)', () => {
   // of every matching row. LIMIT on UPDATE/DELETE is not portable — Postgres
   // has no such form — so being loud is the honest option.
   it('limit() on a delete throws instead of being dropped', async () => {
-    await expect(Post.query().limit(1).delete()).rejects.toThrow(/cannot apply limit/)
+    expect(() => Post.query().limit(1).delete()).toThrow(/cannot apply limit/)
     expect(total()).toBe(4)
   })
 
   it('orderBy() on a delete throws instead of being dropped', async () => {
-    await expect(Post.query().orderBy('id').delete()).rejects.toThrow(/cannot apply .*orderBy/)
+    expect(() => Post.query().orderBy('id').delete()).toThrow(/cannot apply .*orderBy/)
     expect(total()).toBe(4)
   })
 
   it('limit() on an update throws instead of being dropped', async () => {
-    await expect(Post.query().limit(1).update({ views: 3 })).rejects.toThrow(/cannot apply limit/)
+    expect(() => Post.query().limit(1).update({ views: 3 })).toThrow(/cannot apply limit/)
     const bumped = (db.query('SELECT count(*) c FROM sd_posts WHERE views = 3').get() as any).c
     expect(bumped).toBe(0)
   })
 
   it('a write with no ordering or limit is unaffected', async () => {
-    await expect(Post.query().where('title', 'c').update({ views: 7 })).resolves.toBeDefined()
+    expect(Post.query().where('title', 'c').update({ views: 7 })).toBeDefined()
     const bumped = (db.query('SELECT count(*) c FROM sd_posts WHERE views = 7').get() as any).c
     expect(bumped).toBe(1)
   })

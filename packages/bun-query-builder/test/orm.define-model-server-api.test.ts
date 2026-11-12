@@ -83,7 +83,7 @@ describe('query().find() and findOrFail()', () => {
 
   it('findOrFail throws for a missing row', async () => {
     expect((await Trail.query().findOrFail(1)).get('name')).toBe('Ridge')
-    await expect(Trail.query().where('distance', '<', 5).findOrFail(1)).rejects.toThrow('DmTrail with id 1 not found')
+    expect(() => Trail.query().where('distance', '<', 5).findOrFail(1)).toThrow('DmTrail with id 1 not found')
   })
 })
 
@@ -109,7 +109,7 @@ describe('Model.update(id, data)', () => {
   })
 
   it('throws for a missing row', async () => {
-    await expect(Trail.update(99, { distance: 5 })).rejects.toThrow('DmTrail with id 99 not found')
+    expect(() => Trail.update(99, { distance: 5 })).toThrow('DmTrail with id 99 not found')
   })
 })
 

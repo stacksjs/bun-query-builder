@@ -138,7 +138,7 @@ describe('forceDelete() on a query', () => {
   })
 
   it('refuses limit() and orderBy() like delete() does (#1111)', async () => {
-    await expect(Post.query().orderBy('id').limit(1).forceDelete()).rejects.toThrow('forceDelete() cannot apply')
+    expect(() => Post.query().orderBy('id').limit(1).forceDelete()).toThrow('forceDelete() cannot apply')
     expect(state('qd_posts')).toEqual(['a*2020', 'b', 'c', 'd'])
   })
 })
@@ -154,7 +154,7 @@ describe('query deletes with hooks', () => {
       hooks: { beforeDelete: (m: any) => { if (m.get('title') === 'c') throw new Error('c is protected') } },
     } as any) as any
 
-    await expect(Guarded.query().delete()).rejects.toThrow('c is protected')
+    expect(() => Guarded.query().delete()).toThrow('c is protected')
     // Every beforeDelete runs before anything is written.
     expect(state('qd_tags')).toEqual(['a', 'b', 'c', 'd'])
   })

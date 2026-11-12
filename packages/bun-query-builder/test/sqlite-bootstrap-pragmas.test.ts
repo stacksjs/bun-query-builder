@@ -101,7 +101,7 @@ describe('model-executor connection (configureOrm/getExecutor)', () => {
     // Pre-fix this orphan insert succeeded silently: the executor's raw
     // Database had foreign_keys OFF regardless of the query-builder
     // connection's bootstrap.
-    await expect(Child.create({ parent_id: 999 } as any)).rejects.toThrow(/FOREIGN KEY constraint failed/)
+    expect(() => Child.create({ parent_id: 999 } as any)).toThrow(/FOREIGN KEY constraint failed/)
 
     raw.run('INSERT INTO bp_parents (id) VALUES (1)')
     await Child.create({ parent_id: 1 } as any)

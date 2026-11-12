@@ -32,9 +32,10 @@ import type { InferRelationNames, RelationCardinality } from './type-inference'
 export type { InferRelationNames } from './type-inference'
 import { isNumericPlanType, normalizeAttributeType, sqliteAffinityFor } from './column-types'
 import { config, isMysqlLike } from './config'
-import type { DriverConnection } from './db'
 import { serializeBindings } from './bindings'
-import { getOrCreateBunSql, resolveLibSQLTarget } from './db'
+import { connectionSignature, getOrCreateBunSql, hasInjectedSqlInstance, networkConnectionTarget, resolveLibSQLTarget } from './db'
+import { settle, wait, waitAll } from './settle'
+import { closeSyncDriver, syncDriverFor } from './sync-driver'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 import { createFakerCompatLayer } from './faker-compat'
 import { normalizeRelationEntry, normalizeRelationList } from './relation-utils'
@@ -401,6 +402,33 @@ export interface ModelDefinition {
   }
 }
 
+/**
+ * Whether one of a model's lifecycle hooks may answer with a promise.
+ *
+ * A model with no hooks, or only hooks that return nothing, writes where the
+ * call is written. One `async` hook makes every write on that model wait for
+ * it, so the write returns a promise. A definition known only as
+ * `ModelDefinition` counts as possibly asynchronous: its hooks are not known.
+ */
+type HasAsyncHook<TDef> = TDef extends { hooks?: infer H }
+  ? [H] extends [undefined]
+      ? false
+      : true extends {
+        [K in keyof NonNullable<H>]-?: NonNullable<NonNullable<H>[K]> extends (...args: never[]) => infer R
+          ? ([Extract<R, PromiseLike<unknown>>] extends [never] ? false : true)
+          : false
+      }[keyof NonNullable<H>]
+        ? true
+        : false
+  : false
+
+/**
+ * What a write returns: the value, or a promise of it on a model whose hooks
+ * may be asynchronous (see {@link HasAsyncHook}). Reads never run hooks, so
+ * they are always the value.
+ */
+export type Written<TDef, R> = HasAsyncHook<TDef> extends true ? Promise<R> : R
+
 // Extract attribute keys from definition
 type AttributeKeys<TDef extends ModelDefinition> = keyof TDef['attributes'] & string
 
@@ -653,22 +681,39 @@ type WhereOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'like' | 'not like' 
 // model calls silently routed to a fresh, empty SQLite database — every query
 // returned "no such table" (stacksjs/bun-query-builder#1021).
 //
-// All model queries now go through an `OrmExecutor` chosen from the configured
-// dialect. SQLite keeps its synchronous `bun:sqlite` engine (wrapped in
-// resolved Promises); MySQL/Postgres route through Bun's async `SQL` driver via
-// the shared `getOrCreateBunSql()` connection — the same path the direct
-// `selectFrom(...)` builder already uses. Because the network drivers are
-// async-only, every model read/write method now returns a Promise.
+// All model queries go through an `OrmExecutor` chosen from the configured
+// dialect, and every one of them answers where the query is written unless it
+// has no way to:
+//
+//  - SQLite runs on its synchronous `bun:sqlite` engine.
+//  - MySQL and Postgres run on Bun's `SQL` driver, held by a worker thread
+//    that the caller waits on (sync-driver.ts). Same driver, same pool options,
+//    same database as the shared `getOrCreateBunSql()` connection.
+//  - A connection a caller injected, a libSQL server, and
+//    `models.execution: 'async'` run on this thread's async connection and
+//    answer with promises.
+//
+// That is why the model layer is written with `settle`/`wait` (settle.ts)
+// rather than `async`/`await`: a method returns a plain value when its
+// executor and its hooks did, and a promise only when one of them did.
 
 type RunResult = { changes: number, lastInsertId: number | bigint | null }
 
+/**
+ * What an executor hands back: the value where the connection answers in
+ * place (bun:sqlite, and the network dialects through sync-driver.ts), a
+ * promise of it where the connection can only answer later. Callers read it
+ * through `wait`, which takes either.
+ */
+type Answer<T> = T | Promise<T>
+
 interface OrmExecutor {
   readonly dialect: SupportedDialect
-  all: (sql: string, params: unknown[]) => Promise<Record<string, unknown>[]>
-  get: (sql: string, params: unknown[]) => Promise<Record<string, unknown> | undefined>
-  run: (sql: string, params: unknown[]) => Promise<RunResult>
+  all: (sql: string, params: unknown[]) => Answer<Record<string, unknown>[]>
+  get: (sql: string, params: unknown[]) => Answer<Record<string, unknown> | undefined>
+  run: (sql: string, params: unknown[]) => Answer<RunResult>
   /** INSERT that resolves the new primary-key id in a dialect-aware way. */
-  insert: (sql: string, params: unknown[], primaryKey: string) => Promise<RunResult>
+  insert: (sql: string, params: unknown[], primaryKey: string) => Answer<RunResult>
   /** The underlying bun:sqlite Database, when (and only when) the dialect is sqlite. */
   readonly sqliteDb?: Database
 }
@@ -757,73 +802,106 @@ class SqliteExecutor implements OrmExecutor {
   readonly dialect = 'sqlite' as const
   constructor(public readonly sqliteDb: Database) {}
 
-  all(sql: string, params: unknown[]): Promise<Record<string, unknown>[]> {
-    return Promise.resolve(this.sqliteDb.query(sql).all(...(serializeBindings(params) as Bindings)) as Record<string, unknown>[])
+  all(sql: string, params: unknown[]): Record<string, unknown>[] {
+    return this.sqliteDb.query(sql).all(...(serializeBindings(params) as Bindings)) as Record<string, unknown>[]
   }
 
-  get(sql: string, params: unknown[]): Promise<Record<string, unknown> | undefined> {
-    return Promise.resolve((this.sqliteDb.query(sql).get(...(serializeBindings(params) as Bindings)) as Record<string, unknown> | null) ?? undefined)
+  get(sql: string, params: unknown[]): Record<string, unknown> | undefined {
+    return (this.sqliteDb.query(sql).get(...(serializeBindings(params) as Bindings)) as Record<string, unknown> | null) ?? undefined
   }
 
-  run(sql: string, params: unknown[]): Promise<RunResult> {
+  run(sql: string, params: unknown[]): RunResult {
     const r = this.sqliteDb.run(sql, serializeBindings(params) as Bindings)
-    return Promise.resolve({ changes: r.changes, lastInsertId: r.lastInsertRowid })
+    return { changes: r.changes, lastInsertId: r.lastInsertRowid }
   }
 
-  insert(sql: string, params: unknown[]): Promise<RunResult> {
+  insert(sql: string, params: unknown[]): RunResult {
     return this.run(sql, params)
   }
 }
 
+/** A connection as the executor uses it: one statement in, the driver's result out, now or later. */
+interface StatementRunner {
+  /** The rows, as an array that also carries what the driver reported about a write (see {@link WriteResultLike}). */
+  unsafe: (sql: string, params: unknown[]) => unknown
+}
+
 class DriverExecutor implements OrmExecutor {
-  constructor(public readonly dialect: SupportedDialect) {}
+  /**
+   * `synchronous` runs each statement on the worker-held connection and
+   * returns its rows in place (sync-driver.ts). Without it the statement goes
+   * to the shared connection on this thread, which answers with a promise.
+   */
+  constructor(public readonly dialect: SupportedDialect, private readonly synchronous = false) {}
 
   /** The live dialect-aware connection (handles its own reset/config-change). */
-  private conn(): DriverConnection {
-    return getOrCreateBunSql() as unknown as DriverConnection
+  private conn(): StatementRunner {
+    if (this.synchronous) {
+      const driver = syncDriverFor(connectionSignature(), networkConnectionTarget)
+      // The async connection is wrapped so a Date binds as ISO text on
+      // Postgres (bindings.ts). The worker's is a bare driver, so the same
+      // serialization happens here, before the parameters cross over. MySQL
+      // keeps its native Date binding, exactly as on the wrapped connection.
+      return this.dialect === 'postgres'
+        ? { unsafe: (sql, params) => driver.unsafe(sql, serializeBindings(params)) }
+        : driver
+    }
+    return getOrCreateBunSql() as unknown as StatementRunner
   }
 
   private text(sql: string): string {
     return this.dialect === 'postgres' ? toPostgresPlaceholders(sql) : sql
   }
 
-  async all(sql: string, params: unknown[]): Promise<Record<string, unknown>[]> {
-    const rows = await this.conn().unsafe(this.text(sql), params)
-    return (Array.isArray(rows) ? rows : []) as Record<string, unknown>[]
+  all(sql: string, params: unknown[]): Record<string, unknown>[] {
+    const self = this
+    return settle(function* (): Generator<unknown, Record<string, unknown>[], unknown> {
+      const rows = (yield* wait(self.conn().unsafe(self.text(sql), params)))
+      return (Array.isArray(rows) ? rows : []) as Record<string, unknown>[]
+    })
   }
 
-  async get(sql: string, params: unknown[]): Promise<Record<string, unknown> | undefined> {
-    const rows = await this.conn().unsafe(this.text(sql), params)
-    if (Array.isArray(rows))
-      return (rows[0] as Record<string, unknown> | undefined) ?? undefined
-    return (rows as Record<string, unknown> | undefined) ?? undefined
+  get(sql: string, params: unknown[]): Record<string, unknown> | undefined {
+    const self = this
+    return settle(function* (): Generator<unknown, Record<string, unknown> | undefined, unknown> {
+      const rows = (yield* wait(self.conn().unsafe(self.text(sql), params)))
+      if (Array.isArray(rows))
+        return (rows[0] as Record<string, unknown> | undefined) ?? undefined
+      return (rows as Record<string, unknown> | undefined) ?? undefined
+    })
   }
 
-  async run(sql: string, params: unknown[]): Promise<RunResult> {
-    const res = await this.conn().unsafe(this.text(sql), params)
-    return { changes: extractChanges(res), lastInsertId: extractInsertId(res) }
+  run(sql: string, params: unknown[]): RunResult {
+    const self = this
+    return settle(function* (): Generator<unknown, RunResult, unknown> {
+      const res = (yield* wait(self.conn().unsafe(self.text(sql), params))) as WriteResultLike
+      return { changes: extractChanges(res), lastInsertId: extractInsertId(res) }
+    })
   }
 
-  async insert(sql: string, params: unknown[], primaryKey: string): Promise<RunResult> {
-    if (this.dialect === 'postgres') {
-      // Postgres has no auto-increment rowid to read back — RETURNING is the
-      // portable way to recover the generated key.
-      const rows = await this.conn().unsafe(`${toPostgresPlaceholders(sql)} RETURNING ${primaryKey}`, params)
-      const row = Array.isArray(rows) ? rows[0] : rows
-      return { changes: 1, lastInsertId: row ? (row[primaryKey] ?? null) : null }
-    }
-    // MySQL: no RETURNING — read the driver's insertId, falling back to
-    // LAST_INSERT_ID() on the same connection. SQLite over libSQL reports the
-    // rowid with the result itself; a follow-up `last_insert_rowid()` would run
-    // on a different server connection and read 0, so there is no fallback.
-    const res = await this.conn().unsafe(sql, params)
-    let id = extractInsertId(res)
-    if (id == null && this.dialect !== 'sqlite') {
-      const rows = await this.conn().unsafe('SELECT LAST_INSERT_ID() as id', [])
-      const row = Array.isArray(rows) ? rows[0] : rows
-      id = (row?.id as number | bigint | undefined) ?? null
-    }
-    return { changes: extractChanges(res) || 1, lastInsertId: id }
+  insert(sql: string, params: unknown[], primaryKey: string): RunResult {
+    const self = this
+    return settle(function* (): Generator<unknown, RunResult, unknown> {
+      if (self.dialect === 'postgres') {
+        // Postgres has no auto-increment rowid to read back — RETURNING is the
+        // portable way to recover the generated key.
+        const rows = (yield* wait(self.conn().unsafe(`${toPostgresPlaceholders(sql)} RETURNING ${primaryKey}`, params)))
+        const row = (Array.isArray(rows) ? rows[0] : rows) as Record<string, unknown> | undefined
+        return { changes: 1, lastInsertId: row ? ((row[primaryKey] as number | bigint | null | undefined) ?? null) : null }
+      }
+      // MySQL: no RETURNING — read the driver's insertId, falling back to
+      // LAST_INSERT_ID() on the same connection. SQLite over libSQL reports the
+      // rowid with the result itself; a follow-up `last_insert_rowid()` would run
+      // on a different server connection and read 0, so there is no fallback.
+      const res = (yield* wait(self.conn().unsafe(sql, params))) as WriteResultLike
+      let id = extractInsertId(res)
+      if (id == null && self.dialect !== 'sqlite') {
+        const rows = (yield* wait(self.conn().unsafe('SELECT LAST_INSERT_ID() as id', [])))
+        const row = (Array.isArray(rows) ? rows[0] : rows) as Record<string, unknown> | undefined
+        id = (row?.id as number | bigint | undefined) ?? null
+      }
+      return { changes: extractChanges(res) || 1, lastInsertId: id }
+    })
   }
 }
 
@@ -894,6 +972,7 @@ export function releaseOrm(): void {
   _executorForDb = null
   _executorDialect = null
   _executorDatabase = null
+  closeSyncDriver()
 
   if (owned && previous) {
     try {
@@ -912,8 +991,10 @@ export function releaseOrm(): void {
  * An explicit `configureOrm({ database })` always wins and keeps the model
  * layer on sqlite. Otherwise the dialect from `setConfig()` decides: sqlite
  * opens a `bun:sqlite` Database on the configured filename (or `:memory:`),
- * while mysql / postgres route through the shared async `SQL` driver. The
- * executor is rebuilt whenever the dialect or database name changes.
+ * while mysql / postgres route through Bun's `SQL` driver, synchronously
+ * unless something rules that out (see the note on the execution layer). The
+ * executor is rebuilt whenever the dialect, the database or that choice
+ * changes.
  */
 let _warnedImplicitMemory = false
 
@@ -932,7 +1013,13 @@ function getExecutor(): OrmExecutor {
   const database = config.database?.database ?? null
   // The libSQL URL is part of the identity: pointing the same `database` name
   // at a server instead of a file has to rebuild the executor.
-  const identity = `${database ?? ''}|${resolveLibSQLTarget()?.url ?? ''}`
+
+  // A connection a caller supplied can only answer with promises, and so can
+  // a libSQL server (its transport is `fetch`). `models.execution: 'async'`
+  // asks for that path on purpose. All three are part of the identity: a test
+  // that injects a connection, then drops it, must not keep the old executor.
+  const synchronous = config.models?.execution !== 'async' && !hasInjectedSqlInstance() && !resolveLibSQLTarget()
+  const identity = `${database ?? ''}|${resolveLibSQLTarget()?.url ?? ''}|${synchronous ? 'sync' : 'async'}`
 
   if (_executor && _executorForDb === null && _executorDialect === dialect && _executorDatabase === identity)
     return _executor
@@ -943,7 +1030,7 @@ function getExecutor(): OrmExecutor {
 
   // A libSQL server keeps the sqlite dialect but is not a file `bun:sqlite`
   // can open: the model layer writes through the shared async connection,
-  // exactly as it does for the network dialects.
+  // because its transport is `fetch` and that only answers later.
   if (dialect === 'sqlite' && resolveLibSQLTarget()) {
     _executor = new DriverExecutor(dialect)
   }
@@ -967,7 +1054,7 @@ function getExecutor(): OrmExecutor {
     _executor = new SqliteExecutor(db)
   }
   else {
-    _executor = new DriverExecutor(dialect)
+    _executor = new DriverExecutor(dialect, synchronous)
   }
 
   return _executor
@@ -978,7 +1065,7 @@ function getExecutor(): OrmExecutor {
  *
  * Only meaningful when the active dialect is sqlite (or a sqlite Database was
  * supplied via `configureOrm`). For mysql/postgres there is no `Database`
- * object — use the async model API instead. Retained for backwards
+ * object — use the model API instead. Retained for backwards
  * compatibility with callers that reach for the raw sqlite handle (tests,
  * low-level table setup).
  */
@@ -988,7 +1075,7 @@ export function getDatabase(): Database {
     return exec.sqliteDb
   throw new Error(
     `[bun-query-builder] getDatabase() is only available for the sqlite dialect; `
-    + `the configured dialect is '${exec.dialect}'. Use the async model API instead.`,
+    + `the configured dialect is '${exec.dialect}'. Use the model API instead.`,
   )
 }
 
@@ -1469,91 +1556,94 @@ class ModelInstance<
    *
    * @internal
    */
-  async _prepareInsert(): Promise<Record<string, unknown>> {
-    this._applySetters()
-    const pk = this._definition.primaryKey || 'id'
-    const hooks = this._definition.hooks
-    const attrs = this._definition.attributes
-    const data: Record<string, unknown> = {}
+  _prepareInsert(): Record<string, unknown> {
+    const self = this
+    return settle(function* (): Generator<unknown, Record<string, unknown>, unknown> {
+      self._applySetters()
+      const pk = self._definition.primaryKey || 'id'
+      const hooks = self._definition.hooks
+      const attrs = self._definition.attributes
+      const data: Record<string, unknown> = {}
 
-    // Persist every declared attribute that's explicitly present on the
-    // instance — not just `fillable` ones. Previously a non-fillable value
-    // set via create() data / .set() / forceFill() (the common case for FK
-    // columns like `user_id`) was dropped from the INSERT while remaining on
-    // the in-memory instance, desyncing the two and breaking NOT-NULL FKs on
-    // Postgres. `guarded` columns stay mass-assignment protected. See #1025.
-    for (const [key, attr] of Object.entries(attrs)) {
-      // A `guarded` column is dropped from the INSERT unless it was set
-      // through `forceFill()`. Without that exception the documented
-      // escape hatch did not escape: `forceFill({ apiKey })` on a guarded
-      // NOT NULL column threw a constraint error, and on a nullable one it
-      // silently wrote NULL. See #1025 for why guarded is filtered at all.
-      if (attr.guarded && !this._forced.has(toSnakeCase(key))) continue
-      // `attrs` keys are whatever casing the model declared them with
-      // (commonly camelCase, e.g. `memberCount`) but `_attributes` is
-      // always snake_case (see normalizeAttributeKeys) — same casing a
-      // read produces. Normalize the lookup and write the column under
-      // its real (snake_case) name, since that's what the table has.
-      const col = toSnakeCase(key)
-      if (this._attributes[col] !== undefined) {
-        data[col] = this._attributes[col]
+      // Persist every declared attribute that's explicitly present on the
+      // instance — not just `fillable` ones. Previously a non-fillable value
+      // set via create() data / .set() / forceFill() (the common case for FK
+      // columns like `user_id`) was dropped from the INSERT while remaining on
+      // the in-memory instance, desyncing the two and breaking NOT-NULL FKs on
+      // Postgres. `guarded` columns stay mass-assignment protected. See #1025.
+      for (const [key, attr] of Object.entries(attrs)) {
+        // A `guarded` column is dropped from the INSERT unless it was set
+        // through `forceFill()`. Without that exception the documented
+        // escape hatch did not escape: `forceFill({ apiKey })` on a guarded
+        // NOT NULL column threw a constraint error, and on a nullable one it
+        // silently wrote NULL. See #1025 for why guarded is filtered at all.
+        if (attr.guarded && !self._forced.has(toSnakeCase(key))) continue
+        // `attrs` keys are whatever casing the model declared them with
+        // (commonly camelCase, e.g. `memberCount`) but `_attributes` is
+        // always snake_case (see normalizeAttributeKeys) — same casing a
+        // read produces. Normalize the lookup and write the column under
+        // its real (snake_case) name, since that's what the table has.
+        const col = toSnakeCase(key)
+        if (self._attributes[col] !== undefined) {
+          data[col] = self._attributes[col]
+        }
       }
-    }
 
-    // FK columns implied by a `belongsTo` relation (e.g. `monitor_id` on
-    // a model that only declares `belongsTo: ['Monitor']`, with no
-    // matching entry in `attributes`) are never in `attrs` above — the
-    // migration generator infers them from `belongsTo` separately, but
-    // that inference doesn't feed back into the runtime attribute map
-    // this loop reads. Sweep any `_id`-suffixed key present on the
-    // instance that the loop above didn't already pick up. Mass
-    // assignment already gated these through its own `_id` bypass (see
-    // applyMassAssignmentRules) before the value ever reached
-    // `_attributes`, so no further guard is needed here.
-    for (const key of Object.keys(this._attributes)) {
-      if (key.endsWith('_id') && key !== pk && !(key in data)) {
-        data[key] = this._attributes[key]
+      // FK columns implied by a `belongsTo` relation (e.g. `monitor_id` on
+      // a model that only declares `belongsTo: ['Monitor']`, with no
+      // matching entry in `attributes`) are never in `attrs` above — the
+      // migration generator infers them from `belongsTo` separately, but
+      // that inference doesn't feed back into the runtime attribute map
+      // this loop reads. Sweep any `_id`-suffixed key present on the
+      // instance that the loop above didn't already pick up. Mass
+      // assignment already gated these through its own `_id` bypass (see
+      // applyMassAssignmentRules) before the value ever reached
+      // `_attributes`, so no further guard is needed here.
+      for (const key of Object.keys(self._attributes)) {
+        if (key.endsWith('_id') && key !== pk && !(key in data)) {
+          data[key] = self._attributes[key]
+        }
       }
-    }
 
-    // A key the caller supplied is written. Neither loop above picks it up
-    // unless the model declares it as an attribute, and a string key has no
-    // database default to fall back on.
-    const suppliedKey = this._attributes[pk]
-    const keyAttr = attrs[pk]
-    const keyGuarded = keyAttr?.guarded && !this._forced.has(pk)
-    if (suppliedKey != null && !(pk in data) && !keyGuarded)
-      data[pk] = suppliedKey
+      // A key the caller supplied is written. Neither loop above picks it up
+      // unless the model declares it as an attribute, and a string key has no
+      // database default to fall back on.
+      const suppliedKey = self._attributes[pk]
+      const keyAttr = attrs[pk]
+      const keyGuarded = keyAttr?.guarded && !self._forced.has(pk)
+      if (suppliedKey != null && !(pk in data) && !keyGuarded)
+        data[pk] = suppliedKey
 
-    if (timestampsEnabled(this._definition)) {
-      const now = formatNow()
-      // An explicitly supplied `created_at` wins.
-      //
-      // `created_at` is contributed by the timestamps trait, not declared in
-      // `attributes`, so the loop above never copies it out of
-      // `_attributes` — and this block then wrote `now` unconditionally. A
-      // caller that set it deliberately (importing historical records,
-      // backfilling a migration, seeding a database whose dates carry
-      // meaning) got the insert time instead, silently: the value was
-      // accepted, no error was raised, and the row simply came back with the
-      // wrong date. Note `update()` honoured the same field, so the two
-      // paths disagreed about who owned the column.
-      //
-      // `updated_at` stays `now` on purpose — the row IS being written right
-      // now, and a caller-supplied value there would be describing a write
-      // that never happened. Matches the DynamoDB driver's rule, which has
-      // always been `if (!item.createdAt) item.createdAt = now`.
-      const supplied = this._attributes.created_at
-      data.created_at = supplied === undefined || supplied === null ? now : supplied
-      data.updated_at = now
-    }
+      if (timestampsEnabled(self._definition)) {
+        const now = formatNow()
+        // An explicitly supplied `created_at` wins.
+        //
+        // `created_at` is contributed by the timestamps trait, not declared in
+        // `attributes`, so the loop above never copies it out of
+        // `_attributes` — and this block then wrote `now` unconditionally. A
+        // caller that set it deliberately (importing historical records,
+        // backfilling a migration, seeding a database whose dates carry
+        // meaning) got the insert time instead, silently: the value was
+        // accepted, no error was raised, and the row simply came back with the
+        // wrong date. Note `update()` honoured the same field, so the two
+        // paths disagreed about who owned the column.
+        //
+        // `updated_at` stays `now` on purpose — the row IS being written right
+        // now, and a caller-supplied value there would be describing a write
+        // that never happened. Matches the DynamoDB driver's rule, which has
+        // always been `if (!item.createdAt) item.createdAt = now`.
+        const supplied = self._attributes.created_at
+        data.created_at = supplied === undefined || supplied === null ? now : supplied
+        data.updated_at = now
+      }
 
-    if (this._definition.traits?.useUuid && !data.uuid) {
-      data.uuid = crypto.randomUUID()
-    }
+      if (self._definition.traits?.useUuid && !data.uuid) {
+        data.uuid = crypto.randomUUID()
+      }
 
-    await hooks?.beforeCreate?.(data)
-    return data
+      yield* wait(hooks?.beforeCreate?.(data))
+      return data
+    })
   }
 
   /**
@@ -1563,18 +1653,21 @@ class ModelInstance<
    *
    * @internal
    */
-  async _markInserted(data: Record<string, unknown>, generatedKey?: unknown): Promise<void> {
-    const pk = this._definition.primaryKey || 'id'
-    for (const [key, value] of Object.entries(data))
-      this._attributes[key] = value
-    if (!(pk in data) && generatedKey != null)
-      this._attributes[pk] = generatedKey
-    this._exists = true
+  _markInserted(data: Record<string, unknown>, generatedKey?: unknown): void {
+    const self = this
+    return settle(function* (): Generator<unknown, void, unknown> {
+      const pk = self._definition.primaryKey || 'id'
+      for (const [key, value] of Object.entries(data))
+        self._attributes[key] = value
+      if (!(pk in data) && generatedKey != null)
+        self._attributes[pk] = generatedKey
+      self._exists = true
 
-    await this._definition.hooks?.afterCreate?.(this as unknown as ModelHookInstance)
+      yield* wait(self._definition.hooks?.afterCreate?.(self as unknown as ModelHookInstance))
 
-    this._original = { ...this._attributes }
-    this._hasSaved = true
+      self._original = { ...self._attributes }
+      self._hasSaved = true
+    })
   }
 
   /** Run the model's `set` mutators over every dirty attribute. */
@@ -1589,67 +1682,76 @@ class ModelInstance<
     }
   }
 
-  async save(): Promise<this> {
-    const exec = getExecutor()
-    const pk = this._definition.primaryKey || 'id'
-    const hooks = this._definition.hooks
+  save(): Written<TDef, this> {
+    const self = this
+    const answer = settle(function* (): Generator<unknown, typeof self, unknown> {
+      const exec = getExecutor()
+      const pk = self._definition.primaryKey || 'id'
+      const hooks = self._definition.hooks
 
-    if (this._exists) {
-      this._applySetters()
-      // Update
-      await hooks?.beforeUpdate?.(this as unknown as ModelHookInstance, this.getChanges())
+      if (self._exists) {
+        self._applySetters()
+        // Update
+        yield* wait(hooks?.beforeUpdate?.(self as unknown as ModelHookInstance, self.getChanges()))
 
-      const changes = this.getChanges()
-      const changeKeys = Object.keys(changes)
-      if (changeKeys.length > 0) {
-        // A row read without its key (`select('title')`) cannot be addressed.
-        // This used to take the INSERT branch and write a copy of the row.
-        if (this._attributes[pk] == null)
-          throw new Error(`Cannot save a model without a primary key: '${pk}' was not selected`)
-        if (timestampsEnabled(this._definition)) {
-          // The write owns updated_at, so a changed one is not sent as well:
-          // Postgres refuses a column assigned twice (see managedUpdateSet).
-          const { sets, values } = managedUpdateSet(Object.entries(changes), k => k)
-          await exec.run(
-            `UPDATE ${quotedTable(this._definition.table)} SET ${sets} WHERE ${pk} = ?`,
-            [...values, this._attributes[pk]]
-          )
+        const changes = self.getChanges()
+        const changeKeys = Object.keys(changes)
+        if (changeKeys.length > 0) {
+          // A row read without its key (`select('title')`) cannot be addressed.
+          // This used to take the INSERT branch and write a copy of the row.
+          if (self._attributes[pk] == null)
+            throw new Error(`Cannot save a model without a primary key: '${pk}' was not selected`)
+          if (timestampsEnabled(self._definition)) {
+            // The write owns updated_at, so a changed one is not sent as well:
+            // Postgres refuses a column assigned twice (see managedUpdateSet).
+            const { sets, values } = managedUpdateSet(Object.entries(changes), k => k)
+            yield* wait(exec.run(
+              `UPDATE ${quotedTable(self._definition.table)} SET ${sets} WHERE ${pk} = ?`,
+              [...values, self._attributes[pk]]
+            ))
+          }
+          else {
+            const sets = changeKeys.map(k => `${quoteSqlColumn(k)} = ?`).join(', ')
+            yield* wait(exec.run(`UPDATE ${quotedTable(self._definition.table)} SET ${sets} WHERE ${pk} = ?`, [...Object.values(changes), self._attributes[pk]]))
+          }
         }
-        else {
-          const sets = changeKeys.map(k => `${quoteSqlColumn(k)} = ?`).join(', ')
-          await exec.run(`UPDATE ${quotedTable(this._definition.table)} SET ${sets} WHERE ${pk} = ?`, [...Object.values(changes), this._attributes[pk]])
-        }
+
+        yield* wait(hooks?.afterUpdate?.(self as unknown as ModelHookInstance))
+      }
+      else {
+        // Create
+        const data = (yield* wait(self._prepareInsert()))
+        const columns = Object.keys(data)
+        const placeholders = columns.map(() => '?').join(', ')
+
+        const result = (yield* wait(exec.insert(
+          `INSERT INTO ${quotedTable(self._definition.table)} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${placeholders})`,
+          Object.values(data),
+          pk,
+        )))
+
+        // Only a generated key is read back. For a supplied one the driver's
+        // insert id is the rowid (SQLite) or 0 (MySQL on a non-AUTO_INCREMENT
+        // key), not the key.
+        yield* wait(self._markInserted(data, pk in data ? undefined : result.lastInsertId))
+        return self
       }
 
-      await hooks?.afterUpdate?.(this as unknown as ModelHookInstance)
-    }
-    else {
-      // Create
-      const data = await this._prepareInsert()
-      const columns = Object.keys(data)
-      const placeholders = columns.map(() => '?').join(', ')
-
-      const result = await exec.insert(
-        `INSERT INTO ${quotedTable(this._definition.table)} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${placeholders})`,
-        Object.values(data),
-        pk,
-      )
-
-      // Only a generated key is read back. For a supplied one the driver's
-      // insert id is the rowid (SQLite) or 0 (MySQL on a non-AUTO_INCREMENT
-      // key), not the key.
-      await this._markInserted(data, pk in data ? undefined : result.lastInsertId)
-      return this
-    }
-
-    this._original = { ...this._attributes }
-    this._hasSaved = true
-    return this
+      self._original = { ...self._attributes }
+      self._hasSaved = true
+      return self
+    })
+    return answer as unknown as Written<TDef, this>
   }
 
-  async update(data: FillableAttributes<TDef>): Promise<this> {
-    this.fill(data)
-    return this.save()
+  update(data: FillableAttributes<TDef>): Written<TDef, this> {
+    const self = this
+    const answer = settle(function* (): Generator<unknown, typeof self, unknown> {
+      self.fill(data)
+      yield* wait(self.save())
+      return self
+    })
+    return answer as unknown as Written<TDef, this>
   }
 
   /**
@@ -1659,45 +1761,52 @@ class ModelInstance<
    *
    * @returns the freshly-fetched row, or `null` if the row no longer exists.
    */
-  async fresh(): Promise<ModelInstance<TDef, TSelected> | null> {
-    const exec = getExecutor()
-    const pk = this._definition.primaryKey || 'id'
-    const id = this._attributes[pk]
-    if (id == null) return null
-    const row = await exec.get(`SELECT * FROM ${quotedTable(this._definition.table)} WHERE ${pk} = ?`, [id])
-    if (!row) return null
-    return new ModelInstance(this._definition, row as Partial<ModelAttributes<TDef>>, true)
+  fresh(): ModelInstance<TDef, TSelected> | null {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelInstance<TDef, TSelected> | null, unknown> {
+      const exec = getExecutor()
+      const pk = self._definition.primaryKey || 'id'
+      const id = self._attributes[pk]
+      if (id == null) return null
+      const row = (yield* wait(exec.get(`SELECT * FROM ${quotedTable(self._definition.table)} WHERE ${pk} = ?`, [id])))
+      if (!row) return null
+      return new ModelInstance(self._definition, row as Partial<ModelAttributes<TDef>>, true)
+    })
   }
 
-  async delete(): Promise<boolean> {
-    const exec = getExecutor()
-    const pk = this._definition.primaryKey || 'id'
-    const pkValue = this._attributes[pk]
-    const hooks = this._definition.hooks
+  delete(): Written<TDef, boolean> {
+    const self = this
+    const answer = settle(function* (): Generator<unknown, boolean, unknown> {
+      const exec = getExecutor()
+      const pk = self._definition.primaryKey || 'id'
+      const pkValue = self._attributes[pk]
+      const hooks = self._definition.hooks
 
-    // `== null`, not falsy: 0 and '' are primary keys a row can legitimately
-    // carry, and rejecting them told the caller the instance had no key at all.
-    if (pkValue == null) throw new Error('Cannot delete a model without a primary key')
+      // `== null`, not falsy: 0 and '' are primary keys a row can legitimately
+      // carry, and rejecting them told the caller the instance had no key at all.
+      if (pkValue == null) throw new Error('Cannot delete a model without a primary key')
 
-    await hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
+      yield* wait(hooks?.beforeDelete?.(self as unknown as ModelHookInstance))
 
-    if (softDeletesEnabled(this._definition)) {
-      const now = formatNow()
-      await exec.run(
-        `UPDATE ${quotedTable(this._definition.table)} SET deleted_at = ? WHERE ${pk} = ?`,
-        [now, pkValue]
-      )
-      // Reflect the soft delete on the in-memory instance so `trashed()` and
-      // reads of `deleted_at` are consistent without a refresh. See #1024.
-      this._attributes[SOFT_DELETE_COLUMN] = now
-    }
-    else {
-      await exec.run(`DELETE FROM ${quotedTable(this._definition.table)} WHERE ${pk} = ?`, [pkValue])
-    }
+      if (softDeletesEnabled(self._definition)) {
+        const now = formatNow()
+        yield* wait(exec.run(
+          `UPDATE ${quotedTable(self._definition.table)} SET deleted_at = ? WHERE ${pk} = ?`,
+          [now, pkValue]
+        ))
+        // Reflect the soft delete on the in-memory instance so `trashed()` and
+        // reads of `deleted_at` are consistent without a refresh. See #1024.
+        self._attributes[SOFT_DELETE_COLUMN] = now
+      }
+      else {
+        yield* wait(exec.run(`DELETE FROM ${quotedTable(self._definition.table)} WHERE ${pk} = ?`, [pkValue]))
+      }
 
-    await hooks?.afterDelete?.(this as unknown as ModelHookInstance)
+      yield* wait(hooks?.afterDelete?.(self as unknown as ModelHookInstance))
 
-    return true
+      return true
+    })
+    return answer as unknown as Written<TDef, boolean>
   }
 
   /**
@@ -1706,39 +1815,46 @@ class ModelInstance<
    * `delete()` marks a soft-deletable row instead of removing it, which leaves
    * no way to purge one row through an instance. Delete hooks run either way.
    */
-  async forceDelete(): Promise<boolean> {
-    const pk = this._definition.primaryKey || 'id'
-    const pkValue = this._attributes[pk]
-    const hooks = this._definition.hooks
+  forceDelete(): Written<TDef, boolean> {
+    const self = this
+    const answer = settle(function* (): Generator<unknown, boolean, unknown> {
+      const pk = self._definition.primaryKey || 'id'
+      const pkValue = self._attributes[pk]
+      const hooks = self._definition.hooks
 
-    // `== null`, not falsy: 0 and '' are primary keys a row can legitimately
-    // carry, and rejecting them told the caller the instance had no key at all.
-    if (pkValue == null) throw new Error('Cannot delete a model without a primary key')
+      // `== null`, not falsy: 0 and '' are primary keys a row can legitimately
+      // carry, and rejecting them told the caller the instance had no key at all.
+      if (pkValue == null) throw new Error('Cannot delete a model without a primary key')
 
-    await hooks?.beforeDelete?.(this as unknown as ModelHookInstance)
-    await getExecutor().run(`DELETE FROM ${quotedTable(this._definition.table)} WHERE ${pk} = ?`, [pkValue])
-    await hooks?.afterDelete?.(this as unknown as ModelHookInstance)
+      yield* wait(hooks?.beforeDelete?.(self as unknown as ModelHookInstance))
+      yield* wait(getExecutor().run(`DELETE FROM ${quotedTable(self._definition.table)} WHERE ${pk} = ?`, [pkValue]))
+      yield* wait(hooks?.afterDelete?.(self as unknown as ModelHookInstance))
 
-    return true
+      return true
+    })
+    return answer as unknown as Written<TDef, boolean>
   }
 
   /**
    * Restore a soft-deleted row by clearing `deleted_at`. Throws if the model
    * doesn't use soft deletes. See stacksjs/bun-query-builder#1024.
    */
-  async restore(): Promise<this> {
-    if (!softDeletesEnabled(this._definition as ModelDefinition))
-      throw new Error(`[orm] restore() requires soft deletes on '${this._definition.name}'`)
-    const pk = this._definition.primaryKey || 'id'
-    const pkValue = this._attributes[pk]
-    if (!pkValue) throw new Error('Cannot restore a model without a primary key')
-    await getExecutor().run(
-      `UPDATE ${quotedTable(this._definition.table)} SET ${SOFT_DELETE_COLUMN} = ? WHERE ${pk} = ?`,
-      [null, pkValue],
-    )
-    this._attributes[SOFT_DELETE_COLUMN] = null
-    this._original = null
-    return this
+  restore(): this {
+    const self = this
+    return settle(function* (): Generator<unknown, typeof self, unknown> {
+      if (!softDeletesEnabled(self._definition as ModelDefinition))
+        throw new Error(`[orm] restore() requires soft deletes on '${self._definition.name}'`)
+      const pk = self._definition.primaryKey || 'id'
+      const pkValue = self._attributes[pk]
+      if (!pkValue) throw new Error('Cannot restore a model without a primary key')
+      yield* wait(getExecutor().run(
+        `UPDATE ${quotedTable(self._definition.table)} SET ${SOFT_DELETE_COLUMN} = ? WHERE ${pk} = ?`,
+        [null, pkValue],
+      ))
+      self._attributes[SOFT_DELETE_COLUMN] = null
+      self._original = null
+      return self
+    })
   }
 
   /** Whether this instance is soft-deleted (has a non-null `deleted_at`). */
@@ -1757,18 +1873,21 @@ class ModelInstance<
    *
    * Throws only when the receiver has no primary key set.
    */
-  async refresh(): Promise<this | null> {
-    const exec = getExecutor()
-    const pk = this._definition.primaryKey || 'id'
-    const pkValue = this._attributes[pk]
+  refresh(): this | null {
+    const self = this
+    return settle(function* (): Generator<unknown, typeof self | null, unknown> {
+      const exec = getExecutor()
+      const pk = self._definition.primaryKey || 'id'
+      const pkValue = self._attributes[pk]
 
-    if (!pkValue) throw new Error('Cannot refresh a model without a primary key')
+      if (!pkValue) throw new Error('Cannot refresh a model without a primary key')
 
-    const row = await exec.get(`SELECT * FROM ${quotedTable(this._definition.table)} WHERE ${pk} = ?`, [pkValue])
-    if (!row) return null
-    this._attributes = row
-    this._original = null // post-refresh, nothing is dirty
-    return this
+      const row = (yield* wait(exec.get(`SELECT * FROM ${quotedTable(self._definition.table)} WHERE ${pk} = ?`, [pkValue])))
+      if (!row) return null
+      self._attributes = row
+      self._original = null // post-refresh, nothing is dirty
+      return self
+    })
   }
 
   /**
@@ -2576,32 +2695,44 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
     })
   }
 
-  async get(): Promise<ModelInstance<TRel, any>[]> {
-    const exec = getExecutor()
-    const { sql, params } = this.buildSelect()
-    const rows = await exec.all(sql, params)
-    return this.hydrateRows(rows)
+  get(): ModelInstance<TRel, any>[] {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelInstance<TRel, any>[], unknown> {
+      const exec = getExecutor()
+      const { sql, params } = self.buildSelect()
+      const rows = (yield* wait(exec.all(sql, params)))
+      return self.hydrateRows(rows)
+    })
   }
 
-  async first(): Promise<ModelInstance<TRel, any> | undefined> {
-    this._limit = 1
-    return (await this.get())[0]
+  first(): ModelInstance<TRel, any> | undefined {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelInstance<TRel, any> | undefined, unknown> {
+      self._limit = 1
+      return ((yield* wait(self.get())))[0]
+    })
   }
 
-  async count(): Promise<number> {
-    const exec = getExecutor()
-    let sql = `SELECT COUNT(*) as count FROM ${quotedTable(this.pivotTable)} WHERE ${quoteSqlColumn(this.fkParent)} = ?`
-    const params: unknown[] = [this.parentId]
-    for (const w of this._pivotWheres) {
-      sql += ` AND ${w.sql}`
-      params.push(...w.params)
-    }
-    const row = await exec.get(sql, params)
-    return Number((row as { count: number } | undefined)?.count ?? 0)
+  count(): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      const exec = getExecutor()
+      let sql = `SELECT COUNT(*) as count FROM ${quotedTable(self.pivotTable)} WHERE ${quoteSqlColumn(self.fkParent)} = ?`
+      const params: unknown[] = [self.parentId]
+      for (const w of self._pivotWheres) {
+        sql += ` AND ${w.sql}`
+        params.push(...w.params)
+      }
+      const row = (yield* wait(exec.get(sql, params)))
+      return Number((row as { count: number } | undefined)?.count ?? 0)
+    })
   }
 
-  async exists(): Promise<boolean> {
-    return (await this.count()) > 0
+  exists(): boolean {
+    const self = this
+    return settle(function* (): Generator<unknown, boolean, unknown> {
+      return ((yield* wait(self.count()))) > 0
+    })
   }
 
   // --- mutation side --------------------------------------------------------
@@ -2615,66 +2746,75 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
    *
    * Returns the count of inserted rows.
    */
-  async attach(idOrIds: unknown | unknown[], extras: Record<string, unknown> = {}): Promise<number> {
-    const exec = getExecutor()
-    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
-    if (ids.length === 0) return 0
-    const ts = this._resolved.pivotTimestamps ? this.now() : null
-    let inserted = 0
-    for (const relatedId of ids) {
-      const row: Record<string, unknown> = {
-        [this.fkParent]: this.parentId,
-        [this.fkRelated]: relatedId,
-        ...extras,
+  attach(idOrIds: unknown | unknown[], extras: Record<string, unknown> = {}): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      const exec = getExecutor()
+      const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
+      if (ids.length === 0) return 0
+      const ts = self._resolved.pivotTimestamps ? self.now() : null
+      let inserted = 0
+      for (const relatedId of ids) {
+        const row: Record<string, unknown> = {
+          [self.fkParent]: self.parentId,
+          [self.fkRelated]: relatedId,
+          ...extras,
+        }
+        if (ts) {
+          if (row.created_at === undefined) row.created_at = ts
+          if (row.updated_at === undefined) row.updated_at = ts
+        }
+        const cols = Object.keys(row)
+        const placeholders = cols.map(() => '?').join(', ')
+        const sql = `INSERT INTO ${quotedTable(self.pivotTable)} (${cols.map(quoteSqlColumn).join(', ')}) VALUES (${placeholders})`
+        const params = cols.map(c => row[c])
+        yield* wait(exec.run(sql, params))
+        inserted++
       }
-      if (ts) {
-        if (row.created_at === undefined) row.created_at = ts
-        if (row.updated_at === undefined) row.updated_at = ts
-      }
-      const cols = Object.keys(row)
-      const placeholders = cols.map(() => '?').join(', ')
-      const sql = `INSERT INTO ${quotedTable(this.pivotTable)} (${cols.map(quoteSqlColumn).join(', ')}) VALUES (${placeholders})`
-      const params = cols.map(c => row[c])
-      await exec.run(sql, params)
-      inserted++
-    }
-    return inserted
+      return inserted
+    })
   }
 
   /**
    * Detach related rows from the parent. With no argument, detaches all.
    * Returns the count of deleted rows.
    */
-  async detach(idOrIds?: unknown | unknown[]): Promise<number> {
-    const exec = getExecutor()
-    let sql = `DELETE FROM ${quotedTable(this.pivotTable)} WHERE ${quoteSqlColumn(this.fkParent)} = ?`
-    const params: unknown[] = [this.parentId]
-    if (idOrIds !== undefined && idOrIds !== null) {
-      const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
-      if (ids.length === 0) return 0
-      const placeholders = ids.map(() => '?').join(', ')
-      sql += ` AND ${quoteSqlColumn(this.fkRelated)} IN (${placeholders})`
-      params.push(...ids)
-    }
-    return (await exec.run(sql, params)).changes
+  detach(idOrIds?: unknown | unknown[]): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      const exec = getExecutor()
+      let sql = `DELETE FROM ${quotedTable(self.pivotTable)} WHERE ${quoteSqlColumn(self.fkParent)} = ?`
+      const params: unknown[] = [self.parentId]
+      if (idOrIds !== undefined && idOrIds !== null) {
+        const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
+        if (ids.length === 0) return 0
+        const placeholders = ids.map(() => '?').join(', ')
+        sql += ` AND ${quoteSqlColumn(self.fkRelated)} IN (${placeholders})`
+        params.push(...ids)
+      }
+      return ((yield* wait(exec.run(sql, params)))).changes
+    })
   }
 
   /**
    * Update extras on an existing pivot row, identified by the related id.
    * Returns the number of pivot rows updated (0 or 1).
    */
-  async updateExistingPivot(relatedId: unknown, extras: Record<string, unknown>): Promise<number> {
-    const exec = getExecutor()
-    const updates = { ...extras }
-    if (this._resolved.pivotTimestamps && updates.updated_at === undefined) {
-      updates.updated_at = this.now()
-    }
-    const cols = Object.keys(updates)
-    if (cols.length === 0) return 0
-    const setClause = cols.map(c => `${quoteSqlColumn(c)} = ?`).join(', ')
-    const sql = `UPDATE ${quotedTable(this.pivotTable)} SET ${setClause} WHERE ${quoteSqlColumn(this.fkParent)} = ? AND ${quoteSqlColumn(this.fkRelated)} = ?`
-    const params = [...cols.map(c => updates[c]), this.parentId, relatedId]
-    return (await exec.run(sql, params)).changes
+  updateExistingPivot(relatedId: unknown, extras: Record<string, unknown>): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      const exec = getExecutor()
+      const updates = { ...extras }
+      if (self._resolved.pivotTimestamps && updates.updated_at === undefined) {
+        updates.updated_at = self.now()
+      }
+      const cols = Object.keys(updates)
+      if (cols.length === 0) return 0
+      const setClause = cols.map(c => `${quoteSqlColumn(c)} = ?`).join(', ')
+      const sql = `UPDATE ${quotedTable(self.pivotTable)} SET ${setClause} WHERE ${quoteSqlColumn(self.fkParent)} = ? AND ${quoteSqlColumn(self.fkRelated)} = ?`
+      const params = [...cols.map(c => updates[c]), self.parentId, relatedId]
+      return ((yield* wait(exec.run(sql, params)))).changes
+    })
   }
 
   /**
@@ -2685,72 +2825,78 @@ export class BelongsToManyRelationBuilder<TRel extends ModelDefinition> {
    * `items` may be a list of plain ids (no extras) or `{ id, ...extras }`
    * objects.
    */
-  async sync(items: Array<unknown | { id: unknown, [key: string]: unknown }>): Promise<{ attached: unknown[], detached: unknown[], updated: unknown[] }> {
-    const exec = getExecutor()
-    const desired = new Map<unknown, Record<string, unknown>>()
-    for (const item of items) {
-      if (item != null && typeof item === 'object' && 'id' in (item as any)) {
-        const { id, ...extras } = item as { id: unknown, [key: string]: unknown }
-        desired.set(id, extras)
+  sync(items: Array<unknown | { id: unknown, [key: string]: unknown }>): { attached: unknown[], detached: unknown[], updated: unknown[] } {
+    const self = this
+    return settle(function* (): Generator<unknown, { attached: unknown[], detached: unknown[], updated: unknown[] }, unknown> {
+      const exec = getExecutor()
+      const desired = new Map<unknown, Record<string, unknown>>()
+      for (const item of items) {
+        if (item != null && typeof item === 'object' && 'id' in (item as any)) {
+          const { id, ...extras } = item as { id: unknown, [key: string]: unknown }
+          desired.set(id, extras)
+        }
+        else {
+          desired.set(item, {})
+        }
       }
-      else {
-        desired.set(item, {})
+
+      // Read current pivot rows for this parent.
+      const current = (yield* wait(exec.all(
+        `SELECT * FROM ${quotedTable(self.pivotTable)} WHERE ${quoteSqlColumn(self.fkParent)} = ?`,
+        [self.parentId],
+      )))
+      const currentIds = new Set(current.map(r => r[self.fkRelated]))
+
+      const attached: unknown[] = []
+      const detached: unknown[] = []
+      const updated: unknown[] = []
+
+      // Detach missing
+      const toDetach = [...currentIds].filter(id => !desired.has(id))
+      if (toDetach.length > 0) {
+        yield* wait(self.detach(toDetach))
+        detached.push(...toDetach)
       }
-    }
 
-    // Read current pivot rows for this parent.
-    const current = await exec.all(
-      `SELECT * FROM ${quotedTable(this.pivotTable)} WHERE ${quoteSqlColumn(this.fkParent)} = ?`,
-      [this.parentId],
-    )
-    const currentIds = new Set(current.map(r => r[this.fkRelated]))
-
-    const attached: unknown[] = []
-    const detached: unknown[] = []
-    const updated: unknown[] = []
-
-    // Detach missing
-    const toDetach = [...currentIds].filter(id => !desired.has(id))
-    if (toDetach.length > 0) {
-      await this.detach(toDetach)
-      detached.push(...toDetach)
-    }
-
-    // Attach or update
-    for (const [id, extras] of desired) {
-      if (!currentIds.has(id)) {
-        await this.attach(id, extras)
-        attached.push(id)
+      // Attach or update
+      for (const [id, extras] of desired) {
+        if (!currentIds.has(id)) {
+          yield* wait(self.attach(id, extras))
+          attached.push(id)
+        }
+        else if (Object.keys(extras).length > 0) {
+          yield* wait(self.updateExistingPivot(id, extras))
+          updated.push(id)
+        }
       }
-      else if (Object.keys(extras).length > 0) {
-        await this.updateExistingPivot(id, extras)
-        updated.push(id)
-      }
-    }
 
-    return { attached, detached, updated }
+      return { attached, detached, updated }
+    })
   }
 
   /**
    * For each id, attach if currently detached, detach if currently attached.
    * Returns `{ attached, detached }`.
    */
-  async toggle(idOrIds: unknown | unknown[]): Promise<{ attached: unknown[], detached: unknown[] }> {
-    const exec = getExecutor()
-    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
-    if (ids.length === 0) return { attached: [], detached: [] }
-    const placeholders = ids.map(() => '?').join(', ')
-    const present = await exec.all(
-      `SELECT ${quoteSqlColumn(this.fkRelated)} FROM ${quotedTable(this.pivotTable)} WHERE ${quoteSqlColumn(this.fkParent)} = ? AND ${quoteSqlColumn(this.fkRelated)} IN (${placeholders})`,
-      [this.parentId, ...ids],
-    )
-    const presentIds = new Set(present.map(r => r[this.fkRelated]))
+  toggle(idOrIds: unknown | unknown[]): { attached: unknown[], detached: unknown[] } {
+    const self = this
+    return settle(function* (): Generator<unknown, { attached: unknown[], detached: unknown[] }, unknown> {
+      const exec = getExecutor()
+      const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds]
+      if (ids.length === 0) return { attached: [], detached: [] }
+      const placeholders = ids.map(() => '?').join(', ')
+      const present = (yield* wait(exec.all(
+        `SELECT ${quoteSqlColumn(self.fkRelated)} FROM ${quotedTable(self.pivotTable)} WHERE ${quoteSqlColumn(self.fkParent)} = ? AND ${quoteSqlColumn(self.fkRelated)} IN (${placeholders})`,
+        [self.parentId, ...ids],
+      )))
+      const presentIds = new Set(present.map(r => r[self.fkRelated]))
 
-    const toAttach = ids.filter(id => !presentIds.has(id))
-    const toDetach = ids.filter(id => presentIds.has(id))
-    if (toAttach.length > 0) await this.attach(toAttach)
-    if (toDetach.length > 0) await this.detach(toDetach)
-    return { attached: toAttach, detached: toDetach }
+      const toAttach = ids.filter(id => !presentIds.has(id))
+      const toDetach = ids.filter(id => presentIds.has(id))
+      if (toAttach.length > 0) yield* wait(self.attach(toAttach))
+      if (toDetach.length > 0) yield* wait(self.detach(toDetach))
+      return { attached: toAttach, detached: toDetach }
+    })
   }
 }
 
@@ -3367,254 +3513,269 @@ class ModelQueryBuilder<
    * between them — awaiting them in sequence made `.with('a', 'b', 'c')` cost
    * the SUM of three round trips instead of the slowest one.
    */
-  private async eagerLoadRelations(instances: ModelInstance<TDef, TSelected>[]): Promise<void> {
-    if (instances.length === 0 || this._withRelations.length === 0) return
-    await Promise.all(this._withRelations.map(r => this.eagerLoadRelation(r, instances)))
+  private eagerLoadRelations(instances: ModelInstance<TDef, TSelected>[]): void {
+    const self = this
+    return settle(function* (): Generator<unknown, void, unknown> {
+      if (instances.length === 0 || self._withRelations.length === 0) return
+      yield* wait(waitAll(self._withRelations.map(r => self.eagerLoadRelation(r, instances))))
+    })
   }
 
-  private async eagerLoadRelation(relationName: string, instances: ModelInstance<TDef, TSelected>[]): Promise<void> {
-    const exec = getExecutor()
-    const pk = this._definition.primaryKey || 'id'
+  private eagerLoadRelation(relationName: string, instances: ModelInstance<TDef, TSelected>[]): void {
+    const self = this
+    return settle(function* (): Generator<unknown, void, unknown> {
+      const exec = getExecutor()
+      const pk = self._definition.primaryKey || 'id'
 
-    // Cache relation resolution per model+relation pair
-    const cacheKey = `${this._definition.name}:${relationName}`
-    let rel = relationCache.get(cacheKey)
-    if (rel === undefined) {
-      rel = resolveRelation(this._definition as ModelDefinition, relationName)
-      if (relationCache.size >= RELATION_CACHE_MAX)
-        relationCache.clear()
-      relationCache.set(cacheKey, rel)
-    }
-    if (!rel)
-      throw new Error(unresolvedRelationMessage(this._definition as ModelDefinition, relationName))
+      // Cache relation resolution per model+relation pair
+      const cacheKey = `${self._definition.name}:${relationName}`
+      let rel = relationCache.get(cacheKey)
+      if (rel === undefined) {
+        rel = resolveRelation(self._definition as ModelDefinition, relationName)
+        if (relationCache.size >= RELATION_CACHE_MAX)
+          relationCache.clear()
+        relationCache.set(cacheKey, rel)
+      }
+      if (!rel)
+        throw new Error(unresolvedRelationMessage(self._definition as ModelDefinition, relationName))
 
-    const single = rel.type === 'hasOne' || rel.type === 'morphOne'
-    if (rel.type === 'hasMany' || rel.type === 'hasOne' || rel.type === 'morphMany' || rel.type === 'morphOne') {
-      // Get parent IDs
-      const parentIds = distinctParentIds(instances, pk)
-      if (parentIds.length === 0) return
+      const single = rel.type === 'hasOne' || rel.type === 'morphOne'
+      if (rel.type === 'hasMany' || rel.type === 'hasOne' || rel.type === 'morphMany' || rel.type === 'morphOne') {
+        // Get parent IDs
+        const parentIds = distinctParentIds(instances, pk)
+        if (parentIds.length === 0) return
 
-      const placeholders = parentIds.map(() => '?').join(', ')
-      // A polymorphic child shares its foreign key with every other parent
-      // table, so the type column is the only thing keeping one parent's rows
-      // out of another's relation.
-      const morphFilter = rel.morphTypeColumn ? ` AND ${rel.morphTypeColumn} = ?` : ''
-      const rows = await exec.all(
-        `SELECT * FROM ${rel.relatedTable} WHERE ${rel.foreignKey} IN (${placeholders})${morphFilter}`,
-        rel.morphTypeColumn ? [...parentIds, rel.morphTypeValue] : parentIds,
-      )
+        const placeholders = parentIds.map(() => '?').join(', ')
+        // A polymorphic child shares its foreign key with every other parent
+        // table, so the type column is the only thing keeping one parent's rows
+        // out of another's relation.
+        const morphFilter = rel.morphTypeColumn ? ` AND ${rel.morphTypeColumn} = ?` : ''
+        const rows = (yield* wait(exec.all(
+          `SELECT * FROM ${rel.relatedTable} WHERE ${rel.foreignKey} IN (${placeholders})${morphFilter}`,
+          rel.morphTypeColumn ? [...parentIds, rel.morphTypeValue] : parentIds,
+        )))
 
-      // Try to get the related model's definition for proper instances
-      const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
-      const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+        // Try to get the related model's definition for proper instances
+        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || self._definition
 
-      if (!single) {
-        // Group by foreign key
-        const grouped = new Map<unknown, Record<string, unknown>[]>()
-        for (const row of rows) {
-          const fkVal = row[rel.foreignKey]
-          if (!grouped.has(fkVal)) grouped.set(fkVal, [])
-          grouped.get(fkVal)!.push(row)
+        if (!single) {
+          // Group by foreign key
+          const grouped = new Map<unknown, Record<string, unknown>[]>()
+          for (const row of rows) {
+            const fkVal = row[rel.foreignKey]
+            if (!grouped.has(fkVal)) grouped.set(fkVal, [])
+            grouped.get(fkVal)!.push(row)
+          }
+          for (const instance of instances) {
+            const related = grouped.get(instance.get(pk as any)) || []
+            instance.setRelation(relationName, related.map(r => new ModelInstance(relDef as any, r as any, true)))
+          }
         }
-        for (const instance of instances) {
-          const related = grouped.get(instance.get(pk as any)) || []
-          instance.setRelation(relationName, related.map(r => new ModelInstance(relDef as any, r as any, true)))
+        else {
+          // hasOne / morphOne - single record per parent. First row wins: the rows arrive
+          // in the database's order, and overwriting on each hit handed back the
+          // LAST match, which is the opposite of what `hasOne` means when a
+          // parent has stray duplicates.
+          const byFk = new Map<unknown, Record<string, unknown>>()
+          for (const row of rows) {
+            const k = row[rel.foreignKey]
+            if (!byFk.has(k)) byFk.set(k, row)
+          }
+          for (const instance of instances) {
+            const row = byFk.get(instance.get(pk as any))
+            instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any, true) : null)
+          }
         }
       }
-      else {
-        // hasOne / morphOne - single record per parent. First row wins: the rows arrive
-        // in the database's order, and overwriting on each hit handed back the
-        // LAST match, which is the opposite of what `hasOne` means when a
-        // parent has stray duplicates.
-        const byFk = new Map<unknown, Record<string, unknown>>()
-        for (const row of rows) {
-          const k = row[rel.foreignKey]
-          if (!byFk.has(k)) byFk.set(k, row)
+
+      if (rel.type === 'belongsTo') {
+        // Get distinct foreign key values in one pass (no intermediate arrays)
+        const fkSet = new Set<unknown>()
+        for (const i of instances) {
+          const v = (i as any)._attributes[rel.foreignKey]
+          if (v != null) fkSet.add(v)
         }
+        const uniqueFkValues = [...fkSet]
+        if (uniqueFkValues.length === 0) {
+          for (const instance of instances) instance.setRelation(relationName, null)
+          return
+        }
+
+        const placeholders = uniqueFkValues.map(() => '?').join(', ')
+        const rows = (yield* wait(exec.all(
+          `SELECT * FROM ${rel.relatedTable} WHERE ${rel.localKey} IN (${placeholders})`,
+          uniqueFkValues,
+        )))
+
+        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || self._definition
+
+        const byPk = new Map<unknown, Record<string, unknown>>()
+        for (const row of rows) {
+          byPk.set(row[rel.localKey], row)
+        }
+
         for (const instance of instances) {
-          const row = byFk.get(instance.get(pk as any))
+          const fkVal = (instance as any)._attributes[rel.foreignKey]
+          const row = byPk.get(fkVal)
           instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any, true) : null)
         }
       }
-    }
 
-    if (rel.type === 'belongsTo') {
-      // Get distinct foreign key values in one pass (no intermediate arrays)
-      const fkSet = new Set<unknown>()
-      for (const i of instances) {
-        const v = (i as any)._attributes[rel.foreignKey]
-        if (v != null) fkSet.add(v)
-      }
-      const uniqueFkValues = [...fkSet]
-      if (uniqueFkValues.length === 0) {
-        for (const instance of instances) instance.setRelation(relationName, null)
-        return
-      }
+      if (rel.type === 'belongsToMany') {
+        const parentIds = distinctParentIds(instances, pk)
+        if (parentIds.length === 0) return
+        if (!rel.pivotTable || !rel.pivotFkParent || !rel.pivotFkRelated) return
 
-      const placeholders = uniqueFkValues.map(() => '?').join(', ')
-      const rows = await exec.all(
-        `SELECT * FROM ${rel.relatedTable} WHERE ${rel.localKey} IN (${placeholders})`,
-        uniqueFkValues,
-      )
+        // 1) Fetch pivot rows for these parents.
+        const pivotPlaceholders = parentIds.map(() => '?').join(', ')
+        const pivotRows = (yield* wait(exec.all(
+          `SELECT * FROM ${rel.pivotTable} WHERE ${rel.pivotFkParent} IN (${pivotPlaceholders})`,
+          parentIds,
+        )))
 
-      const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
-      const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
+        if (pivotRows.length === 0) {
+          for (const instance of instances) instance.setRelation(relationName, [])
+          return
+        }
 
-      const byPk = new Map<unknown, Record<string, unknown>>()
-      for (const row of rows) {
-        byPk.set(row[rel.localKey], row)
-      }
+        // 2) Fetch related rows in one batch (distinct ids in one pass).
+        const relatedIdSet = new Set<unknown>()
+        for (const p of pivotRows) {
+          const v = p[rel.pivotFkRelated!]
+          if (v != null) relatedIdSet.add(v)
+        }
+        const relatedIds = [...relatedIdSet]
+        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || self._definition
+        const relatedPk = relDef?.primaryKey || 'id'
 
-      for (const instance of instances) {
-        const fkVal = (instance as any)._attributes[rel.foreignKey]
-        const row = byPk.get(fkVal)
-        instance.setRelation(relationName, row ? new ModelInstance(relDef as any, row as any, true) : null)
-      }
-    }
+        let relatedRows: Record<string, unknown>[] = []
+        if (relatedIds.length > 0) {
+          const relPlaceholders = relatedIds.map(() => '?').join(', ')
+          relatedRows = (yield* wait(exec.all(
+            `SELECT * FROM ${rel.relatedTable} WHERE ${relatedPk} IN (${relPlaceholders})`,
+            relatedIds,
+          )))
+        }
+        const relatedByPk = new Map<unknown, Record<string, unknown>>()
+        for (const r of relatedRows) relatedByPk.set(r[relatedPk], r)
 
-    if (rel.type === 'belongsToMany') {
-      const parentIds = distinctParentIds(instances, pk)
-      if (parentIds.length === 0) return
-      if (!rel.pivotTable || !rel.pivotFkParent || !rel.pivotFkRelated) return
+        // 3) Group pivot rows by parent id and assemble related instances per parent.
+        const pivotByParent = new Map<unknown, Record<string, unknown>[]>()
+        for (const p of pivotRows) {
+          const key = p[rel.pivotFkParent!]
+          if (!pivotByParent.has(key)) pivotByParent.set(key, [])
+          pivotByParent.get(key)!.push(p)
+        }
 
-      // 1) Fetch pivot rows for these parents.
-      const pivotPlaceholders = parentIds.map(() => '?').join(', ')
-      const pivotRows = await exec.all(
-        `SELECT * FROM ${rel.pivotTable} WHERE ${rel.pivotFkParent} IN (${pivotPlaceholders})`,
-        parentIds,
-      )
+        // Pivot extras = pivot row minus the two FKs and the pivot pk.
+        const pivotKnownKeys = new Set([rel.pivotFkParent, rel.pivotFkRelated])
 
-      if (pivotRows.length === 0) {
-        for (const instance of instances) instance.setRelation(relationName, [])
-        return
-      }
-
-      // 2) Fetch related rows in one batch (distinct ids in one pass).
-      const relatedIdSet = new Set<unknown>()
-      for (const p of pivotRows) {
-        const v = p[rel.pivotFkRelated!]
-        if (v != null) relatedIdSet.add(v)
-      }
-      const relatedIds = [...relatedIdSet]
-      const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
-      const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
-      const relatedPk = relDef?.primaryKey || 'id'
-
-      let relatedRows: Record<string, unknown>[] = []
-      if (relatedIds.length > 0) {
-        const relPlaceholders = relatedIds.map(() => '?').join(', ')
-        relatedRows = await exec.all(
-          `SELECT * FROM ${rel.relatedTable} WHERE ${relatedPk} IN (${relPlaceholders})`,
-          relatedIds,
-        )
-      }
-      const relatedByPk = new Map<unknown, Record<string, unknown>>()
-      for (const r of relatedRows) relatedByPk.set(r[relatedPk], r)
-
-      // 3) Group pivot rows by parent id and assemble related instances per parent.
-      const pivotByParent = new Map<unknown, Record<string, unknown>[]>()
-      for (const p of pivotRows) {
-        const key = p[rel.pivotFkParent!]
-        if (!pivotByParent.has(key)) pivotByParent.set(key, [])
-        pivotByParent.get(key)!.push(p)
+        for (const instance of instances) {
+          const parentVal = instance.get(pk as any)
+          const myPivots = pivotByParent.get(parentVal) || []
+          const relatedInstances = myPivots
+            .map((p) => {
+              const relRow = relatedByPk.get(p[rel.pivotFkRelated!])
+              if (!relRow) return null
+              const inst = new ModelInstance(relDef as any, relRow as any, true)
+              // Attach pivot extras under instance.pivot
+              const extras: Record<string, unknown> = {}
+              for (const [k, v] of Object.entries(p)) {
+                if (!pivotKnownKeys.has(k)) extras[k] = v
+              }
+              ;(inst as any).pivot = extras
+              return inst
+            })
+            .filter((x): x is ModelInstance<any, any> => x !== null)
+          instance.setRelation(relationName, relatedInstances)
+        }
       }
 
-      // Pivot extras = pivot row minus the two FKs and the pivot pk.
-      const pivotKnownKeys = new Set([rel.pivotFkParent, rel.pivotFkRelated])
+      if (rel.type === 'hasManyThrough' || rel.type === 'hasOneThrough') {
+        // parent.pk → through.<throughForeignKey>, through.pk →
+        // target.<targetForeignKey>. Two batched IN queries, no N+1.
+        const parentIds = distinctParentIds(instances, pk)
+        if (parentIds.length === 0) return
 
-      for (const instance of instances) {
-        const parentVal = instance.get(pk as any)
-        const myPivots = pivotByParent.get(parentVal) || []
-        const relatedInstances = myPivots
-          .map((p) => {
-            const relRow = relatedByPk.get(p[rel.pivotFkRelated!])
-            if (!relRow) return null
-            const inst = new ModelInstance(relDef as any, relRow as any, true)
-            // Attach pivot extras under instance.pivot
-            const extras: Record<string, unknown> = {}
-            for (const [k, v] of Object.entries(p)) {
-              if (!pivotKnownKeys.has(k)) extras[k] = v
-            }
-            ;(inst as any).pivot = extras
-            return inst
-          })
-          .filter((x): x is ModelInstance<any, any> => x !== null)
-        instance.setRelation(relationName, relatedInstances)
+        // 1) through rows linking parents to the intermediate table.
+        const throughPk = rel.throughLocalKey || 'id'
+        const throughPh = parentIds.map(() => '?').join(', ')
+        const throughRows = (yield* wait(exec.all(
+          `SELECT ${throughPk}, ${rel.throughForeignKey} FROM ${rel.throughTable} WHERE ${rel.throughForeignKey} IN (${throughPh})`,
+          parentIds,
+        )))
+        if (throughRows.length === 0) {
+          for (const instance of instances)
+            instance.setRelation(relationName, rel.type === 'hasManyThrough' ? [] : null)
+          return
+        }
+        // throughId → parentId
+        const throughToParent = new Map<unknown, unknown>()
+        for (const t of throughRows) throughToParent.set(t[throughPk], t[rel.throughForeignKey!])
+
+        // 2) target rows in one batch.
+        const throughIds = [...new Set(throughRows.map(t => t[throughPk]))]
+        const targetPh = throughIds.map(() => '?').join(', ')
+        const targetRows = (yield* wait(exec.all(
+          `SELECT * FROM ${rel.relatedTable} WHERE ${rel.targetForeignKey} IN (${targetPh})`,
+          throughIds,
+        )))
+
+        const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
+        const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || self._definition
+
+        // Group target rows by parent (target.targetFk → throughId → parentId).
+        const byParent = new Map<unknown, ModelInstance<any, any>[]>()
+        for (const row of targetRows) {
+          const parentVal = throughToParent.get(row[rel.targetForeignKey!])
+          if (parentVal == null) continue
+          if (!byParent.has(parentVal)) byParent.set(parentVal, [])
+          byParent.get(parentVal)!.push(new ModelInstance(relDef as any, row as any, true))
+        }
+
+        for (const instance of instances) {
+          const group = byParent.get(instance.get(pk as any)) || []
+          instance.setRelation(relationName, rel.type === 'hasManyThrough' ? group : (group[0] ?? null))
+        }
       }
-    }
-
-    if (rel.type === 'hasManyThrough' || rel.type === 'hasOneThrough') {
-      // parent.pk → through.<throughForeignKey>, through.pk →
-      // target.<targetForeignKey>. Two batched IN queries, no N+1.
-      const parentIds = distinctParentIds(instances, pk)
-      if (parentIds.length === 0) return
-
-      // 1) through rows linking parents to the intermediate table.
-      const throughPk = rel.throughLocalKey || 'id'
-      const throughPh = parentIds.map(() => '?').join(', ')
-      const throughRows = await exec.all(
-        `SELECT ${throughPk}, ${rel.throughForeignKey} FROM ${rel.throughTable} WHERE ${rel.throughForeignKey} IN (${throughPh})`,
-        parentIds,
-      )
-      if (throughRows.length === 0) {
-        for (const instance of instances)
-          instance.setRelation(relationName, rel.type === 'hasManyThrough' ? [] : null)
-        return
-      }
-      // throughId → parentId
-      const throughToParent = new Map<unknown, unknown>()
-      for (const t of throughRows) throughToParent.set(t[throughPk], t[rel.throughForeignKey!])
-
-      // 2) target rows in one batch.
-      const throughIds = [...new Set(throughRows.map(t => t[throughPk]))]
-      const targetPh = throughIds.map(() => '?').join(', ')
-      const targetRows = await exec.all(
-        `SELECT * FROM ${rel.relatedTable} WHERE ${rel.targetForeignKey} IN (${targetPh})`,
-        throughIds,
-      )
-
-      const relatedModelDef = getModelFromRegistry(rel.relatedModelName)
-      const relDef = relatedModelDef?.getDefinition?.() || relatedModelDef?.definition || this._definition
-
-      // Group target rows by parent (target.targetFk → throughId → parentId).
-      const byParent = new Map<unknown, ModelInstance<any, any>[]>()
-      for (const row of targetRows) {
-        const parentVal = throughToParent.get(row[rel.targetForeignKey!])
-        if (parentVal == null) continue
-        if (!byParent.has(parentVal)) byParent.set(parentVal, [])
-        byParent.get(parentVal)!.push(new ModelInstance(relDef as any, row as any, true))
-      }
-
-      for (const instance of instances) {
-        const group = byParent.get(instance.get(pk as any)) || []
-        instance.setRelation(relationName, rel.type === 'hasManyThrough' ? group : (group[0] ?? null))
-      }
-    }
+    })
   }
 
-  async get(): Promise<ModelRecord<TDef, TSelected>[]> {
-    const exec = getExecutor()
-    const { sql, params } = this.buildQuery()
-    const rows = await exec.all(sql, params)
-    const instances = rows.map(row => new ModelInstance<TDef, TSelected>(this._definition, row as any, true))
+  get(): ModelRecord<TDef, TSelected>[] {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelRecord<TDef, TSelected>[], unknown> {
+      const exec = getExecutor()
+      const { sql, params } = self.buildQuery()
+      const rows = (yield* wait(exec.all(sql, params)))
+      const instances = rows.map(row => new ModelInstance<TDef, TSelected>(self._definition, row as any, true))
 
-    // Eager load relations
-    if (this._withRelations.length > 0) {
-      await this.eagerLoadRelations(instances)
-    }
+      // Eager load relations
+      if (self._withRelations.length > 0) {
+        yield* wait(self.eagerLoadRelations(instances))
+      }
 
-    return instances as ModelRecord<TDef, TSelected>[]
+      return instances as ModelRecord<TDef, TSelected>[]
+    })
   }
 
-  async first(): Promise<ModelRecord<TDef, TSelected> | undefined> {
-    this._limit = 1
-    return (await this.get())[0]
+  first(): ModelRecord<TDef, TSelected> | undefined {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelRecord<TDef, TSelected> | undefined, unknown> {
+      self._limit = 1
+      return ((yield* wait(self.get())))[0]
+    })
   }
 
-  async firstOrFail(): Promise<ModelRecord<TDef, TSelected>> {
-    const result = await this.first()
-    if (!result) throw new Error(`No ${this._definition.name} found`)
-    return result
+  firstOrFail(): ModelRecord<TDef, TSelected> {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelRecord<TDef, TSelected>, unknown> {
+      const result = (yield* wait(self.first()))
+      if (!result) throw new Error(`No ${self._definition.name} found`)
+      return result
+    })
   }
 
   /**
@@ -3623,44 +3784,62 @@ class ModelQueryBuilder<
    * typed with the browser builder's `query().find()`, which compiled on the
    * server and then threw because this builder had none.
    */
-  async find(id: number | string): Promise<ModelRecord<TDef, TSelected> | undefined> {
-    const pk = (this._definition.primaryKey || 'id') as ColumnName<TDef>
-    return this.where(pk, id as any).first()
+  find(id: number | string): ModelRecord<TDef, TSelected> | undefined {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelRecord<TDef, TSelected> | undefined, unknown> {
+      const pk = (self._definition.primaryKey || 'id') as ColumnName<TDef>
+      return self.where(pk, id as any).first()
+    })
   }
 
-  async findOrFail(id: number | string): Promise<ModelRecord<TDef, TSelected>> {
-    const result = await this.find(id)
-    if (!result) throw new Error(`${this._definition.name} with id ${id} not found`)
-    return result
+  findOrFail(id: number | string): ModelRecord<TDef, TSelected> {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelRecord<TDef, TSelected>, unknown> {
+      const result = (yield* wait(self.find(id)))
+      if (!result) throw new Error(`${self._definition.name} with id ${id} not found`)
+      return result
+    })
   }
 
-  async last(): Promise<ModelRecord<TDef, TSelected> | undefined> {
-    const pk = this._definition.primaryKey || 'id'
-    this._orderBy = [{ column: pk, direction: 'desc' }]
-    this._limit = 1
-    return (await this.get())[0]
+  last(): ModelRecord<TDef, TSelected> | undefined {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelRecord<TDef, TSelected> | undefined, unknown> {
+      const pk = self._definition.primaryKey || 'id'
+      self._orderBy = [{ column: pk, direction: 'desc' }]
+      self._limit = 1
+      return ((yield* wait(self.get())))[0]
+    })
   }
 
-  async count(): Promise<number> {
-    const exec = getExecutor()
-    const params: unknown[] = []
-    let sql = `SELECT COUNT(*) as count FROM ${quotedTable(this._definition.table)}`
+  count(): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      const exec = getExecutor()
+      const params: unknown[] = []
+      let sql = `SELECT COUNT(*) as count FROM ${quotedTable(self._definition.table)}`
 
-    const whereBody = this.composeWhere(params)
-    if (whereBody) {
-      sql += ` WHERE ${whereBody}`
-    }
+      const whereBody = self.composeWhere(params)
+      if (whereBody) {
+        sql += ` WHERE ${whereBody}`
+      }
 
-    const row = await exec.get(sql, params)
-    return Number((row as { count: number } | undefined)?.count ?? 0)
+      const row = (yield* wait(exec.get(sql, params)))
+      return Number((row as { count: number } | undefined)?.count ?? 0)
+    })
   }
 
-  async exists(): Promise<boolean> {
-    return (await this.count()) > 0
+  exists(): boolean {
+    const self = this
+    return settle(function* (): Generator<unknown, boolean, unknown> {
+      return ((yield* wait(self.count()))) > 0
+    })
   }
 
-  async doesntExist(): Promise<boolean> {
-    return (await this.count()) === 0
+  doesntExist(): boolean {
+    const self = this
+    return settle(function* (): Generator<unknown, boolean, unknown> {
+      return ((yield* wait(self.count()))) === 0
+    })
   }
 
   /**
@@ -3671,12 +3850,15 @@ class ModelQueryBuilder<
    * const admin = User.where('role', 'admin').sole()
    * ```
    */
-  async sole(): Promise<ModelRecord<TDef, TSelected>> {
-    this._limit = 2 // fetch 2 to detect duplicates
-    const results = await this.get()
-    if (results.length === 0) throw new Error(`No ${this._definition.name} found`)
-    if (results.length > 1) throw new Error(`Expected one ${this._definition.name}, found multiple`)
-    return results[0]
+  sole(): ModelRecord<TDef, TSelected> {
+    const self = this
+    return settle(function* (): Generator<unknown, ModelRecord<TDef, TSelected>, unknown> {
+      self._limit = 2 // fetch 2 to detect duplicates
+      const results = (yield* wait(self.get()))
+      if (results.length === 0) throw new Error(`No ${self._definition.name} found`)
+      if (results.length > 1) throw new Error(`Expected one ${self._definition.name}, found multiple`)
+      return results[0]
+    })
   }
 
   /**
@@ -3688,30 +3870,33 @@ class ModelQueryBuilder<
    * Post.where('id', 1).increment('views', 5)
    * ```
    */
-  async increment<K extends NumericColumns<TDef>>(column: K, amount = 1): Promise<number> {
-    assertValidIdentifier(column, 'increment(column)')
-    this.assertNoUnappliedClauses('increment')
-    const exec = getExecutor()
-    const params: unknown[] = [amount]
+  increment<K extends NumericColumns<TDef>>(column: K, amount = 1): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      assertValidIdentifier(column, 'increment(column)')
+      self.assertNoUnappliedClauses('increment')
+      const exec = getExecutor()
+      const params: unknown[] = [amount]
 
-    // quotedColumn, not sqlColumn: a column the model has every right to name
-    // `order` or `group` is a syntax error unquoted. See quoteSqlColumn.
-    const incCol = quotedColumn(column as string)
-    let sql = `UPDATE ${quotedTable(this._definition.table)} SET ${incCol} = ${incCol} + ?`
+      // quotedColumn, not sqlColumn: a column the model has every right to name
+      // `order` or `group` is a syntax error unquoted. See quoteSqlColumn.
+      const incCol = quotedColumn(column as string)
+      let sql = `UPDATE ${quotedTable(self._definition.table)} SET ${incCol} = ${incCol} + ?`
 
-    if (timestampsEnabled(this._definition)) {
-      sql += `, updated_at = ?`
-      params.push(formatNow())
-    }
+      if (timestampsEnabled(self._definition)) {
+        sql += `, updated_at = ?`
+        params.push(formatNow())
+      }
 
-    // See delete(): composeWhere is the only path that adds the soft-delete
-    // predicate, so a scoped counter bump has to go through it. #1111.
-    const whereBody = this.composeWhere(params)
-    if (whereBody) {
-      sql += ` WHERE ${whereBody}`
-    }
+      // See delete(): composeWhere is the only path that adds the soft-delete
+      // predicate, so a scoped counter bump has to go through it. #1111.
+      const whereBody = self.composeWhere(params)
+      if (whereBody) {
+        sql += ` WHERE ${whereBody}`
+      }
 
-    return (await exec.run(sql, params)).changes
+      return ((yield* wait(exec.run(sql, params)))).changes
+    })
   }
 
   /**
@@ -3723,7 +3908,7 @@ class ModelQueryBuilder<
    * Product.where('id', 1).decrement('stock', 3)
    * ```
    */
-  decrement<K extends NumericColumns<TDef>>(column: K, amount = 1): Promise<number> {
+  decrement<K extends NumericColumns<TDef>>(column: K, amount = 1): number {
     return this.increment(column, -amount)
   }
 
@@ -3737,31 +3922,34 @@ class ModelQueryBuilder<
    * })
    * ```
    */
-  async chunk(size: number, callback: (items: ModelInstance<TDef, TSelected>[]) => void | false | Promise<void | false>): Promise<void> {
-    let page = 0
-    while (true) {
-      const builder = new ModelQueryBuilder<TDef, TSelected>(this._definition)
-      // Copy wheres, orders, and relations
-      builder._wheres = [...this._wheres]
-      builder._orderBy = [...this._orderBy]
-      builder._select = [...this._select]
-      builder._withRelations = [...this._withRelations]
-      builder._trashed = this._trashed
-      builder._limit = size
-      builder._offset = page * size
+  chunk(size: number, callback: (items: ModelInstance<TDef, TSelected>[]) => void | false | Promise<void | false>): void {
+    const self = this
+    return settle(function* (): Generator<unknown, void, unknown> {
+      let page = 0
+      while (true) {
+        const builder = new ModelQueryBuilder<TDef, TSelected>(self._definition)
+        // Copy wheres, orders, and relations
+        builder._wheres = [...self._wheres]
+        builder._orderBy = [...self._orderBy]
+        builder._select = [...self._select]
+        builder._withRelations = [...self._withRelations]
+        builder._trashed = self._trashed
+        builder._limit = size
+        builder._offset = page * size
 
-      const results = await builder.get()
-      if (results.length === 0) break
+        const results = (yield* wait(builder.get()))
+        if (results.length === 0) break
 
-      const result = await callback(results)
-      if (result === false) break
-      if (results.length < size) break
+        const result = (yield* wait(callback(results)))
+        if (result === false) break
+        if (results.length < size) break
 
-      page++
-    }
+        page++
+      }
+    })
   }
 
-  async paginate(page: number | PaginateOptions = 1, perPage = 15): Promise<{
+  paginate(page: number | PaginateOptions = 1, perPage = 15): {
     data: ModelInstance<TDef, TSelected>[]
     total: number
     page: number
@@ -3772,38 +3960,52 @@ class ModelQueryBuilder<
     from: number | null
     to: number | null
     meta: { perPage: number, page: number, total: number, lastPage: number }
-  }> {
-    // Options form: `paginate({ page, perPage })`. This API is (page, perPage)
-    // and the query builder's is (perPage, page); both arguments are numbers,
-    // so transposing them returns a different page rather than raising
-    // anything. Naming them cannot be got wrong. See #1092.
-    if (typeof page === 'object' && page !== null) {
-      const options = page
-      perPage = options.perPage ?? 15
-      page = options.page ?? 1
-    }
-    const total = await this.count()
-    const lastPage = Math.ceil(total / perPage)
-    this._limit = perPage
-    this._offset = (page - 1) * perPage
-    const data = await this.get()
-    return {
-      data,
-      total,
-      page,
-      perPage,
-      lastPage,
-      hasMorePages: page < lastPage,
-      isEmpty: data.length === 0,
-      from: data.length > 0 ? (page - 1) * perPage + 1 : null,
-      to: data.length > 0 ? (page - 1) * perPage + data.length : null,
-      // Mirrors the query builder's result, which nests under `meta`. The flat
-      // fields above stay exactly as they were, so this is additive: code
-      // written against either shape now works against both, and a helper that
-      // reads `result.meta.total` stops depending on which API produced it.
-      // See #1092.
-      meta: { perPage, page, total, lastPage },
-    }
+  } {
+    const self = this
+    return settle(function* (): Generator<unknown, {
+    data: ModelInstance<TDef, TSelected>[]
+    total: number
+    page: number
+    perPage: number
+    lastPage: number
+    hasMorePages: boolean
+    isEmpty: boolean
+    from: number | null
+    to: number | null
+    meta: { perPage: number, page: number, total: number, lastPage: number }
+  }, unknown> {
+      // Options form: `paginate({ page, perPage })`. This API is (page, perPage)
+      // and the query builder's is (perPage, page); both arguments are numbers,
+      // so transposing them returns a different page rather than raising
+      // anything. Naming them cannot be got wrong. See #1092.
+      if (typeof page === 'object' && page !== null) {
+        const options = page
+        perPage = options.perPage ?? 15
+        page = options.page ?? 1
+      }
+      const total = (yield* wait(self.count()))
+      const lastPage = Math.ceil(total / perPage)
+      self._limit = perPage
+      self._offset = (page - 1) * perPage
+      const data = (yield* wait(self.get()))
+      return {
+        data,
+        total,
+        page,
+        perPage,
+        lastPage,
+        hasMorePages: page < lastPage,
+        isEmpty: data.length === 0,
+        from: data.length > 0 ? (page - 1) * perPage + 1 : null,
+        to: data.length > 0 ? (page - 1) * perPage + data.length : null,
+        // Mirrors the query builder's result, which nests under `meta`. The flat
+        // fields above stay exactly as they were, so this is additive: code
+        // written against either shape now works against both, and a helper that
+        // reads `result.meta.total` stops depending on which API produced it.
+        // See #1092.
+        meta: { perPage, page, total, lastPage },
+      }
+    })
   }
 
   /**
@@ -3837,7 +4039,7 @@ class ModelQueryBuilder<
    * await Post.query().simplePaginate({ perPage: 15, page: 2 })
    * ```
    */
-  async simplePaginate(perPage: number | PaginateOptions = 15, page = 1): Promise<{
+  simplePaginate(perPage: number | PaginateOptions = 15, page = 1): {
     data: ModelRecord<TDef, TSelected>[]
     page: number
     perPage: number
@@ -3846,33 +4048,45 @@ class ModelQueryBuilder<
     from: number | null
     to: number | null
     meta: { perPage: number, page: number, hasMore: boolean }
-  }> {
-    if (typeof perPage === 'object' && perPage !== null) {
-      const options = perPage
-      page = options.page ?? 1
-      perPage = options.perPage ?? 15
-    }
-    if (!Number.isInteger(perPage) || perPage <= 0)
-      throw new TypeError(`[orm] simplePaginate(perPage): expected positive integer, got ${perPage}`)
-    if (!Number.isInteger(page) || page < 1)
-      throw new TypeError(`[orm] simplePaginate(page): expected integer >= 1, got ${page}`)
+  } {
+    const self = this
+    return settle(function* (): Generator<unknown, {
+    data: ModelRecord<TDef, TSelected>[]
+    page: number
+    perPage: number
+    hasMorePages: boolean
+    isEmpty: boolean
+    from: number | null
+    to: number | null
+    meta: { perPage: number, page: number, hasMore: boolean }
+  }, unknown> {
+      if (typeof perPage === 'object' && perPage !== null) {
+        const options = perPage
+        page = options.page ?? 1
+        perPage = options.perPage ?? 15
+      }
+      if (!Number.isInteger(perPage) || perPage <= 0)
+        throw new TypeError(`[orm] simplePaginate(perPage): expected positive integer, got ${perPage}`)
+      if (!Number.isInteger(page) || page < 1)
+        throw new TypeError(`[orm] simplePaginate(page): expected integer >= 1, got ${page}`)
 
-    const query = this.fork()
-    query._limit = perPage + 1
-    query._offset = (page - 1) * perPage
-    const rows = await query.get()
-    const hasMore = rows.length > perPage
-    const data = hasMore ? rows.slice(0, perPage) : rows
-    return {
-      data,
-      page,
-      perPage,
-      hasMorePages: hasMore,
-      isEmpty: data.length === 0,
-      from: data.length > 0 ? (page - 1) * perPage + 1 : null,
-      to: data.length > 0 ? (page - 1) * perPage + data.length : null,
-      meta: { perPage, page, hasMore },
-    }
+      const query = self.fork()
+      query._limit = perPage + 1
+      query._offset = (page - 1) * perPage
+      const rows = (yield* wait(query.get()))
+      const hasMore = rows.length > perPage
+      const data = hasMore ? rows.slice(0, perPage) : rows
+      return {
+        data,
+        page,
+        perPage,
+        hasMorePages: hasMore,
+        isEmpty: data.length === 0,
+        from: data.length > 0 ? (page - 1) * perPage + 1 : null,
+        to: data.length > 0 ? (page - 1) * perPage + data.length : null,
+        meta: { perPage, page, hasMore },
+      }
+    })
   }
 
   /**
@@ -3902,187 +4116,208 @@ class ModelQueryBuilder<
    * await Post.query().cursorPaginate(15, cursor, ['created_at', 'id'], 'desc')
    * ```
    */
-  async cursorPaginate(
+  cursorPaginate(
     perPage: number = 15,
     cursor?: unknown,
     column: string | string[] = this._definition.primaryKey || 'id',
     direction: 'asc' | 'desc' = 'asc',
-  ): Promise<{
+  ): {
     data: ModelRecord<TDef, TSelected>[]
     perPage: number
     hasMorePages: boolean
     isEmpty: boolean
     meta: { perPage: number, nextCursor: string | null, prevCursor: string | null }
-  }> {
-    if (!Number.isInteger(perPage) || perPage <= 0)
-      throw new TypeError(`[orm] cursorPaginate(perPage): expected positive integer, got ${perPage}`)
-    if (direction !== 'asc' && direction !== 'desc')
-      throw new TypeError(`[orm] cursorPaginate(direction): expected 'asc' or 'desc', got ${String(direction)}`)
-    const columns = (Array.isArray(column) ? column : [column]).map(String)
-    if (columns.length === 0)
-      throw new TypeError('[orm] cursorPaginate(column): expected at least one column')
-    for (const name of columns) assertValidIdentifier(name, 'cursorPaginate(column)')
-    if (this._orderBy.length > 0) {
-      throw new TypeError(
-        `[orm] cursorPaginate() cannot be combined with orderBy(): it orders by ${columns.map(c => `${c} ${direction}`).join(', ')} itself, `
-        + `and a cursor is only meaningful in that order. Remove the orderBy(), or pass the column and direction to cursorPaginate().`,
-      )
-    }
-    if (!this._select.includes('*')) {
-      for (const name of columns) {
-        if (!this._select.includes(name))
-          throw new TypeError(`[orm] cursorPaginate(): select cursor column ${name} in the result`)
-      }
-    }
-
-    // Work out which way this cursor points and which values it carries.
-    let backwards = false
-    let values: unknown[] | null = null
-    const token = decodeCursor(cursor)
-    if (token) {
-      if (token.columns.length !== columns.length || token.columns.some((c, i) => c !== columns[i]) || token.order !== direction) {
+  } {
+    const self = this
+    return settle(function* (): Generator<unknown, {
+    data: ModelRecord<TDef, TSelected>[]
+    perPage: number
+    hasMorePages: boolean
+    isEmpty: boolean
+    meta: { perPage: number, nextCursor: string | null, prevCursor: string | null }
+  }, unknown> {
+      if (!Number.isInteger(perPage) || perPage <= 0)
+        throw new TypeError(`[orm] cursorPaginate(perPage): expected positive integer, got ${perPage}`)
+      if (direction !== 'asc' && direction !== 'desc')
+        throw new TypeError(`[orm] cursorPaginate(direction): expected 'asc' or 'desc', got ${String(direction)}`)
+      const columns = (Array.isArray(column) ? column : [column]).map(String)
+      if (columns.length === 0)
+        throw new TypeError('[orm] cursorPaginate(column): expected at least one column')
+      for (const name of columns) assertValidIdentifier(name, 'cursorPaginate(column)')
+      if (self._orderBy.length > 0) {
         throw new TypeError(
-          `[orm] cursorPaginate(): this cursor was issued for ${token.columns.join(', ')} ${token.order}, `
-          + `not ${columns.join(', ')} ${direction}. Request the first page again.`,
+          `[orm] cursorPaginate() cannot be combined with orderBy(): it orders by ${columns.map(c => `${c} ${direction}`).join(', ')} itself, `
+          + `and a cursor is only meaningful in that order. Remove the orderBy(), or pass the column and direction to cursorPaginate().`,
         )
       }
-      backwards = token.direction === 'prev'
-      values = token.values
-    }
-    else if (cursor !== undefined && cursor !== null) {
-      values = Array.isArray(cursor) ? cursor : [cursor]
-      if (values.length !== columns.length) {
-        throw new TypeError(`[orm] cursorPaginate(): expected ${columns.length} cursor value(s) for ${columns.join(', ')}, got ${values.length}`)
+      if (!self._select.includes('*')) {
+        for (const name of columns) {
+          if (!self._select.includes(name))
+            throw new TypeError(`[orm] cursorPaginate(): select cursor column ${name} in the result`)
+        }
       }
-    }
 
-    // Forwards in `direction`, or the opposite way when paging back; a backward
-    // page is read in reverse and put back in order afterwards.
-    const reading: 'asc' | 'desc' = backwards ? (direction === 'asc' ? 'desc' : 'asc') : direction
-    const compare = reading === 'asc' ? '>' : '<'
-    const params: unknown[] = []
-    const existing = this.composeWhere(params)
-    const query = new ModelQueryBuilder<TDef, TSelected>(this._definition)
-    query._select = [...this._select]
-    query._withRelations = [...this._withRelations]
-    // composeWhere has already applied the soft-delete scope.
-    query._trashed = 'include'
-    if (existing) query._wheres.push({ raw: `(${existing})`, rawParams: params, boolean: 'and' })
-    if (values) {
-      const quoted = columns.map(quotedColumn)
-      const marks = values.map(() => '?').join(', ')
-      const predicate = quoted.length === 1 ? `${quoted[0]} ${compare} ?` : `(${quoted.join(', ')}) ${compare} (${marks})`
-      query._wheres.push({ raw: predicate, rawParams: values, boolean: 'and' })
-    }
-    query._orderBy = columns.map(name => ({ column: name, direction: reading }))
-    query._limit = perPage + 1
+      // Work out which way this cursor points and which values it carries.
+      let backwards = false
+      let values: unknown[] | null = null
+      const token = decodeCursor(cursor)
+      if (token) {
+        if (token.columns.length !== columns.length || token.columns.some((c, i) => c !== columns[i]) || token.order !== direction) {
+          throw new TypeError(
+            `[orm] cursorPaginate(): this cursor was issued for ${token.columns.join(', ')} ${token.order}, `
+            + `not ${columns.join(', ')} ${direction}. Request the first page again.`,
+          )
+        }
+        backwards = token.direction === 'prev'
+        values = token.values
+      }
+      else if (cursor !== undefined && cursor !== null) {
+        values = Array.isArray(cursor) ? cursor : [cursor]
+        if (values.length !== columns.length) {
+          throw new TypeError(`[orm] cursorPaginate(): expected ${columns.length} cursor value(s) for ${columns.join(', ')}, got ${values.length}`)
+        }
+      }
 
-    const rows = await query.get()
-    const more = rows.length > perPage
-    const page = more ? rows.slice(0, perPage) : rows
-    if (backwards) page.reverse()
+      // Forwards in `direction`, or the opposite way when paging back; a backward
+      // page is read in reverse and put back in order afterwards.
+      const reading: 'asc' | 'desc' = backwards ? (direction === 'asc' ? 'desc' : 'asc') : direction
+      const compare = reading === 'asc' ? '>' : '<'
+      const params: unknown[] = []
+      const existing = self.composeWhere(params)
+      const query = new ModelQueryBuilder<TDef, TSelected>(self._definition)
+      query._select = [...self._select]
+      query._withRelations = [...self._withRelations]
+      // composeWhere has already applied the soft-delete scope.
+      query._trashed = 'include'
+      if (existing) query._wheres.push({ raw: `(${existing})`, rawParams: params, boolean: 'and' })
+      if (values) {
+        const quoted = columns.map(quotedColumn)
+        const marks = values.map(() => '?').join(', ')
+        const predicate = quoted.length === 1 ? `${quoted[0]} ${compare} ?` : `(${quoted.join(', ')}) ${compare} (${marks})`
+        query._wheres.push({ raw: predicate, rawParams: values, boolean: 'and' })
+      }
+      query._orderBy = columns.map(name => ({ column: name, direction: reading }))
+      query._limit = perPage + 1
 
-    const cursorFor = (row: ModelRecord<TDef, TSelected>, pointing: CursorDirection): string => {
-      const picked = columns.map((name) => {
-        const value = (row as any).getAttribute(name)
-        if (value === undefined)
-          throw new TypeError(`[orm] cursorPaginate(): select cursor column ${name} in the result`)
-        return value
-      })
-      return encodeCursor({ values: picked, direction: pointing, columns, order: direction })
-    }
-    const first = page[0]
-    const last = page[page.length - 1]
+      const rows = (yield* wait(query.get()))
+      const more = rows.length > perPage
+      const page = more ? rows.slice(0, perPage) : rows
+      if (backwards) page.reverse()
 
-    // Reading forwards, "more" is the next page and a prior page exists whenever
-    // a cursor brought us here. Reading backwards it is the other way round, and
-    // the page we came from is always after this one.
-    const hasNext = backwards ? page.length > 0 : more
-    const hasPrev = backwards ? more : values !== null && page.length > 0
-    return {
-      data: page,
-      perPage,
-      hasMorePages: hasNext,
-      isEmpty: page.length === 0,
-      meta: {
+      const cursorFor = (row: ModelRecord<TDef, TSelected>, pointing: CursorDirection): string => {
+        const picked = columns.map((name) => {
+          const value = (row as any).getAttribute(name)
+          if (value === undefined)
+            throw new TypeError(`[orm] cursorPaginate(): select cursor column ${name} in the result`)
+          return value
+        })
+        return encodeCursor({ values: picked, direction: pointing, columns, order: direction })
+      }
+      const first = page[0]
+      const last = page[page.length - 1]
+
+      // Reading forwards, "more" is the next page and a prior page exists whenever
+      // a cursor brought us here. Reading backwards it is the other way round, and
+      // the page we came from is always after this one.
+      const hasNext = backwards ? page.length > 0 : more
+      const hasPrev = backwards ? more : values !== null && page.length > 0
+      return {
+        data: page,
         perPage,
-        nextCursor: hasNext && last ? cursorFor(last, 'next') : null,
-        prevCursor: hasPrev && first ? cursorFor(first, 'prev') : null,
-      },
-    }
+        hasMorePages: hasNext,
+        isEmpty: page.length === 0,
+        meta: {
+          perPage,
+          nextCursor: hasNext && last ? cursorFor(last, 'next') : null,
+          prevCursor: hasPrev && first ? cursorFor(first, 'prev') : null,
+        },
+      }
+    })
   }
 
-  async pluck<K extends ColumnName<TDef>>(
+  pluck<K extends ColumnName<TDef>>(
     column: K
-  ): Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]> {
-    assertValidIdentifier(column, 'pluck(column)')
-    // Raw query — avoid creating ModelInstance objects just to extract one column
-    const exec = getExecutor()
-    const params: unknown[] = []
-    // Two spellings of the same column: the statement needs it quoted (an
-    // `order` or `group` column is a syntax error bare), while the result key
-    // every driver hands back is the unquoted name.
-    const pluckCol = sqlColumn(column as string)
-    let sql = `SELECT ${quotedColumn(column as string)} FROM ${quotedTable(this._definition.table)}`
+  ): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[] {
+    const self = this
+    return settle(function* (): Generator<unknown, (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[], unknown> {
+      assertValidIdentifier(column, 'pluck(column)')
+      // Raw query — avoid creating ModelInstance objects just to extract one column
+      const exec = getExecutor()
+      const params: unknown[] = []
+      // Two spellings of the same column: the statement needs it quoted (an
+      // `order` or `group` column is a syntax error bare), while the result key
+      // every driver hands back is the unquoted name.
+      const pluckCol = sqlColumn(column as string)
+      let sql = `SELECT ${quotedColumn(column as string)} FROM ${quotedTable(self._definition.table)}`
 
-    const whereBody = this.composeWhere(params)
-    if (whereBody) {
-      sql += ` WHERE ${whereBody}`
-    }
-    if (this._orderBy.length > 0) {
-      sql += ` ORDER BY ${this._orderBy.map(o => `${quotedColumn(o.column)} ${o.direction.toUpperCase()}`).join(', ')}`
-    }
-    if (this._limit !== undefined) sql += ` LIMIT ${this._limit}`
-    if (this._offset !== undefined) sql += ` OFFSET ${this._offset}`
+      const whereBody = self.composeWhere(params)
+      if (whereBody) {
+        sql += ` WHERE ${whereBody}`
+      }
+      if (self._orderBy.length > 0) {
+        sql += ` ORDER BY ${self._orderBy.map(o => `${quotedColumn(o.column)} ${o.direction.toUpperCase()}`).join(', ')}`
+      }
+      if (self._limit !== undefined) sql += ` LIMIT ${self._limit}`
+      if (self._offset !== undefined) sql += ` OFFSET ${self._offset}`
 
-    const rows = await exec.all(sql, params)
-    return rows.map(r => r[pluckCol]) as any
+      const rows = (yield* wait(exec.all(sql, params)))
+      return rows.map(r => r[pluckCol]) as any
+    })
   }
 
-  private async aggregate(fn: string, column: string): Promise<unknown> {
-    // The aggregate function name comes from internal call sites
-    // (max/min/avg/sum below) so it's bounded — but validate column
-    // since callers pass user-derived field names to those wrappers.
-    assertValidIdentifier(column, `${fn}(column)`)
-    const exec = getExecutor()
-    const params: unknown[] = []
-    // quotedColumn: `MAX(order)` is a syntax error, `MAX("order")` is not.
-    let sql = `SELECT ${fn}(${quotedColumn(column)}) as v FROM ${quotedTable(this._definition.table)}`
+  private aggregate(fn: string, column: string): unknown {
+    const self = this
+    return settle(function* (): Generator<unknown, unknown, unknown> {
+      // The aggregate function name comes from internal call sites
+      // (max/min/avg/sum below) so it's bounded — but validate column
+      // since callers pass user-derived field names to those wrappers.
+      assertValidIdentifier(column, `${fn}(column)`)
+      const exec = getExecutor()
+      const params: unknown[] = []
+      // quotedColumn: `MAX(order)` is a syntax error, `MAX("order")` is not.
+      let sql = `SELECT ${fn}(${quotedColumn(column)}) as v FROM ${quotedTable(self._definition.table)}`
 
-    const whereBody = this.composeWhere(params)
-    if (whereBody) {
-      sql += ` WHERE ${whereBody}`
-    }
+      const whereBody = self.composeWhere(params)
+      if (whereBody) {
+        sql += ` WHERE ${whereBody}`
+      }
 
-    const row = await exec.get(sql, params) as { v: unknown } | undefined
-    const v = row?.v
-    if (v == null) return null
-    // Postgres returns numeric aggregates (and bigint COUNT) as strings via
-    // the driver — coerce those. But MAX/MIN on a TEXT column legitimately
-    // yields text: the previous unconditional Number() turned it into NaN.
-    // Genuinely numeric-looking text values still coerce; that ambiguity is
-    // inherent to the driver's string transport.
-    if (typeof v === 'string') {
-      const n = Number(v)
-      return v.trim() !== '' && !Number.isNaN(n) ? n : v
-    }
-    return v
+      const row = (yield* wait(exec.get(sql, params))) as { v: unknown } | undefined
+      const v = row?.v
+      if (v == null) return null
+      // Postgres returns numeric aggregates (and bigint COUNT) as strings via
+      // the driver — coerce those. But MAX/MIN on a TEXT column legitimately
+      // yields text: the previous unconditional Number() turned it into NaN.
+      // Genuinely numeric-looking text values still coerce; that ambiguity is
+      // inherent to the driver's string transport.
+      if (typeof v === 'string') {
+        const n = Number(v)
+        return v.trim() !== '' && !Number.isNaN(n) ? n : v
+      }
+      return v
+    })
   }
 
-  max<K extends ColumnName<TDef>>(column: K): Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null> {
-    return this.aggregate('MAX', column as string) as Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null>
+  max<K extends ColumnName<TDef>>(column: K): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null {
+    return this.aggregate('MAX', column as string) as (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null
   }
 
-  min<K extends ColumnName<TDef>>(column: K): Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null> {
-    return this.aggregate('MIN', column as string) as Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null>
+  min<K extends ColumnName<TDef>>(column: K): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null {
+    return this.aggregate('MIN', column as string) as (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : number) | null
   }
 
-  async avg<K extends NumericColumns<TDef>>(column: K): Promise<number> {
-    return Number(await this.aggregate('AVG', column as string) ?? 0) || 0
+  avg<K extends NumericColumns<TDef>>(column: K): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      return Number((yield* wait(self.aggregate('AVG', column as string))) ?? 0) || 0
+    })
   }
 
-  async sum<K extends NumericColumns<TDef>>(column: K): Promise<number> {
-    return Number(await this.aggregate('SUM', column as string) ?? 0) || 0
+  sum<K extends NumericColumns<TDef>>(column: K): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      return Number((yield* wait(self.aggregate('SUM', column as string))) ?? 0) || 0
+    })
   }
 
   /**
@@ -4098,96 +4333,110 @@ class ModelQueryBuilder<
    * `onlyTrashed().delete()` still purges the trash (#1111), since marking rows
    * that are already marked would do nothing. `forceDelete()` purges any scope.
    */
-  async delete(): Promise<number> {
-    this.assertNoUnappliedClauses('delete')
-    const mark = softDeletesEnabled(this._definition as ModelDefinition) && this._trashed !== 'only'
-    return this.deleteMatching(mark)
+  delete(): Written<TDef, number> {
+    const self = this
+    const answer = settle(function* (): Generator<unknown, number, unknown> {
+      self.assertNoUnappliedClauses('delete')
+      const mark = softDeletesEnabled(self._definition as ModelDefinition) && self._trashed !== 'only'
+      return self.deleteMatching(mark)
+    })
+    return answer as unknown as Written<TDef, number>
   }
 
   /**
    * Remove the matching rows for good, soft deletes or not. Delete hooks run
    * for each row. Resolves to the number of rows removed.
    */
-  async forceDelete(): Promise<number> {
-    this.assertNoUnappliedClauses('forceDelete')
-    return this.deleteMatching(false)
+  forceDelete(): Written<TDef, number> {
+    const self = this
+    const answer = settle(function* (): Generator<unknown, number, unknown> {
+      self.assertNoUnappliedClauses('forceDelete')
+      return self.deleteMatching(false)
+    })
+    return answer as unknown as Written<TDef, number>
   }
 
-  private async deleteMatching(mark: boolean): Promise<number> {
-    const exec = getExecutor()
-    const table = quotedTable(this._definition.table)
-    const hooks = this._definition.hooks
+  private deleteMatching(mark: boolean): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      const exec = getExecutor()
+      const table = quotedTable(self._definition.table)
+      const hooks = self._definition.hooks
 
-    // composeWhere, not buildWhereClauses: the soft-delete predicate is added
-    // only by composeWhere, so building the WHERE here meant a scope that
-    // exists purely as that predicate contributed nothing to the statement.
-    // `onlyTrashed().delete()` — purge the trash — emitted a bare DELETE and
-    // removed every row, live ones included. See #1111.
-    const params: unknown[] = []
-    let whereBody = this.composeWhere(params)
-    // withTrashed() reaches rows that are already marked. Marking them again
-    // would move their deleted_at, so they are left as they are.
-    if (mark && this._trashed === 'include')
-      whereBody = whereBody ? `(${whereBody}) AND ${SOFT_DELETE_COLUMN} IS NULL` : `${SOFT_DELETE_COLUMN} IS NULL`
-    const where = whereBody ? ` WHERE ${whereBody}` : ''
-    const now = mark ? formatNow() : undefined
+      // composeWhere, not buildWhereClauses: the soft-delete predicate is added
+      // only by composeWhere, so building the WHERE here meant a scope that
+      // exists purely as that predicate contributed nothing to the statement.
+      // `onlyTrashed().delete()` — purge the trash — emitted a bare DELETE and
+      // removed every row, live ones included. See #1111.
+      const params: unknown[] = []
+      let whereBody = self.composeWhere(params)
+      // withTrashed() reaches rows that are already marked. Marking them again
+      // would move their deleted_at, so they are left as they are.
+      if (mark && self._trashed === 'include')
+        whereBody = whereBody ? `(${whereBody}) AND ${SOFT_DELETE_COLUMN} IS NULL` : `${SOFT_DELETE_COLUMN} IS NULL`
+      const where = whereBody ? ` WHERE ${whereBody}` : ''
+      const now = mark ? formatNow() : undefined
 
-    if (!hooks?.beforeDelete && !hooks?.afterDelete) {
-      return mark
-        ? (await exec.run(`UPDATE ${table} SET ${SOFT_DELETE_COLUMN} = ?${where}`, [now, ...params])).changes
-        : (await exec.run(`DELETE FROM ${table}${where}`, params)).changes
-    }
+      if (!hooks?.beforeDelete && !hooks?.afterDelete) {
+        return mark
+          ? ((yield* wait(exec.run(`UPDATE ${table} SET ${SOFT_DELETE_COLUMN} = ?${where}`, [now, ...params])))).changes
+          : ((yield* wait(exec.run(`DELETE FROM ${table}${where}`, params)))).changes
+      }
 
-    // Hooks take the row, so the rows are read first and then deleted by key:
-    // the hooks and the statement see the same set. Every beforeDelete runs
-    // before anything is written, so one that throws stops the whole delete.
-    const pk = this._definition.primaryKey || 'id'
-    const rows = await exec.all(`SELECT * FROM ${table}${where}`, params)
-    const instances = rows.map(row => new ModelInstance<TDef>(this._definition, row as Partial<ModelAttributes<TDef>>, true))
-    const keys = instances.map(i => (i as any)._attributes[pk] as unknown)
-    if (keys.some(k => k == null))
-      throw new Error(`Cannot delete a model without a primary key: '${pk}' is missing from a matching row`)
+      // Hooks take the row, so the rows are read first and then deleted by key:
+      // the hooks and the statement see the same set. Every beforeDelete runs
+      // before anything is written, so one that throws stops the whole delete.
+      const pk = self._definition.primaryKey || 'id'
+      const rows = (yield* wait(exec.all(`SELECT * FROM ${table}${where}`, params)))
+      const instances = rows.map(row => new ModelInstance<TDef>(self._definition, row as Partial<ModelAttributes<TDef>>, true))
+      const keys = instances.map(i => (i as any)._attributes[pk] as unknown)
+      if (keys.some(k => k == null))
+        throw new Error(`Cannot delete a model without a primary key: '${pk}' is missing from a matching row`)
 
-    for (const instance of instances)
-      await hooks.beforeDelete?.(instance as unknown as ModelHookInstance)
+      for (const instance of instances)
+        yield* wait(hooks.beforeDelete?.(instance as unknown as ModelHookInstance))
 
-    let changes = 0
-    for (let i = 0; i < keys.length; i += DELETE_KEY_CHUNK) {
-      const chunk = keys.slice(i, i + DELETE_KEY_CHUNK)
-      const inList = `${pk} IN (${chunk.map(() => '?').join(', ')})`
-      changes += mark
-        ? (await exec.run(`UPDATE ${table} SET ${SOFT_DELETE_COLUMN} = ? WHERE ${inList}`, [now, ...chunk])).changes
-        : (await exec.run(`DELETE FROM ${table} WHERE ${inList}`, chunk)).changes
-    }
+      let changes = 0
+      for (let i = 0; i < keys.length; i += DELETE_KEY_CHUNK) {
+        const chunk = keys.slice(i, i + DELETE_KEY_CHUNK)
+        const inList = `${pk} IN (${chunk.map(() => '?').join(', ')})`
+        changes += mark
+          ? ((yield* wait(exec.run(`UPDATE ${table} SET ${SOFT_DELETE_COLUMN} = ? WHERE ${inList}`, [now, ...chunk])))).changes
+          : ((yield* wait(exec.run(`DELETE FROM ${table} WHERE ${inList}`, chunk)))).changes
+      }
 
-    for (const instance of instances) {
-      // As instance.delete() does, so trashed() in afterDelete is accurate.
-      if (mark)
-        (instance as any)._attributes[SOFT_DELETE_COLUMN] = now
-      await hooks.afterDelete?.(instance as unknown as ModelHookInstance)
-    }
-    return changes
+      for (const instance of instances) {
+        // As instance.delete() does, so trashed() in afterDelete is accurate.
+        if (mark)
+          (instance as any)._attributes[SOFT_DELETE_COLUMN] = now
+        yield* wait(hooks.afterDelete?.(instance as unknown as ModelHookInstance))
+      }
+      return changes
+    })
   }
 
-  async update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): Promise<number> {
-    this.assertNoUnappliedClauses('update')
-    const exec = getExecutor()
-    const entries = Object.entries(data)
-    const { sets, values } = timestampsEnabled(this._definition)
-      ? managedUpdateSet(entries, sqlColumn)
-      : { sets: entries.map(([k]) => `${quotedColumn(k)} = ?`).join(', '), values: entries.map(([, v]) => v) }
-    const params: unknown[] = [...values]
+  update(data: Partial<Pick<InferModelAttributes<TDef>, FillableKeys<TDef>>>): number {
+    const self = this
+    return settle(function* (): Generator<unknown, number, unknown> {
+      self.assertNoUnappliedClauses('update')
+      const exec = getExecutor()
+      const entries = Object.entries(data)
+      const { sets, values } = timestampsEnabled(self._definition)
+        ? managedUpdateSet(entries, sqlColumn)
+        : { sets: entries.map(([k]) => `${quotedColumn(k)} = ?`).join(', '), values: entries.map(([, v]) => v) }
+      const params: unknown[] = [...values]
 
-    let sql = `UPDATE ${quotedTable(this._definition.table)} SET ${sets}`
+      let sql = `UPDATE ${quotedTable(self._definition.table)} SET ${sets}`
 
-    // See delete(): composeWhere is the only path that adds the soft-delete
-    // predicate, so a scoped update has to go through it. #1111.
-    const whereBody = this.composeWhere(params)
-    if (whereBody) {
-      sql += ` WHERE ${whereBody}`
-    }
+      // See delete(): composeWhere is the only path that adds the soft-delete
+      // predicate, so a scoped update has to go through it. #1111.
+      const whereBody = self.composeWhere(params)
+      if (whereBody) {
+        sql += ` WHERE ${whereBody}`
+      }
 
-    return (await exec.run(sql, params)).changes
+      return ((yield* wait(exec.run(sql, params)))).changes
+    })
   }
 }
 
@@ -4243,17 +4492,17 @@ export type ModelStatic<TDef extends ModelDefinition> = StaticWhereOverloads<TDe
   skip: (count: number) => ModelQueryBuilder<TDef>
   withTrashed: () => ModelQueryBuilder<TDef>
   onlyTrashed: () => ModelQueryBuilder<TDef>
-  find: (id: number | string) => Promise<ModelRecord<TDef> | undefined>
-  findOrFail: (id: number | string) => Promise<ModelRecord<TDef>>
-  findMany: (ids: (number | string)[]) => Promise<ModelRecord<TDef>[]>
-  all: () => Promise<ModelRecord<TDef>[]>
-  first: () => Promise<ModelRecord<TDef> | undefined>
-  firstOrFail: () => Promise<ModelRecord<TDef>>
-  last: () => Promise<ModelRecord<TDef> | undefined>
-  count: () => Promise<number>
-  exists: () => Promise<boolean>
-  doesntExist: () => Promise<boolean>
-  paginate: (page?: number | PaginateOptions, perPage?: number) => Promise<{
+  find: (id: number | string) => ModelRecord<TDef> | undefined
+  findOrFail: (id: number | string) => ModelRecord<TDef>
+  findMany: (ids: (number | string)[]) => ModelRecord<TDef>[]
+  all: () => ModelRecord<TDef>[]
+  first: () => ModelRecord<TDef> | undefined
+  firstOrFail: () => ModelRecord<TDef>
+  last: () => ModelRecord<TDef> | undefined
+  count: () => number
+  exists: () => boolean
+  doesntExist: () => boolean
+  paginate: (page?: number | PaginateOptions, perPage?: number) => {
     data: ModelRecord<TDef>[]
     total: number
     page: number
@@ -4263,8 +4512,8 @@ export type ModelStatic<TDef extends ModelDefinition> = StaticWhereOverloads<TDe
     isEmpty: boolean
     from: number | null
     to: number | null
-  }>
-  simplePaginate: (perPage?: number | PaginateOptions, page?: number) => Promise<{
+  }
+  simplePaginate: (perPage?: number | PaginateOptions, page?: number) => {
     data: ModelRecord<TDef>[]
     page: number
     perPage: number
@@ -4273,36 +4522,36 @@ export type ModelStatic<TDef extends ModelDefinition> = StaticWhereOverloads<TDe
     from: number | null
     to: number | null
     meta: { perPage: number, page: number, hasMore: boolean }
-  }>
-  cursorPaginate: (perPage?: number, cursor?: unknown, column?: string | string[], direction?: 'asc' | 'desc') => Promise<{
+  }
+  cursorPaginate: (perPage?: number, cursor?: unknown, column?: string | string[], direction?: 'asc' | 'desc') => {
     data: ModelRecord<TDef>[]
     perPage: number
     hasMorePages: boolean
     isEmpty: boolean
     meta: { perPage: number, nextCursor: string | null, prevCursor: string | null }
-  }>
+  }
   whereBetween: <K extends ColumnName<TDef>>(column: K, range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown]) => ModelQueryBuilder<TDef>
   whereNotBetween: <K extends ColumnName<TDef>>(column: K, range: [min: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown, max: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown]) => ModelQueryBuilder<TDef>
-  create: (data: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
-  createMany: (items: FillableAttributes<TDef>[]) => Promise<ModelRecord<TDef>[]>
-  updateOrCreate: (search: Partial<ModelAttributes<TDef>>, data: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
-  firstOrCreate: (search: Partial<ModelAttributes<TDef>>, data?: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
-  update: (id: number | string, data: FillableAttributes<TDef>) => Promise<ModelRecord<TDef>>
-  delete: (id: number | string) => Promise<boolean>
-  destroy: (id: number | string) => Promise<boolean>
-  forceDelete: (id: number | string) => Promise<boolean>
-  remove: (id: number | string) => Promise<boolean>
-  truncate: () => Promise<void>
+  create: (data: FillableAttributes<TDef>) => Written<TDef, ModelRecord<TDef>>
+  createMany: (items: FillableAttributes<TDef>[]) => Written<TDef, ModelRecord<TDef>[]>
+  updateOrCreate: (search: Partial<ModelAttributes<TDef>>, data: FillableAttributes<TDef>) => Written<TDef, ModelRecord<TDef>>
+  firstOrCreate: (search: Partial<ModelAttributes<TDef>>, data?: FillableAttributes<TDef>) => Written<TDef, ModelRecord<TDef>>
+  update: (id: number | string, data: FillableAttributes<TDef>) => Written<TDef, ModelRecord<TDef>>
+  delete: (id: number | string) => Written<TDef, boolean>
+  destroy: (id: number | string) => Written<TDef, boolean>
+  forceDelete: (id: number | string) => Written<TDef, boolean>
+  remove: (id: number | string) => Written<TDef, boolean>
+  truncate: () => void
   getDefinition: () => TDef
   getTable: () => string
   make: (data?: Partial<ModelAttributes<TDef>>) => ModelInstance<TDef>
   latest: (column?: ColumnName<TDef>) => ModelQueryBuilder<TDef>
   oldest: (column?: ColumnName<TDef>) => ModelQueryBuilder<TDef>
-  max: <K extends ColumnName<TDef>>(column: K) => Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) | null>
-  min: <K extends ColumnName<TDef>>(column: K) => Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) | null>
-  avg: <K extends NumericColumns<TDef>>(column: K) => Promise<number>
-  sum: <K extends NumericColumns<TDef>>(column: K) => Promise<number>
-  pluck: <K extends ColumnName<TDef>>(column: K) => Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]>
+  max: <K extends ColumnName<TDef>>(column: K) => (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) | null
+  min: <K extends ColumnName<TDef>>(column: K) => (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) | null
+  avg: <K extends NumericColumns<TDef>>(column: K) => number
+  sum: <K extends NumericColumns<TDef>>(column: K) => number
+  pluck: <K extends ColumnName<TDef>>(column: K) => (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]
 } & {
   [K in AttributeKeys<TDef> as `where${Capitalize<K>}`]: (value: K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown) => ModelQueryBuilder<TDef>
 }
@@ -4381,27 +4630,33 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
     /** Start a query restricted to soft-deleted rows. See #1024. */
     onlyTrashed: () => new ModelQueryBuilder<TDef>(definition).onlyTrashed(),
 
-    async find(id: number | string): Promise<ModelRecord<TDef> | undefined> {
-      const exec = getExecutor()
-      const pk = definition.primaryKey || 'id'
-      // Exclude soft-deleted rows by default (use withTrashed()/query() to override).
-      const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
-      const row = await exec.get(`SELECT * FROM ${quotedTable(definition.table)} WHERE ${pk} = ?${sd}`, [id])
-      return row ? new ModelInstance<TDef>(definition, row as any, true) as ModelRecord<TDef> : undefined
+    find(id: number | string): ModelRecord<TDef> | undefined {
+      return settle(function* (): Generator<unknown, ModelRecord<TDef> | undefined, unknown> {
+        const exec = getExecutor()
+        const pk = definition.primaryKey || 'id'
+        // Exclude soft-deleted rows by default (use withTrashed()/query() to override).
+        const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
+        const row = (yield* wait(exec.get(`SELECT * FROM ${quotedTable(definition.table)} WHERE ${pk} = ?${sd}`, [id])))
+        return row ? new ModelInstance<TDef>(definition, row as any, true) as ModelRecord<TDef> : undefined
+      })
     },
 
-    async findOrFail(id: number | string): Promise<ModelRecord<TDef>> {
-      const result = await model.find(id)
-      if (!result) throw new Error(`${definition.name} with id ${id} not found`)
-      return result
+    findOrFail(id: number | string): ModelRecord<TDef> {
+      return settle(function* (): Generator<unknown, ModelRecord<TDef>, unknown> {
+        const result = (yield* wait(model.find(id)))
+        if (!result) throw new Error(`${definition.name} with id ${id} not found`)
+        return result
+      })
     },
 
-    async findMany(ids: (number | string)[]): Promise<ModelRecord<TDef>[]> {
-      const exec = getExecutor()
-      const pk = definition.primaryKey || 'id'
-      const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
-      const rows = await exec.all(`SELECT * FROM ${quotedTable(definition.table)} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})${sd}`, ids)
-      return rows.map(row => new ModelInstance<TDef>(definition, row as any, true) as ModelRecord<TDef>)
+    findMany(ids: (number | string)[]): ModelRecord<TDef>[] {
+      return settle(function* (): Generator<unknown, ModelRecord<TDef>[], unknown> {
+        const exec = getExecutor()
+        const pk = definition.primaryKey || 'id'
+        const sd = softDeletesEnabled(definition) ? ` AND ${SOFT_DELETE_COLUMN} IS NULL` : ''
+        const rows = (yield* wait(exec.all(`SELECT * FROM ${quotedTable(definition.table)} WHERE ${pk} IN (${ids.map(() => '?').join(', ')})${sd}`, ids)))
+        return rows.map(row => new ModelInstance<TDef>(definition, row as any, true) as ModelRecord<TDef>)
+      })
     },
 
     all: () => new ModelQueryBuilder<TDef>(definition).get(),
@@ -4423,10 +4678,12 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
       return new ModelQueryBuilder<TDef>(definition).whereNotBetween(column, range as any)
     },
 
-    async create(data: FillableAttributes<TDef>): Promise<ModelRecord<TDef>> {
-      const instance = new ModelInstance<TDef>(definition, data as any, false)
-      await instance.save()
-      return instance as ModelRecord<TDef>
+    create(data: FillableAttributes<TDef>): ModelRecord<TDef> {
+      return settle(function* (): Generator<unknown, ModelRecord<TDef>, unknown> {
+        const instance = new ModelInstance<TDef>(definition, data as any, false)
+        yield* wait(instance.save())
+        return instance as ModelRecord<TDef>
+      })
     },
 
     /**
@@ -4445,150 +4702,158 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
      * no RETURNING, so records there without a key are inserted one at a time
      * to read each id, exactly as before.
      */
-    async createMany(items: FillableAttributes<TDef>[]): Promise<ModelRecord<TDef>[]> {
-      const instances = items.map(data => new ModelInstance<TDef>(definition, data as any, false))
-      if (!instances.length)
-        return []
+    createMany(items: FillableAttributes<TDef>[]): ModelRecord<TDef>[] {
+      return settle(function* (): Generator<unknown, ModelRecord<TDef>[], unknown> {
+        const instances = items.map(data => new ModelInstance<TDef>(definition, data as any, false))
+        if (!instances.length)
+          return []
 
-      const exec = getExecutor()
-      const pk = definition.primaryKey || 'id'
-      const rows: Record<string, unknown>[] = []
-      for (const instance of instances)
-        rows.push(await instance._prepareInsert())
+        const exec = getExecutor()
+        const pk = definition.primaryKey || 'id'
+        const rows: Record<string, unknown>[] = []
+        for (const instance of instances)
+          rows.push((yield* wait(instance._prepareInsert())))
 
-      // Rectangular statements: group records by the columns they set, in
-      // first-seen order so the common case (one shape) is one group.
-      const groups = new Map<string, number[]>()
-      rows.forEach((row, i) => {
-        const shape = Object.keys(row).join('\u0000')
-        const group = groups.get(shape)
-        if (group)
-          group.push(i)
-        else
-          groups.set(shape, [i])
-      })
+        // Rectangular statements: group records by the columns they set, in
+        // first-seen order so the common case (one shape) is one group.
+        const groups = new Map<string, number[]>()
+        rows.forEach((row, i) => {
+          const shape = Object.keys(row).join('\u0000')
+          const group = groups.get(shape)
+          if (group)
+            group.push(i)
+          else
+            groups.set(shape, [i])
+        })
 
-      for (const [shape, indexes] of groups) {
-        const columns = shape ? shape.split('\u0000') : []
-        const generated = !columns.includes(pk)
+        for (const [shape, indexes] of groups) {
+          const columns = shape ? shape.split('\u0000') : []
+          const generated = !columns.includes(pk)
 
-        if (!columns.length || (generated && exec.dialect === 'mysql')) {
-          for (const i of indexes) {
-            const row = rows[i]!
-            const cols = Object.keys(row)
-            const result = await exec.insert(
-              cols.length
-                ? `INSERT INTO ${quotedTable(definition.table)} (${cols.map(quoteSqlColumn).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
-                : `INSERT INTO ${quotedTable(definition.table)} DEFAULT VALUES`,
-              Object.values(row),
-              pk,
-            )
-            await instances[i]!._markInserted(row, generated ? result.lastInsertId : undefined)
+          if (!columns.length || (generated && exec.dialect === 'mysql')) {
+            for (const i of indexes) {
+              const row = rows[i]!
+              const cols = Object.keys(row)
+              const result = (yield* wait(exec.insert(
+                cols.length
+                  ? `INSERT INTO ${quotedTable(definition.table)} (${cols.map(quoteSqlColumn).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
+                  : `INSERT INTO ${quotedTable(definition.table)} DEFAULT VALUES`,
+                Object.values(row),
+                pk,
+              )))
+              yield* wait(instances[i]!._markInserted(row, generated ? result.lastInsertId : undefined))
+            }
+            continue
           }
-          continue
-        }
 
-        // Postgres: the batch goes as ONE jsonb parameter, typed by the table's
-        // own row type. Drivers cache a prepared statement per query text AND
-        // per parameter types (Bun infers them from the values, and a null is
-        // a different type), and never free one. A multi-row VALUES insert of
-        // rows with optional columns is a new type signature nearly every
-        // execution, so a year of seeded analytics left thousands of cached
-        // statements on one connection and grew its Postgres backend past
-        // 1.8 GB. One jsonb parameter is one signature per column shape.
-        if (exec.dialect === 'postgres' && jsonBatchable(definition, columns, indexes.map(i => rows[i]!))) {
-          const table = quotedTable(definition.table)
-          // Quoted on both sides of the statement: the INSERT target list and
-          // the SELECT off the record set name the same columns, and a reserved
-          // one has to be spelled the same way in each.
-          const list = columns.map(quoteSqlColumn).join(', ')
-          // Bound as text and cast on the server: typed as jsonb, the driver
-          // JSON-encodes the parameter itself and the batch arrives as one
-          // JSON string rather than an array.
-          const sql = `INSERT INTO ${table} (${list}) SELECT ${list} FROM jsonb_populate_recordset(NULL::${table}, (?::text)::jsonb)`
-          for (let start = 0; start < indexes.length; start += BULK_JSON_ROWS) {
-            const chunk = indexes.slice(start, start + BULK_JSON_ROWS)
-            const payload = JSON.stringify(chunk.map(i => Object.fromEntries(columns.map(c => [c, rows[i]![c] ?? null]))), jsonValue)
+          // Postgres: the batch goes as ONE jsonb parameter, typed by the table's
+          // own row type. Drivers cache a prepared statement per query text AND
+          // per parameter types (Bun infers them from the values, and a null is
+          // a different type), and never free one. A multi-row VALUES insert of
+          // rows with optional columns is a new type signature nearly every
+          // execution, so a year of seeded analytics left thousands of cached
+          // statements on one connection and grew its Postgres backend past
+          // 1.8 GB. One jsonb parameter is one signature per column shape.
+          if (exec.dialect === 'postgres' && jsonBatchable(definition, columns, indexes.map(i => rows[i]!))) {
+            const table = quotedTable(definition.table)
+            // Quoted on both sides of the statement: the INSERT target list and
+            // the SELECT off the record set name the same columns, and a reserved
+            // one has to be spelled the same way in each.
+            const list = columns.map(quoteSqlColumn).join(', ')
+            // Bound as text and cast on the server: typed as jsonb, the driver
+            // JSON-encodes the parameter itself and the batch arrives as one
+            // JSON string rather than an array.
+            const sql = `INSERT INTO ${table} (${list}) SELECT ${list} FROM jsonb_populate_recordset(NULL::${table}, (?::text)::jsonb)`
+            for (let start = 0; start < indexes.length; start += BULK_JSON_ROWS) {
+              const chunk = indexes.slice(start, start + BULK_JSON_ROWS)
+              const payload = JSON.stringify(chunk.map(i => Object.fromEntries(columns.map(c => [c, rows[i]![c] ?? null]))), jsonValue)
+              if (!generated) {
+                yield* wait(exec.run(sql, [payload]))
+                for (const i of chunk)
+                  yield* wait(instances[i]!._markInserted(rows[i]!))
+                continue
+              }
+              // Inserted in recordset order; integer keys are sorted too, which
+              // is a sequence's allocation order, so the pairing holds either way.
+              const returned = ((yield* wait(exec.all(`${sql} RETURNING ${pk}`, [payload])))).map(r => r[pk])
+              const keys = returned.every(k => typeof k === 'number' || typeof k === 'bigint')
+                ? [...returned].sort((a, b) => (a as number) < (b as number) ? -1 : (a as number) > (b as number) ? 1 : 0)
+                : returned
+              for (let j = 0; j < chunk.length; j++)
+                yield* wait(instances[chunk[j]!]!._markInserted(rows[chunk[j]!]!, keys[j]))
+            }
+            continue
+          }
+
+          // Every statement's row count is a power of two, so however many
+          // records arrive and however the caller batches them, one column shape
+          // produces at most log2(perStatement) + 1 distinct statements to cache.
+          // Sizing each chunk to "whatever is left" made every remainder a new
+          // statement: a year of daily batches was over a thousand of them.
+          const perStatement = floorPowerOfTwo(Math.max(1, Math.floor(BULK_INSERT_MAX_PARAMS / columns.length)))
+          for (let start = 0; start < indexes.length;) {
+            const size = Math.min(perStatement, floorPowerOfTwo(indexes.length - start))
+            const chunk = indexes.slice(start, start + size)
+            start += size
+            const sql = `INSERT INTO ${quotedTable(definition.table)} (${columns.map(quoteSqlColumn).join(', ')}) VALUES ${chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ')}`
+            const params = chunk.flatMap(i => columns.map(c => rows[i]![c]))
+
             if (!generated) {
-              await exec.run(sql, [payload])
+              yield* wait(exec.run(sql, params))
               for (const i of chunk)
-                await instances[i]!._markInserted(rows[i]!)
+                yield* wait(instances[i]!._markInserted(rows[i]!))
               continue
             }
-            // Inserted in recordset order; integer keys are sorted too, which
-            // is a sequence's allocation order, so the pairing holds either way.
-            const returned = (await exec.all(`${sql} RETURNING ${pk}`, [payload])).map(r => r[pk])
+
+            // Generated keys come back in the order the VALUES were written on
+            // both Postgres and SQLite. Integer keys are also sorted, which is
+            // the allocation order of a sequence or rowid, so the pairing holds
+            // even if a future engine returns them in another order.
+            const returned = ((yield* wait(exec.all(`${sql} RETURNING ${pk}`, params)))).map(r => r[pk])
             const keys = returned.every(k => typeof k === 'number' || typeof k === 'bigint')
               ? [...returned].sort((a, b) => (a as number) < (b as number) ? -1 : (a as number) > (b as number) ? 1 : 0)
               : returned
             for (let j = 0; j < chunk.length; j++)
-              await instances[chunk[j]!]!._markInserted(rows[chunk[j]!]!, keys[j])
+              yield* wait(instances[chunk[j]!]!._markInserted(rows[chunk[j]!]!, keys[j]))
           }
-          continue
         }
 
-        // Every statement's row count is a power of two, so however many
-        // records arrive and however the caller batches them, one column shape
-        // produces at most log2(perStatement) + 1 distinct statements to cache.
-        // Sizing each chunk to "whatever is left" made every remainder a new
-        // statement: a year of daily batches was over a thousand of them.
-        const perStatement = floorPowerOfTwo(Math.max(1, Math.floor(BULK_INSERT_MAX_PARAMS / columns.length)))
-        for (let start = 0; start < indexes.length;) {
-          const size = Math.min(perStatement, floorPowerOfTwo(indexes.length - start))
-          const chunk = indexes.slice(start, start + size)
-          start += size
-          const sql = `INSERT INTO ${quotedTable(definition.table)} (${columns.map(quoteSqlColumn).join(', ')}) VALUES ${chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ')}`
-          const params = chunk.flatMap(i => columns.map(c => rows[i]![c]))
+        return instances as ModelRecord<TDef>[]
+      })
+    },
 
-          if (!generated) {
-            await exec.run(sql, params)
-            for (const i of chunk)
-              await instances[i]!._markInserted(rows[i]!)
-            continue
-          }
-
-          // Generated keys come back in the order the VALUES were written on
-          // both Postgres and SQLite. Integer keys are also sorted, which is
-          // the allocation order of a sequence or rowid, so the pairing holds
-          // even if a future engine returns them in another order.
-          const returned = (await exec.all(`${sql} RETURNING ${pk}`, params)).map(r => r[pk])
-          const keys = returned.every(k => typeof k === 'number' || typeof k === 'bigint')
-            ? [...returned].sort((a, b) => (a as number) < (b as number) ? -1 : (a as number) > (b as number) ? 1 : 0)
-            : returned
-          for (let j = 0; j < chunk.length; j++)
-            await instances[chunk[j]!]!._markInserted(rows[chunk[j]!]!, keys[j])
+    updateOrCreate(
+      search: Partial<Attrs>,
+      data: FillableAttributes<TDef>
+    ): ModelRecord<TDef> {
+      const self = this
+      return settle(function* (): Generator<unknown, ModelRecord<TDef>, unknown> {
+        let query = new ModelQueryBuilder<TDef>(definition)
+        for (const [key, value] of Object.entries(search)) {
+          query = query.where(key as Cols, value as any)
         }
-      }
-
-      return instances as ModelRecord<TDef>[]
+        const existing = (yield* wait(query.first()))
+        if (existing) {
+          yield* wait(existing.update(data))
+          return existing
+        }
+        return self.create({ ...search, ...data } as any)
+      })
     },
 
-    async updateOrCreate(
+    firstOrCreate(
       search: Partial<Attrs>,
       data: FillableAttributes<TDef>
-    ): Promise<ModelRecord<TDef>> {
-      let query = new ModelQueryBuilder<TDef>(definition)
-      for (const [key, value] of Object.entries(search)) {
-        query = query.where(key as Cols, value as any)
-      }
-      const existing = await query.first()
-      if (existing) {
-        await existing.update(data)
-        return existing
-      }
-      return this.create({ ...search, ...data } as any)
-    },
-
-    async firstOrCreate(
-      search: Partial<Attrs>,
-      data: FillableAttributes<TDef>
-    ): Promise<ModelRecord<TDef>> {
-      let query = new ModelQueryBuilder<TDef>(definition)
-      for (const [key, value] of Object.entries(search)) {
-        query = query.where(key as Cols, value as any)
-      }
-      const existing = await query.first()
-      return existing || this.create({ ...search, ...data } as any)
+    ): ModelRecord<TDef> {
+      const self = this
+      return settle(function* (): Generator<unknown, ModelRecord<TDef>, unknown> {
+        let query = new ModelQueryBuilder<TDef>(definition)
+        for (const [key, value] of Object.entries(search)) {
+          query = query.where(key as Cols, value as any)
+        }
+        const existing = (yield* wait(query.first()))
+        return existing || self.create({ ...search, ...data } as any)
+      })
     },
 
     /**
@@ -4597,10 +4862,12 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
      * exists. `defineModel()` typed this browser-model method on the server,
      * where it was missing.
      */
-    async update(id: number | string, data: FillableAttributes<TDef>): Promise<ModelRecord<TDef>> {
-      const record = await model.findOrFail(id)
-      await record.update(data)
-      return record
+    update(id: number | string, data: FillableAttributes<TDef>): ModelRecord<TDef> {
+      return settle(function* (): Generator<unknown, ModelRecord<TDef>, unknown> {
+        const record = (yield* wait(model.findOrFail(id)))
+        yield* wait(record.update(data))
+        return record
+      })
     },
 
     /**
@@ -4609,9 +4876,11 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
      * such row exists. `defineModel()` typed this browser-model method on the
      * server, where it was missing.
      */
-    async delete(id: number | string): Promise<boolean> {
-      const record = await model.find(id)
-      return record ? record.delete() : false
+    delete(id: number | string): boolean {
+      return settle(function* (): Generator<unknown, boolean, unknown> {
+        const record = (yield* wait(model.find(id)))
+        return record ? (yield* wait(record.delete())) : false
+      })
     },
 
     /**
@@ -4622,7 +4891,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
      * rows that `delete()` on the same model would have kept, and no hook saw
      * it. `forceDelete()` is the spelling for a permanent one.
      */
-    destroy(id: number | string): Promise<boolean> {
+    destroy(id: number | string): boolean {
       return model.delete(id)
     },
 
@@ -4631,17 +4900,21 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
      * Delete hooks run. `remove()` is the same call — the name the client
      * builder's `db.remove(table, id)` already uses for a real DELETE.
      */
-    async forceDelete(id: number | string): Promise<boolean> {
-      const record = await model.withTrashed().find(id)
-      return record ? record.forceDelete() : false
+    forceDelete(id: number | string): boolean {
+      return settle(function* (): Generator<unknown, boolean, unknown> {
+        const record = (yield* wait(model.withTrashed().find(id)))
+        return record ? (yield* wait(record.forceDelete())) : false
+      })
     },
 
-    remove(id: number | string): Promise<boolean> {
+    remove(id: number | string): boolean {
       return model.forceDelete(id)
     },
 
-    async truncate(): Promise<void> {
-      await getExecutor().run(`DELETE FROM ${quotedTable(definition.table)}`, [])
+    truncate(): void {
+      return settle(function* (): Generator<unknown, void, unknown> {
+        yield* wait(getExecutor().run(`DELETE FROM ${quotedTable(definition.table)}`, []))
+      })
     },
 
     getDefinition: () => definition,
@@ -4659,7 +4932,7 @@ function createModelInternal<const TDef extends ModelDefinition>(definition: TDe
     avg: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).avg(column),
     sum: <K extends Numeric>(column: K) => new ModelQueryBuilder<TDef>(definition).sum(column),
 
-    pluck<K extends ColumnName<TDef>>(column: K): Promise<(K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[]> {
+    pluck<K extends ColumnName<TDef>>(column: K): (K extends keyof ModelAttributes<TDef> ? ModelAttributes<TDef>[K] : unknown)[] {
       return new ModelQueryBuilder<TDef>(definition).pluck(column)
     },
   }
@@ -4690,130 +4963,134 @@ export function createModel<const TDef extends ModelDefinition>(definition: TDef
   return model
 }
 
-export async function createTableFromModel(definition: ModelDefinition): Promise<void> {
-  const exec = getExecutor()
-  const pk = toSnakeCase(definition.primaryKey || 'id')
-  const columns: string[] = []
-  const emitted = new Set<string>([pk])
+export function createTableFromModel(definition: ModelDefinition): void {
+  return settle(function* (): Generator<unknown, void, unknown> {
+    const exec = getExecutor()
+    const pk = toSnakeCase(definition.primaryKey || 'id')
+    const columns: string[] = []
+    const emitted = new Set<string>([pk])
 
-  // Every column name is quoted for the dialect, as the migration drivers
-  // already do (see SQLiteDriver.createTable). This helper emitted them bare,
-  // so a model with an `order`, `group` or `when` column — names the read and
-  // write paths quote and therefore support — could not have its table created
-  // at all: `near "order": syntax error`. `emitted` still keys off the
-  // UNQUOTED name, since that is what the column is called.
-  columns.push(definition.autoIncrement !== false
-    ? `${quoteSqlColumn(pk)} INTEGER PRIMARY KEY AUTOINCREMENT`
-    : `${quoteSqlColumn(pk)} INTEGER PRIMARY KEY`)
+    // Every column name is quoted for the dialect, as the migration drivers
+    // already do (see SQLiteDriver.createTable). This helper emitted them bare,
+    // so a model with an `order`, `group` or `when` column — names the read and
+    // write paths quote and therefore support — could not have its table created
+    // at all: `near "order": syntax error`. `emitted` still keys off the
+    // UNQUOTED name, since that is what the column is called.
+    columns.push(definition.autoIncrement !== false
+      ? `${quoteSqlColumn(pk)} INTEGER PRIMARY KEY AUTOINCREMENT`
+      : `${quoteSqlColumn(pk)} INTEGER PRIMARY KEY`)
 
-  if (definition.traits?.useUuid) {
-    columns.push('uuid TEXT UNIQUE')
-    emitted.add('uuid')
-  }
-
-  for (const [attrName, attr] of Object.entries(definition.attributes)) {
-    // Column names are snake_case — that is what the migration generator emits
-    // (see snakeCase() in migrations.ts) and what every ORM read/write path
-    // normalizes to (see normalizeAttributeKeys). Emitting the raw declaration
-    // key created a `escalationCount` column that no query ever addressed, so
-    // any insert touching a camelCase attribute failed with "no such column".
-    const name = toSnakeCase(attrName)
-    if (emitted.has(name)) continue
-    emitted.add(name)
-    // Same mapping the migration path uses. This understood only `number` and
-    // `boolean` and sent everything else to TEXT, so `type: 'integer'` — the
-    // spelling in this library's own docs — created a TEXT column and integers
-    // read back as strings. See #1094 and column-types.ts.
-    const declaredType = normalizeAttributeType(attr.type)
-    let colType: string = sqliteAffinityFor(declaredType)
-    // Safety net: a numeric foreign-key column stores as INTEGER, so float
-    // storage cannot corrupt an id (11.0 for 11). Conditional on the declared
-    // type, matching SQLiteDriver.getColumnType: external ids are frequently
-    // strings (tickers, wallet addresses, hashes) and a declared text type has
-    // to win over a name heuristic. An attribute that declares no type at all
-    // keeps the old INTEGER default rather than silently changing shape.
-    if (name.endsWith('_id') && (declaredType === undefined || isNumericPlanType(declaredType)))
-      colType = 'INTEGER'
-    let colDef = `${quoteSqlColumn(name)} ${colType}`
-    if (attr.unique) colDef += ' UNIQUE'
-    // Inline FK constraints for SQLite CREATE TABLE
-    if (typeof attr.foreignKey === 'object' && attr.foreignKey !== null) {
-      const fk = attr.foreignKey as import('./schema').ForeignKeyConfig
-      colDef += ` REFERENCES ${fk.table}(${quoteSqlColumn(fk.column ?? 'id')})`
-      if (fk.onDelete)
-        colDef += ` ON DELETE ${fk.onDelete.toUpperCase()}`
-      if (fk.onUpdate)
-        colDef += ` ON UPDATE ${fk.onUpdate.toUpperCase()}`
+    if (definition.traits?.useUuid) {
+      columns.push('uuid TEXT UNIQUE')
+      emitted.add('uuid')
     }
-    columns.push(colDef)
-  }
 
-  // belongsTo puts an FK on THIS table — the migration generator emits these
-  // (see normalizeRelationList in migrations.ts), so the helper must too or a
-  // model that relies on the implied column can't be created from its own
-  // definition. Explicitly declared FK attributes already won above.
-  for (const rel of normalizeRelationList(definition.belongsTo)) {
-    const name = rel.foreignKey ?? `${toSnakeCase(rel.model)}_id`
-    if (emitted.has(name)) continue
-    emitted.add(name)
-    columns.push(`${quoteSqlColumn(name)} INTEGER`)
-  }
-
-  if (timestampsEnabled(definition)) {
-    for (const c of ['created_at', 'updated_at']) {
-      if (emitted.has(c)) continue
-      emitted.add(c)
-      columns.push(`${c} TEXT`)
+    for (const [attrName, attr] of Object.entries(definition.attributes)) {
+      // Column names are snake_case — that is what the migration generator emits
+      // (see snakeCase() in migrations.ts) and what every ORM read/write path
+      // normalizes to (see normalizeAttributeKeys). Emitting the raw declaration
+      // key created a `escalationCount` column that no query ever addressed, so
+      // any insert touching a camelCase attribute failed with "no such column".
+      const name = toSnakeCase(attrName)
+      if (emitted.has(name)) continue
+      emitted.add(name)
+      // Same mapping the migration path uses. This understood only `number` and
+      // `boolean` and sent everything else to TEXT, so `type: 'integer'` — the
+      // spelling in this library's own docs — created a TEXT column and integers
+      // read back as strings. See #1094 and column-types.ts.
+      const declaredType = normalizeAttributeType(attr.type)
+      let colType: string = sqliteAffinityFor(declaredType)
+      // Safety net: a numeric foreign-key column stores as INTEGER, so float
+      // storage cannot corrupt an id (11.0 for 11). Conditional on the declared
+      // type, matching SQLiteDriver.getColumnType: external ids are frequently
+      // strings (tickers, wallet addresses, hashes) and a declared text type has
+      // to win over a name heuristic. An attribute that declares no type at all
+      // keeps the old INTEGER default rather than silently changing shape.
+      if (name.endsWith('_id') && (declaredType === undefined || isNumericPlanType(declaredType)))
+        colType = 'INTEGER'
+      let colDef = `${quoteSqlColumn(name)} ${colType}`
+      if (attr.unique) colDef += ' UNIQUE'
+      // Inline FK constraints for SQLite CREATE TABLE
+      if (typeof attr.foreignKey === 'object' && attr.foreignKey !== null) {
+        const fk = attr.foreignKey as import('./schema').ForeignKeyConfig
+        colDef += ` REFERENCES ${fk.table}(${quoteSqlColumn(fk.column ?? 'id')})`
+        if (fk.onDelete)
+          colDef += ` ON DELETE ${fk.onDelete.toUpperCase()}`
+        if (fk.onUpdate)
+          colDef += ` ON UPDATE ${fk.onUpdate.toUpperCase()}`
+      }
+      columns.push(colDef)
     }
-  }
-  if (softDeletesEnabled(definition) && !emitted.has('deleted_at')) {
-    emitted.add('deleted_at')
-    columns.push('deleted_at TEXT')
-  }
 
-  await exec.run(`CREATE TABLE IF NOT EXISTS ${quotedTable(definition.table)} (${columns.join(', ')})`, [])
-}
-
-export async function seedModel(definition: ModelDefinition, count?: number, faker?: Record<string, unknown>): Promise<void> {
-  const exec = getExecutor()
-  const seeder = definition.traits?.useSeeder
-  const seedCount = count ?? (typeof seeder === 'object' && seeder ? seeder.count : 10)
-
-  if (!faker) {
-    try {
-      const tsFaker = await (import('@stacksjs/ts-faker' as string) as Promise<{ faker: Record<string, unknown> }>)
-      faker = createFakerCompatLayer(tsFaker.faker) as unknown as Record<string, unknown>
-    }
-catch {
-      console.warn('@stacksjs/ts-faker not found. Install it for seeding support.')
-      return
-    }
-  }
-
-  for (let i = 0; i < seedCount; i++) {
-    const data: Record<string, unknown> = {}
-
-    for (const [name, attr] of Object.entries(definition.attributes)) {
-      // Column names are snake_case everywhere else (migration generator,
-      // createTableFromModel, normalizeAttributeKeys) — seeding a camelCase
-      // attribute under its raw name targeted a column that doesn't exist.
-      if (attr.factory) data[toSnakeCase(name)] = (attr.factory as (_f: unknown) => unknown)(faker)
+    // belongsTo puts an FK on THIS table — the migration generator emits these
+    // (see normalizeRelationList in migrations.ts), so the helper must too or a
+    // model that relies on the implied column can't be created from its own
+    // definition. Explicitly declared FK attributes already won above.
+    for (const rel of normalizeRelationList(definition.belongsTo)) {
+      const name = rel.foreignKey ?? `${toSnakeCase(rel.model)}_id`
+      if (emitted.has(name)) continue
+      emitted.add(name)
+      columns.push(`${quoteSqlColumn(name)} INTEGER`)
     }
 
     if (timestampsEnabled(definition)) {
-      const now = formatNow()
-      data.created_at = now
-      data.updated_at = now
+      for (const c of ['created_at', 'updated_at']) {
+        if (emitted.has(c)) continue
+        emitted.add(c)
+        columns.push(`${c} TEXT`)
+      }
+    }
+    if (softDeletesEnabled(definition) && !emitted.has('deleted_at')) {
+      emitted.add('deleted_at')
+      columns.push('deleted_at TEXT')
     }
 
-    if (definition.traits?.useUuid) data.uuid = crypto.randomUUID()
+    yield* wait(exec.run(`CREATE TABLE IF NOT EXISTS ${quotedTable(definition.table)} (${columns.join(', ')})`, []))
+  })
+}
 
-    const columns = Object.keys(data)
-    await exec.run(
-      `INSERT INTO ${quotedTable(definition.table)} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
-      Object.values(data)
-    )
-  }
+export function seedModel(definition: ModelDefinition, count?: number, faker?: Record<string, unknown>): void {
+  return settle(function* (): Generator<unknown, void, unknown> {
+    const exec = getExecutor()
+    const seeder = definition.traits?.useSeeder
+    const seedCount = count ?? (typeof seeder === 'object' && seeder ? seeder.count : 10)
+
+    if (!faker) {
+      try {
+        const tsFaker = (yield* wait(import('@stacksjs/ts-faker' as string) as Promise<{ faker: Record<string, unknown> }>))
+        faker = createFakerCompatLayer(tsFaker.faker) as unknown as Record<string, unknown>
+      }
+      catch {
+        console.warn('@stacksjs/ts-faker not found. Install it for seeding support.')
+        return
+      }
+    }
+
+    for (let i = 0; i < seedCount; i++) {
+      const data: Record<string, unknown> = {}
+
+      for (const [name, attr] of Object.entries(definition.attributes)) {
+        // Column names are snake_case everywhere else (migration generator,
+        // createTableFromModel, normalizeAttributeKeys) — seeding a camelCase
+        // attribute under its raw name targeted a column that doesn't exist.
+        if (attr.factory) data[toSnakeCase(name)] = (attr.factory as (_f: unknown) => unknown)(faker)
+      }
+
+      if (timestampsEnabled(definition)) {
+        const now = formatNow()
+        data.created_at = now
+        data.updated_at = now
+      }
+
+      if (definition.traits?.useUuid) data.uuid = crypto.randomUUID()
+
+      const columns = Object.keys(data)
+      yield* wait(exec.run(
+        `INSERT INTO ${quotedTable(definition.table)} (${columns.map(quoteSqlColumn).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        Object.values(data)
+      ))
+    }
+  })
 }
 
 export type {
