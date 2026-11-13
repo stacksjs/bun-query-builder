@@ -12,6 +12,45 @@ The query builder emits Bun `sql` queries. `toSQL()` returns a Bun query object 
 - Composable, chainable methods
 - Ergonomic helpers for dates, JSON, NULL checks, column-to-column comparisons
 
+## Values, not promises
+
+A query answers where it is written. `get()`, `first()`, `execute()`,
+`count()`, `paginate()` and the rest return the rows, the row or the number:
+
+```ts
+const users = db.selectFrom('users').where({ active: true }).get()
+console.log(users.length)
+
+const newest = db.selectFrom('users').orderBy('created_at', 'desc').first()
+console.log(newest?.email)
+```
+
+`await` in front of any of them still works, because `await` on a value is that
+value, so the examples in this guide that write `await` are correct as they
+stand. What changes is what a call is without it: the rows, not a pending
+promise.
+
+A failure is thrown where the call stands. Use `try`/`catch`; there is no
+promise to call `.catch()` on.
+
+This holds on SQLite, MySQL and Postgres. SQLite runs a statement in place;
+MySQL and Postgres run it on a worker thread the caller waits on, exactly as
+[model calls](./models.md#how) do, and the two share one connection pool. A
+call returns a promise only when something it touched could not answer in
+place:
+
+- a callback you passed that is `async` (a transaction's, `chunk()`'s);
+- a statement that needs a lock, or a pooled connection, held by a transaction
+  that is still open in this same process because its callback is `async` and
+  has not finished: the row cannot exist until that callback has run, so the
+  call answers with a promise of it
+  (see [A query that cannot finish](./models.md#a-query-that-cannot-finish));
+- a connection you supplied yourself (`createQueryBuilder({ sql })`,
+  `setSqlInstance()`), or a libSQL server;
+- `setConfig({ models: { execution: 'async' } })`.
+
+Keep transaction callbacks synchronous and the second case never arises.
+
 ## Getting Started
 
 ```ts

@@ -139,14 +139,15 @@ try {
         await db.deleteFrom(table).execute()
       }
       let invoked = false
-      await assert.rejects(db.transaction(async () => { invoked = true }, { sqliteMode: 'immediate; DROP TABLE users' as never }), /sqliteMode/)
+      // Refused before anything is asked of the database, so where the call stands.
+      assert.throws(() => db.transaction(async () => { invoked = true }, { sqliteMode: 'immediate; DROP TABLE users' as never }), /sqliteMode/)
       assert.equal(invoked, false)
     }
     finally { contender.close() }
   }
   if (dialect !== 'sqlite') {
     let invoked = false
-    await assert.rejects(db.transaction(async () => { invoked = true }, { sqliteMode: 'immediate' }), /requires the SQLite dialect/)
+    assert.throws(() => db.transaction(async () => { invoked = true }, { sqliteMode: 'immediate' }), /requires the SQLite dialect/)
     assert.equal(invoked, false)
   }
   console.log(`${mode} transaction completion OK`)

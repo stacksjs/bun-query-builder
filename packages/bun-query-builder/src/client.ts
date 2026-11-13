@@ -12,6 +12,8 @@ import type { DriverConnection, DriverQuery } from './db'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { serializeBindings, withDateBindings } from './bindings'
 import { bunSql, getOrCreateBunSql, resetConnection, resolveLibSQLTarget } from './db'
+import { isThenable, settle, wait as waitFor } from './settle'
+import { answersInPlace, isTemplateStatement, syncConnection } from './sync-connection'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
 import type { WhereTerm } from './sql-fragments'
@@ -121,6 +123,10 @@ function boundFragment(sql: string, args: readonly unknown[]): BoundSqlFragment 
  * into a statement; see {@link refuseNativeQuery}.
  */
 function isNativeDriverQuery(value: unknown): boolean {
+  // The same statement on the connection that answers in place: its text is
+  // made by the driver on the worker, so there is none here to splice.
+  if (isTemplateStatement(value))
+    return true
   return value instanceof Promise
     && typeof (value as { execute?: unknown }).execute === 'function'
     && typeof (value as { cancel?: unknown }).cancel === 'function'
@@ -2260,7 +2266,7 @@ export interface BaseSelectQueryBuilder<
    * const createdAt = await db.selectFrom('users').orderBy('id', 'desc').value('created_at')
    * ```
    */
-  value: <K extends keyof TSelected & string>(column: K) => Promise<SelectedRow<DB, TTable, TSelected>[K]>
+  value: <K extends keyof TSelected & string>(column: K) => SelectedRow<DB, TTable, TSelected>[K]
   pluck: {
     /**
      * # `pluck(column)`
@@ -2273,7 +2279,7 @@ export interface BaseSelectQueryBuilder<
      * const ids = await db.selectFrom('users').orderBy('id').pluck('id')
      * ```
      */
-    <K extends keyof TSelected & string>(column: K): Promise<SelectedRow<DB, TTable, TSelected>[K][]>
+    <K extends keyof TSelected & string>(column: K): SelectedRow<DB, TTable, TSelected>[K][]
     /**
      * # `pluck(column, key)`
      *
@@ -2285,7 +2291,7 @@ export interface BaseSelectQueryBuilder<
      * const map = await db.selectFrom('users').pluck('name', 'email')
      * ```
      */
-    <K extends keyof TSelected & string, K2 extends keyof TSelected & string>(column: K, key: K2): Promise<Record<string, SelectedRow<DB, TTable, TSelected>[K]>>
+    <K extends keyof TSelected & string, K2 extends keyof TSelected & string>(column: K, key: K2): Record<string, SelectedRow<DB, TTable, TSelected>[K]>
   }
   /**
    * # `exists`
@@ -2298,7 +2304,7 @@ export interface BaseSelectQueryBuilder<
    * const hasAdmins = await db.selectFrom('users').where({ admin: true }).exists()
    * ```
    */
-  exists: () => Promise<boolean>
+  exists: () => boolean
   /**
    * # `doesntExist`
    *
@@ -2310,7 +2316,7 @@ export interface BaseSelectQueryBuilder<
    * const none = await db.selectFrom('users').where({ active: false }).doesntExist()
    * ```
    */
-  doesntExist: () => Promise<boolean>
+  doesntExist: () => boolean
   /**
    * # `cursorPaginate`
    *
@@ -2322,7 +2328,7 @@ export interface BaseSelectQueryBuilder<
    * const page2 = await db.selectFrom('users').cursorPaginate(10, page1.meta.nextCursor)
    * ```
    */
-  cursorPaginate: (perPage: number, cursor?: string | number, column?: string, direction?: 'asc' | 'desc') => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, nextCursor: string | number | null } }>
+  cursorPaginate: (perPage: number, cursor?: string | number, column?: string, direction?: 'asc' | 'desc') => { data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, nextCursor: string | number | null } }
   /**
    * # `chunk`
    *
@@ -2336,7 +2342,7 @@ export interface BaseSelectQueryBuilder<
    * const done = await db.selectFrom('users').chunk(50, () => {})
    * ```
    */
-  chunk: (size: number, handler: (rows: SelectedRow<DB, TTable, TSelected>[]) => Promise<void> | void) => Promise<void>
+  chunk: <R extends void | Promise<void>>(size: number, handler: (rows: SelectedRow<DB, TTable, TSelected>[]) => R) => R
   /**
    * # `chunkById`
    *
@@ -2348,7 +2354,7 @@ export interface BaseSelectQueryBuilder<
    * await db.selectFrom('users').chunkById(100)
    * ```
    */
-  chunkById: (size: number, column?: keyof DB[TTable]['columns'] & string, handler?: (rows: SelectedRow<DB, TTable, TSelected>[]) => Promise<void> | void) => Promise<void>
+  chunkById: <R extends void | Promise<void> = void>(size: number, column?: keyof DB[TTable]['columns'] & string, handler?: (rows: SelectedRow<DB, TTable, TSelected>[]) => R) => R
   /**
    * # `eachById`
    *
@@ -2360,7 +2366,7 @@ export interface BaseSelectQueryBuilder<
    * await db.selectFrom('users').eachById(50)
    * ```
    */
-  eachById: (size: number, column?: keyof DB[TTable]['columns'] & string, handler?: (row: SelectedRow<DB, TTable, TSelected>) => Promise<void> | void) => Promise<void>
+  eachById: <R extends void | Promise<void> = void>(size: number, column?: keyof DB[TTable]['columns'] & string, handler?: (row: SelectedRow<DB, TTable, TSelected>) => R) => R
   /**
    * # `when`
    *
@@ -2420,7 +2426,7 @@ export interface BaseSelectQueryBuilder<
    * const plan2 = await db.selectFrom('users').orderBy('id').limit(1).explain()
    * ```
    */
-  explain: () => Promise<Record<string, unknown>[]>
+  explain: () => Record<string, unknown>[]
   /**
    * # `simple`
    *
@@ -2445,7 +2451,7 @@ export interface BaseSelectQueryBuilder<
    * const res2 = await db.selectFrom('users').where({ active: true }).paginate(25)
    * ```
    */
-  paginate: ((perPage: number, page?: number, opts?: { tx?: { unsafe: (sql: string, params?: unknown[]) => unknown } }) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>) & ((options: PaginateOptions) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }>)
+  paginate: ((perPage: number, page?: number, opts?: { tx?: { unsafe: (sql: string, params?: unknown[]) => unknown } }) => { data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } }) & ((options: PaginateOptions) => { data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, total: number, lastPage: number } })
   /**
    * # `simplePaginate`
    *
@@ -2457,7 +2463,7 @@ export interface BaseSelectQueryBuilder<
    * const res2 = await db.selectFrom('users').where({ active: true }).simplePaginate(25)
    * ```
    */
-  simplePaginate: (perPage: number, page?: number) => Promise<{ data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, hasMore: boolean } }>
+  simplePaginate: (perPage: number, page?: number) => { data: SelectedRow<DB, TTable, TSelected>[], meta: { perPage: number, page: number, hasMore: boolean } }
   /**
    * # `toSQL`
    *
@@ -2470,9 +2476,9 @@ export interface BaseSelectQueryBuilder<
    * ```
    */
   toSQL: () => string
-  execute: () => Promise<SelectedRow<DB, TTable, TSelected>[]>
-  executeTakeFirst: () => Promise<SelectedRow<DB, TTable, TSelected> | undefined>
-  executeTakeFirstOrThrow: () => Promise<SelectedRow<DB, TTable, TSelected>>
+  execute: () => SelectedRow<DB, TTable, TSelected>[]
+  executeTakeFirst: () => SelectedRow<DB, TTable, TSelected> | undefined
+  executeTakeFirstOrThrow: () => SelectedRow<DB, TTable, TSelected>
   // Laravel-style retrieval helpers
   /**
    * # `get`
@@ -2485,7 +2491,7 @@ export interface BaseSelectQueryBuilder<
    * const rows2 = await db.selectFrom('users').orderBy('id', 'desc').get()
    * ```
    */
-  get: () => Promise<SelectedRow<DB, TTable, TSelected>[]>
+  get: () => SelectedRow<DB, TTable, TSelected>[]
   /**
    * # `first`
    *
@@ -2497,7 +2503,7 @@ export interface BaseSelectQueryBuilder<
    * const row2 = await db.selectFrom('users').orderBy('id').first()
    * ```
    */
-  first: () => Promise<SelectedRow<DB, TTable, TSelected> | undefined>
+  first: () => SelectedRow<DB, TTable, TSelected> | undefined
   /**
    * # `firstOrFail`
    *
@@ -2509,27 +2515,27 @@ export interface BaseSelectQueryBuilder<
    * const row2 = await db.selectFrom('users').where({ email: 'a@b.c' }).firstOrFail()
    * ```
    */
-  firstOrFail: () => Promise<SelectedRow<DB, TTable, TSelected>>
-  find: (id: PrimaryKeyValue<DB, TTable>) => Promise<SelectedRow<DB, TTable, TSelected> | undefined>
-  findOrFail: (id: PrimaryKeyValue<DB, TTable>) => Promise<SelectedRow<DB, TTable, TSelected>>
-  findMany: (ids: PrimaryKeyValue<DB, TTable>[]) => Promise<SelectedRow<DB, TTable, TSelected>[]>
+  firstOrFail: () => SelectedRow<DB, TTable, TSelected>
+  find: (id: PrimaryKeyValue<DB, TTable>) => SelectedRow<DB, TTable, TSelected> | undefined
+  findOrFail: (id: PrimaryKeyValue<DB, TTable>) => SelectedRow<DB, TTable, TSelected>
+  findMany: (ids: PrimaryKeyValue<DB, TTable>[]) => SelectedRow<DB, TTable, TSelected>[]
   lazy: () => AsyncIterable<SelectedRow<DB, TTable, TSelected>>
   lazyById: () => AsyncIterable<SelectedRow<DB, TTable, TSelected>>
   pipe: <R>(fn: (qb: SelectQueryBuilder<DB, TTable, TSelected, TJoined>) => R) => R
-  count: () => Promise<number>
-  avg: (column: NumericColumnName<DB[TTable]['columns']>) => Promise<number>
-  sum: (column: NumericColumnName<DB[TTable]['columns']>) => Promise<number>
+  count: () => number
+  avg: (column: NumericColumnName<DB[TTable]['columns']>) => number
+  sum: (column: NumericColumnName<DB[TTable]['columns']>) => number
   /** MAX of a column — typed as that column's value (string columns yield strings), or null on an empty set. */
-  max: <K extends keyof DB[TTable]['columns'] & string>(column: K) => Promise<DB[TTable]['columns'][K] | null>
+  max: <K extends keyof DB[TTable]['columns'] & string>(column: K) => DB[TTable]['columns'][K] | null
   /** MIN of a column — typed as that column's value (string columns yield strings), or null on an empty set. */
-  min: <K extends keyof DB[TTable]['columns'] & string>(column: K) => Promise<DB[TTable]['columns'][K] | null>
+  min: <K extends keyof DB[TTable]['columns'] & string>(column: K) => DB[TTable]['columns'][K] | null
   // Type-only convenience properties for IDE hovers; not implemented at runtime
   readonly rows: TSelected[]
   readonly row: TSelected
-  values: () => Promise<unknown[][]>
+  values: () => unknown[][]
   /** Return parameter values for debugging/tests. */
   toParams?: () => unknown[]
-  raw: () => Promise<unknown[][]>
+  raw: () => unknown[][]
   cancel: () => void
   /** Include soft-deleted rows in results. */
   withTrashed?: () => SelectQueryBuilder<DB, TTable, TSelected, TJoined>
@@ -2601,10 +2607,10 @@ export interface InsertQueryBuilder<DB extends AnyDatabaseSchema, TTable extends
    * const rows = await db.insertInto('users').values({ name: 'A' }).returning('id').execute()
    * ```
    */
-  execute: () => Promise<number | DB[TTable]['columns'] | DB[TTable]['columns'][]>
+  execute: () => number | DB[TTable]['columns'] | DB[TTable]['columns'][]
   returningAll: () => SelectQueryBuilder<DB, TTable, DB[TTable]['columns']>
-  executeTakeFirst: () => Promise<DB[TTable]['columns'] | undefined>
-  executeTakeFirstOrThrow: () => Promise<DB[TTable]['columns']>
+  executeTakeFirst: () => DB[TTable]['columns'] | undefined
+  executeTakeFirstOrThrow: () => DB[TTable]['columns']
 }
 
 export interface UpdateQueryBuilder<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> {
@@ -2700,10 +2706,10 @@ export interface UpdateQueryBuilder<DB extends AnyDatabaseSchema, TTable extends
    * const count = await db.updateTable('users').set({ active: true }).where({ id: 1 }).execute()
    * ```
    */
-  execute: () => Promise<number>
+  execute: () => number
   returningAll: () => SelectQueryBuilder<DB, TTable, DB[TTable]['columns']>
-  executeTakeFirst: () => Promise<{ numUpdatedRows?: number }>
-  executeTakeFirstOrThrow: () => Promise<{ numUpdatedRows: number }>
+  executeTakeFirst: () => { numUpdatedRows?: number }
+  executeTakeFirstOrThrow: () => { numUpdatedRows: number }
 }
 
 export interface DeleteQueryBuilder<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> {
@@ -2780,10 +2786,10 @@ export interface DeleteQueryBuilder<DB extends AnyDatabaseSchema, TTable extends
    * const count = await db.deleteFrom('users').where({ id: 1 }).execute()
    * ```
    */
-  execute: () => Promise<number>
+  execute: () => number
   returningAll: () => SelectQueryBuilder<DB, TTable, DB[TTable]['columns']>
-  executeTakeFirst: () => Promise<{ numDeletedRows?: number }>
-  executeTakeFirstOrThrow: () => Promise<{ numDeletedRows: number }>
+  executeTakeFirst: () => { numDeletedRows?: number }
+  executeTakeFirstOrThrow: () => { numDeletedRows: number }
 }
 
 export interface TableQueryBuilder<DB extends AnyDatabaseSchema, TTable extends keyof DB & string> {
@@ -2833,6 +2839,17 @@ export interface TableQueryBuilder<DB extends AnyDatabaseSchema, TTable extends 
    */
   select: <K extends keyof DB[TTable]['columns'] & string>(...columns: K[]) => SelectQueryBuilder<DB, TTable, Pick<DB[TTable]['columns'], K>>
 }
+
+/**
+ * A raw statement (`db.unsafe(sql, params)`, `db.file(path)`): nothing runs
+ * until it is executed or awaited.
+ *
+ * `execute()` runs it and returns its rows where the connection answers in
+ * place (`bun:sqlite`, and MySQL or Postgres through the worker-held pool).
+ * Awaiting the statement resolves to the same rows on every connection, so it
+ * is typed as the promise it can always be used as.
+ */
+export type RawStatement<TRows> = Promise<TRows> & { execute: () => TRows }
 
 export interface QueryBuilder<DB extends AnyDatabaseSchema> {
   // typed select list (column names or raw aliases)
@@ -2980,7 +2997,7 @@ export interface QueryBuilder<DB extends AnyDatabaseSchema> {
    * const rows = await db.unsafe('SELECT 1 as one')
    * ```
    */
-  unsafe: <TRow extends Record<string, unknown> = Record<string, unknown>>(query: string, params?: unknown[]) => Promise<TRow[]>
+  unsafe: <TRow extends Record<string, unknown> = Record<string, unknown>>(query: string, params?: unknown[]) => RawStatement<TRow[]>
   /** Raw SQLite-only inserts, deferred outside transactions. Bypasses query hooks. */
   deferInsert?: DeferredInsert
   /** Synchronously drain this SQLite connection's deferred inserts. */
@@ -2995,7 +3012,7 @@ export interface QueryBuilder<DB extends AnyDatabaseSchema> {
    * const rows = await db.file('queries/users.sql')
    * ```
    */
-  file: <TRow extends Record<string, unknown> = Record<string, unknown>>(path: string, params?: unknown[]) => Promise<TRow[]>
+  file: <TRow extends Record<string, unknown> = Record<string, unknown>>(path: string, params?: unknown[]) => RawStatement<TRow[]>
   /**
    * # `reserve`
    *
@@ -3008,7 +3025,7 @@ export interface QueryBuilder<DB extends AnyDatabaseSchema> {
 finally { reserved.release() }
    * ```
    */
-  reserve: () => Promise<(QueryBuilder<DB> & { release: () => void })>
+  reserve: () => (QueryBuilder<DB> & { release: () => void })
   /**
    * # `close`
    *
@@ -3019,7 +3036,7 @@ finally { reserved.release() }
    * await db.close()
    * ```
    */
-  close: (opts?: { timeout?: number }) => Promise<void>
+  close: (opts?: { timeout?: number }) => void
   // Pub/Sub (stubs until Bun exposes API)
   /**
    * # `listen`
@@ -3031,45 +3048,45 @@ finally { reserved.release() }
    * await db.listen('events')
    * ```
    */
-  listen: (channel: string, handler?: (payload: unknown) => void) => Promise<void>
+  listen: (channel: string, handler?: (payload: unknown) => void) => void
   /**
    * # `unlisten`
    *
    * Unsubscribes from a channel or all channels (placeholder).
    */
-  unlisten: (channel?: string) => Promise<void>
+  unlisten: (channel?: string) => void
   /**
    * # `notify`
    *
    * Sends a notification to a channel (placeholder).
    */
-  notify: (channel: string, payload?: unknown) => Promise<void>
+  notify: (channel: string, payload?: unknown) => void
   // COPY support (stubs until available)
   /**
    * # `copyTo`
    *
    * Streams out data from a query or table (placeholder).
    */
-  copyTo: (queryOrTable: string, options?: Record<string, unknown>) => Promise<unknown>
+  copyTo: (queryOrTable: string, options?: Record<string, unknown>) => unknown
   /**
    * # `copyFrom`
    *
    * Streams data into a table (placeholder).
    */
-  copyFrom: (queryOrTable: string, source: AsyncIterable<unknown> | Iterable<unknown>, options?: Record<string, unknown>) => Promise<unknown>
+  copyFrom: (queryOrTable: string, source: AsyncIterable<unknown> | Iterable<unknown>, options?: Record<string, unknown>) => unknown
   // Pool readiness
   /**
    * # `ping`
    *
    * Executes a lightweight query to confirm connectivity.
    */
-  ping: () => Promise<boolean>
+  ping: () => boolean
   /**
    * # `waitForReady`
    *
    * Repeatedly pings until ready or attempts exhausted.
    */
-  waitForReady: (opts?: { attempts?: number, delayMs?: number }) => Promise<void>
+  waitForReady: (opts?: { attempts?: number, delayMs?: number }) => void
   /**
    * # `transaction`
    *
@@ -3083,21 +3100,21 @@ finally { reserved.release() }
    * })
    * ```
    */
-  transaction: <T>(fn: (tx: QueryBuilder<DB>) => Promise<T> | T, options?: TransactionOptions) => Promise<T>
+  transaction: <T>(fn: (tx: QueryBuilder<DB>) => T, options?: TransactionOptions) => T
   /**
    * # `savepoint`
    *
    * Executes the provided function inside a database savepoint.
    */
-  savepoint: <T>(fn: (sp: QueryBuilder<DB>) => Promise<T> | T) => Promise<T>
+  savepoint: <T>(fn: (sp: QueryBuilder<DB>) => T) => T
   /**
    * # `beginDistributed` / `commitDistributed` / `rollbackDistributed`
    *
    * Distributed transaction primitives (if supported by Bun.sql).
    */
-  beginDistributed: <T>(name: string, fn: (tx: QueryBuilder<DB>) => Promise<T> | T) => Promise<T>
-  commitDistributed: (name: string) => Promise<void>
-  rollbackDistributed: (name: string) => Promise<void>
+  beginDistributed: <T>(name: string, fn: (tx: QueryBuilder<DB>) => T) => T
+  commitDistributed: (name: string) => void
+  rollbackDistributed: (name: string) => void
   /**
    * # `configure`
    *
@@ -3115,18 +3132,18 @@ finally { reserved.release() }
    *
    * Wraps a function so it runs inside a new transaction when called.
    */
-  transactional: <TArgs extends unknown[], R>(fn: (tx: QueryBuilder<DB>, ...args: TArgs) => Promise<R> | R, options?: TransactionOptions) => (...args: TArgs) => Promise<R>
+  transactional: <TArgs extends unknown[], R>(fn: (tx: QueryBuilder<DB>, ...args: TArgs) => R, options?: TransactionOptions) => (...args: TArgs) => R
   // aggregates
-  count: <TTable extends keyof DB & string>(table: TTable, column?: keyof DB[TTable]['columns'] & string) => Promise<number>
-  sum: <TTable extends keyof DB & string>(table: TTable, column: keyof DB[TTable]['columns'] & string) => Promise<number>
-  avg: <TTable extends keyof DB & string>(table: TTable, column: keyof DB[TTable]['columns'] & string) => Promise<number>
-  min: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(table: TTable, column: K) => Promise<DB[TTable]['columns'][K] | null>
-  max: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(table: TTable, column: K) => Promise<DB[TTable]['columns'][K] | null>
+  count: <TTable extends keyof DB & string>(table: TTable, column?: keyof DB[TTable]['columns'] & string) => number
+  sum: <TTable extends keyof DB & string>(table: TTable, column: keyof DB[TTable]['columns'] & string) => number
+  avg: <TTable extends keyof DB & string>(table: TTable, column: keyof DB[TTable]['columns'] & string) => number
+  min: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(table: TTable, column: K) => DB[TTable]['columns'][K] | null
+  max: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string>(table: TTable, column: K) => DB[TTable]['columns'][K] | null
   // dml helpers
-  insertOrIgnore: <TTable extends keyof DB & string>(table: TTable, values: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[]) => Promise<number>
-  insertGetId: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string = DB[TTable]['primaryKey'] & keyof DB[TTable]['columns'] & string>(table: TTable, values: Partial<DB[TTable]['columns']>, idColumn?: K) => Promise<DB[TTable]['columns'][K]>
-  updateOrInsert: <TTable extends keyof DB & string>(table: TTable, match: Partial<DB[TTable]['columns']>, values: Partial<DB[TTable]['columns']>) => Promise<boolean>
-  upsert: <TTable extends keyof DB & string>(table: TTable, rows: Partial<DB[TTable]['columns']>[], conflictColumns: (keyof DB[TTable]['columns'] & string)[], mergeColumns?: (keyof DB[TTable]['columns'] & string)[]) => Promise<number>
+  insertOrIgnore: <TTable extends keyof DB & string>(table: TTable, values: Partial<DB[TTable]['columns']> | Partial<DB[TTable]['columns']>[]) => number
+  insertGetId: <TTable extends keyof DB & string, K extends keyof DB[TTable]['columns'] & string = DB[TTable]['primaryKey'] & keyof DB[TTable]['columns'] & string>(table: TTable, values: Partial<DB[TTable]['columns']>, idColumn?: K) => DB[TTable]['columns'][K]
+  updateOrInsert: <TTable extends keyof DB & string>(table: TTable, match: Partial<DB[TTable]['columns']>, values: Partial<DB[TTable]['columns']>) => boolean
+  upsert: <TTable extends keyof DB & string>(table: TTable, rows: Partial<DB[TTable]['columns']>[], conflictColumns: (keyof DB[TTable]['columns'] & string)[], mergeColumns?: (keyof DB[TTable]['columns'] & string)[]) => number
 
   /**
    * # `create(table, values)`
@@ -3136,7 +3153,7 @@ finally { reserved.release() }
   create: <TTable extends keyof DB & string>(
     table: TTable,
     values: Partial<DB[TTable]['columns']>,
-  ) => Promise<DB[TTable]['columns']>
+  ) => DB[TTable]['columns']
 
   /**
    * # `createMany(table, rows)`
@@ -3146,7 +3163,7 @@ finally { reserved.release() }
   createMany: <TTable extends keyof DB & string>(
     table: TTable,
     rows: Partial<DB[TTable]['columns']>[],
-  ) => Promise<void>
+  ) => void
 
   /**
    * # `insertMany(table, rows)`
@@ -3156,7 +3173,7 @@ finally { reserved.release() }
   insertMany: <TTable extends keyof DB & string>(
     table: TTable,
     rows: Partial<DB[TTable]['columns']>[],
-  ) => Promise<void>
+  ) => void
 
   /**
    * # `updateMany(table, conditions, data)`
@@ -3167,7 +3184,7 @@ finally { reserved.release() }
     table: TTable,
     conditions: WhereExpression<DB[TTable]['columns']>,
     data: Partial<DB[TTable]['columns']>,
-  ) => Promise<number>
+  ) => number
 
   /**
    * # `deleteMany(table, ids)`
@@ -3177,7 +3194,7 @@ finally { reserved.release() }
   deleteMany: <TTable extends keyof DB & string>(
     table: TTable,
     ids: PrimaryKeyValue<DB, TTable>[],
-  ) => Promise<number>
+  ) => number
 
   /**
    * # `firstOrCreate(table, match, [defaults])`
@@ -3188,7 +3205,7 @@ finally { reserved.release() }
     table: TTable,
     match: Partial<DB[TTable]['columns']>,
     defaults?: Partial<DB[TTable]['columns']>,
-  ) => Promise<DB[TTable]['columns']>
+  ) => DB[TTable]['columns']
 
   /**
    * # `updateOrCreate(table, match, values)`
@@ -3199,7 +3216,7 @@ finally { reserved.release() }
     table: TTable,
     match: Partial<DB[TTable]['columns']>,
     values: Partial<DB[TTable]['columns']>,
-  ) => Promise<DB[TTable]['columns']>
+  ) => DB[TTable]['columns']
 
   /**
    * # `save(table, values)`
@@ -3208,7 +3225,7 @@ finally { reserved.release() }
   save: <TTable extends keyof DB & string>(
     table: TTable,
     values: Partial<DB[TTable]['columns']>,
-  ) => Promise<DB[TTable]['columns']>
+  ) => DB[TTable]['columns']
 
   /**
    * # `remove(table, id)`
@@ -3217,7 +3234,7 @@ finally { reserved.release() }
   remove: <TTable extends keyof DB & string>(
     table: TTable,
     id: PrimaryKeyValue<DB, TTable>,
-  ) => Promise<unknown>
+  ) => unknown
 
   /**
    * # `find(table, id)`
@@ -3226,7 +3243,7 @@ finally { reserved.release() }
   find: <TTable extends keyof DB & string>(
     table: TTable,
     id: PrimaryKeyValue<DB, TTable>,
-  ) => Promise<DB[TTable]['columns'] | undefined>
+  ) => DB[TTable]['columns'] | undefined
 
   /**
    * # `findOrFail(table, id)`
@@ -3235,7 +3252,7 @@ finally { reserved.release() }
   findOrFail: <TTable extends keyof DB & string>(
     table: TTable,
     id: PrimaryKeyValue<DB, TTable>,
-  ) => Promise<DB[TTable]['columns']>
+  ) => DB[TTable]['columns']
 
   /**
    * # `findMany(table, ids)`
@@ -3244,7 +3261,7 @@ finally { reserved.release() }
   findMany: <TTable extends keyof DB & string>(
     table: TTable,
     ids: PrimaryKeyValue<DB, TTable>[],
-  ) => Promise<DB[TTable]['columns'][]>
+  ) => DB[TTable]['columns'][]
 
   /**
    * # `latest(table, column?)`
@@ -3253,7 +3270,7 @@ finally { reserved.release() }
   latest: <TTable extends keyof DB & string>(
     table: TTable,
     column?: keyof DB[TTable]['columns'] & string,
-  ) => Promise<DB[TTable]['columns'] | undefined>
+  ) => DB[TTable]['columns'] | undefined
 
   /**
    * # `oldest(table, column?)`
@@ -3262,7 +3279,7 @@ finally { reserved.release() }
   oldest: <TTable extends keyof DB & string>(
     table: TTable,
     column?: keyof DB[TTable]['columns'] & string,
-  ) => Promise<DB[TTable]['columns'] | undefined>
+  ) => DB[TTable]['columns'] | undefined
 
   /**
    * # `skip(table, count)`
@@ -3277,15 +3294,15 @@ finally { reserved.release() }
    * # `rawQuery(sql)`
    * Execute a raw SQL string (single statement) with no parameters.
    */
-  rawQuery: (query: string) => Promise<Record<string, unknown>[]>
+  rawQuery: (query: string) => Record<string, unknown>[]
   /** Safely wrap/validate an identifier for raw fragments. */
   id?: (name: string) => SqlFragment
   /** Safely wrap/validate multiple identifiers. */
   ids?: (...names: string[]) => SqlFragment
   /** Take an advisory lock (PostgreSQL only). */
-  advisoryLock?: (key: number | string) => Promise<void>
+  advisoryLock?: (key: number | string) => void
   /** Try to take an advisory lock and return false if unavailable (PostgreSQL only). */
-  tryAdvisoryLock?: (key: number | string) => Promise<boolean>
+  tryAdvisoryLock?: (key: number | string) => boolean
   /**
    * Release an advisory lock taken on THIS builder's connection.
    *
@@ -3299,7 +3316,7 @@ finally { reserved.release() }
    * Take the lock on a `reserve()`d connection and release it through the same
    * builder.
    */
-  advisoryUnlock?: (key: number | string) => Promise<boolean>
+  advisoryUnlock?: (key: number | string) => boolean
   /** Get all relationships defined for a table. */
   getRelationships?: (table: string) => Record<string, unknown>
   /** Check if a table has a specific relationship. */
@@ -3407,6 +3424,69 @@ function matchesSqlState(err: any, states?: string[]): boolean {
   // than letting a generic code hide the actual server state.
   return [err?.code, err?.sqlState, err?.sqlstate, err?.errno]
     .some(code => code != null && states.includes(String(code)))
+}
+
+/**
+ * The connection a builder uses when it was given none: the one that answers
+ * in place where the configured database has one (`bun:sqlite`, or MySQL and
+ * Postgres through sync-connection.ts), otherwise the driver's own, which
+ * answers with promises.
+ */
+function builderConnection(): DriverConnection {
+  return answersInPlace() ? syncConnection() : getOrCreateBunSql() as unknown as DriverConnection
+}
+
+/** The pool itself, for what is not a statement: `reserve()`, `close()`, a two-phase commit by name. */
+function builderPool(): DriverConnection {
+  return answersInPlace() ? syncConnection() : bunSql as unknown as DriverConnection
+}
+
+/**
+ * Run a statement the driver handed back as a query object: in place where the
+ * connection answers in place, as the driver's promise where it does not.
+ */
+function executeQuery(query: any): any {
+  return typeof query.executeSync === 'function' ? query.executeSync() : query.execute()
+}
+
+/**
+ * A raw statement as the builder hands it out (`db.unsafe(sql)`, `db.file(path)`).
+ *
+ * It is the connection's own query object: nothing runs until it is executed
+ * or awaited. On a connection that answers in place its `execute()` does too,
+ * so `db.unsafe(sql).execute()` is the rows, as a builder chain's `execute()`
+ * is. The object underneath is left as it is, for the driver and the wrapper
+ * that made it.
+ */
+function rawStatement(query: any): any {
+  if (query === null || typeof query !== 'object' || typeof query.executeSync !== 'function')
+    return query
+  return Object.assign(Object.create(query), { execute: () => query.executeSync() })
+}
+
+/**
+ * The value of `value` inside a `settle` body, where `await` would stand.
+ *
+ * A statement is a query object, and awaiting one is what runs it. On a
+ * connection that answers in place that would still be a promise, of rows it
+ * already has, so the statement is run here instead and its rows are the value.
+ */
+function* wait<T>(value: T): Generator<unknown, Awaited<T>, unknown> {
+  // `executeSync` hands back the rows, or a promise of them in the one case a
+  // network statement cannot answer in place (sync-driver.ts). Either is waited for.
+  if (value !== null && typeof value === 'object' && typeof (value as { executeSync?: unknown }).executeSync === 'function')
+    return (yield* waitFor((value as unknown as { executeSync: () => unknown }).executeSync())) as Awaited<T>
+  return yield* waitFor(value)
+}
+
+/** `run()`, or what `fallback` makes of its failure: a `.catch()` that works whether or not `run` had to wait. */
+function* attempt<T>(run: () => T, fallback: (error: unknown) => Awaited<T>): Generator<unknown, Awaited<T>, unknown> {
+  try {
+    return yield* wait(run())
+  }
+  catch (error) {
+    return fallback(error)
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -3592,7 +3672,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
   // string (bindings.ts). The cached connection is already wrapped; this
   // covers one handed in through `state.sql` (a Bun transaction, a reserved
   // connection, or the caller's own `new SQL()`), and is a no-op otherwise.
-  const _sql: DriverConnection = withDateBindings(state?.sql ?? getOrCreateBunSql()) as unknown as DriverConnection
+  const _sql: DriverConnection = withDateBindings(state?.sql ?? builderConnection()) as unknown as DriverConnection
   const meta = state?.meta
   const schema = state?.schema
 
@@ -3821,7 +3901,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     return undefined
   }
 
-  function runWithHooks<T = any>(q: any, kind: 'select' | 'insert' | 'update' | 'delete' | 'raw', opts?: { signal?: AbortSignal, timeoutMs?: number }): Promise<T> {
+  /**
+   * Run one statement, with the hooks, the timeout and the abort signal around
+   * it. Answers where it is called when the connection does (`bun:sqlite`, and
+   * MySQL or Postgres through sync-connection.ts): the rows, or the thrown
+   * error. A connection that can only answer later (one the caller supplied, a
+   * libSQL server, `models.execution: 'async'`) gets a promise of them.
+   */
+  function runWithHooks<T = any>(q: any, kind: 'select' | 'insert' | 'update' | 'delete' | 'raw', opts?: { signal?: AbortSignal, timeoutMs?: number }): T {
     const hooks = activeHooks()
     const slowMs = hooks?.slowQueryThresholdMs
     const slowEnabled = slowMs != null && slowMs >= 0
@@ -3831,7 +3918,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
     // Fast path: no hooks, no timeout, no signal - direct execute
     if (!hasHooks && !hasTimeoutOrSignal) {
-      return (q as any).execute()
+      return typeof q.executeSync === 'function' ? q.executeSync() : (q as any).execute()
     }
 
     const text = computeSqlText(q)
@@ -3879,10 +3966,15 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       let error: unknown
       let failed = false
       try {
-        rows = q.executeSync()
+        // A network connection takes the limit and stops waiting at it;
+        // `bun:sqlite` runs to the end whatever it is given.
+        rows = q.executeSync(opts?.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : undefined)
       }
       catch (err) {
-        error = err
+        // The same error the waiting path reports for the same limit.
+        error = opts?.timeoutMs && (err as { code?: string } | null)?.code === 'ERR_QB_MODEL_STATEMENT_TIMEOUT'
+          ? Object.assign(new Error(`Query timed out after ${opts.timeoutMs}ms`), { code: 'EBQBTIMEOUT', cause: err })
+          : err
         failed = true
       }
       // Match the async path's post-execution abort check. A timeout cannot
@@ -3898,11 +3990,22 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       }
       if (failed) {
         finish(error, undefined, true)
-        return Promise.reject(error)
+        throw error
+      }
+      // The one statement that could not answer in place (sync-driver.ts): its
+      // hooks fire when it does.
+      if (isThenable(rows)) {
+        return Promise.resolve(rows).then((answered) => {
+          finish(undefined, Array.isArray(answered) ? answered.length : (typeof answered === 'number' ? answered : undefined))
+          return answered
+        }, (err) => {
+          finish(err, undefined, true)
+          throw err
+        }) as T
       }
       const rowCount = Array.isArray(rows) ? rows.length : (typeof rows === 'number' ? rows : undefined)
       finish(undefined, rowCount)
-      return Promise.resolve(rows)
+      return rows
     }
 
     const execPromise = (q as any).execute()
@@ -3933,7 +4036,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const err = new Error('Query aborted')
           ;(err as any).code = 'EBQBABORT'
         finish(err)
-        return Promise.reject(err)
+        return Promise.reject(err) as T
       }
       const abortHandler = () => {
         try {
@@ -3947,7 +4050,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       })
     }
 
-    return Promise.race(promises)
+    return (Promise.race(promises) as Promise<any>)
       .then((rows) => {
         clearTimeout(timeoutId)
         const rc = Array.isArray(rows) ? rows.length : (typeof rows === 'number' ? rows : undefined)
@@ -3958,7 +4061,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         clearTimeout(timeoutId)
         finish(err)
         throw err
-      })
+      }) as T
   }
 
   /**
@@ -4002,7 +4105,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     return {
       sql: sqlText,
       toString: () => sqlText,
-      execute: () => (q as any).execute(),
+      execute: () => executeQuery((q as any)),
       values: () => (q as any).values(),
       raw: () => (q as any).raw(),
     }
@@ -6528,227 +6631,253 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return {
           sql: sqlText,
           toString: () => sqlText,
-          execute: () => ensureBuilt().execute(),
+          execute: () => executeQuery(ensureBuilt()),
           values: () => ensureBuilt().values(),
           raw: () => ensureBuilt().raw(),
         } as any
       },
-      async value(column: string) {
-        const q = prepareSelect('', ' LIMIT 1')
-        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
-        const [row] = rows
-        return row?.[column]
+      value(column: string) {
+        return settle(function* () {
+          const q = prepareSelect('', ' LIMIT 1')
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })))
+          const [row] = rows
+          return row?.[column]
+        })
       },
-      async pluck(column: any, key?: any) {
-        const rows = await runWithHooks<any[]>(ensureBuilt(), 'select', { signal: abortSignal, timeoutMs })
-        if (key) {
-          // Build the keyed map, but throw on duplicate keys so the
-          // caller knows their assumption ("the key column is
-          // unique") was wrong. The previous implementation
-          // silently overwrote on collision — two rows with the
-          // same `key` value left only the last one's `column`
-          // visible, which the documented `Record<string, ...>`
-          // return type implicitly promised was a unique mapping.
-          // See stacksjs/stacks#1862 #30.
-          const out: Record<string, any> = {}
-          for (const r of rows) {
-            const k = String(r?.[key])
-            if (Object.prototype.hasOwnProperty.call(out, k)) {
-              throw new Error(`[query-builder] pluck(${column}, ${key}): duplicate key '${k}' — multiple rows share this value, so the resulting map would silently drop data. Use a unique key column or pluck without a key to get an array.`)
+      pluck(column: any, key?: any) {
+        return settle(function* () {
+          const rows = (yield* wait(runWithHooks<any[]>(ensureBuilt(), 'select', { signal: abortSignal, timeoutMs })))
+          if (key) {
+            // Build the keyed map, but throw on duplicate keys so the
+            // caller knows their assumption ("the key column is
+            // unique") was wrong. The previous implementation
+            // silently overwrote on collision — two rows with the
+            // same `key` value left only the last one's `column`
+            // visible, which the documented `Record<string, ...>`
+            // return type implicitly promised was a unique mapping.
+            // See stacksjs/stacks#1862 #30.
+            const out: Record<string, any> = {}
+            for (const r of rows) {
+              const k = String(r?.[key])
+              if (Object.prototype.hasOwnProperty.call(out, k)) {
+                throw new Error(`[query-builder] pluck(${column}, ${key}): duplicate key '${k}' — multiple rows share this value, so the resulting map would silently drop data. Use a unique key column or pluck without a key to get an array.`)
+              }
+              out[k] = r?.[column]
             }
-            out[k] = r?.[column]
+            return out
           }
-          return out
-        }
-        return rows.map((r: any) => r?.[column])
+          return rows.map((r: any) => r?.[column])
+        })
       },
-      async exists() {
-        const q = prepareSelect('SELECT EXISTS (', ') as e')
-        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
-        const [row] = rows
-        return Boolean(row?.e)
+      exists() {
+        return settle(function* () {
+          const q = prepareSelect('SELECT EXISTS (', ') as e')
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })))
+          const [row] = rows
+          return Boolean(row?.e)
+        })
       },
-      async doesntExist() {
-        const e = await (this as any).exists()
-        return !e
+      doesntExist() {
+        const self = this
+        return settle(function* () {
+          const e = (yield* wait((self as any).exists()))
+          return !e
+        })
       },
-      async paginate(perPage: number | PaginateOptions, page = 1, opts: { tx?: { unsafe: (sql: string, params?: any[]) => any } } = {}) {
-        // Options form: `paginate({ perPage, page })`. The two paginate APIs in
-        // this library take the same two numbers in opposite orders — this one
-        // is (perPage, page), the ORM's is (page, perPage) — and both arguments
-        // are numbers, so getting it backwards is silent: you simply receive a
-        // different page. Naming them cannot be got wrong. See #1092.
-        if (typeof perPage === 'object' && perPage !== null) {
-          const options = perPage
-          page = options.page ?? 1
-          opts = options.tx ? { tx: options.tx as { unsafe: (sql: string, params?: any[]) => any } } : {}
-          perPage = options.perPage ?? 10
-        }
-        if (!Number.isFinite(perPage) || perPage <= 0 || !Number.isInteger(perPage))
-          throw new TypeError(`[query-builder] paginate(perPage): expected positive integer, got ${perPage}`)
-        if (!Number.isFinite(page) || page < 1 || !Number.isInteger(page))
-          throw new TypeError(`[query-builder] paginate(page): expected integer >= 1, got ${page}`)
+      paginate(perPage: number | PaginateOptions, page = 1, opts: { tx?: { unsafe: (sql: string, params?: any[]) => any } } = {}) {
+        return settle(function* () {
+          // Options form: `paginate({ perPage, page })`. The two paginate APIs in
+          // this library take the same two numbers in opposite orders — this one
+          // is (perPage, page), the ORM's is (page, perPage) — and both arguments
+          // are numbers, so getting it backwards is silent: you simply receive a
+          // different page. Naming them cannot be got wrong. See #1092.
+          if (typeof perPage === 'object' && perPage !== null) {
+            const options = perPage
+            page = options.page ?? 1
+            opts = options.tx ? { tx: options.tx as { unsafe: (sql: string, params?: any[]) => any } } : {}
+            perPage = options.perPage ?? 10
+          }
+          if (!Number.isFinite(perPage) || perPage <= 0 || !Number.isInteger(perPage))
+            throw new TypeError(`[query-builder] paginate(perPage): expected positive integer, got ${perPage}`)
+          if (!Number.isFinite(page) || page < 1 || !Number.isInteger(page))
+            throw new TypeError(`[query-builder] paginate(page): expected integer >= 1, got ${page}`)
 
-        // Snapshot-consistent pagination (#1051): when the caller supplies a
-        // transaction handle, run BOTH the count and the page-data through it,
-        // so a concurrent INSERT/DELETE can't desync `total` from `data.length`.
-        // The caller owns the transaction (and thus the isolation level).
-        if (opts.tx) {
-          const baseSql = reorderSelectClauses(currentSql())
-          // The handle is the caller's and may be a raw driver transaction,
-          // so serialize Dates here rather than rely on the connection.
-          const baseParams = serializeBindings([...whereParams])
-          const cRows = await opts.tx.unsafe(`SELECT COUNT(*) as c FROM (${baseSql}) as sub`, baseParams) as any[]
-          const total = Number(cRows?.[0]?.c ?? 0)
+          // Snapshot-consistent pagination (#1051): when the caller supplies a
+          // transaction handle, run BOTH the count and the page-data through it,
+          // so a concurrent INSERT/DELETE can't desync `total` from `data.length`.
+          // The caller owns the transaction (and thus the isolation level).
+          if (opts.tx) {
+            const baseSql = reorderSelectClauses(currentSql())
+            // The handle is the caller's and may be a raw driver transaction,
+            // so serialize Dates here rather than rely on the connection.
+            const baseParams = serializeBindings([...whereParams])
+            const cRows = (yield* wait(opts.tx.unsafe(`SELECT COUNT(*) as c FROM (${baseSql}) as sub`, baseParams))) as any[]
+            const total = Number(cRows?.[0]?.c ?? 0)
+            const lastPage = Math.max(1, Math.ceil(total / perPage))
+            const p = Math.max(1, Math.min(page, lastPage))
+            const offset = (p - 1) * perPage
+            const data = (yield* wait(opts.tx.unsafe(`${baseSql} LIMIT ${perPage} OFFSET ${offset}`, baseParams))) as any[]
+            return { data, meta: { perPage, page: p, total, lastPage } }
+          }
+
+          // Count + page-data run as two separate queries, so a
+          // concurrent INSERT or DELETE between them can make `total`
+          // and `data.length` mutually inconsistent — `total = 99` with
+          // a `perPage = 20` page returning 18 rows on page 5 is a
+          // classic symptom. The fix is to wrap both in a single
+          // read-only transaction with snapshot isolation, but that
+          // doesn't compose cleanly with callers who already wrap
+          // `paginate()` in their own transaction (nested begin()
+          // semantics vary by driver). For now we run both queries
+          // back-to-back as before; under typical low-write workloads
+          // the window is small enough that users rarely notice.
+          //
+          // See stacksjs/stacks#1862 #12 — a future major version
+          // should accept a `tx` parameter so the caller can choose
+          // their isolation level.
+          const countQ = prepareSelect('SELECT COUNT(*) as c FROM (', ') as sub')
+          const cRows = (yield* wait(runWithHooks<any[]>(countQ, 'select', { signal: abortSignal, timeoutMs })))
+          const [cRow] = cRows
+          const total = Number(cRow?.c ?? 0)
           const lastPage = Math.max(1, Math.ceil(total / perPage))
           const p = Math.max(1, Math.min(page, lastPage))
           const offset = (p - 1) * perPage
-          const data = await opts.tx.unsafe(`${baseSql} LIMIT ${perPage} OFFSET ${offset}`, baseParams) as any[]
+          const data = (yield* wait(runWithHooks<any[]>(prepareSelect('', ` LIMIT ${getPlaceholder(whereParams.length + 1)} OFFSET ${getPlaceholder(whereParams.length + 2)}`, [perPage, offset]), 'select', { signal: abortSignal, timeoutMs })))
           return { data, meta: { perPage, page: p, total, lastPage } }
-        }
-
-        // Count + page-data run as two separate queries, so a
-        // concurrent INSERT or DELETE between them can make `total`
-        // and `data.length` mutually inconsistent — `total = 99` with
-        // a `perPage = 20` page returning 18 rows on page 5 is a
-        // classic symptom. The fix is to wrap both in a single
-        // read-only transaction with snapshot isolation, but that
-        // doesn't compose cleanly with callers who already wrap
-        // `paginate()` in their own transaction (nested begin()
-        // semantics vary by driver). For now we run both queries
-        // back-to-back as before; under typical low-write workloads
-        // the window is small enough that users rarely notice.
-        //
-        // See stacksjs/stacks#1862 #12 — a future major version
-        // should accept a `tx` parameter so the caller can choose
-        // their isolation level.
-        const countQ = prepareSelect('SELECT COUNT(*) as c FROM (', ') as sub')
-        const cRows = await runWithHooks<any[]>(countQ, 'select', { signal: abortSignal, timeoutMs })
-        const [cRow] = cRows
-        const total = Number(cRow?.c ?? 0)
-        const lastPage = Math.max(1, Math.ceil(total / perPage))
-        const p = Math.max(1, Math.min(page, lastPage))
-        const offset = (p - 1) * perPage
-        const data = await runWithHooks<any[]>(prepareSelect('', ` LIMIT ${getPlaceholder(whereParams.length + 1)} OFFSET ${getPlaceholder(whereParams.length + 2)}`, [perPage, offset]), 'select', { signal: abortSignal, timeoutMs })
-        return { data, meta: { perPage, page: p, total, lastPage } }
+        })
       },
-      async simplePaginate(perPage: number, page = 1) {
-        const p = Math.max(1, page)
-        const offset = (p - 1) * perPage
-        const data = await runWithHooks<any[]>(prepareSelect('', ` LIMIT ${getPlaceholder(whereParams.length + 1)} OFFSET ${getPlaceholder(whereParams.length + 2)}`, [perPage + 1, offset]), 'select', { signal: abortSignal, timeoutMs })
-        const hasMore = data.length > perPage
-        return { data: hasMore ? data.slice(0, perPage) : data, meta: { perPage, page: p, hasMore } }
+      simplePaginate(perPage: number, page = 1) {
+        return settle(function* () {
+          const p = Math.max(1, page)
+          const offset = (p - 1) * perPage
+          const data = (yield* wait(runWithHooks<any[]>(prepareSelect('', ` LIMIT ${getPlaceholder(whereParams.length + 1)} OFFSET ${getPlaceholder(whereParams.length + 2)}`, [perPage + 1, offset]), 'select', { signal: abortSignal, timeoutMs })))
+          const hasMore = data.length > perPage
+          return { data: hasMore ? data.slice(0, perPage) : data, meta: { perPage, page: p, hasMore } }
+        })
       },
-      async cursorPaginate(perPage: number, cursor?: any, column: string | string[] = 'id', direction: 'asc' | 'desc' = 'asc') {
-        if (!Number.isInteger(perPage) || perPage <= 0)
-          throw new TypeError(`[query-builder] cursorPaginate(perPage): expected positive integer, got ${perPage}`)
+      cursorPaginate(perPage: number, cursor?: any, column: string | string[] = 'id', direction: 'asc' | 'desc' = 'asc') {
+        return settle(function* () {
+          if (!Number.isInteger(perPage) || perPage <= 0)
+            throw new TypeError(`[query-builder] cursorPaginate(perPage): expected positive integer, got ${perPage}`)
 
-        const cols = (Array.isArray(column) ? column : [column]).map(String)
-        for (const c of cols) validateIdentifier(c, 'cursorPaginate(column)')
-        const cmp = direction === 'asc' ? '>' : '<'
-        const dir = direction === 'asc' ? 'ASC' : 'DESC'
-        const params = [...whereParams]
+          const cols = (Array.isArray(column) ? column : [column]).map(String)
+          for (const c of cols) validateIdentifier(c, 'cursorPaginate(column)')
+          const cmp = direction === 'asc' ? '>' : '<'
+          const dir = direction === 'asc' ? 'ASC' : 'DESC'
+          const params = [...whereParams]
 
-        // The cursor predicate is a WHERE TERM, not a second WHERE keyword.
-        // It used to be composed as `sql`${q} WHERE ...``, unconditionally — so
-        // any filter already on the builder produced `... WHERE a WHERE b`, a
-        // syntax error on every dialect. That is why `.where(x).chunkById(...)`
-        // never worked: page one has no cursor and succeeds, and the failure
-        // only lands on page two. See stacksjs/bun-query-builder#1090.
-        let predicate = ''
-        if (cursor !== undefined && cursor !== null) {
-          if (Array.isArray(column)) {
-            const phs = (cursor as any[]).map((v) => { params.push(v); return getPlaceholder(params.length) })
-            predicate = `(${cols.join(', ')}) ${cmp} (${phs.join(', ')})`
+          // The cursor predicate is a WHERE TERM, not a second WHERE keyword.
+          // It used to be composed as `sql`${q} WHERE ...``, unconditionally — so
+          // any filter already on the builder produced `... WHERE a WHERE b`, a
+          // syntax error on every dialect. That is why `.where(x).chunkById(...)`
+          // never worked: page one has no cursor and succeeds, and the failure
+          // only lands on page two. See stacksjs/bun-query-builder#1090.
+          let predicate = ''
+          if (cursor !== undefined && cursor !== null) {
+            if (Array.isArray(column)) {
+              const phs = (cursor as any[]).map((v) => { params.push(v); return getPlaceholder(params.length) })
+              predicate = `(${cols.join(', ')}) ${cmp} (${phs.join(', ')})`
+            }
+            else {
+              params.push(cursor)
+              predicate = `${cols[0]} ${cmp} ${getPlaceholder(params.length)}`
+            }
           }
-          else {
-            params.push(cursor)
-            predicate = `${cols[0]} ${cmp} ${getPlaceholder(params.length)}`
+
+          // Rendered through currentSql() so the predicate is spliced ahead of any
+          // trailing clause rather than appended past it, and so the builder's own
+          // WHERE terms come along.
+          const base = reorderSelectClauses(predicate ? currentSql({ conn: 'AND', sql: predicate }) : currentSql())
+          const order = cols.map(c => `${c} ${dir}`).join(', ')
+
+          // Cursor pagination OWNS the ordering — the cursor predicate `col > ?`
+          // only selects "the rows after this one" if the rows are sorted by that
+          // same column, so a different ORDER BY makes the cursor meaningless and
+          // silently skips or repeats rows.
+          //
+          // This case has always been broken: it emitted a second ORDER BY and
+          // failed to parse. It was invisible until now only because the
+          // duplicate-WHERE error above fired first. Refusing it says so, rather
+          // than dropping the caller's ordering without mentioning it.
+          if (hasTopLevelOrderBy(base)) {
+            throw new TypeError(
+              `[query-builder] cursorPaginate() cannot be combined with orderBy() — it orders by `
+              + `${order} itself, and a cursor is only meaningful in that order. `
+              + `Remove the orderBy(), or pass the column and direction to cursorPaginate().`,
+            )
           }
-        }
-
-        // Rendered through currentSql() so the predicate is spliced ahead of any
-        // trailing clause rather than appended past it, and so the builder's own
-        // WHERE terms come along.
-        const base = reorderSelectClauses(predicate ? currentSql({ conn: 'AND', sql: predicate }) : currentSql())
-        const order = cols.map(c => `${c} ${dir}`).join(', ')
-
-        // Cursor pagination OWNS the ordering — the cursor predicate `col > ?`
-        // only selects "the rows after this one" if the rows are sorted by that
-        // same column, so a different ORDER BY makes the cursor meaningless and
-        // silently skips or repeats rows.
-        //
-        // This case has always been broken: it emitted a second ORDER BY and
-        // failed to parse. It was invisible until now only because the
-        // duplicate-WHERE error above fired first. Refusing it says so, rather
-        // than dropping the caller's ordering without mentioning it.
-        if (hasTopLevelOrderBy(base)) {
-          throw new TypeError(
-            `[query-builder] cursorPaginate() cannot be combined with orderBy() — it orders by `
-            + `${order} itself, and a cursor is only meaningful in that order. `
-            + `Remove the orderBy(), or pass the column and direction to cursorPaginate().`,
-          )
-        }
-        const q = params.length > 0
-          ? prepareQuery(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`, params)
-          : prepareQuery(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`)
-        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
-        // We fetch perPage+1 rows to detect whether more exist; the extra row
-        // is only a "has more?" probe and is NOT delivered. The next cursor
-        // MUST be the LAST DELIVERED row — using the probe row (rows[perPage])
-        // made the next page query `col > <probe>`, which skipped that row
-        // entirely, dropping one row at every page boundary (and silently
-        // truncating chunkById/eachById).
-        const hasMore = rows.length > perPage
-        const data = rows.slice(0, perPage)
-        const lastRow = data[data.length - 1]
-        // SQL returns an unaliased `table.id` as `id`. Reading the qualified
-        // key dropped the next cursor and silently hid every later page.
-        const cursorValue = (row: any, name: string) => {
-          const key = Object.prototype.hasOwnProperty.call(row, name) ? name : name.split('.').at(-1)!
-          if (!Object.prototype.hasOwnProperty.call(row, key))
-            throw new TypeError(`[query-builder] cursorPaginate(): select cursor column ${name} in the result`)
-          return row[key]
-        }
-        const next = hasMore && lastRow
-          ? (Array.isArray(column) ? column.map(c => cursorValue(lastRow, c)) : cursorValue(lastRow, column))
-          : null
-        const prevCursor = data.length ? (Array.isArray(column) ? column.map(c => cursorValue(data[0], c)) : cursorValue(data[0], column)) : null
-        return { data, meta: { perPage, nextCursor: next ?? null, prevCursor } }
+          const q = params.length > 0
+            ? prepareQuery(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`, params)
+            : prepareQuery(`${base} ORDER BY ${order} LIMIT ${perPage + 1}`)
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })))
+          // We fetch perPage+1 rows to detect whether more exist; the extra row
+          // is only a "has more?" probe and is NOT delivered. The next cursor
+          // MUST be the LAST DELIVERED row — using the probe row (rows[perPage])
+          // made the next page query `col > <probe>`, which skipped that row
+          // entirely, dropping one row at every page boundary (and silently
+          // truncating chunkById/eachById).
+          const hasMore = rows.length > perPage
+          const data = rows.slice(0, perPage)
+          const lastRow = data[data.length - 1]
+          // SQL returns an unaliased `table.id` as `id`. Reading the qualified
+          // key dropped the next cursor and silently hid every later page.
+          const cursorValue = (row: any, name: string) => {
+            const key = Object.prototype.hasOwnProperty.call(row, name) ? name : name.split('.').at(-1)!
+            if (!Object.prototype.hasOwnProperty.call(row, key))
+              throw new TypeError(`[query-builder] cursorPaginate(): select cursor column ${name} in the result`)
+            return row[key]
+          }
+          const next = hasMore && lastRow
+            ? (Array.isArray(column) ? column.map(c => cursorValue(lastRow, c)) : cursorValue(lastRow, column))
+            : null
+          const prevCursor = data.length ? (Array.isArray(column) ? column.map(c => cursorValue(data[0], c)) : cursorValue(data[0], column)) : null
+          return { data, meta: { perPage, nextCursor: next ?? null, prevCursor } }
+        })
       },
-      async chunk(size: number, handler: (rows: any[]) => Promise<void> | void) {
-        let page = 1
-        while (true) {
-          const { data, meta } = await (this as any).paginate(size, page)
-          if (data.length === 0)
-            break
-          await handler(data as any[])
-          // Terminate on lastPage, NOT on `data.length < size`: paginate()
-          // CLAMPS an out-of-range page back to the last page, so when the row
-          // count is an exact multiple of `size` the final page is full and a
-          // `< size` check would request page after page forever, each clamped
-          // to the same last page (infinite loop). meta.lastPage is authoritative.
-          if (page >= meta.lastPage)
-            break
-          page += 1
-        }
+      chunk(size: number, handler: (rows: any[]) => Promise<void> | void) {
+        const self = this
+        return settle(function* () {
+          let page = 1
+          while (true) {
+            const { data, meta } = (yield* wait((self as any).paginate(size, page)))
+            if (data.length === 0)
+              break
+            yield* wait(handler(data as any[]))
+            // Terminate on lastPage, NOT on `data.length < size`: paginate()
+            // CLAMPS an out-of-range page back to the last page, so when the row
+            // count is an exact multiple of `size` the final page is full and a
+            // `< size` check would request page after page forever, each clamped
+            // to the same last page (infinite loop). meta.lastPage is authoritative.
+            if (page >= meta.lastPage)
+              break
+            page += 1
+          }
+        })
       },
-      async chunkById(size: number, column = 'id', handler?: (rows: any[]) => Promise<void> | void) {
-        let cursor: any
-        while (true) {
-          const { data, meta } = await (this as any).cursorPaginate(size, cursor, column, 'asc')
-          if (data.length === 0)
-            break
-          if (handler)
-            await handler(data as any[])
-          cursor = meta.nextCursor
-          if (!cursor)
-            break
-        }
+      chunkById(size: number, column = 'id', handler?: (rows: any[]) => Promise<void> | void) {
+        const self = this
+        return settle(function* () {
+          let cursor: any
+          while (true) {
+            const { data, meta } = (yield* wait((self as any).cursorPaginate(size, cursor, column, 'asc')))
+            if (data.length === 0)
+              break
+            if (handler)
+              yield* wait(handler(data as any[]))
+            cursor = meta.nextCursor
+            if (!cursor)
+              break
+          }
+        })
       },
-      async eachById(size: number, column = 'id', handler?: (row: any) => Promise<void> | void) {
-        await (this as any).chunkById(size, column, async (rows: any[]) => {
-          for (const r of rows) await handler?.(r as any)
+      eachById(size: number, column = 'id', handler?: (row: any) => Promise<void> | void) {
+        const self = this
+        return settle(function* () {
+          yield* wait((self as any).chunkById(size, column, (rows: any[]) => {
+            return settle(function* () {
+              for (const r of rows) yield* wait(handler?.(r as any))
+            })
+          }))
         })
       },
       withTimeout(ms: number) {
@@ -6805,9 +6934,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         useCache = true
         return this as any
       },
-      async explain() {
-        const q = prepareSelect('EXPLAIN ')
-        return await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
+      explain() {
+        return settle(function* () {
+          const q = prepareSelect('EXPLAIN ')
+          return (yield* wait(runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })))
+        })
       },
       simple() {
         return (ensureBuilt() as any).simple()
@@ -6815,127 +6946,146 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       toText() {
         return currentSql()
       },
-      async get() {
-        const hooks = activeHooks()
-        const hasQueryHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hasSlowQueryHook(hooks))
+      get() {
+        return settle(function* () {
+          const hooks = activeHooks()
+          const hasQueryHooks = hooks && (hooks.onQueryStart || hooks.onQueryEnd || hooks.onQueryError || hooks.startSpan || hasSlowQueryHook(hooks))
 
-        // Ultra-fast path: skip unsafe() entirely, use _prepareStatement for direct stmt access
-        if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
-          const prepareFn = _sql._prepareStatement
-          if (prepareFn) {
-            const stmt = prepareFn(currentSql())
-            return hydratePivotRows(whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all())
+          // Ultra-fast path: skip unsafe() entirely, use _prepareStatement for direct stmt access
+          if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
+            const prepareFn = _sql._prepareStatement
+            if (prepareFn) {
+              const stmt = prepareFn(currentSql())
+              return hydratePivotRows(whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all())
+            }
           }
-        }
 
-        // Build query at execution time (statement will be cached by db-clients.ts)
-        const getText = currentSql()
-        built = whereParams.length > 0
-          ? prepareQuery(getText, whereParams)
-          : prepareQuery(getText)
+          // Build query at execution time (statement will be cached by db-clients.ts)
+          const getText = currentSql()
+          built = whereParams.length > 0
+            ? prepareQuery(getText, whereParams)
+            : prepareQuery(getText)
 
-        // Fast path: no soft-deletes, no cache, no timeout, no signal, no hooks
-        if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
-          // Direct statement execution for maximum performance (bypasses all overhead)
-          const stmt = ensureBuilt()._stmt
-          const params = ensureBuilt()._params
-          if (stmt) {
-            return hydratePivotRows(params && params.length > 0 ? stmt.all(...params) : stmt.all())
+          // Fast path: no soft-deletes, no cache, no timeout, no signal, no hooks
+          if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !hasQueryHooks) {
+            // Direct statement execution for maximum performance (bypasses all overhead)
+            const stmt = ensureBuilt()._stmt
+            const params = ensureBuilt()._params
+            if (stmt) {
+              return hydratePivotRows(params && params.length > 0 ? stmt.all(...params) : stmt.all())
+            }
+            return hydratePivotRows((yield* wait(executeQuery(ensureBuilt()))))
           }
-          return hydratePivotRows(await ensureBuilt().execute())
-        }
 
-        // Fast path: no soft-deletes, no cache, no timeout, no signal (but may have hooks)
-        if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal) {
-          return hydratePivotRows(await runWithHooks<any[]>(ensureBuilt(), 'select'))
-        }
-
-        // Apply soft-deletes default filter if enabled and table has the column
-        let finalQuery = ensureBuilt()
-        if (config.softDeletes?.enabled && config.softDeletes.defaultFilter && !includeTrashed) {
-          const col = config.softDeletes.column
-          const tbl = String(table)
-          const hasCol = schema ? Boolean((schema as any)[tbl]?.columns?.[col]) : true
-          if (hasCol && !SQL_PATTERNS.DELETED_AT.test(currentSql())) {
-            // Record the term, then rebuild. The previous version composed
-            // `sql`${ensureBuilt()} WHERE ...`` as well, which appended a second
-            // unconditional WHERE keyword on top of any filter already present.
-            addWhereText('WHERE', `${String(col)} IS ${onlyTrashed ? 'NOT ' : ''}NULL`)
-            finalQuery = ensureBuilt()
+          // Fast path: no soft-deletes, no cache, no timeout, no signal (but may have hooks)
+          if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal) {
+            return hydratePivotRows((yield* wait(runWithHooks<any[]>(ensureBuilt(), 'select'))))
           }
-        }
 
-        // Transaction reads must see their own writes and must never publish
-        // uncommitted rows into the process cache. Native query objects also
-        // stringify identically, so use the builder's final SQL, not String(q).
-        const cacheable = useCache && !state?.inTransaction
-        const cacheKey = cacheable
-          ? queryCacheKey(_sql, currentSql(), whereParams)
-          : ''
-        if (cacheable) {
-          const cached = queryCache.get(cacheKey)
-          if (cached)
-            return cached
-        }
-
-        const result = await runWithHooks<any[]>(finalQuery, 'select', { signal: abortSignal, timeoutMs })
-
-        // Store in cache if enabled
-        if (cacheable)
-          queryCache.set(cacheKey, result, cacheTtl)
-
-        return hydratePivotRows(result)
-      },
-      async executeTakeFirst() {
-        const rows = await runWithHooks<any[]>(ensureBuilt(), 'select', { signal: abortSignal, timeoutMs })
-        return hydratePivotRow(Array.isArray(rows) ? rows[0] : rows)
-      },
-      async executeTakeFirstOrThrow() {
-        const result = await (this as any).executeTakeFirst()
-        if (!result)
-          throw new Error('Record not found')
-        return result
-      },
-      async first() {
-        // Ultra-fast path: skip overhead, prepare statement directly from text
-        const fHooks = activeHooks()
-        const fHasQueryHooks = fHooks && (fHooks.onQueryStart || fHooks.onQueryEnd || fHooks.onQueryError || fHooks.startSpan || hasSlowQueryHook(fHooks))
-        if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !fHasQueryHooks) {
-          const prepareFn = _sql._prepareStatement
-          if (prepareFn) {
-            const base = currentSql()
-            const firstText = base.includes(' LIMIT ') ? base : `${base} LIMIT 1`
-            const stmt = prepareFn(firstText)
-            const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
-            return hydratePivotRow(rows[0]) as any
+          // Apply soft-deletes default filter if enabled and table has the column
+          let finalQuery = ensureBuilt()
+          if (config.softDeletes?.enabled && config.softDeletes.defaultFilter && !includeTrashed) {
+            const col = config.softDeletes.column
+            const tbl = String(table)
+            const hasCol = schema ? Boolean((schema as any)[tbl]?.columns?.[col]) : true
+            if (hasCol && !SQL_PATTERNS.DELETED_AT.test(currentSql())) {
+              // Record the term, then rebuild. The previous version composed
+              // `sql`${ensureBuilt()} WHERE ...`` as well, which appended a second
+              // unconditional WHERE keyword on top of any filter already present.
+              addWhereText('WHERE', `${String(col)} IS ${onlyTrashed ? 'NOT ' : ''}NULL`)
+              finalQuery = ensureBuilt()
+            }
           }
-        }
-        const rows = await runWithHooks<any[]>(prepareSelect('', ' LIMIT 1'), 'select', { signal: abortSignal, timeoutMs })
-        const [row] = rows
-        return hydratePivotRow(row) as any
+
+          // Transaction reads must see their own writes and must never publish
+          // uncommitted rows into the process cache. Native query objects also
+          // stringify identically, so use the builder's final SQL, not String(q).
+          const cacheable = useCache && !state?.inTransaction
+          const cacheKey = cacheable
+            ? queryCacheKey(_sql, currentSql(), whereParams)
+            : ''
+          if (cacheable) {
+            const cached = queryCache.get(cacheKey)
+            if (cached)
+              return cached
+          }
+
+          const result = (yield* wait(runWithHooks<any[]>(finalQuery, 'select', { signal: abortSignal, timeoutMs })))
+
+          // Store in cache if enabled
+          if (cacheable)
+            queryCache.set(cacheKey, result, cacheTtl)
+
+          return hydratePivotRows(result)
+        })
       },
-      async firstOrFail() {
-        const row = await (this as any).first()
-        if (!row)
-          throw new Error('Record not found')
-        return row as any
+      executeTakeFirst() {
+        return settle(function* () {
+          const rows = (yield* wait(runWithHooks<any[]>(ensureBuilt(), 'select', { signal: abortSignal, timeoutMs })))
+          return hydratePivotRow(Array.isArray(rows) ? rows[0] : rows)
+        })
       },
-      async find(id: any) {
-        const pk = meta?.primaryKeys[String(table)] ?? 'id'
-        const rows = await runWithHooks<any[]>(prepareSelect('', ` WHERE ${quoteInsertIdent(pk)} = ${getPlaceholder(whereParams.length + 1)} LIMIT 1`, [id]), 'select', { signal: abortSignal, timeoutMs })
-        const [row] = rows
-        return row as any
+      executeTakeFirstOrThrow() {
+        const self = this
+        return settle(function* () {
+          const result = (yield* wait((self as any).executeTakeFirst()))
+          if (!result)
+            throw new Error('Record not found')
+          return result
+        })
       },
-      async findOrFail(id: any) {
-        const row = await (this as any).find(id)
-        if (!row)
-          throw new Error('Record not found')
-        return row as any
+      first() {
+        return settle(function* () {
+          // Ultra-fast path: skip overhead, prepare statement directly from text
+          const fHooks = activeHooks()
+          const fHasQueryHooks = fHooks && (fHooks.onQueryStart || fHooks.onQueryEnd || fHooks.onQueryError || fHooks.startSpan || hasSlowQueryHook(fHooks))
+          if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !fHasQueryHooks) {
+            const prepareFn = _sql._prepareStatement
+            if (prepareFn) {
+              const base = currentSql()
+              const firstText = base.includes(' LIMIT ') ? base : `${base} LIMIT 1`
+              const stmt = prepareFn(firstText)
+              const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
+              return hydratePivotRow(rows[0]) as any
+            }
+          }
+          const rows = (yield* wait(runWithHooks<any[]>(prepareSelect('', ' LIMIT 1'), 'select', { signal: abortSignal, timeoutMs })))
+          const [row] = rows
+          return hydratePivotRow(row) as any
+        })
       },
-      async findMany(ids: any[]) {
-        const pk = meta?.primaryKeys[String(table)] ?? 'id'
-        const rows = await runWithHooks<any[]>(prepareSelect('', ` WHERE ${renderInPredicate(quoteInsertIdent(String(pk)), ids, false, getPlaceholders(ids.length, whereParams.length + 1))}`, ids), 'select', { signal: abortSignal, timeoutMs })
-        return rows as any
+      firstOrFail() {
+        const self = this
+        return settle(function* () {
+          const row = (yield* wait((self as any).first()))
+          if (!row)
+            throw new Error('Record not found')
+          return row as any
+        })
+      },
+      find(id: any) {
+        return settle(function* () {
+          const pk = meta?.primaryKeys[String(table)] ?? 'id'
+          const rows = (yield* wait(runWithHooks<any[]>(prepareSelect('', ` WHERE ${quoteInsertIdent(pk)} = ${getPlaceholder(whereParams.length + 1)} LIMIT 1`, [id]), 'select', { signal: abortSignal, timeoutMs })))
+          const [row] = rows
+          return row as any
+        })
+      },
+      findOrFail(id: any) {
+        const self = this
+        return settle(function* () {
+          const row = (yield* wait((self as any).find(id)))
+          if (!row)
+            throw new Error('Record not found')
+          return row as any
+        })
+      },
+      findMany(ids: any[]) {
+        return settle(function* () {
+          const pk = meta?.primaryKeys[String(table)] ?? 'id'
+          const rows = (yield* wait(runWithHooks<any[]>(prepareSelect('', ` WHERE ${renderInPredicate(quoteInsertIdent(String(pk)), ids, false, getPlaceholders(ids.length, whereParams.length + 1))}`, ids), 'select', { signal: abortSignal, timeoutMs })))
+          return rows as any
+        })
       },
       async* lazy() {
         let cursor: any
@@ -6944,7 +7094,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           const q = cursor == null
             ? sql`${ensureBuilt()} ORDER BY ${sql(String(pk))} ASC LIMIT 100`
             : sql`${ensureBuilt()} WHERE ${sql(String(pk))} > ${cursor} ORDER BY ${sql(String(pk))} ASC LIMIT 100`
-          const rows: any[] = await (q as any).execute()
+          const rows: any[] = await executeQuery(q)
           if (rows.length === 0)
             break
           for (const r of rows) yield r as any
@@ -6960,7 +7110,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           const q = cursor == null
             ? sql`${ensureBuilt()} ORDER BY ${sql(String(pk))} ASC LIMIT 100`
             : sql`${ensureBuilt()} WHERE ${sql(String(pk))} > ${cursor} ORDER BY ${sql(String(pk))} ASC LIMIT 100`
-          const rows: any[] = await (q as any).execute()
+          const rows: any[] = await executeQuery(q)
           if (rows.length === 0)
             break
           for (const r of rows) yield r as any
@@ -6972,124 +7122,134 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       pipe(fn: any) {
         return fn(this as any)
       },
-      async count() {
-        // Build COUNT query. The fast path replaces the SELECT list
-        // with `COUNT(*)` and keeps everything after `FROM`. That's
-        // correct UNLESS the query has a `GROUP BY` — then
-        // `COUNT(*)` returns one row per group, and grabbing
-        // `rows[0]` silently returns just the first group's count.
-        // Wrap in a subquery when GROUP BY is present.
-        // See stacksjs/stacks#1862 #26.
-        // Rebuild from currentSql(), not `text` — the WHERE lives in the term
-        // list now, and slicing `text` here would count the UNFILTERED table.
-        const src = currentSql()
-        const fromIdx = src.indexOf(' FROM ')
-        const hasGroupBy = / GROUP BY /i.test(src)
-        let countText: string
-        if (hasGroupBy) {
-          countText = `SELECT COUNT(*) as c FROM (${src}) AS _bqb_count_sub`
-        }
-        else if (fromIdx !== -1) {
-          countText = `SELECT COUNT(*) as c${src.substring(fromIdx)}`
-        }
-        else {
-          countText = `SELECT COUNT(*) as c FROM ${tableRef}`
-        }
-
-        // Ultra-fast path
-        const cHooks = activeHooks()
-        const cHasHooks = cHooks && (cHooks.onQueryStart || cHooks.onQueryEnd || cHooks.onQueryError || cHooks.startSpan || hasSlowQueryHook(cHooks))
-        if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !cHasHooks) {
-          const prepareFn = _sql._prepareStatement
-          if (prepareFn) {
-            const stmt = prepareFn(countText)
-            const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
-            return Number(rows[0]?.c ?? 0)
+      count() {
+        return settle(function* () {
+          // Build COUNT query. The fast path replaces the SELECT list
+          // with `COUNT(*)` and keeps everything after `FROM`. That's
+          // correct UNLESS the query has a `GROUP BY` — then
+          // `COUNT(*)` returns one row per group, and grabbing
+          // `rows[0]` silently returns just the first group's count.
+          // Wrap in a subquery when GROUP BY is present.
+          // See stacksjs/stacks#1862 #26.
+          // Rebuild from currentSql(), not `text` — the WHERE lives in the term
+          // list now, and slicing `text` here would count the UNFILTERED table.
+          const src = currentSql()
+          const fromIdx = src.indexOf(' FROM ')
+          const hasGroupBy = / GROUP BY /i.test(src)
+          let countText: string
+          if (hasGroupBy) {
+            countText = `SELECT COUNT(*) as c FROM (${src}) AS _bqb_count_sub`
           }
-        }
-
-        const q = whereParams.length > 0
-          ? prepareQuery(countText, whereParams)
-          : prepareQuery(countText)
-        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
-        const [row] = rows
-        return Number(row?.c ?? 0)
-      },
-      async avg(column: string) {
-        // max()/min() hand `row.m` back to the caller untouched, so an
-        // unvalidated column here is a read primitive over the whole
-        // connection: `max('(SELECT token FROM secrets LIMIT 1)')` returned
-        // that token. avg()/sum() coerce through Number(), which narrows the
-        // leak to numeric columns rather than closing it. All four build the
-        // statement by interpolation, so all four validate. #1181
-        const col = assertSafeColumnRef(column, 'avg(column)')
-        // Build optimized AVG query without subquery or helpers
-        const src = currentSql()
-        const fromIdx = src.indexOf(' FROM ')
-        const avgText = fromIdx !== -1
-          ? `SELECT AVG(${col}) as a${src.substring(fromIdx)}`
-          : `SELECT AVG(${col}) as a FROM ${tableRef}`
-
-        // Ultra-fast path
-        const aHooks = activeHooks()
-        const aHasHooks = aHooks && (aHooks.onQueryStart || aHooks.onQueryEnd || aHooks.onQueryError || aHooks.startSpan || hasSlowQueryHook(aHooks))
-        if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !aHasHooks) {
-          const prepareFn = _sql._prepareStatement
-          if (prepareFn) {
-            const stmt = prepareFn(avgText)
-            const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
-            return Number(rows[0]?.a ?? 0)
+          else if (fromIdx !== -1) {
+            countText = `SELECT COUNT(*) as c${src.substring(fromIdx)}`
           }
-        }
+          else {
+            countText = `SELECT COUNT(*) as c FROM ${tableRef}`
+          }
 
-        const q = whereParams.length > 0
-          ? prepareQuery(avgText, whereParams)
-          : prepareQuery(avgText)
-        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
-        const [row] = rows
-        return Number(row?.a ?? 0)
+          // Ultra-fast path
+          const cHooks = activeHooks()
+          const cHasHooks = cHooks && (cHooks.onQueryStart || cHooks.onQueryEnd || cHooks.onQueryError || cHooks.startSpan || hasSlowQueryHook(cHooks))
+          if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !cHasHooks) {
+            const prepareFn = _sql._prepareStatement
+            if (prepareFn) {
+              const stmt = prepareFn(countText)
+              const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
+              return Number(rows[0]?.c ?? 0)
+            }
+          }
+
+          const q = whereParams.length > 0
+            ? prepareQuery(countText, whereParams)
+            : prepareQuery(countText)
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })))
+          const [row] = rows
+          return Number(row?.c ?? 0)
+        })
       },
-      async sum(column: string) {
-        const col = assertSafeColumnRef(column, 'sum(column)')
-        const src = currentSql()
-        const fromIdx = src.indexOf(' FROM ')
-        const sumText = fromIdx !== -1
-          ? `SELECT SUM(${col}) as s${src.substring(fromIdx)}`
-          : `SELECT SUM(${col}) as s FROM ${tableRef}`
-        const q = whereParams.length > 0
-          ? prepareQuery(sumText, whereParams)
-          : prepareQuery(sumText)
-        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
-        const [row] = rows
-        return Number(row?.s ?? 0)
+      avg(column: string) {
+        return settle(function* () {
+          // max()/min() hand `row.m` back to the caller untouched, so an
+          // unvalidated column here is a read primitive over the whole
+          // connection: `max('(SELECT token FROM secrets LIMIT 1)')` returned
+          // that token. avg()/sum() coerce through Number(), which narrows the
+          // leak to numeric columns rather than closing it. All four build the
+          // statement by interpolation, so all four validate. #1181
+          const col = assertSafeColumnRef(column, 'avg(column)')
+          // Build optimized AVG query without subquery or helpers
+          const src = currentSql()
+          const fromIdx = src.indexOf(' FROM ')
+          const avgText = fromIdx !== -1
+            ? `SELECT AVG(${col}) as a${src.substring(fromIdx)}`
+            : `SELECT AVG(${col}) as a FROM ${tableRef}`
+
+          // Ultra-fast path
+          const aHooks = activeHooks()
+          const aHasHooks = aHooks && (aHooks.onQueryStart || aHooks.onQueryEnd || aHooks.onQueryError || aHooks.startSpan || hasSlowQueryHook(aHooks))
+          if (!config.softDeletes?.enabled && !useCache && !timeoutMs && !abortSignal && !aHasHooks) {
+            const prepareFn = _sql._prepareStatement
+            if (prepareFn) {
+              const stmt = prepareFn(avgText)
+              const rows = whereParams.length > 0 ? stmt.all(...whereParams) : stmt.all()
+              return Number(rows[0]?.a ?? 0)
+            }
+          }
+
+          const q = whereParams.length > 0
+            ? prepareQuery(avgText, whereParams)
+            : prepareQuery(avgText)
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })))
+          const [row] = rows
+          return Number(row?.a ?? 0)
+        })
       },
-      async max(column: string) {
-        const col = assertSafeColumnRef(column, 'max(column)')
-        const src = currentSql()
-        const fromIdx = src.indexOf(' FROM ')
-        const maxText = fromIdx !== -1
-          ? `SELECT MAX(${col}) as m${src.substring(fromIdx)}`
-          : `SELECT MAX(${col}) as m FROM ${tableRef}`
-        const q = whereParams.length > 0
-          ? prepareQuery(maxText, whereParams)
-          : prepareQuery(maxText)
-        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
-        const [row] = rows
-        return row?.m
+      sum(column: string) {
+        return settle(function* () {
+          const col = assertSafeColumnRef(column, 'sum(column)')
+          const src = currentSql()
+          const fromIdx = src.indexOf(' FROM ')
+          const sumText = fromIdx !== -1
+            ? `SELECT SUM(${col}) as s${src.substring(fromIdx)}`
+            : `SELECT SUM(${col}) as s FROM ${tableRef}`
+          const q = whereParams.length > 0
+            ? prepareQuery(sumText, whereParams)
+            : prepareQuery(sumText)
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })))
+          const [row] = rows
+          return Number(row?.s ?? 0)
+        })
       },
-      async min(column: string) {
-        const col = assertSafeColumnRef(column, 'min(column)')
-        const src = currentSql()
-        const fromIdx = src.indexOf(' FROM ')
-        const minText = fromIdx !== -1
-          ? `SELECT MIN(${col}) as m${src.substring(fromIdx)}`
-          : `SELECT MIN(${col}) as m FROM ${tableRef}`
-        const q = whereParams.length > 0
-          ? prepareQuery(minText, whereParams)
-          : prepareQuery(minText)
-        const rows = await runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })
-        const [row] = rows
-        return row?.m
+      max(column: string) {
+        return settle(function* () {
+          const col = assertSafeColumnRef(column, 'max(column)')
+          const src = currentSql()
+          const fromIdx = src.indexOf(' FROM ')
+          const maxText = fromIdx !== -1
+            ? `SELECT MAX(${col}) as m${src.substring(fromIdx)}`
+            : `SELECT MAX(${col}) as m FROM ${tableRef}`
+          const q = whereParams.length > 0
+            ? prepareQuery(maxText, whereParams)
+            : prepareQuery(maxText)
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })))
+          const [row] = rows
+          return row?.m
+        })
+      },
+      min(column: string) {
+        return settle(function* () {
+          const col = assertSafeColumnRef(column, 'min(column)')
+          const src = currentSql()
+          const fromIdx = src.indexOf(' FROM ')
+          const minText = fromIdx !== -1
+            ? `SELECT MIN(${col}) as m${src.substring(fromIdx)}`
+            : `SELECT MIN(${col}) as m FROM ${tableRef}`
+          const q = whereParams.length > 0
+            ? prepareQuery(minText, whereParams)
+            : prepareQuery(minText)
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'select', { signal: abortSignal, timeoutMs })))
+          const [row] = rows
+          return row?.m
+        })
       },
       lockForUpdate() {
         text += ' FOR UPDATE'
@@ -7473,50 +7633,68 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         toSQL() {
           return makeExecutableQuery(build(), text) as any
         },
-        async execute() {
-          return runWithHooks<any[]>(build(), 'select')
+        execute() {
+          return settle(function* () {
+            return runWithHooks<any[]>(build(), 'select')
+          })
         },
-        async executeTakeFirst() {
-          const rows = await runWithHooks<any[]>(build(), 'select')
-          return Array.isArray(rows) ? rows[0] : rows
+        executeTakeFirst() {
+          return settle(function* () {
+            const rows = (yield* wait(runWithHooks<any[]>(build(), 'select')))
+            return Array.isArray(rows) ? rows[0] : rows
+          })
         },
-        async executeTakeFirstOrThrow() {
-          const rows = await runWithHooks<any[]>(build(), 'select')
-          const first = Array.isArray(rows) ? rows[0] : rows
-          if (!first)
-            throw new Error('Record not found')
-          return first
+        executeTakeFirstOrThrow() {
+          return settle(function* () {
+            const rows = (yield* wait(runWithHooks<any[]>(build(), 'select')))
+            const first = Array.isArray(rows) ? rows[0] : rows
+            if (!first)
+              throw new Error('Record not found')
+            return first
+          })
         },
-        async get() {
-          return runWithHooks<any[]>(build(), 'select')
+        get() {
+          return settle(function* () {
+            return runWithHooks<any[]>(build(), 'select')
+          })
         },
-        async first() {
-          const rows = await runWithHooks<any[]>(build(), 'select')
-          return Array.isArray(rows) ? rows[0] : rows
+        first() {
+          return settle(function* () {
+            const rows = (yield* wait(runWithHooks<any[]>(build(), 'select')))
+            return Array.isArray(rows) ? rows[0] : rows
+          })
         },
-        async firstOrFail() {
-          const rows = await runWithHooks<any[]>(build(), 'select')
-          const first = Array.isArray(rows) ? rows[0] : rows
-          if (!first)
-            throw new Error('No rows found')
-          return first
+        firstOrFail() {
+          return settle(function* () {
+            const rows = (yield* wait(runWithHooks<any[]>(build(), 'select')))
+            const first = Array.isArray(rows) ? rows[0] : rows
+            if (!first)
+              throw new Error('No rows found')
+            return first
+          })
         },
-        async count() {
-          const q = params.length > 0
-            ? prepareQuery(`SELECT COUNT(*) as c FROM (${text}) as sub`, params)
-            : prepareQuery(`SELECT COUNT(*) as c FROM (${text}) as sub`)
-          const rows = await runWithHooks<any[]>(q, 'select')
-          return Number(rows?.[0]?.c ?? 0)
+        count() {
+          return settle(function* () {
+            const q = params.length > 0
+              ? prepareQuery(`SELECT COUNT(*) as c FROM (${text}) as sub`, params)
+              : prepareQuery(`SELECT COUNT(*) as c FROM (${text}) as sub`)
+            const rows = (yield* wait(runWithHooks<any[]>(q, 'select')))
+            return Number(rows?.[0]?.c ?? 0)
+          })
         },
-        async exists() {
-          const q = params.length > 0
-            ? prepareQuery(`SELECT EXISTS(${text}) as e`, params)
-            : prepareQuery(`SELECT EXISTS(${text}) as e`)
-          const result = await runWithHooks<any[]>(q, 'select')
-          return Boolean(result?.[0]?.e)
+        exists() {
+          return settle(function* () {
+            const q = params.length > 0
+              ? prepareQuery(`SELECT EXISTS(${text}) as e`, params)
+              : prepareQuery(`SELECT EXISTS(${text}) as e`)
+            const result = (yield* wait(runWithHooks<any[]>(q, 'select')))
+            return Boolean(result?.[0]?.e)
+          })
         },
-        async doesntExist() {
-          return !(await base.exists!())
+        doesntExist() {
+          return settle(function* () {
+            return !((yield* wait(base.exists!())))
+          })
         },
         values() {
           return (build() as any).values()
@@ -7634,7 +7812,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         tap: () => base as any,
         dump: () => base as any,
         dd: () => { throw new Error('Dump and Die') },
-        explain: () => Promise.resolve([]),
+        explain: () => [],
         simple: () => (build() as any).simple(),
         toText: () => text,
         toParams: () => [...params],
@@ -7688,9 +7866,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
        * the same message they throw when a real RETURNING comes back empty.
        */
       const emptyReturningBuilder = (): any => {
-        const noRow = async (): Promise<any> => undefined
-        const noRowOrFail = async (): Promise<any> => {
-          throw new Error('Insert with RETURNING returned no rows')
+        const noRow = (): any => undefined
+        const noRowOrFail = (): any => {
+          return settle(function* (): Generator<unknown, any, unknown> {
+            throw new Error('Insert with RETURNING returned no rows')
+          })
         }
         return {
           where: () => emptyReturningBuilder(),
@@ -7700,8 +7880,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           limit: () => emptyReturningBuilder(),
           offset: () => emptyReturningBuilder(),
           toSQL: () => makeExecutableQuery(null as any, '') as any,
-          execute: async () => [],
-          get: async () => [],
+          execute: () => [],
+          get: () => [],
           first: noRow,
           executeTakeFirst: noRow,
           firstOrFail: noRowOrFail,
@@ -7738,34 +7918,38 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const names = (cols as unknown[]).flat(2).map(String).filter(Boolean)
         const wanted = names.length > 0 && !names.includes('*') ? names.map(column => quoteId(column)).join(', ') : '*'
 
-        const run = async (): Promise<any[]> => {
-          const inserted = await runWithHooks<any>(prepareQuery(sqlText, params), 'insert')
-          const first = Number((inserted as any)?.lastInsertRowid ?? 0)
-          const affected = Math.max(1, Number((inserted as any)?.affectedRows ?? 1))
+        const run = (): any[] => {
+          return settle(function* (): Generator<unknown, any[], unknown> {
+            const inserted = (yield* wait(runWithHooks<any>(prepareQuery(sqlText, params), 'insert')))
+            const first = Number((inserted as any)?.lastInsertRowid ?? 0)
+            const affected = Math.max(1, Number((inserted as any)?.affectedRows ?? 1))
 
-          const given = insertedKeys.filter(value => value !== undefined && value !== null)
+            const given = insertedKeys.filter(value => value !== undefined && value !== null)
 
-          const read = first > 0
-            ? prepareQuery(
-                `SELECT ${wanted} FROM ${quoteId(String(table))} WHERE ${quoteId(key)} >= ? AND ${quoteId(key)} < ? ORDER BY ${quoteId(key)} ASC`,
-                [first, first + affected],
-              )
-            : given.length > 0
+            const read = first > 0
               ? prepareQuery(
-                  `SELECT ${wanted} FROM ${quoteId(String(table))} WHERE ${quoteId(key)} IN (${given.map(() => '?').join(', ')}) ORDER BY ${quoteId(key)} ASC`,
-                  given,
+                  `SELECT ${wanted} FROM ${quoteId(String(table))} WHERE ${quoteId(key)} >= ? AND ${quoteId(key)} < ? ORDER BY ${quoteId(key)} ASC`,
+                  [first, first + affected],
                 )
-              : null
+              : given.length > 0
+                ? prepareQuery(
+                    `SELECT ${wanted} FROM ${quoteId(String(table))} WHERE ${quoteId(key)} IN (${given.map(() => '?').join(', ')}) ORDER BY ${quoteId(key)} ASC`,
+                    given,
+                  )
+                : null
 
-          if (!read)
-            return []
+            if (!read)
+              return []
 
-          const rows = await read.execute()
+            const rows = (yield* wait(executeQuery(read)))
 
-          return Array.isArray(rows) ? rows : []
+            return Array.isArray(rows) ? rows : []
+          })
         }
 
-        const runFirst = async (): Promise<any> => (await run())[0]
+        const runFirst = (): any => settle(function* (): Generator<unknown, any, unknown> {
+          return (yield* wait(run()))[0]
+        })
 
         return {
           where: () => this,
@@ -7779,17 +7963,21 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           get: run,
           first: runFirst,
           executeTakeFirst: runFirst,
-          async firstOrFail() {
-            const row = await runFirst()
-            if (!row)
-              throw new Error('Insert with RETURNING returned no rows')
-            return row
+          firstOrFail() {
+            return settle(function* () {
+              const row = (yield* wait(runFirst()))
+              if (!row)
+                throw new Error('Insert with RETURNING returned no rows')
+              return row
+            })
           },
-          async executeTakeFirstOrThrow() {
-            const row = await runFirst()
-            if (!row)
-              throw new Error('Insert with RETURNING returned no rows')
-            return row
+          executeTakeFirstOrThrow() {
+            return settle(function* () {
+              const row = (yield* wait(runFirst()))
+              if (!row)
+                throw new Error('Insert with RETURNING returned no rows')
+              return row
+            })
           },
         }
       }
@@ -7989,9 +8177,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // (get/first/firstOrFail/executeTakeFirst) must exist at runtime —
           // previously only execute()/toSQL() did, so the typed
           // `.returning('id').first()` threw "first is not a function".
-          const runFirst = async () => {
-            const rows = await runWithHooks<any[]>(q, 'insert')
-            return Array.isArray(rows) ? rows[0] : rows
+          const runFirst = () => {
+            return settle(function* () {
+              const rows = (yield* wait(runWithHooks<any[]>(q, 'insert')))
+              return Array.isArray(rows) ? rows[0] : rows
+            })
           }
           return {
             where: () => this,
@@ -8005,17 +8195,21 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             get: () => runWithHooks<any[]>(q, 'insert'),
             first: runFirst,
             executeTakeFirst: runFirst,
-            async firstOrFail() {
-              const row = await runFirst()
-              if (!row)
-                throw new Error('Insert with RETURNING returned no rows')
-              return row
+            firstOrFail() {
+              return settle(function* () {
+                const row = (yield* wait(runFirst()))
+                if (!row)
+                  throw new Error('Insert with RETURNING returned no rows')
+                return row
+              })
             },
-            async executeTakeFirstOrThrow() {
-              const row = await runFirst()
-              if (!row)
-                throw new Error('Insert with RETURNING returned no rows')
-              return row
+            executeTakeFirstOrThrow() {
+              return settle(function* () {
+                const row = (yield* wait(runFirst()))
+                if (!row)
+                  throw new Error('Insert with RETURNING returned no rows')
+                return row
+              })
             },
           }
         },
@@ -8041,21 +8235,25 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           if (!built) built = prepareQuery(sqlText, params)
           return runWithHooks(built, 'insert')
         },
-        async executeTakeFirst() {
-          if (noRows)
-            return emptyInsertResult()
-          if (!built) built = prepareQuery(sqlText, params)
-          const result = await runWithHooks(built, 'insert')
-          return result
+        executeTakeFirst() {
+          return settle(function* () {
+            if (noRows)
+              return emptyInsertResult()
+            if (!built) built = prepareQuery(sqlText, params)
+            const result = (yield* wait(runWithHooks(built, 'insert')))
+            return result
+          })
         },
-        async executeTakeFirstOrThrow() {
-          if (noRows)
-            throw new Error('Insert failed')
-          if (!built) built = prepareQuery(sqlText, params)
-          const result = await runWithHooks(built, 'insert')
-          if (!result)
-            throw new Error('Insert failed')
-          return result
+        executeTakeFirstOrThrow() {
+          return settle(function* () {
+            if (noRows)
+              throw new Error('Insert failed')
+            if (!built) built = prepareQuery(sqlText, params)
+            const result = (yield* wait(runWithHooks(built, 'insert')))
+            if (!result)
+              throw new Error('Insert failed')
+            return result
+          })
         },
         returningAll() {
           /*
@@ -8300,49 +8498,54 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
            * shape this cannot serve and Postgres can. It is also a shape almost
            * nobody writes: the predicate is nearly always a key.
            */
-          const runMysql = async (): Promise<any[]> => {
-            const hasWhere = /\sWHERE\s/i.test(sqlText)
-            const where = hasWhere ? sqlText.slice(sqlText.search(/\sWHERE\s/i) + 1) : ''
-            // The SET clause's parameters come first in `params`; the predicate
-            // only needs its own, so the SET's are dropped from the front.
-            const predicateParams = params.slice(params.length - (where.match(/\?|\$\d+/g)?.length ?? 0))
-            const key = quoteId('id')
+          const runMysql = (): any[] => {
+            return settle(function* (): Generator<unknown, any[], unknown> {
+              const hasWhere = /\sWHERE\s/i.test(sqlText)
+              const where = hasWhere ? sqlText.slice(sqlText.search(/\sWHERE\s/i) + 1) : ''
+              // The SET clause's parameters come first in `params`; the predicate
+              // only needs its own, so the SET's are dropped from the front.
+              const predicateParams = params.slice(params.length - (where.match(/\?|\$\d+/g)?.length ?? 0))
+              const key = quoteId('id')
 
-            /*
-             * The rows are identified *before* the update, not after.
-             *
-             * Reading afterwards with the same predicate looks equivalent and
-             * is not: an update whose predicate tests a column it is about to
-             * change matches nothing the second time. `spendRecoveryCode` is
-             * exactly that shape - `SET used_at = now() ... WHERE used_at IS
-             * NULL`, whose whole purpose is that it can only match once - and
-             * it silently reported that no code had been spent, which reads as
-             * a wrong recovery code to whoever typed it.
-             */
-            const found = await (predicateParams.length > 0
-              ? prepareQuery(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`, predicateParams)
-              : prepareQuery(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`)).execute().catch(() => [])
+              /*
+               * The rows are identified *before* the update, not after.
+               *
+               * Reading afterwards with the same predicate looks equivalent and
+               * is not: an update whose predicate tests a column it is about to
+               * change matches nothing the second time. `spendRecoveryCode` is
+               * exactly that shape - `SET used_at = now() ... WHERE used_at IS
+               * NULL`, whose whole purpose is that it can only match once - and
+               * it silently reported that no code had been spent, which reads as
+               * a wrong recovery code to whoever typed it.
+               */
+              // A failure to read the keys is no keys: the update below still runs.
+              const found = (yield* attempt(() => executeQuery(predicateParams.length > 0
+                ? prepareQuery(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`, predicateParams)
+                : prepareQuery(`SELECT ${key} FROM ${quoteId(String(table))}${hasWhere ? ` ${where}` : ''}`)), () => []))
 
-            const ids = (Array.isArray(found) ? found : []).map((row: any) => row?.id).filter((id: unknown) => id !== undefined && id !== null)
+              const ids = (Array.isArray(found) ? found : []).map((row: any) => row?.id).filter((id: unknown) => id !== undefined && id !== null)
 
-            await runWithHooks<any>(params.length > 0 ? prepareQuery(sqlText, params) : prepareQuery(sqlText), 'update')
+              yield* wait(runWithHooks<any>(params.length > 0 ? prepareQuery(sqlText, params) : prepareQuery(sqlText), 'update'))
 
-            if (ids.length === 0)
-              return []
+              if (ids.length === 0)
+                return []
 
-            const selected = `SELECT ${safeCols.join(', ')} FROM ${quoteId(String(table))} WHERE ${key} IN (${ids.map(() => '?').join(', ')})`
-            const rows = await prepareQuery(selected, ids).execute()
+              const selected = `SELECT ${safeCols.join(', ')} FROM ${quoteId(String(table))} WHERE ${key} IN (${ids.map(() => '?').join(', ')})`
+              const rows = (yield* wait(executeQuery(prepareQuery(selected, ids))))
 
-            return Array.isArray(rows) ? rows : []
+              return Array.isArray(rows) ? rows : []
+            })
           }
 
-          const run = (): Promise<any[]> => (isMysqlLike(config.dialect)
+          const run = (): any[] => (isMysqlLike(config.dialect)
             ? runMysql()
             : runWithHooks<any[]>(build(), 'update'))
 
-          const runFirst = async () => {
-            const rows = await run()
-            return Array.isArray(rows) ? rows[0] : rows
+          const runFirst = () => {
+            return settle(function* () {
+              const rows = (yield* wait(run()))
+              return Array.isArray(rows) ? rows[0] : rows
+            })
           }
           // Not expressible on this builder. Silently ignoring them is what
           // made a `.limit(1)` destructive write hit every row.
@@ -8368,17 +8571,21 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             get: run,
             first: runFirst,
             executeTakeFirst: runFirst,
-            async firstOrFail() {
-              const row = await runFirst()
-              if (!row)
-                throw new Error('Update with RETURNING returned no rows')
-              return row
+            firstOrFail() {
+              return settle(function* () {
+                const row = (yield* wait(runFirst()))
+                if (!row)
+                  throw new Error('Update with RETURNING returned no rows')
+                return row
+              })
             },
-            async executeTakeFirstOrThrow() {
-              const row = await runFirst()
-              if (!row)
-                throw new Error('Update with RETURNING returned no rows')
-              return row
+            executeTakeFirstOrThrow() {
+              return settle(function* () {
+                const row = (yield* wait(runFirst()))
+                if (!row)
+                  throw new Error('Update with RETURNING returned no rows')
+                return row
+              })
             },
           }
           return obj
@@ -8391,19 +8598,25 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           }
           return makeExecutableQuery(built, sqlText) as any
         },
-        async execute() {
-          const result = await runWithHooks(built, 'update')
-          return mutationCount(result)
+        execute() {
+          return settle(function* () {
+            const result = (yield* wait(runWithHooks(built, 'update')))
+            return mutationCount(result)
+          })
         },
-        async executeTakeFirst() {
-          const result = mutationCount(await runWithHooks(built, 'update'))
-          return { numUpdatedRows: result }
+        executeTakeFirst() {
+          return settle(function* () {
+            const result = mutationCount((yield* wait(runWithHooks(built, 'update'))))
+            return { numUpdatedRows: result }
+          })
         },
-        async executeTakeFirstOrThrow() {
-          const result = mutationCount(await runWithHooks(built, 'update'))
-          if (result === 0)
-            throw new Error('No rows updated')
-          return { numUpdatedRows: result }
+        executeTakeFirstOrThrow() {
+          return settle(function* () {
+            const result = mutationCount((yield* wait(runWithHooks(built, 'update'))))
+            if (result === 0)
+              throw new Error('No rows updated')
+            return { numUpdatedRows: result }
+          })
         },
         returningAll() {
           /*
@@ -8589,36 +8802,42 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           // `.returning(...)` to a delete skipped beforeDelete/afterDelete
           // entirely, so an application-level delete guard — the usual reason
           // to implement beforeDelete at all — could be walked straight past.
-          const runDelete = async (): Promise<any[]> => {
-            await activeHooks()?.beforeDelete?.({ table: String(table), where: whereCondition })
+          const runDelete = (): any[] => {
+            return settle(function* (): Generator<unknown, any[], unknown> {
+              yield* wait(activeHooks()?.beforeDelete?.({ table: String(table), where: whereCondition }))
 
-            /*
-             * MySQL has no RETURNING on a DELETE, so the rows are read *before*
-             * the write - the only order that can work, since afterwards they
-             * are gone. Both statements carry the same predicate and the same
-             * parameters, so what is returned is what was removed.
-             */
-            const rows = isMysqlLike(config.dialect)
-              ? await (async (): Promise<any[]> => {
-                  const from = sqlText.slice(sqlText.search(/\sFROM\s/i) + 1)
-                  const selected = `SELECT ${safeCols.join(', ')} ${from}`
-                  const found = await (delParams.length > 0 ? prepareQuery(selected, delParams) : prepareQuery(selected)).execute()
+              /*
+               * MySQL has no RETURNING on a DELETE, so the rows are read *before*
+               * the write - the only order that can work, since afterwards they
+               * are gone. Both statements carry the same predicate and the same
+               * parameters, so what is returned is what was removed.
+               */
+              const rows = isMysqlLike(config.dialect)
+                ? (yield* wait(((): any[] => {
+                  return settle(function* (): Generator<unknown, any[], unknown> {
+                    const from = sqlText.slice(sqlText.search(/\sFROM\s/i) + 1)
+                    const selected = `SELECT ${safeCols.join(', ')} ${from}`
+                    const found = (yield* wait(executeQuery((delParams.length > 0 ? prepareQuery(selected, delParams) : prepareQuery(selected)))))
 
-                  await runWithHooks<any>(delParams.length > 0 ? prepareQuery(sqlText, delParams) : prepareQuery(sqlText), 'delete')
+                    yield* wait(runWithHooks<any>(delParams.length > 0 ? prepareQuery(sqlText, delParams) : prepareQuery(sqlText), 'delete'))
 
-                  return Array.isArray(found) ? found : []
-                })()
-              : await runWithHooks<any[]>(build(), 'delete')
+                    return Array.isArray(found) ? found : []
+                  })
+                })()))
+                : (yield* wait(runWithHooks<any[]>(build(), 'delete')))
 
-            try {
-              await activeHooks()?.afterDelete?.({ table: String(table), where: whereCondition, result: rows })
-            }
-            catch {}
-            return rows
+              try {
+                yield* wait(activeHooks()?.afterDelete?.({ table: String(table), where: whereCondition, result: rows }))
+              }
+              catch {}
+              return rows
+            })
           }
-          const runFirst = async () => {
-            const rows = await runDelete()
-            return Array.isArray(rows) ? rows[0] : rows
+          const runFirst = () => {
+            return settle(function* () {
+              const rows = (yield* wait(runDelete()))
+              return Array.isArray(rows) ? rows[0] : rows
+            })
           }
           const unsupported = (name: string) => (): never => {
             throw new TypeError(`[query-builder] deleteFrom.returning(...).${name}() is not supported — a DELETE cannot be ordered or limited through this builder. Narrow it with where() instead.`)
@@ -8638,17 +8857,21 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             get: () => runDelete(),
             first: runFirst,
             executeTakeFirst: runFirst,
-            async firstOrFail() {
-              const row = await runFirst()
-              if (!row)
-                throw new Error('Delete with RETURNING returned no rows')
-              return row
+            firstOrFail() {
+              return settle(function* () {
+                const row = (yield* wait(runFirst()))
+                if (!row)
+                  throw new Error('Delete with RETURNING returned no rows')
+                return row
+              })
             },
-            async executeTakeFirstOrThrow() {
-              const row = await runFirst()
-              if (!row)
-                throw new Error('Delete with RETURNING returned no rows')
-              return row
+            executeTakeFirstOrThrow() {
+              return settle(function* () {
+                const row = (yield* wait(runFirst()))
+                if (!row)
+                  throw new Error('Delete with RETURNING returned no rows')
+                return row
+              })
             },
           }
           return obj
@@ -8656,32 +8879,38 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         toSQL() {
           return makeExecutableQuery(ensureDelBuilt(), sqlText) as any
         },
-        async execute() {
-          try {
-            await activeHooks()?.beforeDelete?.({ table: String(table), where: whereCondition })
-          }
-          catch (err) {
-            throw err
-          }
+        execute() {
+          return settle(function* () {
+            try {
+              yield* wait(activeHooks()?.beforeDelete?.({ table: String(table), where: whereCondition }))
+            }
+            catch (err) {
+              throw err
+            }
 
-          const result = mutationCount(await runWithHooks(ensureDelBuilt(), 'delete'))
+            const result = mutationCount((yield* wait(runWithHooks(ensureDelBuilt(), 'delete'))))
 
-          try {
-            await activeHooks()?.afterDelete?.({ table: String(table), where: whereCondition, result })
-          }
-          catch {}
+            try {
+              yield* wait(activeHooks()?.afterDelete?.({ table: String(table), where: whereCondition, result }))
+            }
+            catch {}
 
-          return result
+            return result
+          })
         },
-        async executeTakeFirst() {
-          const result = mutationCount(await runWithHooks(ensureDelBuilt(), 'delete'))
-          return { numDeletedRows: result }
+        executeTakeFirst() {
+          return settle(function* () {
+            const result = mutationCount((yield* wait(runWithHooks(ensureDelBuilt(), 'delete'))))
+            return { numDeletedRows: result }
+          })
         },
-        async executeTakeFirstOrThrow() {
-          const result = mutationCount(await runWithHooks(ensureDelBuilt(), 'delete'))
-          if (result === 0)
-            throw new Error('No rows deleted')
-          return { numDeletedRows: result }
+        executeTakeFirstOrThrow() {
+          return settle(function* () {
+            const result = mutationCount((yield* wait(runWithHooks(ensureDelBuilt(), 'delete'))))
+            if (result === 0)
+              throw new Error('No rows deleted')
+            return { numDeletedRows: result }
+          })
         },
         returningAll() {
           /*
@@ -8726,65 +8955,71 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
     simple(strings: TemplateStringsArray, ...values: any[]) {
       return (_sql(strings, ...values) as any).simple()
     },
-    async advisoryLock(key: number | string): Promise<void> {
-      if (config.dialect === 'postgres') {
-        const k = advisoryLockKey(key)
-        const q = prepareQuery('SELECT pg_advisory_lock($1)', [k])
-        await runWithHooks<any[]>(q, 'raw')
-        return
-      }
-      if (isMysqlLike(config.dialect)) {
-        // MySQL has `GET_LOCK(name, timeout)`. Wait indefinitely
-        // (timeout=-1) to match Postgres `pg_advisory_lock` semantics.
-        const lockName = `bqb:${String(key)}`
-        const q = prepareQuery('SELECT GET_LOCK(?, -1) AS ok', [lockName])
-        await runWithHooks<any[]>(q, 'raw')
-        return
-      }
-      // SQLite has no advisory-lock primitive. Refusing loud is
-      // safer than silently returning — distributed-coordination
-      // callers would otherwise believe they hold the lock.
-      // See stacksjs/stacks#1862 #17.
-      throw new Error(`[query-builder] advisoryLock() is not supported on SQLite — use a Postgres or MySQL deployment for distributed locking.`)
+    advisoryLock(key: number | string): void {
+      return settle(function* (): Generator<unknown, void, unknown> {
+        if (config.dialect === 'postgres') {
+          const k = advisoryLockKey(key)
+          const q = prepareQuery('SELECT pg_advisory_lock($1)', [k])
+          yield* wait(runWithHooks<any[]>(q, 'raw'))
+          return
+        }
+        if (isMysqlLike(config.dialect)) {
+          // MySQL has `GET_LOCK(name, timeout)`. Wait indefinitely
+          // (timeout=-1) to match Postgres `pg_advisory_lock` semantics.
+          const lockName = `bqb:${String(key)}`
+          const q = prepareQuery('SELECT GET_LOCK(?, -1) AS ok', [lockName])
+          yield* wait(runWithHooks<any[]>(q, 'raw'))
+          return
+        }
+        // SQLite has no advisory-lock primitive. Refusing loud is
+        // safer than silently returning — distributed-coordination
+        // callers would otherwise believe they hold the lock.
+        // See stacksjs/stacks#1862 #17.
+        throw new Error(`[query-builder] advisoryLock() is not supported on SQLite — use a Postgres or MySQL deployment for distributed locking.`)
+      })
     },
-    async tryAdvisoryLock(key: number | string): Promise<boolean> {
-      if (config.dialect === 'postgres') {
-        const k = advisoryLockKey(key)
-        const q = prepareQuery('SELECT pg_try_advisory_lock($1) as ok', [k])
-        const rows = await runWithHooks<any[]>(q, 'raw')
-        return Boolean(rows?.[0]?.ok)
-      }
-      if (isMysqlLike(config.dialect)) {
-        // MySQL `GET_LOCK(name, 0)` returns 1 immediately if free, 0
-        // if held by another connection.
-        const lockName = `bqb:${String(key)}`
-        const q = prepareQuery('SELECT GET_LOCK(?, 0) AS ok', [lockName])
-        const rows = await runWithHooks<any[]>(q, 'raw')
-        return Number(rows?.[0]?.ok) === 1
-      }
-      // SQLite: no primitive. Return false (lock unavailable) so
-      // callers fall through to whatever non-distributed path they
-      // had. Loud throw would crash apps that gracefully degrade
-      // when locks aren't held.
-      return false
+    tryAdvisoryLock(key: number | string): boolean {
+      return settle(function* (): Generator<unknown, boolean, unknown> {
+        if (config.dialect === 'postgres') {
+          const k = advisoryLockKey(key)
+          const q = prepareQuery('SELECT pg_try_advisory_lock($1) as ok', [k])
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'raw')))
+          return Boolean(rows?.[0]?.ok)
+        }
+        if (isMysqlLike(config.dialect)) {
+          // MySQL `GET_LOCK(name, 0)` returns 1 immediately if free, 0
+          // if held by another connection.
+          const lockName = `bqb:${String(key)}`
+          const q = prepareQuery('SELECT GET_LOCK(?, 0) AS ok', [lockName])
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'raw')))
+          return Number(rows?.[0]?.ok) === 1
+        }
+        // SQLite: no primitive. Return false (lock unavailable) so
+        // callers fall through to whatever non-distributed path they
+        // had. Loud throw would crash apps that gracefully degrade
+        // when locks aren't held.
+        return false
+      })
     },
-    async advisoryUnlock(key: number | string): Promise<boolean> {
-      // Must run on the same connection that took the lock — hence `_sql`,
-      // and hence the requirement that callers hold a reserved builder.
-      if (config.dialect === 'postgres') {
-        const k = advisoryLockKey(key)
-        const q = prepareQuery('SELECT pg_advisory_unlock($1) as ok', [k])
-        const rows = await runWithHooks<any[]>(q, 'raw')
-        return Boolean(rows?.[0]?.ok)
-      }
-      if (isMysqlLike(config.dialect)) {
-        const lockName = `bqb:${String(key)}`
-        const q = prepareQuery('SELECT RELEASE_LOCK(?) AS ok', [lockName])
-        const rows = await runWithHooks<any[]>(q, 'raw')
-        return Number(rows?.[0]?.ok) === 1
-      }
-      // SQLite never took one; mirror tryAdvisoryLock's graceful shape.
-      return false
+    advisoryUnlock(key: number | string): boolean {
+      return settle(function* (): Generator<unknown, boolean, unknown> {
+        // Must run on the same connection that took the lock — hence `_sql`,
+        // and hence the requirement that callers hold a reserved builder.
+        if (config.dialect === 'postgres') {
+          const k = advisoryLockKey(key)
+          const q = prepareQuery('SELECT pg_advisory_unlock($1) as ok', [k])
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'raw')))
+          return Boolean(rows?.[0]?.ok)
+        }
+        if (isMysqlLike(config.dialect)) {
+          const lockName = `bqb:${String(key)}`
+          const q = prepareQuery('SELECT RELEASE_LOCK(?) AS ok', [lockName])
+          const rows = (yield* wait(runWithHooks<any[]>(q, 'raw')))
+          return Number(rows?.[0]?.ok) === 1
+        }
+        // SQLite never took one; mirror tryAdvisoryLock's graceful shape.
+        return false
+      })
     },
     unsafe(query: string, params?: any[]) {
       // Throws at the call site, before the connection sees a query whose
@@ -8794,222 +9029,269 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       // builder whose `_sql` is the reserved transaction connection; routing
       // raw SQL through the process-wide pool lets it escape the transaction
       // (and makes row locks such as `FOR UPDATE` ineffective).
-      return (_sql as any).unsafe(query, params)
+      return rawStatement((_sql as any).unsafe(query, params))
     },
     /** SQLite-only raw INSERT queue. Like unsafe(), this bypasses query hooks. */
     deferInsert: _sql.deferInsert?.bind(_sql),
     /** Persist this connection's queued INSERTs before returning. SQLite only. */
     flushDeferredInserts: _sql.flushDeferredInserts?.bind(_sql),
     file(path: string, params?: any[]) {
-      return (_sql as any).file(path, params)
+      return rawStatement((_sql as any).file(path, params))
     },
-    async reserve() {
-      const reserved = await (bunSql as any).reserve()
-      const qb = createQueryBuilder<DB>({ sql: reserved, meta, schema, hooks: state?.hooks }) as any
-      qb.release = () => reserved.release()
-      return qb
+    reserve() {
+      return settle(function* () {
+        const reserved = (yield* wait((builderPool() as any).reserve()))
+        const qb = createQueryBuilder<DB>({ sql: reserved, meta, schema, hooks: state?.hooks }) as any
+        qb.release = () => reserved.release()
+        return qb
+      })
     },
-    async close(opts?: { timeout?: number }) {
-      await (bunSql as any).close(opts)
+    close(opts?: { timeout?: number }) {
+      return settle(function* () {
+        yield* wait((builderPool() as any).close(opts))
+      })
     },
-    async listen(channel: string, handler?: (payload: any) => void) {
-      // Placeholder until Bun exposes LISTEN/NOTIFY API. Use a polling fallback or raw SQL when available
-      // await (bunSql as any)`LISTEN ${bunSql(channel)}`
-      if (handler) {
-        // Users can wire their own NOTIFY handling with triggers/server side until native support lands
-      }
+    listen(channel: string, handler?: (payload: any) => void) {
+      return settle(function* () {
+        // Placeholder until Bun exposes LISTEN/NOTIFY API. Use a polling fallback or raw SQL when available
+        // await (bunSql as any)`LISTEN ${bunSql(channel)}`
+        if (handler) {
+          // Users can wire their own NOTIFY handling with triggers/server side until native support lands
+        }
+      })
     },
-    async unlisten(_channel?: string) {
-      // Placeholder for UNLISTEN channel/all
+    unlisten(_channel?: string) {
+      return settle(function* () {
+        // Placeholder for UNLISTEN channel/all
+      })
     },
-    async notify(_channel: string, _payload?: any) {
-      // Placeholder; when Bun exposes, use NOTIFY channel, 'payload'
-      // await (bunSql as any)`NOTIFY ${bunSql(channel)}, ${bunSql(JSON.stringify(payload ?? null))}`
+    notify(_channel: string, _payload?: any) {
+      return settle(function* () {
+        // Placeholder; when Bun exposes, use NOTIFY channel, 'payload'
+        // await (bunSql as any)`NOTIFY ${bunSql(channel)}, ${bunSql(JSON.stringify(payload ?? null))}`
+      })
     },
-    async copyTo(_queryOrTable: string, _options?: Record<string, any>) {
-      // Placeholder for future COPY support
-      throw new Error('COPY TO is not yet supported by Bun.sql; placeholder')
+    copyTo(_queryOrTable: string, _options?: Record<string, any>) {
+      return settle(function* () {
+        // Placeholder for future COPY support
+        throw new Error('COPY TO is not yet supported by Bun.sql; placeholder')
+      })
     },
-    async copyFrom(_queryOrTable: string, _source: AsyncIterable<any> | Iterable<any>, _options?: Record<string, any>) {
-      // Placeholder for future COPY support
-      throw new Error('COPY FROM is not yet supported by Bun.sql; placeholder')
+    copyFrom(_queryOrTable: string, _source: AsyncIterable<any> | Iterable<any>, _options?: Record<string, any>) {
+      return settle(function* () {
+        // Placeholder for future COPY support
+        throw new Error('COPY FROM is not yet supported by Bun.sql; placeholder')
+      })
     },
-    async ping() {
-      try {
-        const q = prepareQuery('SELECT 1')
-        await runWithHooks<any[]>(q, 'select')
-        return true
-      }
-      catch {
-        return false
-      }
-    },
-    async waitForReady(opts?: { attempts?: number, delayMs?: number }) {
-      const attempts = Math.max(1, opts?.attempts ?? 10)
-      const delay = Math.max(10, opts?.delayMs ?? 100)
-      for (let i = 0; i < attempts; i++) {
-        if (await (this as any).ping())
-          return
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-      throw new Error('Database not ready after waiting')
-    },
-    async transaction(fn, options) {
-      const defaults = state?.txDefaults
-      const opts: TransactionOptions = { ...defaults, ...options }
-      if (opts.sqliteMode !== undefined) {
-        if (config.dialect !== 'sqlite')
-          throw new TypeError('[query-builder] sqliteMode requires the SQLite dialect')
-        if (!['deferred', 'immediate', 'exclusive'].includes(opts.sqliteMode))
-          throw new TypeError('[query-builder] sqliteMode must be deferred, immediate or exclusive')
-      }
-      // Use THIS builder's connection (the injected one when present, the same
-      // one its reads use), not the always-global `bunSql`. Otherwise a builder
-      // created with `createQueryBuilder({ sql })` ran its transactions on a
-      // different connection than its queries — which silently breaks when the
-      // two aren't the same database (e.g. distinct in-memory sqlite handles).
-      const txConn: any = state?.sql ?? bunSql
-      // A nested transaction() must open a SAVEPOINT, not a new top-level
-      // transaction — Bun's driver throws "cannot call begin inside a
-      // transaction" otherwise. The builder handed to a tx callback is flagged
-      // with `inTransaction`, so a nested call dispatches to `savepoint`.
-      const nested = state?.inTransaction === true
-      const txMethod = nested && typeof txConn?.savepoint === 'function' ? 'savepoint' : 'begin'
-      const runWith = async (attempt: number): Promise<any> => {
-        opts.logger?.({ type: 'start', attempt })
-        const start = Date.now()
-        const beginOptions = !nested && opts.sqliteMode ? [opts.sqliteMode.toUpperCase()] : []
-        return await (txConn as any)[txMethod](...beginOptions, async (tx: any) => {
-          const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks, inTransaction: true })
-
-          // Transaction isolation + read-only mode — dialect-specific
-          // SQL, with a clear "not supported" path for SQLite. The
-          // previous code emitted Postgres syntax verbatim on every
-          // dialect AND silently swallowed errors on the read-only
-          // path, so callers asking for `readOnly: true` on MySQL
-          // silently got a read-write transaction instead. Now each
-          // dialect dispatches to its own SQL form; unsupported
-          // combinations throw a clear error. See stacksjs/stacks#1862 #14.
-          // Skipped for a nested savepoint: isolation is a property of the
-          // enclosing transaction and can't be set on a savepoint.
-          if (opts?.isolation && !nested) {
-            const level = opts.isolation
-            const upper = level === 'read committed'
-              ? 'READ COMMITTED'
-              : level === 'repeatable read'
-                ? 'REPEATABLE READ'
-                : 'SERIALIZABLE'
-            if (config.dialect === 'postgres') {
-              await (tx as any).unsafe(`SET TRANSACTION ISOLATION LEVEL ${upper}`)
-            }
-            else if (isMysqlLike(config.dialect)) {
-              // MySQL uses `SET SESSION TRANSACTION ISOLATION LEVEL`
-              // — applied per-session before the transaction body.
-              // For a per-transaction setting MySQL needs the
-              // SET TRANSACTION statement to come BEFORE BEGIN,
-              // which `bunSql.begin()` doesn't expose. We fall back
-              // to the session-level form, which matches Postgres'
-              // transaction-scoped semantics closely enough.
-              await (tx as any).unsafe(`SET TRANSACTION ISOLATION LEVEL ${upper}`)
-            }
-            else {
-              // SQLite has only a single isolation level (SERIALIZABLE)
-              // — refuse loud rather than silently ignoring a level
-              // the caller explicitly asked for.
-              if (level !== 'serializable') {
-                throw new Error(`[query-builder] transaction({ isolation: '${level}' }) not supported on SQLite (only 'serializable'). Use a Postgres or MySQL deployment for finer-grained isolation.`)
-              }
-            }
-          }
-          if (opts?.readOnly) {
-            if (config.dialect === 'postgres') {
-              await (tx as any).unsafe('SET TRANSACTION READ ONLY')
-            }
-            else if (isMysqlLike(config.dialect)) {
-              await (tx as any).unsafe('SET TRANSACTION READ ONLY')
-            }
-            else {
-              // SQLite has `PRAGMA query_only = ON` for read-only
-              // sessions, but that's session-scoped not
-              // transaction-scoped. Refuse rather than silently
-              // accepting writes inside a "read-only" transaction.
-              throw new Error('[query-builder] transaction({ readOnly: true }) not supported on SQLite. Use a Postgres or MySQL deployment.')
-            }
-          }
-          const res = await fn(qb)
-          const durationMs = Date.now() - start
-          opts.logger?.({ type: 'commit', attempt, durationMs })
-          return res
-        })
-      }
-      const retries = Math.max(0, opts?.retries ?? 0)
-      let attempt = 0
-      let out: Awaited<ReturnType<typeof fn>>
-      // Retry on common serialization/deadlock errors
-      for (;;) {
+    ping() {
+      return settle(function* () {
         try {
-          out = await runWith(attempt + 1)
-          break
+          const q = prepareQuery('SELECT 1')
+          yield* wait(runWithHooks<any[]>(q, 'select'))
+          return true
         }
-        catch (err: any) {
-          const retriable = isRetriableTxError(err) || matchesSqlState(err, opts.sqlStates)
-          if (attempt < retries && retriable) {
-            attempt++
-            opts?.onRetry?.(attempt, err)
-            const delay = computeBackoffMs(attempt, opts.backoff)
-            if (delay > 0)
-              await sleep(delay)
-            continue
-          }
-          try {
-            opts.onRollback?.(err)
-          }
-          catch {}
-          try {
-            opts.afterRollback?.()
-          }
-          catch {}
-          throw err
+        catch {
+          return false
         }
-      }
-      // The driver has committed. A callback failure must propagate without
-      // replaying committed writes or falsely reporting that they rolled back.
-      await opts.afterCommit?.()
-      return out
-    },
-    async savepoint(fn) {
-      // The guard is `inTransaction` — the flag `transaction()` sets on the
-      // builder it hands to its callback — NOT the mere presence of a
-      // `.savepoint` method on the connection. Bun's top-level `SQL` object
-      // exposes `savepoint` too, so the old check passed OUTSIDE any
-      // transaction and issued a bare SAVEPOINT against the pool instead of
-      // raising. It only looked correct where the connection was unreachable
-      // and the method lookup failed for the wrong reason.
-      if (state?.inTransaction !== true)
-        throw new Error('savepoint() must be called inside a transaction')
-      const s: any = _sql
-      if (!s || typeof s.savepoint !== 'function')
-        throw new Error('savepoint() is not supported by the active connection')
-      return await s.savepoint(async (sp: any) => {
-        // Carry the flag: a savepoint body is still inside a transaction, so a
-        // nested savepoint()/transaction() from here must nest, not begin.
-        const qb = createQueryBuilder<DB>({ sql: sp, meta, schema, hooks: state?.hooks, inTransaction: true })
-        return await fn(qb)
       })
     },
-    async beginDistributed(name, fn) {
-      const txConn: any = state?.sql ?? bunSql
-      const res = await (txConn as any).beginDistributed(name, async (tx: any) => {
-        const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks })
-        return await fn(qb)
+    waitForReady(opts?: { attempts?: number, delayMs?: number }) {
+      const self = this
+      return settle(function* () {
+        const attempts = Math.max(1, opts?.attempts ?? 10)
+        const delay = Math.max(10, opts?.delayMs ?? 100)
+        for (let i = 0; i < attempts; i++) {
+          if ((yield* wait((self as any).ping())))
+            return
+          yield* wait(new Promise(resolve => setTimeout(resolve, delay)))
+        }
+        throw new Error('Database not ready after waiting')
       })
-      return res as any
     },
-    async commitDistributed(name) {
-      await (bunSql as any).commitDistributed(name)
+    transaction(fn, options) {
+      return settle(function* () {
+        const defaults = state?.txDefaults
+        const opts: TransactionOptions = { ...defaults, ...options }
+        if (opts.sqliteMode !== undefined) {
+          if (config.dialect !== 'sqlite')
+            throw new TypeError('[query-builder] sqliteMode requires the SQLite dialect')
+          if (!['deferred', 'immediate', 'exclusive'].includes(opts.sqliteMode))
+            throw new TypeError('[query-builder] sqliteMode must be deferred, immediate or exclusive')
+        }
+        // Use THIS builder's connection (the injected one when present, the same
+        // one its reads use), not the always-global `bunSql`. Otherwise a builder
+        // created with `createQueryBuilder({ sql })` ran its transactions on a
+        // different connection than its queries — which silently breaks when the
+        // two aren't the same database (e.g. distinct in-memory sqlite handles).
+        const txConn: any = state?.sql ?? builderConnection()
+        // A nested transaction() must open a SAVEPOINT, not a new top-level
+        // transaction — Bun's driver throws "cannot call begin inside a
+        // transaction" otherwise. The builder handed to a tx callback is flagged
+        // with `inTransaction`, so a nested call dispatches to `savepoint`.
+        const nested = state?.inTransaction === true
+        const txMethod = nested && typeof txConn?.savepoint === 'function' ? 'savepoint' : 'begin'
+        const runWith = (attempt: number): any => {
+          return settle(function* (): Generator<unknown, any, unknown> {
+            opts.logger?.({ type: 'start', attempt })
+            const start = Date.now()
+            const beginOptions = !nested && opts.sqliteMode ? [opts.sqliteMode.toUpperCase()] : []
+            return (yield* wait((txConn as any)[txMethod](...beginOptions, (tx: any) => {
+              return settle(function* () {
+                const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks, inTransaction: true })
+
+                // Transaction isolation + read-only mode — dialect-specific
+                // SQL, with a clear "not supported" path for SQLite. The
+                // previous code emitted Postgres syntax verbatim on every
+                // dialect AND silently swallowed errors on the read-only
+                // path, so callers asking for `readOnly: true` on MySQL
+                // silently got a read-write transaction instead. Now each
+                // dialect dispatches to its own SQL form; unsupported
+                // combinations throw a clear error. See stacksjs/stacks#1862 #14.
+                // Skipped for a nested savepoint: isolation is a property of the
+                // enclosing transaction and can't be set on a savepoint.
+                if (opts?.isolation && !nested) {
+                  const level = opts.isolation
+                  const upper = level === 'read committed'
+                    ? 'READ COMMITTED'
+                    : level === 'repeatable read'
+                      ? 'REPEATABLE READ'
+                      : 'SERIALIZABLE'
+                  if (config.dialect === 'postgres') {
+                    yield* wait((tx as any).unsafe(`SET TRANSACTION ISOLATION LEVEL ${upper}`))
+                  }
+                  else if (isMysqlLike(config.dialect)) {
+                    // MySQL uses `SET SESSION TRANSACTION ISOLATION LEVEL`
+                    // — applied per-session before the transaction body.
+                    // For a per-transaction setting MySQL needs the
+                    // SET TRANSACTION statement to come BEFORE BEGIN,
+                    // which `bunSql.begin()` doesn't expose. We fall back
+                    // to the session-level form, which matches Postgres'
+                    // transaction-scoped semantics closely enough.
+                    yield* wait((tx as any).unsafe(`SET TRANSACTION ISOLATION LEVEL ${upper}`))
+                  }
+                  else {
+                    // SQLite has only a single isolation level (SERIALIZABLE)
+                    // — refuse loud rather than silently ignoring a level
+                    // the caller explicitly asked for.
+                    if (level !== 'serializable') {
+                      throw new Error(`[query-builder] transaction({ isolation: '${level}' }) not supported on SQLite (only 'serializable'). Use a Postgres or MySQL deployment for finer-grained isolation.`)
+                    }
+                  }
+                }
+                if (opts?.readOnly) {
+                  if (config.dialect === 'postgres') {
+                    yield* wait((tx as any).unsafe('SET TRANSACTION READ ONLY'))
+                  }
+                  else if (isMysqlLike(config.dialect)) {
+                    yield* wait((tx as any).unsafe('SET TRANSACTION READ ONLY'))
+                  }
+                  else {
+                    // SQLite has `PRAGMA query_only = ON` for read-only
+                    // sessions, but that's session-scoped not
+                    // transaction-scoped. Refuse rather than silently
+                    // accepting writes inside a "read-only" transaction.
+                    throw new Error('[query-builder] transaction({ readOnly: true }) not supported on SQLite. Use a Postgres or MySQL deployment.')
+                  }
+                }
+                const res = (yield* wait(fn(qb)))
+                const durationMs = Date.now() - start
+                opts.logger?.({ type: 'commit', attempt, durationMs })
+                return res
+              })
+            })))
+          })
+        }
+        const retries = Math.max(0, opts?.retries ?? 0)
+        let attempt = 0
+        let waited = false
+        let out: Awaited<ReturnType<typeof fn>>
+        // Retry on common serialization/deadlock errors
+        for (;;) {
+          try {
+            const answer = runWith(attempt + 1)
+            waited ||= isThenable(answer)
+            out = (yield* wait(answer))
+            break
+          }
+          catch (err: any) {
+            const retriable = isRetriableTxError(err) || matchesSqlState(err, opts.sqlStates)
+            if (attempt < retries && retriable) {
+              attempt++
+              opts?.onRetry?.(attempt, err)
+              const delay = computeBackoffMs(attempt, opts.backoff)
+              // A transaction that has answered in place so far pauses in
+              // place too. Waiting here instead would turn it into a promise
+              // on the one run in a thousand that had to retry.
+              if (delay > 0) {
+                if (waited)
+                  yield* wait(sleep(delay))
+                else
+                  Bun.sleepSync(delay)
+              }
+              continue
+            }
+            try {
+              opts.onRollback?.(err)
+            }
+            catch {}
+            try {
+              opts.afterRollback?.()
+            }
+            catch {}
+            throw err
+          }
+        }
+        // The driver has committed. A callback failure must propagate without
+        // replaying committed writes or falsely reporting that they rolled back.
+        yield* wait(opts.afterCommit?.())
+        return out
+      })
     },
-    async rollbackDistributed(name) {
-      await (bunSql as any).rollbackDistributed(name)
+    savepoint(fn) {
+      return settle(function* () {
+        // The guard is `inTransaction` — the flag `transaction()` sets on the
+        // builder it hands to its callback — NOT the mere presence of a
+        // `.savepoint` method on the connection. Bun's top-level `SQL` object
+        // exposes `savepoint` too, so the old check passed OUTSIDE any
+        // transaction and issued a bare SAVEPOINT against the pool instead of
+        // raising. It only looked correct where the connection was unreachable
+        // and the method lookup failed for the wrong reason.
+        if (state?.inTransaction !== true)
+          throw new Error('savepoint() must be called inside a transaction')
+        const s: any = _sql
+        if (!s || typeof s.savepoint !== 'function')
+          throw new Error('savepoint() is not supported by the active connection')
+        return (yield* wait(s.savepoint((sp: any) => {
+          return settle(function* () {
+            // Carry the flag: a savepoint body is still inside a transaction, so a
+            // nested savepoint()/transaction() from here must nest, not begin.
+            const qb = createQueryBuilder<DB>({ sql: sp, meta, schema, hooks: state?.hooks, inTransaction: true })
+            return (yield* wait(fn(qb)))
+          })
+        })))
+      })
+    },
+    beginDistributed(name, fn) {
+      return settle(function* () {
+        const txConn: any = state?.sql ?? builderConnection()
+        const res = (yield* wait((txConn as any).beginDistributed(name, (tx: any) => {
+          return settle(function* () {
+            const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks })
+            return (yield* wait(fn(qb)))
+          })
+        })))
+        return res as any
+      })
+    },
+    commitDistributed(name) {
+      return settle(function* () {
+        yield* wait((builderPool() as any).commitDistributed(name))
+      })
+    },
+    rollbackDistributed(name) {
+      return settle(function* () {
+        yield* wait((builderPool() as any).rollbackDistributed(name))
+      })
     },
     setTransactionDefaults(defaults) {
       state = { ...state, txDefaults: { ...state?.txDefaults, ...defaults } }
@@ -9019,451 +9301,509 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         return (this as any).transaction((tx: any) => fn(tx, ...(args as any)), options)
       }) as any
     },
-    async insertOrIgnore(table, values) {
-      // Built with explicit columns + placeholders rather than Bun's
-      // `${sql(table)} ${sql(values)}` helper, which is broken on every dialect
-      // (#1052). MySQL uses `INSERT IGNORE`; Postgres/SQLite `ON CONFLICT DO NOTHING`.
-      const rows = (Array.isArray(values) ? values : [values]) as Record<string, any>[]
-      if (!rows.length)
-        return undefined as any
-      const { colsSql, valuesSql, params } = buildInsertClause(rows)
-      const tbl = quoteInsertIdent(String(table))
-      const sqlText = isMysqlLike(config.dialect)
-        ? `INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
-        : `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} ON CONFLICT DO NOTHING`
-      return (prepareQuery(sqlText, params) as any).execute()
+    insertOrIgnore(table, values) {
+      return settle(function* () {
+        // Built with explicit columns + placeholders rather than Bun's
+        // `${sql(table)} ${sql(values)}` helper, which is broken on every dialect
+        // (#1052). MySQL uses `INSERT IGNORE`; Postgres/SQLite `ON CONFLICT DO NOTHING`.
+        const rows = (Array.isArray(values) ? values : [values]) as Record<string, any>[]
+        if (!rows.length)
+          return undefined as any
+        const { colsSql, valuesSql, params } = buildInsertClause(rows)
+        const tbl = quoteInsertIdent(String(table))
+        const sqlText = isMysqlLike(config.dialect)
+          ? `INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
+          : `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} ON CONFLICT DO NOTHING`
+        return executeQuery((prepareQuery(sqlText, params) as any))
+      })
     },
-    async insertGetId(table, values, idColumn = 'id' as any) {
-      const { colsSql, valuesSql, params } = buildInsertClause([values as Record<string, any>])
-      const tbl = quoteInsertIdent(String(table))
-      if (isMysqlLike(config.dialect)) {
-        // MySQL has no RETURNING — insert then read LAST_INSERT_ID().
-        await (prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
-        const [row] = await (prepareQuery(`SELECT LAST_INSERT_ID() as id`) as any).execute()
+    insertGetId(table, values, idColumn = 'id' as any) {
+      return settle(function* () {
+        const { colsSql, valuesSql, params } = buildInsertClause([values as Record<string, any>])
+        const tbl = quoteInsertIdent(String(table))
+        if (isMysqlLike(config.dialect)) {
+          // MySQL has no RETURNING — insert then read LAST_INSERT_ID().
+          yield* wait(executeQuery((prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any)))
+          const [row] = (yield* wait(executeQuery((prepareQuery(`SELECT LAST_INSERT_ID() as id`) as any))))
+          return row?.id
+        }
+        if (config.dialect === 'sqlite') {
+          // The bun:sqlite wrapper returns { changes, lastInsertRowid } rather
+          // than RETURNING rows, so read the rowid directly.
+          const res = (yield* wait(executeQuery((prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any))))
+          if (res?.lastInsertRowid != null)
+            return res.lastInsertRowid
+          const [row] = (yield* wait(executeQuery((prepareQuery(`SELECT last_insert_rowid() as id`) as any))))
+          return row?.id
+        }
+        // Postgres supports RETURNING.
+        const [row] = (yield* wait(executeQuery((prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} RETURNING ${quoteInsertIdent(String(idColumn))} as id`, params) as any))))
         return row?.id
-      }
-      if (config.dialect === 'sqlite') {
-        // The bun:sqlite wrapper returns { changes, lastInsertRowid } rather
-        // than RETURNING rows, so read the rowid directly.
-        const res = await (prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
-        if (res?.lastInsertRowid != null)
-          return res.lastInsertRowid
-        const [row] = await (prepareQuery(`SELECT last_insert_rowid() as id`) as any).execute()
-        return row?.id
-      }
-      // Postgres supports RETURNING.
-      const [row] = await (prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} RETURNING ${quoteInsertIdent(String(idColumn))} as id`, params) as any).execute()
-      return row?.id
+      })
     },
-    async updateOrInsert(table, match, values) {
-      const tbl = quoteInsertIdent(String(table))
-      const matchKeys = Object.keys(match)
-      let idx = 1
-      const whereSql = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(idx++)}`).join(' AND ')
-      const whereParams = matchKeys.map(k => (match as any)[k])
-      const existsRows = await (prepareQuery(`SELECT 1 FROM ${tbl} WHERE ${whereSql} LIMIT 1`, whereParams) as any).execute()
-      if ((existsRows as any[]).length) {
-        const setKeys = Object.keys(values)
-        let i = 1
-        const setSql = setKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(', ')
-        const whereSql2 = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(' AND ')
-        const params = [...setKeys.map(k => (values as any)[k]), ...matchKeys.map(k => (match as any)[k])]
-        await (prepareQuery(`UPDATE ${tbl} SET ${setSql} WHERE ${whereSql2}`, params) as any).execute()
+    updateOrInsert(table, match, values) {
+      return settle(function* () {
+        const tbl = quoteInsertIdent(String(table))
+        const matchKeys = Object.keys(match)
+        let idx = 1
+        const whereSql = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(idx++)}`).join(' AND ')
+        const whereParams = matchKeys.map(k => (match as any)[k])
+        const existsRows = (yield* wait(executeQuery((prepareQuery(`SELECT 1 FROM ${tbl} WHERE ${whereSql} LIMIT 1`, whereParams) as any))))
+        if ((existsRows as any[]).length) {
+          const setKeys = Object.keys(values)
+          let i = 1
+          const setSql = setKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(', ')
+          const whereSql2 = matchKeys.map(k => `${quoteInsertIdent(k)} = ${getPlaceholder(i++)}`).join(' AND ')
+          const params = [...setKeys.map(k => (values as any)[k]), ...matchKeys.map(k => (match as any)[k])]
+          yield* wait(executeQuery((prepareQuery(`UPDATE ${tbl} SET ${setSql} WHERE ${whereSql2}`, params) as any)))
+          return true
+        }
+        const { colsSql, valuesSql, params } = buildInsertClause([{ ...match, ...values } as Record<string, any>])
+        yield* wait(executeQuery((prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any)))
         return true
-      }
-      const { colsSql, valuesSql, params } = buildInsertClause([{ ...match, ...values } as Record<string, any>])
-      await (prepareQuery(`INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
-      return true
+      })
     },
-    async upsert(table, rows, conflictColumns, mergeColumns) {
-      const targetCols = conflictColumns.map(c => String(c))
-      const setCols = (mergeColumns ?? []).map(c => String(c))
-      const list = rows as Record<string, any>[]
-      if (!list.length)
-        return undefined as any
-      const { colsSql, valuesSql, params } = buildInsertClause(list)
-      const tbl = quoteInsertIdent(String(table))
-      const insert = `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
+    upsert(table, rows, conflictColumns, mergeColumns) {
+      return settle(function* () {
+        const targetCols = conflictColumns.map(c => String(c))
+        const setCols = (mergeColumns ?? []).map(c => String(c))
+        const list = rows as Record<string, any>[]
+        if (!list.length)
+          return undefined as any
+        const { colsSql, valuesSql, params } = buildInsertClause(list)
+        const tbl = quoteInsertIdent(String(table))
+        const insert = `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
 
-      // MySQL uses ON DUPLICATE KEY UPDATE / INSERT IGNORE; Postgres + SQLite
-      // use ON CONFLICT ... DO UPDATE / DO NOTHING. Empty mergeColumns => the
-      // "do nothing" form (an empty SET is a syntax error). See #1035, #1052.
-      if (isMysqlLike(config.dialect)) {
+        // MySQL uses ON DUPLICATE KEY UPDATE / INSERT IGNORE; Postgres + SQLite
+        // use ON CONFLICT ... DO UPDATE / DO NOTHING. Empty mergeColumns => the
+        // "do nothing" form (an empty SET is a syntax error). See #1035, #1052.
+        if (isMysqlLike(config.dialect)) {
+          if (setCols.length === 0)
+            return executeQuery((prepareQuery(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any))
+          const updateList = setCols.map(c => `${quoteInsertIdent(c)} = VALUES(${quoteInsertIdent(c)})`).join(', ')
+          return executeQuery((prepareQuery(`${insert} ON DUPLICATE KEY UPDATE ${updateList}`, params) as any))
+        }
+
+        const targets = targetCols.map(quoteInsertIdent).join(', ')
         if (setCols.length === 0)
-          return (prepareQuery(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any).execute()
-        const updateList = setCols.map(c => `${quoteInsertIdent(c)} = VALUES(${quoteInsertIdent(c)})`).join(', ')
-        return (prepareQuery(`${insert} ON DUPLICATE KEY UPDATE ${updateList}`, params) as any).execute()
-      }
-
-      const targets = targetCols.map(quoteInsertIdent).join(', ')
-      if (setCols.length === 0)
-        return (prepareQuery(`${insert} ON CONFLICT (${targets}) DO NOTHING`, params) as any).execute()
-      const updateList = setCols.map(c => `${quoteInsertIdent(c)} = EXCLUDED.${quoteInsertIdent(c)}`).join(', ')
-      return (prepareQuery(`${insert} ON CONFLICT (${targets}) DO UPDATE SET ${updateList}`, params) as any).execute()
+          return executeQuery((prepareQuery(`${insert} ON CONFLICT (${targets}) DO NOTHING`, params) as any))
+        const updateList = setCols.map(c => `${quoteInsertIdent(c)} = EXCLUDED.${quoteInsertIdent(c)}`).join(', ')
+        return executeQuery((prepareQuery(`${insert} ON CONFLICT (${targets}) DO UPDATE SET ${updateList}`, params) as any))
+      })
     },
-    async save(table, values) {
-      const pk = meta?.primaryKeys[String(table)] ?? 'id'
-      const id = (values as any)[pk]
-      if (id != null) {
-        // First check if the row exists
-        const existingRow = await (this as any).selectFrom(table).find(id)
+    save(table, values) {
+      const self = this
+      return settle(function* () {
+        const pk = meta?.primaryKeys[String(table)] ?? 'id'
+        const id = (values as any)[pk]
+        if (id != null) {
+          // First check if the row exists
+          const existingRow = (yield* wait((self as any).selectFrom(table).find(id)))
 
-        if (existingRow) {
-          // Row exists, update it
-          await (this as any).updateTable(table).set(values as any).where({ [pk]: id } as any).execute()
+          if (existingRow) {
+            // Row exists, update it
+            yield* wait((self as any).updateTable(table).set(values as any).where({ [pk]: id } as any).execute())
 
-          // Retrieve the updated row
-          const updatedRow = await (this as any).selectFrom(table).find(id)
-          if (!updatedRow)
-            throw new Error('save() failed to retrieve updated row')
-          return updatedRow
+            // Retrieve the updated row
+            const updatedRow = (yield* wait((self as any).selectFrom(table).find(id)))
+            if (!updatedRow)
+              throw new Error('save() failed to retrieve updated row')
+            return updatedRow
+          }
+          else {
+            // Row doesn't exist, create it
+            return (yield* wait((self as any).create(table, values)))
+          }
         }
-        else {
-          // Row doesn't exist, create it
-          return await (this as any).create(table, values)
-        }
-      }
-      return await (this as any).create(table, values)
+        return (yield* wait((self as any).create(table, values)))
+      })
     },
-    async remove(table, id) {
-      return await (this as any).deleteFrom(table).where({ id } as any).execute()
+    remove(table, id) {
+      const self = this
+      return settle(function* () {
+        return (yield* wait((self as any).deleteFrom(table).where({ id } as any).execute()))
+      })
     },
-    async find(table, id) {
-      return await (this as any).selectFrom(table).find(id)
+    find(table, id) {
+      const self = this
+      return settle(function* () {
+        return (yield* wait((self as any).selectFrom(table).find(id)))
+      })
     },
-    async findOrFail(table, id) {
-      return await (this as any).selectFrom(table).findOrFail(id)
+    findOrFail(table, id) {
+      const self = this
+      return settle(function* () {
+        return (yield* wait((self as any).selectFrom(table).findOrFail(id)))
+      })
     },
-    async findMany(table, ids) {
-      return await (this as any).selectFrom(table).findMany(ids)
+    findMany(table, ids) {
+      const self = this
+      return settle(function* () {
+        return (yield* wait((self as any).selectFrom(table).findMany(ids)))
+      })
     },
-    async latest(table, column) {
-      return await (this as any).selectFrom(table).latest(column as any).first()
+    latest(table, column) {
+      const self = this
+      return settle(function* () {
+        return (yield* wait((self as any).selectFrom(table).latest(column as any).first()))
+      })
     },
-    async oldest(table, column) {
-      return await (this as any).selectFrom(table).oldest(column as any).first()
+    oldest(table, column) {
+      const self = this
+      return settle(function* () {
+        return (yield* wait((self as any).selectFrom(table).oldest(column as any).first()))
+      })
     },
     skip(table, count) {
       return (this as any).selectFrom(table).offset(count)
     },
-    async rawQuery(query: string) {
-      const start = Date.now()
-      try {
-        activeHooks()?.onQueryStart?.({ sql: query, kind: 'raw' })
-        const res = await (_sql as any).unsafe(query)
-        activeHooks()?.onQueryEnd?.({ sql: query, durationMs: Date.now() - start, kind: 'raw' })
-        return res
-      }
-      catch (err) {
-        activeHooks()?.onQueryError?.({ sql: query, error: err, durationMs: Date.now() - start, kind: 'raw' })
-        throw err
-      }
-    },
-    async create(table, values) {
-      const pk = meta?.primaryKeys[String(table)] ?? 'id'
-
-      // beforeCreate hook
-      try {
-        await activeHooks()?.beforeCreate?.({ table: String(table), data: values })
-      }
-      catch (err) {
-        throw err
-      }
-
-      if (config.dialect === 'postgres') {
-        // For PostgreSQL, use RETURNING to get the ID, then fetch the full row
-        const q = _sql`INSERT INTO ${_sql(String(table))} ${_sql(values as any)} RETURNING ${_sql(String(pk))} as id`
-        const [result] = await q.execute()
-
-        if (!result?.id) {
-          console.error(`create() failed to get insert ID for table ${String(table)}`)
-          console.error('Inserted values:', values)
-          throw new Error(`create() failed to get insert ID for table ${String(table)}`)
-        }
-
-        const row = await (this as any).selectFrom(table).find(result.id)
-
-        if (!row) {
-          console.error(`create() failed to retrieve inserted row for table ${String(table)} with id ${result.id}`)
-          console.error('Inserted values:', values)
-          throw new Error(`create() failed to retrieve inserted row for table ${String(table)} with id ${result.id}`)
-        }
-
-        // afterCreate hook
+    rawQuery(query: string) {
+      return settle(function* () {
+        const start = Date.now()
         try {
-          await activeHooks()?.afterCreate?.({ table: String(table), data: values, result: row })
+          activeHooks()?.onQueryStart?.({ sql: query, kind: 'raw' })
+          const res = (yield* wait((_sql as any).unsafe(query)))
+          activeHooks()?.onQueryEnd?.({ sql: query, durationMs: Date.now() - start, kind: 'raw' })
+          return res
         }
-        catch {}
-
-        return row
-      }
-      else {
-        // For MySQL and other databases
-        const id = await (this as any).insertGetId(table, values, pk)
-
-        if (id == null) {
-          throw new Error(`create() failed to get insert ID for table ${String(table)}`)
+        catch (err) {
+          activeHooks()?.onQueryError?.({ sql: query, error: err, durationMs: Date.now() - start, kind: 'raw' })
+          throw err
         }
-
-        const row = await (this as any).selectFrom(table).find(id)
-
-        if (!row) {
-          console.error(`create() failed to retrieve inserted row for table ${String(table)} with id ${id}`)
-          console.error('Inserted values:', values)
-          throw new Error(`create() failed to retrieve inserted row for table ${String(table)} with id ${id}`)
-        }
-
-        // afterCreate hook
-        try {
-          await activeHooks()?.afterCreate?.({ table: String(table), data: values, result: row })
-        }
-        catch {}
-
-        return row
-      }
+      })
     },
-    async createMany(table, rows) {
-      if (!rows?.length)
-        return
+    create(table, values) {
+      const self = this
+      return settle(function* () {
+        const pk = meta?.primaryKeys[String(table)] ?? 'id'
 
-      // The union across every row, not just the first one's keys (#1189).
-      const { keys, uniform } = insertColumns(rows as Record<string, any>[])
-      const colCount = keys.length
-      const rowCount = rows.length
-      const params: any[] = []
+        // beforeCreate hook
+        try {
+          yield* wait(activeHooks()?.beforeCreate?.({ table: String(table), data: values }))
+        }
+        catch (err) {
+          throw err
+        }
 
-      // Quote table + column identifiers (#1033) — MySQL backticks, else
-      // double quotes (Postgres/SQLite).
-      const quoteId = isMysqlLike(config.dialect)
-        ? (id: string): string => `\`${String(id).replace(/`/g, '``')}\``
-        : (id: string): string => `"${String(id).replace(/"/g, '""')}"`
-      let sql = `INSERT INTO ${quoteId(String(table))}(${keys.map(quoteId).join(',')})VALUES`
-      for (let r = 0; r < rowCount; r++) {
-        if (r > 0)
-          sql += ','
-        sql += '('
-        const row = rows[r] as Record<string, any>
-        for (let c = 0; c < colCount; c++) {
-          if (c > 0)
-            sql += ','
-          if (!uniform && !(keys[c] in row)) {
-            sql += absentCellSql()
-            continue
+        if (config.dialect === 'postgres') {
+          // For PostgreSQL, use RETURNING to get the ID, then fetch the full row
+          const q = _sql`INSERT INTO ${_sql(String(table))} ${_sql(values as any)} RETURNING ${_sql(String(pk))} as id`
+          const [result] = (yield* wait(executeQuery(q)))
+
+          if (!result?.id) {
+            console.error(`create() failed to get insert ID for table ${String(table)}`)
+            console.error('Inserted values:', values)
+            throw new Error(`create() failed to get insert ID for table ${String(table)}`)
           }
-          sql += getPlaceholder(params.length + 1)
-          params.push(row[keys[c]])
+
+          const row = (yield* wait((self as any).selectFrom(table).find(result.id)))
+
+          if (!row) {
+            console.error(`create() failed to retrieve inserted row for table ${String(table)} with id ${result.id}`)
+            console.error('Inserted values:', values)
+            throw new Error(`create() failed to retrieve inserted row for table ${String(table)} with id ${result.id}`)
+          }
+
+          // afterCreate hook
+          try {
+            yield* wait(activeHooks()?.afterCreate?.({ table: String(table), data: values, result: row }))
+          }
+          catch {}
+
+          return row
         }
-        sql += ')'
-      }
+        else {
+          // For MySQL and other databases
+          const id = (yield* wait((self as any).insertGetId(table, values, pk)))
 
-      return prepareQuery(sql, params).execute()
+          if (id == null) {
+            throw new Error(`create() failed to get insert ID for table ${String(table)}`)
+          }
+
+          const row = (yield* wait((self as any).selectFrom(table).find(id)))
+
+          if (!row) {
+            console.error(`create() failed to retrieve inserted row for table ${String(table)} with id ${id}`)
+            console.error('Inserted values:', values)
+            throw new Error(`create() failed to retrieve inserted row for table ${String(table)} with id ${id}`)
+          }
+
+          // afterCreate hook
+          try {
+            yield* wait(activeHooks()?.afterCreate?.({ table: String(table), data: values, result: row }))
+          }
+          catch {}
+
+          return row
+        }
+      })
     },
-    async insertMany(table, rows) {
-      if (!rows?.length)
-        return
+    createMany(table, rows) {
+      return settle(function* () {
+        if (!rows?.length)
+          return
 
-      // The union across every row, not just the first one's keys (#1189).
-      const { keys, uniform } = insertColumns(rows as Record<string, any>[])
-      const colCount = keys.length
-      const rowCount = rows.length
-      const totalParams = rowCount * colCount
-      const params = new Array(totalParams)
+        // The union across every row, not just the first one's keys (#1189).
+        const { keys, uniform } = insertColumns(rows as Record<string, any>[])
+        const colCount = keys.length
+        const rowCount = rows.length
+        const params: any[] = []
 
-      // Pre-build a single row placeholder template: (?,?,?,?) or ($1,$2,$3,$4)
-      const isPositional = config.dialect === 'postgres'
-
-      // Both paths below reuse one shape for every row — the `?` template
-      // literally, the Postgres one by index arithmetic — which only holds when
-      // every row carries every column. A heterogeneous batch emits its tuples
-      // one at a time instead, with DEFAULT (or NULL on SQLite) where a row
-      // lacks a column.
-      if (!uniform) {
-        const tuples = new Array<string>(rowCount)
-        const bound: any[] = []
+        // Quote table + column identifiers (#1033) — MySQL backticks, else
+        // double quotes (Postgres/SQLite).
+        const quoteId = isMysqlLike(config.dialect)
+          ? (id: string): string => `\`${String(id).replace(/`/g, '``')}\``
+          : (id: string): string => `"${String(id).replace(/"/g, '""')}"`
+        let sql = `INSERT INTO ${quoteId(String(table))}(${keys.map(quoteId).join(',')})VALUES`
         for (let r = 0; r < rowCount; r++) {
+          if (r > 0)
+            sql += ','
+          sql += '('
           const row = rows[r] as Record<string, any>
-          const cells = new Array<string>(colCount)
           for (let c = 0; c < colCount; c++) {
-            if (!(keys[c] in row)) {
-              cells[c] = absentCellSql()
+            if (c > 0)
+              sql += ','
+            if (!uniform && !(keys[c] in row)) {
+              sql += absentCellSql()
               continue
             }
-            cells[c] = isPositional ? `$${bound.length + 1}` : '?'
-            bound.push(row[keys[c]])
+            sql += getPlaceholder(params.length + 1)
+            params.push(row[keys[c]])
           }
-          tuples[r] = `(${cells.join(',')})`
+          sql += ')'
         }
-        return prepareQuery(`INSERT INTO ${sqlIdent(String(table))}(${keys.map(k => sqlIdent(String(k))).join(',')})VALUES${tuples.join(',')}`, bound).execute()
-      }
 
-      let rowTemplate: string
-      if (!isPositional) {
-        // SQLite/MySQL: all placeholders are ?, build once and reuse
-        const placeholders = new Array(colCount)
-        for (let c = 0; c < colCount; c++) placeholders[c] = '?'
-        rowTemplate = `(${placeholders.join(',')})`
-      }
-      else {
-        rowTemplate = '' // not used for postgres
-      }
+        return executeQuery(prepareQuery(sql, params))
+      })
+    },
+    insertMany(table, rows) {
+      return settle(function* () {
+        if (!rows?.length)
+          return
 
-      // Build SQL and collect params
-      const sqlParts = new Array(rowCount + 2)
-      sqlParts[0] = `INSERT INTO ${sqlIdent(String(table))}(${keys.map(k => sqlIdent(String(k))).join(',')})VALUES`
-      let pidx = 0
+        // The union across every row, not just the first one's keys (#1189).
+        const { keys, uniform } = insertColumns(rows as Record<string, any>[])
+        const colCount = keys.length
+        const rowCount = rows.length
+        const totalParams = rowCount * colCount
+        const params = new Array(totalParams)
 
-      if (!isPositional) {
-        // Fast path: reuse the same template for every row
+        // Pre-build a single row placeholder template: (?,?,?,?) or ($1,$2,$3,$4)
+        const isPositional = config.dialect === 'postgres'
+
+        // Both paths below reuse one shape for every row — the `?` template
+        // literally, the Postgres one by index arithmetic — which only holds when
+        // every row carries every column. A heterogeneous batch emits its tuples
+        // one at a time instead, with DEFAULT (or NULL on SQLite) where a row
+        // lacks a column.
+        if (!uniform) {
+          const tuples = new Array<string>(rowCount)
+          const bound: any[] = []
+          for (let r = 0; r < rowCount; r++) {
+            const row = rows[r] as Record<string, any>
+            const cells = new Array<string>(colCount)
+            for (let c = 0; c < colCount; c++) {
+              if (!(keys[c] in row)) {
+                cells[c] = absentCellSql()
+                continue
+              }
+              cells[c] = isPositional ? `$${bound.length + 1}` : '?'
+              bound.push(row[keys[c]])
+            }
+            tuples[r] = `(${cells.join(',')})`
+          }
+          return executeQuery(prepareQuery(`INSERT INTO ${sqlIdent(String(table))}(${keys.map(k => sqlIdent(String(k))).join(',')})VALUES${tuples.join(',')}`, bound))
+        }
+
+        let rowTemplate: string
+        if (!isPositional) {
+          // SQLite/MySQL: all placeholders are ?, build once and reuse
+          const placeholders = new Array(colCount)
+          for (let c = 0; c < colCount; c++) placeholders[c] = '?'
+          rowTemplate = `(${placeholders.join(',')})`
+        }
+        else {
+          rowTemplate = '' // not used for postgres
+        }
+
+        // Build SQL and collect params
+        const sqlParts = new Array(rowCount + 2)
+        sqlParts[0] = `INSERT INTO ${sqlIdent(String(table))}(${keys.map(k => sqlIdent(String(k))).join(',')})VALUES`
+        let pidx = 0
+
+        if (!isPositional) {
+          // Fast path: reuse the same template for every row
+          for (let r = 0; r < rowCount; r++) {
+            const row = rows[r]
+            sqlParts[r + 1] = rowTemplate
+            for (let c = 0; c < colCount; c++) {
+              params[pidx++] = row[keys[c]]
+            }
+          }
+          // Join with commas between row templates
+          return executeQuery(prepareQuery(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params))
+        }
+
+        // Postgres path: positional placeholders
         for (let r = 0; r < rowCount; r++) {
           const row = rows[r]
-          sqlParts[r + 1] = rowTemplate
+          const placeholders = new Array(colCount)
           for (let c = 0; c < colCount; c++) {
+            placeholders[c] = `$${pidx + 1}`
             params[pidx++] = row[keys[c]]
           }
+          sqlParts[r + 1] = `(${placeholders.join(',')})`
         }
-        // Join with commas between row templates
-        return prepareQuery(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
-      }
+        return executeQuery(prepareQuery(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params))
+      })
+    },
+    updateMany(table, conditions, data) {
+      return settle(function* () {
+        // Ultra-optimized direct SQL construction
+        const dataKeys = Object.keys(data)
+        const dataLen = dataKeys.length
+        if (dataLen === 0)
+          return 0
 
-      // Postgres path: positional placeholders
-      for (let r = 0; r < rowCount; r++) {
-        const row = rows[r]
-        const placeholders = new Array(colCount)
-        for (let c = 0; c < colCount; c++) {
-          placeholders[c] = `$${pidx + 1}`
-          params[pidx++] = row[keys[c]]
+        const params: any[] = []
+
+        // Build SET clause using array join
+        const setClauses: string[] = Array.from({ length: dataLen })
+        for (let i = 0; i < dataLen; i++) {
+          setClauses[i] = `${sqlIdent(String(dataKeys[i]))}=${getPlaceholder(i + 1)}`
+          params.push((data as any)[dataKeys[i]])
         }
-        sqlParts[r + 1] = `(${placeholders.join(',')})`
-      }
-      return prepareQuery(sqlParts[0] + sqlParts.slice(1, rowCount + 1).join(','), params).execute()
+
+        let sql = `UPDATE ${sqlIdent(String(table))} SET ${setClauses.join(',')}`
+
+        // Build WHERE clause.
+        //
+        // Every branch below either appends a predicate or throws. `conditions`
+        // is a required parameter, so there is no shape of it that means "every
+        // row" — passing one is the caller saying they have a filter. Anything
+        // this cannot turn into a predicate used to fall straight through to an
+        // UPDATE with no WHERE, which rewrote the whole table and reported the
+        // full count as success. See #1112, and #1101 for the same defect in
+        // updateTable().
+        if (Array.isArray(conditions)) {
+          // Separated by spaces: the three parts used to be concatenated bare,
+          // which is fine for `=` and `>=` and produces `namelike?` for every
+          // word operator the allowed set contains.
+          const safeOperator = assertSafeWhereOperator(String(conditions[1]), 'updateMany')
+          sql += ` WHERE ${sqlIdent(String(conditions[0]))} ${safeOperator} ${getPlaceholder(params.length + 1)}`
+          params.push(conditions[2])
+        }
+        // A fragment is inside the declared `WhereExpression` type (through
+        // `WhereRaw`) and `raw` is a public export, so `updateMany(t, raw('id =
+        // 1'), data)` typechecks and reads like the intended way to express a
+        // condition this signature cannot otherwise carry. It matched no branch.
+        else if (isRawExpression(conditions)) {
+          sql += ` WHERE ${conditions.raw}`
+        }
+        else if (isBoundSqlExpression(conditions)) {
+          const rendered = renderBoundSqlExpression(conditions, params.length + 1)
+          sql += ` WHERE ${rendered.text}`
+          params.push(...rendered.parameters)
+        }
+        else if (conditions && typeof conditions === 'object' && Object.keys(conditions).length > 0) {
+          const whereClauses = Object.keys(conditions).map(key =>
+            renderColumnCondition(sqlIdent(key), (conditions as any)[key], params))
+          sql += ` WHERE ${whereClauses.join(' AND ')}`
+        }
+        // The empty object is the one that bites in production: `conditions` is
+        // usually built from request input, and `updateMany(t, buildFilter(req.query), data)`
+        // rewrote every row the moment the filter came back empty.
+        else if (conditions && typeof conditions === 'object') {
+          throw new TypeError('[query-builder] updateMany(): an empty object is not a filter. Pass a condition, or use updateTable(table).set(data).execute() if updating every row is intended.')
+        }
+        else {
+          throw new TypeError(`[query-builder] updateMany(): expected a condition, got ${conditions === null ? 'null' : typeof conditions}. Refusing to run an UPDATE with no WHERE — use updateTable(table).set(data).execute() if updating every row is intended.`)
+        }
+
+        return executeQuery(prepareQuery(sql, params))
+      })
     },
-    async updateMany(table, conditions, data) {
-      // Ultra-optimized direct SQL construction
-      const dataKeys = Object.keys(data)
-      const dataLen = dataKeys.length
-      if (dataLen === 0)
-        return 0
-
-      const params: any[] = []
-
-      // Build SET clause using array join
-      const setClauses: string[] = Array.from({ length: dataLen })
-      for (let i = 0; i < dataLen; i++) {
-        setClauses[i] = `${sqlIdent(String(dataKeys[i]))}=${getPlaceholder(i + 1)}`
-        params.push((data as any)[dataKeys[i]])
-      }
-
-      let sql = `UPDATE ${sqlIdent(String(table))} SET ${setClauses.join(',')}`
-
-      // Build WHERE clause.
-      //
-      // Every branch below either appends a predicate or throws. `conditions`
-      // is a required parameter, so there is no shape of it that means "every
-      // row" — passing one is the caller saying they have a filter. Anything
-      // this cannot turn into a predicate used to fall straight through to an
-      // UPDATE with no WHERE, which rewrote the whole table and reported the
-      // full count as success. See #1112, and #1101 for the same defect in
-      // updateTable().
-      if (Array.isArray(conditions)) {
-        // Separated by spaces: the three parts used to be concatenated bare,
-        // which is fine for `=` and `>=` and produces `namelike?` for every
-        // word operator the allowed set contains.
-        const safeOperator = assertSafeWhereOperator(String(conditions[1]), 'updateMany')
-        sql += ` WHERE ${sqlIdent(String(conditions[0]))} ${safeOperator} ${getPlaceholder(params.length + 1)}`
-        params.push(conditions[2])
-      }
-      // A fragment is inside the declared `WhereExpression` type (through
-      // `WhereRaw`) and `raw` is a public export, so `updateMany(t, raw('id =
-      // 1'), data)` typechecks and reads like the intended way to express a
-      // condition this signature cannot otherwise carry. It matched no branch.
-      else if (isRawExpression(conditions)) {
-        sql += ` WHERE ${conditions.raw}`
-      }
-      else if (isBoundSqlExpression(conditions)) {
-        const rendered = renderBoundSqlExpression(conditions, params.length + 1)
-        sql += ` WHERE ${rendered.text}`
-        params.push(...rendered.parameters)
-      }
-      else if (conditions && typeof conditions === 'object' && Object.keys(conditions).length > 0) {
-        const whereClauses = Object.keys(conditions).map(key =>
-          renderColumnCondition(sqlIdent(key), (conditions as any)[key], params))
-        sql += ` WHERE ${whereClauses.join(' AND ')}`
-      }
-      // The empty object is the one that bites in production: `conditions` is
-      // usually built from request input, and `updateMany(t, buildFilter(req.query), data)`
-      // rewrote every row the moment the filter came back empty.
-      else if (conditions && typeof conditions === 'object') {
-        throw new TypeError('[query-builder] updateMany(): an empty object is not a filter. Pass a condition, or use updateTable(table).set(data).execute() if updating every row is intended.')
-      }
-      else {
-        throw new TypeError(`[query-builder] updateMany(): expected a condition, got ${conditions === null ? 'null' : typeof conditions}. Refusing to run an UPDATE with no WHERE — use updateTable(table).set(data).execute() if updating every row is intended.`)
-      }
-
-      return prepareQuery(sql, params).execute()
-    },
-    async deleteMany(table, ids) {
-      if (!Array.isArray(ids) || ids.length === 0)
-        return 0
-      const pk = meta?.primaryKeys[String(table)] ?? 'id'
-      const len = ids.length
-
-      // Direct SQL construction for performance (avoids full query builder overhead)
-      if (config.dialect === 'postgres') {
-        const placeholders = new Array(len)
-        for (let i = 0; i < len; i++) placeholders[i] = `$${i + 1}`
-        return prepareQuery(`DELETE FROM ${sqlIdent(String(table))} WHERE ${sqlIdent(String(pk))} IN (${placeholders.join(',')})`, ids).execute()
-      }
-      // SQLite/MySQL: use ? placeholders
-      const placeholders = new Array(len)
-      for (let i = 0; i < len; i++) placeholders[i] = '?'
-      return prepareQuery(`DELETE FROM ${sqlIdent(String(table))} WHERE ${sqlIdent(String(pk))} IN (${placeholders.join(',')})`, ids).execute()
-    },
-    async firstOrCreate(table, match, defaults) {
-      const existing = await (this as any).selectFrom(table).where(match as any).first()
-      if (existing)
-        return existing
-      return await (this as any).create(table, { ...(match as any), ...(defaults as any) })
-    },
-    async updateOrCreate(table, match, values) {
-      const existing = await (this as any).selectFrom(table).where(match as any).first()
-      if (existing) {
-        await (this as any).updateTable(table).set(values as any).where(match as any).execute()
+    deleteMany(table, ids) {
+      return settle(function* () {
+        if (!Array.isArray(ids) || ids.length === 0)
+          return 0
         const pk = meta?.primaryKeys[String(table)] ?? 'id'
-        const id = (existing as any)[pk]
-        const refreshed = id != null
-          ? await (this as any).selectFrom(table).find(id)
-          : await (this as any).selectFrom(table).where(match as any).first()
-        if (!refreshed)
-          throw new Error('updateOrCreate() failed to retrieve updated row')
-        return refreshed
-      }
-      return await (this as any).create(table, { ...(match as any), ...(values as any) })
+        const len = ids.length
+
+        // Direct SQL construction for performance (avoids full query builder overhead)
+        if (config.dialect === 'postgres') {
+          const placeholders = new Array(len)
+          for (let i = 0; i < len; i++) placeholders[i] = `$${i + 1}`
+          return executeQuery(prepareQuery(`DELETE FROM ${sqlIdent(String(table))} WHERE ${sqlIdent(String(pk))} IN (${placeholders.join(',')})`, ids))
+        }
+        // SQLite/MySQL: use ? placeholders
+        const placeholders = new Array(len)
+        for (let i = 0; i < len; i++) placeholders[i] = '?'
+        return executeQuery(prepareQuery(`DELETE FROM ${sqlIdent(String(table))} WHERE ${sqlIdent(String(pk))} IN (${placeholders.join(',')})`, ids))
+      })
     },
-    async count(table, column) {
-      const col = column ? _sql(String(column)) : _sql`*`
-      const q = _sql`SELECT COUNT(${col}) as c FROM ${_sql(String(table))}`
-      const [row] = await (q as any).execute()
-      return Number((row?.c ?? 0) as any)
+    firstOrCreate(table, match, defaults) {
+      const self = this
+      return settle(function* () {
+        const existing = (yield* wait((self as any).selectFrom(table).where(match as any).first()))
+        if (existing)
+          return existing
+        return (yield* wait((self as any).create(table, { ...(match as any), ...(defaults as any) })))
+      })
     },
-    async sum(table, column) {
-      const q = _sql`SELECT SUM(${_sql(String(column))}) as s FROM ${_sql(String(table))}`
-      const [row] = await (q as any).execute()
-      return Number((row?.s ?? 0) as any)
+    updateOrCreate(table, match, values) {
+      const self = this
+      return settle(function* () {
+        const existing = (yield* wait((self as any).selectFrom(table).where(match as any).first()))
+        if (existing) {
+          yield* wait((self as any).updateTable(table).set(values as any).where(match as any).execute())
+          const pk = meta?.primaryKeys[String(table)] ?? 'id'
+          const id = (existing as any)[pk]
+          const refreshed = id != null
+            ? (yield* wait((self as any).selectFrom(table).find(id)))
+            : (yield* wait((self as any).selectFrom(table).where(match as any).first()))
+          if (!refreshed)
+            throw new Error('updateOrCreate() failed to retrieve updated row')
+          return refreshed
+        }
+        return (yield* wait((self as any).create(table, { ...(match as any), ...(values as any) })))
+      })
     },
-    async avg(table, column) {
-      const q = _sql`SELECT AVG(${_sql(String(column))}) as a FROM ${_sql(String(table))}`
-      const [row] = await (q as any).execute()
-      return Number((row?.a ?? 0) as any)
+    count(table, column) {
+      return settle(function* () {
+        const col = column ? _sql(String(column)) : _sql`*`
+        const q = _sql`SELECT COUNT(${col}) as c FROM ${_sql(String(table))}`
+        const [row] = (yield* wait(executeQuery((q as any))))
+        return Number((row?.c ?? 0) as any)
+      })
     },
-    async min(table, column) {
-      const q = _sql`SELECT MIN(${_sql(String(column))}) as m FROM ${_sql(String(table))}`
-      const [row] = await (q as any).execute()
-      return (row?.m as any)
+    sum(table, column) {
+      return settle(function* () {
+        const q = _sql`SELECT SUM(${_sql(String(column))}) as s FROM ${_sql(String(table))}`
+        const [row] = (yield* wait(executeQuery((q as any))))
+        return Number((row?.s ?? 0) as any)
+      })
     },
-    async max(table, column) {
-      const q = _sql`SELECT MAX(${_sql(String(column))}) as m FROM ${_sql(String(table))}`
-      const [row] = await (q as any).execute()
-      return (row?.m as any)
+    avg(table, column) {
+      return settle(function* () {
+        const q = _sql`SELECT AVG(${_sql(String(column))}) as a FROM ${_sql(String(table))}`
+        const [row] = (yield* wait(executeQuery((q as any))))
+        return Number((row?.a ?? 0) as any)
+      })
+    },
+    min(table, column) {
+      return settle(function* () {
+        const q = _sql`SELECT MIN(${_sql(String(column))}) as m FROM ${_sql(String(table))}`
+        const [row] = (yield* wait(executeQuery((q as any))))
+        return (row?.m as any)
+      })
+    },
+    max(table, column) {
+      return settle(function* () {
+        const q = _sql`SELECT MAX(${_sql(String(column))}) as m FROM ${_sql(String(table))}`
+        const [row] = (yield* wait(executeQuery((q as any))))
+        return (row?.m as any)
+      })
     },
     /**
      * Get all relationships defined for a table

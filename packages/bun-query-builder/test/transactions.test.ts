@@ -39,7 +39,7 @@ describe('transactions API shape', () => {
 
   it('savepoint throws outside an active transaction', async () => {
     const db = qb()
-    await expect(db.savepoint(async () => {})).rejects.toThrow('savepoint() must be called inside a transaction')
+    expect(() => db.savepoint(async () => {})).toThrow('savepoint() must be called inside a transaction')
   })
 
   it('transactional returns a function without executing', () => {

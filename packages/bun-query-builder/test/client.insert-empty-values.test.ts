@@ -116,7 +116,7 @@ describe('insertInto().values([]) is a no-op (#1097)', () => {
       expect(await b.get()).toEqual([])
       expect(await b.first()).toBeUndefined()
       expect(await b.executeTakeFirst()).toBeUndefined()
-      await expect(b.firstOrFail()).rejects.toThrow(/returned no rows/)
+      expect(() => b.firstOrFail()).toThrow(/returned no rows/)
     })
 
     it('behaves the same through returningAll()', async () => {

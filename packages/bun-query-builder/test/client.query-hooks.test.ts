@@ -72,17 +72,14 @@ describe('query hooks: slow-query + params (#1045)', () => {
     expect(ends).toHaveLength(1)
   })
 
-  it('delivers native errors once while preserving promise rejection', async () => {
+  it('delivers a native error once, thrown where the call stands', () => {
     const errors: unknown[] = []
     config.hooks = { onQueryError: event => errors.push(event.error) }
-    const pending = (createQueryBuilder() as any).selectFrom('missing_hook_table').execute()
-    const observed = errors.slice()
-    await expect(pending).rejects.toThrow('missing_hook_table')
-    expect(observed).toHaveLength(1)
+    expect(() => (createQueryBuilder() as any).selectFrom('missing_hook_table').execute()).toThrow('missing_hook_table')
     expect(errors).toHaveLength(1)
   })
 
-  it('keeps undefined synchronous driver failures as rejections', async () => {
+  it('keeps an undefined synchronous driver failure a failure', () => {
     const errors: unknown[] = []
     const completed: unknown[] = []
     config.hooks = {
@@ -95,14 +92,19 @@ describe('query hooks: slow-query + params (#1045)', () => {
       toString: () => 'SELECT id FROM items',
     }
     const connection = Object.assign(() => query, { unsafe: () => query })
-    const pending = (createQueryBuilder({ sql: connection as any }) as any).selectFrom('items').execute()
-    const outcome = await pending.then(() => 'resolved', (error: unknown) => ({ error }))
+    let outcome: unknown = 'returned'
+    try {
+      ;(createQueryBuilder({ sql: connection as any }) as any).selectFrom('items').execute()
+    }
+    catch (error) {
+      outcome = { error }
+    }
     expect(outcome).toEqual({ error: undefined })
     expect(errors).toEqual([undefined])
     expect(completed).toHaveLength(0)
   })
 
-  it('reports an already-aborted native query once through a rejected Promise', async () => {
+  it('reports an already-aborted native query once, where the call stands', () => {
     const errors: unknown[] = []
     const completed: unknown[] = []
     config.hooks = {
@@ -111,26 +113,30 @@ describe('query hooks: slow-query + params (#1045)', () => {
     }
     const controller = new AbortController()
     controller.abort()
-    const pending = (createQueryBuilder() as any).selectFrom('items').abort(controller.signal).execute()
-    expect(pending).toBeInstanceOf(Promise)
-    const observed = errors.slice()
-    await expect(pending).rejects.toMatchObject({ code: 'EBQBABORT' })
-    expect(observed).toHaveLength(1)
+    let thrown: unknown
+    try {
+      ;(createQueryBuilder() as any).selectFrom('items').abort(controller.signal).execute()
+    }
+    catch (error) {
+      thrown = error
+    }
+    expect(thrown).toMatchObject({ code: 'EBQBABORT' })
     expect(errors).toHaveLength(1)
     expect(completed).toHaveLength(0)
   })
 
-  it('completes native queries with a timeout and reports hooks once', async () => {
+  it('completes native queries with a timeout in place and reports hooks once', async () => {
     const completed: unknown[] = []
     const errors: unknown[] = []
     config.hooks = {
       onQueryEnd: event => completed.push(event),
       onQueryError: event => errors.push(event.error),
     }
-    const pending = (createQueryBuilder() as any).selectFrom('items').withTimeout(1000).execute()
-    expect(pending).toBeInstanceOf(Promise)
-    expect(completed).toHaveLength(1)
-    expect(await pending).toHaveLength(2)
+    const rows = (createQueryBuilder() as any).selectFrom('items').withTimeout(1000).execute()
+    expect(rows).not.toBeInstanceOf(Promise)
+    expect(rows).toHaveLength(2)
+    // The awaited form is the same rows.
+    expect(await rows).toHaveLength(2)
     expect(completed).toHaveLength(1)
     expect(errors).toHaveLength(0)
   })

@@ -98,24 +98,24 @@ describe('a fragment is honoured as a predicate (#1112)', () => {
 
 describe('an unreadable condition is refused, not dropped (#1112)', () => {
   it('{} names the problem and rewrites nothing', async () => {
-    await expect(qb().updateMany('t', {} as any, { name: 'T' }))
-      .rejects.toThrow(/an empty object is not a filter/)
+    expect(() => qb().updateMany('t', {} as any, { name: 'T' }))
+      .toThrow(/an empty object is not a filter/)
 
     expect(names()).toEqual(['a', 'b', 'c', 'd'])
   })
 
   for (const [label, value] of [['undefined', undefined], ['null', null]] as const) {
     it(`${label} throws and rewrites nothing`, async () => {
-      await expect(qb().updateMany('t', value as any, { name: 'T' }))
-        .rejects.toThrow(/expected a condition/)
+      expect(() => qb().updateMany('t', value as any, { name: 'T' }))
+        .toThrow(/expected a condition/)
 
       expect(names()).toEqual(['a', 'b', 'c', 'd'])
     })
   }
 
   it('the message points at the call that does mean every row', async () => {
-    await expect(qb().updateMany('t', {} as any, { name: 'T' }))
-      .rejects.toThrow(/updateTable\(table\)\.set\(data\)\.execute\(\)/)
+    expect(() => qb().updateMany('t', {} as any, { name: 'T' }))
+      .toThrow(/updateTable\(table\)\.set\(data\)\.execute\(\)/)
   })
 })
 
@@ -144,8 +144,8 @@ describe('the array form validates its operator (#1112)', () => {
   // A payload has to keep the placeholder count at one to get past the driver's
   // arity check — `'>0 OR id>'` does, and rewrote the whole table.
   it('refuses an operator outside the allowed set, and writes nothing', async () => {
-    await expect(qb().updateMany('t', ['id', '>0 OR id>', 0] as any, { name: 'PWNED' }))
-      .rejects.toThrow(/refusing to use '>0 OR id>' as a SQL operator/)
+    expect(() => qb().updateMany('t', ['id', '>0 OR id>', 0] as any, { name: 'PWNED' }))
+      .toThrow(/refusing to use '>0 OR id>' as a SQL operator/)
 
     expect(names()).toEqual(['a', 'b', 'c', 'd'])
   })

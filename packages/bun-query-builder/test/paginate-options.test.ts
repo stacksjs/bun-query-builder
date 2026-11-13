@@ -90,10 +90,10 @@ describe('the builder accepts the options form (#1092)', () => {
   })
 
   it('the existing validation still applies through the options form', async () => {
-    await expect(qb().selectFrom('t').selectAll().paginate({ perPage: 0 }))
-      .rejects.toThrow(/expected positive integer/)
-    await expect(qb().selectFrom('t').selectAll().paginate({ perPage: 5, page: 0 }))
-      .rejects.toThrow(/expected integer >= 1/)
+    expect(() => qb().selectFrom('t').selectAll().paginate({ perPage: 0 }))
+      .toThrow(/expected positive integer/)
+    expect(() => qb().selectFrom('t').selectAll().paginate({ perPage: 5, page: 0 }))
+      .toThrow(/expected integer >= 1/)
   })
 })
 

@@ -11,7 +11,7 @@ describe('savepoint guard', () => {
     // and issued a bare SAVEPOINT against the pool.
     const fakeConn: any = { savepoint: async (fn: any) => fn({}), unsafe: () => {} }
     const db = createQueryBuilder<typeof schema>({ meta, schema, sql: fakeConn }) as any
-    await expect(db.savepoint(async () => {})).rejects.toThrow('savepoint() must be called inside a transaction')
+    expect(() => db.savepoint(async () => {})).toThrow('savepoint() must be called inside a transaction')
   })
 
   it('allows savepoint on a builder flagged inTransaction', async () => {

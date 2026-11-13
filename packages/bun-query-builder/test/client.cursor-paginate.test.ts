@@ -79,8 +79,8 @@ describe('cursorPaginate continues an existing WHERE (#1090)', () => {
   })
 
   it('refuses to silently end pagination when the cursor column was not selected', async () => {
-    await expect(createQueryBuilder<typeof schema>({ schema, sql }).selectFrom('cp_rows').select(['b']).cursorPaginate(3))
-      .rejects.toThrow(/select cursor column id/)
+    expect(() => createQueryBuilder<typeof schema>({ schema, sql }).selectFrom('cp_rows').select(['b']).cursorPaginate(3))
+      .toThrow(/select cursor column id/)
   })
 
   it('pages a filtered query instead of throwing', async () => {
@@ -158,16 +158,16 @@ describe('cursorPaginate argument validation (#1090)', () => {
     // result is sorted by that column, so a second ordering makes the cursor
     // meaningless. This always emitted a duplicate ORDER BY and failed to
     // parse; it was invisible because the duplicate-WHERE error fired first.
-    await expect(q().where('b', '=', 1).orderBy('id').cursorPaginate(3, 5, 'id'))
-      .rejects.toThrow(/cannot be combined with orderBy/)
+    expect(() => q().where('b', '=', 1).orderBy('id').cursorPaginate(3, 5, 'id'))
+      .toThrow(/cannot be combined with orderBy/)
   })
 
   it('refuses a non-positive page size', async () => {
-    await expect(q().cursorPaginate(0, 1, 'id')).rejects.toThrow(/expected positive integer/)
+    expect(() => q().cursorPaginate(0, 1, 'id')).toThrow(/expected positive integer/)
   })
 
   it('refuses a column that is not an identifier', async () => {
-    await expect(q().cursorPaginate(3, 1, 'id; DROP TABLE cp_rows')).rejects.toThrow(/Invalid identifier/)
+    expect(() => q().cursorPaginate(3, 1, 'id; DROP TABLE cp_rows')).toThrow(/Invalid identifier/)
     // And the table is still there.
     expect((await sql.unsafe('SELECT count(*) as c FROM cp_rows'))[0].c).toBe(20)
   })

@@ -3,6 +3,7 @@ import type { Changes, SQLQueryBindings, Statement } from 'bun:sqlite'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { SQL } from 'bun'
 import { serializeBindings, withDateBindings } from './bindings'
+import { settle, wait } from './settle'
 import { closeSyncDriver } from './sync-driver'
 
 /**
@@ -711,7 +712,11 @@ function createSQLiteSQL(filename: string): SQL {
   // entirely broken there (and untested at runtime). bun:sqlite is synchronous,
   // so BEGIN/COMMIT/ROLLBACK are plain statements; nesting uses SAVEPOINTs.
   let txDepth = 0
-  sqlFunction.begin = async (fnOrName: any, maybeFn?: any): Promise<any> => {
+  //
+  // Done when it returns, when the callback is: BEGIN, the callback and COMMIT
+  // run where `begin()` is called. A callback that answers with a promise is
+  // waited for, and the transaction is then a promise.
+  sqlFunction.begin = (fnOrName: any, maybeFn?: any): any => settle(function* (): Generator<unknown, any, unknown> {
     const fn = typeof fnOrName === 'function' ? fnOrName : maybeFn
     if (typeof fn !== 'function')
       throw new TypeError('[query-builder] sqlite begin(): a transaction callback is required')
@@ -731,7 +736,7 @@ function createSQLiteSQL(filename: string): SQL {
     try {
       // The transaction handle IS this same connection — bun:sqlite is a single
       // connection, so statements run on the open BEGIN/SAVEPOINT scope.
-      const result = await fn(sqlFunction)
+      const result = yield* wait(fn(sqlFunction))
       txDepth--
       if (isSavepoint)
         wrapper.run(`RELEASE SAVEPOINT ${spName}`)
@@ -758,7 +763,7 @@ function createSQLiteSQL(filename: string): SQL {
       }
       throw err
     }
-  }
+  })
 
   // Nested transactions use savepoint() (matching Bun's native SQL tx API).
   // begin() already switches to SAVEPOINT when txDepth > 0, so aliasing is

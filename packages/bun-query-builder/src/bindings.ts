@@ -146,7 +146,7 @@ function serializeRecord(row: Record<string, unknown>): Record<string, unknown> 
  * Arguments of a call to the connection itself: a tagged template
  * (`strings, ...values`) or the helper (`sql(row | rows | identifiers, ...columns)`).
  */
-function serializeCallArgs(args: unknown[]): unknown[] {
+export function serializeCallArgs(args: unknown[]): unknown[] {
   const [first] = args
   if (Array.isArray(first) && 'raw' in first)
     return args.some((arg, index) => index > 0 && needsSerializing(arg))

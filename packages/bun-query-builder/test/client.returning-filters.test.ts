@@ -129,8 +129,8 @@ describe('DELETE: a filter after returning() applies (#1110)', () => {
   it('fires beforeDelete, so a delete guard cannot be walked past', async () => {
     setConfig({ hooks: { beforeDelete: () => { throw new Error('BLOCKED by guard') } } } as any)
 
-    await expect(qb().deleteFrom('t').returning('id').where({ id: 1 }).execute())
-      .rejects.toThrow(/BLOCKED by guard/)
+    expect(() => qb().deleteFrom('t').returning('id').where({ id: 1 }).execute())
+      .toThrow(/BLOCKED by guard/)
 
     expect(rows()).toHaveLength(4)
   })

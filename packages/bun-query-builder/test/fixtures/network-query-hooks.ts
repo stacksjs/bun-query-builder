@@ -104,7 +104,8 @@ try {
   assert.equal(spansEnded, events.length)
   assert.equal(errors.length, 0)
   const endCount = ends.length
-  await assert.rejects(db.selectFrom(`${table}_missing`).where('id', '=', 9).execute())
+  // The connection answers in place, so the failure is thrown where the call stands.
+  assert.throws(() => db.selectFrom(`${table}_missing`).where('id', '=', 9).execute())
   assert.equal(errors.length, 1)
   assert.deepEqual(metadata(errors[0]), metadata(events.at(-1)!))
   assert.deepEqual(errors[0].params, [9])

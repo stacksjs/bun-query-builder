@@ -12,6 +12,50 @@ The builder wraps Bun’s transaction primitives and adds:
 - Savepoints inside a transaction
 - Two-phase distributed transactions
 
+## Done when it returns
+
+A transaction runs where it is written: `BEGIN`, the callback and `COMMIT`
+have all happened by the next line.
+
+```ts
+const orderId = db.transaction((tx) => {
+  const order = tx.insertInto('orders').values({ customer_id: 7 }).returning('id').first()
+  tx.insertInto('order_lines').values({ order_id: order.id, sku: 'A-1' }).execute()
+  return order.id
+})
+// Committed. A callback that throws has rolled everything back and rethrown.
+```
+
+Every statement issued through `tx` runs on the transaction's one connection,
+so it sees the transaction's own writes and nothing outside sees them until
+the commit. A nested `tx.transaction()` or `tx.savepoint()` is a savepoint that
+rolls back alone.
+
+A callback that is `async` is waited for, and the transaction is then a
+promise, as it always was: `await db.transaction(async tx => { ... })`. Write
+the callback without `async` when everything in it is a query, and the
+transaction answers in place. A retry (`retries`, `backoff`) keeps it in place
+too: the pause between attempts is taken on the calling thread.
+
+Write through `tx` inside the callback. A statement issued through `db` or a
+model there runs on another connection and cannot see the transaction's
+writes.
+
+While a transaction with an `async` callback is open, it holds its locks across
+each `await`. A statement elsewhere in the process that needs one of them is
+not waited for on the calling thread, which is the thread the commit needs: it
+answers with a promise that resolves once the transaction has finished. That is
+what lets several such transactions contend for one row, as they always could:
+
+```ts
+await Promise.all(orders.map(order => db.transaction(async (tx) => {
+  const [stock] = await tx.unsafe('SELECT quantity FROM stock WHERE sku = $1 FOR UPDATE', [order.sku]).execute()
+  await tx.updateTable('stock').set({ quantity: stock.quantity - order.count }).where({ sku: order.sku }).execute()
+})))
+```
+
+See [A query that cannot finish](./models.md#a-query-that-cannot-finish).
+
 ## Basic Usage
 
 ```ts

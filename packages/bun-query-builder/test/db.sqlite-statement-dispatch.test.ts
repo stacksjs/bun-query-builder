@@ -31,7 +31,8 @@ beforeAll(() => {
 
 describe('a statement that produces rows returns rows', () => {
   it('a plain SELECT, which already worked', () => {
-    expect(qb.unsafe('SELECT 1 AS one').execute()).resolves.toEqual([{ one: 1 }])
+    // The rows, where the call stands: bun:sqlite answers in place.
+    expect(qb.unsafe('SELECT 1 AS one').execute()).toEqual([{ one: 1 }])
   })
 
   it('a common table expression', async () => {

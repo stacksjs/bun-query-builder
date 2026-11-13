@@ -435,11 +435,14 @@ export interface ModelsConfig {
    * proceeds while a query is in flight. Every model call then has to be
    * awaited. SQLite is synchronous either way.
    *
+   * The query builder (`db.selectFrom(...)`, `db.transaction(...)`) follows
+   * the same setting: it runs on the same worker-held pool as the models.
+   *
    * @default 'sync'
    */
   execution?: 'sync' | 'async'
   /**
-   * How long a MySQL or Postgres model query may take, in milliseconds,
+   * How long a MySQL or Postgres query, from a model or the query builder, may take, in milliseconds,
    * before the call stops waiting and throws. The calling thread does nothing
    * else while it waits, so a query that can never finish (one that needs a
    * lock held by an open transaction on the same thread) would otherwise stop

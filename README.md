@@ -208,6 +208,22 @@ query. `setConfig({ models: { execution: 'async' } })` gives promises back
 instead. A write on a model with `async` hooks returns a promise, because the
 hook has to be waited for. See [Models answer in place](docs/features/models.md).
 
+The query builder answers the same way, and a transaction is done when it
+returns:
+
+```ts
+const rows = db.selectFrom('users').where({ active: true }).get()
+
+const orderId = db.transaction((tx) => {
+  const order = tx.insertInto('orders').values({ customer_id: 7 }).returning('id').first()
+  tx.insertInto('order_lines').values({ order_id: order.id, sku: 'A-1' }).execute()
+  return order.id
+})
+```
+
+`await` on any of these still works. A transaction whose callback is `async`
+is a promise, as before. See [Transactions](docs/features/transactions.md).
+
 ### Query Scopes
 
 ```ts

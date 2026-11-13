@@ -67,13 +67,22 @@ synchronous either way.
 
 ### A query that cannot finish
 
-Because the calling thread waits, a query that can never finish would stop the
-process. The way to write one is a model call inside a `db.transaction()` that
-needs a row the transaction has locked: the transaction's connection is on the
-calling thread, the model's is on the worker, and the transaction cannot commit
-while its thread is waiting for the model. So a MySQL or Postgres model query
-has a limit, 30 seconds by default, after which the call throws a
-`StatementTimeoutError` (`code: 'ERR_QB_MODEL_STATEMENT_TIMEOUT'`):
+Waiting on the calling thread is safe unless what the query needs can only be
+produced by that thread. One thing can: a transaction whose callback is
+`async`. It stays open across an `await`, holding its row locks, and the code
+that will commit it is waiting for the thread. So while such a transaction (or
+a `reserve()`d connection) is open in the process, each statement is watched:
+the database is asked whether the statement's connection is waiting on the
+open one, and if it is, that call answers with a promise of its result instead
+of waiting. It is the one case where a value cannot exist yet. Everything else
+still answers in place, and a program whose transaction callbacks are not
+`async` never has one open across an `await`.
+
+A lock held by another process is a different matter: the query waits for it,
+as it would in any synchronous program. So a MySQL or Postgres statement, from
+a model or from the query builder, has a limit, 30 seconds by default, after
+which the call throws a `StatementTimeoutError`
+(`code: 'ERR_QB_MODEL_STATEMENT_TIMEOUT'`):
 
 ```ts
 setConfig({ models: { timeoutMs: 5000 } }) // 0 waits for as long as it takes

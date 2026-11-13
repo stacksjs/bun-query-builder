@@ -89,17 +89,17 @@ describe('identifier injection is refused on reorder and the aggregates', () => 
   it('max and min, which return the value to the caller', async () => {
     // These two are the severe ones: the result is handed back untouched, so
     // the column slot reads any table the connection can reach.
-    await expect(qb().selectFrom('users').max(SUBQUERY)).rejects.toThrow(REFUSED)
-    await expect(qb().selectFrom('users').min(SUBQUERY)).rejects.toThrow(REFUSED)
+    expect(() => qb().selectFrom('users').max(SUBQUERY)).toThrow(REFUSED)
+    expect(() => qb().selectFrom('users').min(SUBQUERY)).toThrow(REFUSED)
   })
 
   it('avg and sum, where Number() narrowed the leak rather than closing it', async () => {
-    await expect(qb().selectFrom('users').avg(SUBQUERY)).rejects.toThrow(REFUSED)
-    await expect(qb().selectFrom('users').sum(SUBQUERY)).rejects.toThrow(REFUSED)
+    expect(() => qb().selectFrom('users').avg(SUBQUERY)).toThrow(REFUSED)
+    expect(() => qb().selectFrom('users').sum(SUBQUERY)).toThrow(REFUSED)
   })
 
   it('a stacked statement through an aggregate', async () => {
-    await expect(qb().selectFrom('users').sum(`salary) as s FROM users; DROP TABLE users; --`)).rejects.toThrow(REFUSED)
+    expect(() => qb().selectFrom('users').sum(`salary) as s FROM users; DROP TABLE users; --`)).toThrow(REFUSED)
   })
 })
 
