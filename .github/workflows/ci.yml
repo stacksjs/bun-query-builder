@@ -160,6 +160,107 @@ jobs:
       - name: Unit Tests
         run: bun run test
 
+  # The same tests, run by a Bun whose MySQL and Postgres drivers can wait for a
+  # statement on the calling thread (stacksjs/bun: official Bun plus the
+  # synchronous calls). On it the model layer and the query builder use
+  # native-sync-driver.ts instead of the worker, so this is where that driver
+  # is tested. The job above tests the worker, on stock Bun.
+  test-native:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test_db
+          MYSQL_USER: query_hooks
+          MYSQL_PASSWORD: query_hooks
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -proot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 3306:3306
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      QUERY_HOOK_MYSQL_URL: mysql://query_hooks:query_hooks@127.0.0.1:3306/test_db?ssl=true
+      QUERY_HOOK_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      QUERY_CACHE_MYSQL_URL: mysql://query_hooks:query_hooks@127.0.0.1:3306/test_db?ssl=true
+      QUERY_CACHE_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      TRANSACTION_TEST_MYSQL_URL: mysql://query_hooks:query_hooks@127.0.0.1:3306/test_db?ssl=true
+      TRANSACTION_TEST_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: test_db
+      # sync-drivers.live.test.ts fails, instead of quietly testing the worker
+      # twice, if the runtime it is run by has no synchronous calls.
+      EXPECT_NATIVE_SYNC: "1"
+      # The release of stacksjs/bun to test with: the official tag the job
+      # above pins, plus the patches. Raised together with it.
+      NATIVE_BUN_RELEASE: bun-v1.4.4-stacks.1
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Use cached node_modules
+        uses: actions/cache@v6.1.0
+        with:
+          path: node_modules
+          key: node-modules-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            node-modules-
+
+      - name: Install Dependencies
+        run: bun install
+
+      - name: Wait for PostgreSQL
+        run: |
+          timeout 60 bash -c 'until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done'
+
+      - name: Build
+        run: bun run build
+
+      - name: Replace Bun with the one that has the synchronous calls
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "$NATIVE_BUN_RELEASE" --repo stacksjs/bun --pattern 'bun-linux-x64.zip' --pattern 'SHASUMS256.txt' --dir "$RUNNER_TEMP/native-bun"
+          cd "$RUNNER_TEMP/native-bun"
+          grep ' bun-linux-x64.zip$' SHASUMS256.txt | sha256sum --check -
+          unzip -q bun-linux-x64.zip
+          # Ahead of the stock one on PATH: the tests start their probes with `bun` and with process.execPath.
+          echo "$RUNNER_TEMP/native-bun/bun-linux-x64" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/native-bun/bun-linux-x64/bun" --revision
+
+      - name: Unit Tests
+        run: |
+          bun --revision
+          bun run test
+
   publish-commit:
     needs: [lint, typecheck, test]
     runs-on: ubuntu-latest
