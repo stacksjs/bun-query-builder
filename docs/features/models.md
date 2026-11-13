@@ -93,14 +93,18 @@ place:
   `async` functions has to wait for them, so its writes return promises. Reads
   never run a hook and are always values. Hooks that return nothing leave the
   write in place.
+- **A mutator that answers with a promise.** A `set` entry that hashes a
+  password off the thread is waited for when an instance is saved or updated,
+  so that write returns a promise. A mutator that answers in place leaves it in
+  place.
 - **An async callback you pass in**, such as `chunk(100, async rows => ...)`.
 - **`models.execution: 'async'`**, above.
 - **A connection you supplied** with `setSqlInstance()`. It lives on the
   calling thread and answers with promises.
 - **A libSQL server.** Its transport is `fetch`.
 
-The types follow the first case: `Model.create()` is typed as the row on a
-model without async hooks, and as a promise of the row on a model with one.
+The types follow the first two cases: a write is typed as its value on a model
+without async hooks or mutators, and as a promise of it on a model with one.
 
 ## What changed for existing code
 

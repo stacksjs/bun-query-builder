@@ -423,11 +423,29 @@ type HasAsyncHook<TDef> = TDef extends { hooks?: infer H }
   : false
 
 /**
- * What a write returns: the value, or a promise of it on a model whose hooks
- * may be asynchronous (see {@link HasAsyncHook}). Reads never run hooks, so
- * they are always the value.
+ * Whether one of a model's `set` mutators answers with a promise. A write
+ * waits for such a mutator, so it returns a promise, the same as for a hook.
+ * A `set` known only as a record of functions is not counted: nothing says
+ * any of them is asynchronous.
  */
-export type Written<TDef, R> = HasAsyncHook<TDef> extends true ? Promise<R> : R
+type HasAsyncSetter<TDef> = TDef extends { set?: infer S }
+  ? [S] extends [undefined]
+      ? false
+      : true extends {
+        [K in keyof NonNullable<S>]-?: NonNullable<NonNullable<S>[K]> extends (...args: never[]) => infer R
+          ? (unknown extends R ? false : [Extract<R, PromiseLike<unknown>>] extends [never] ? false : true)
+          : false
+      }[keyof NonNullable<S>]
+        ? true
+        : false
+  : false
+
+/**
+ * What a write returns: the value, or a promise of it on a model whose hooks
+ * or mutators may be asynchronous (see {@link HasAsyncHook} and
+ * {@link HasAsyncSetter}). Reads never run either, so they are always the value.
+ */
+export type Written<TDef, R> = true extends (HasAsyncHook<TDef> | HasAsyncSetter<TDef>) ? Promise<R> : R
 
 // Extract attribute keys from definition
 type AttributeKeys<TDef extends ModelDefinition> = keyof TDef['attributes'] & string
@@ -1559,7 +1577,7 @@ class ModelInstance<
   _prepareInsert(): Record<string, unknown> {
     const self = this
     return settle(function* (): Generator<unknown, Record<string, unknown>, unknown> {
-      self._applySetters()
+      yield* wait(self._applySetters())
       const pk = self._definition.primaryKey || 'id'
       const hooks = self._definition.hooks
       const attrs = self._definition.attributes
@@ -1670,16 +1688,26 @@ class ModelInstance<
     })
   }
 
-  /** Run the model's `set` mutators over every dirty attribute. */
-  private _applySetters(): void {
-    const setters = this._definition.set || {}
-    for (const [key, setter] of Object.entries(setters)) {
-      if (this.isDirty(key as ColumnName<TDef>)) {
-        // Write back in the storage casing, or a camelCase mutator would add a
-        // second key alongside the column it was meant to replace.
-        this._attributes[toSnakeCase(key)] = setter(this._attributes as Record<string, unknown>)
+  /**
+   * Run the model's `set` mutators over every dirty attribute.
+   *
+   * A mutator that answers in place is applied in place. One that answers
+   * with a promise (a password hash made off the thread) is waited for, and
+   * the write it belongs to becomes a promise: what must never happen is the
+   * promise itself being bound as the column's value.
+   */
+  private _applySetters(): void | Promise<void> {
+    const self = this
+    return settle(function* (): Generator<unknown, void, unknown> {
+      const setters = self._definition.set || {}
+      for (const [key, setter] of Object.entries(setters)) {
+        if (self.isDirty(key as ColumnName<TDef>)) {
+          // Write back in the storage casing, or a camelCase mutator would add a
+          // second key alongside the column it was meant to replace.
+          self._attributes[toSnakeCase(key)] = yield* wait(setter(self._attributes as Record<string, unknown>))
+        }
       }
-    }
+    })
   }
 
   save(): Written<TDef, this> {
@@ -1690,7 +1718,7 @@ class ModelInstance<
       const hooks = self._definition.hooks
 
       if (self._exists) {
-        self._applySetters()
+        yield* wait(self._applySetters())
         // Update
         yield* wait(hooks?.beforeUpdate?.(self as unknown as ModelHookInstance, self.getChanges()))
 

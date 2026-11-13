@@ -219,6 +219,41 @@ describe('writes answer in place unless a hook cannot', () => {
     expect(isThenable(Slow.find(created.id))).toBe(false)
   })
 
+  // Mutators run on a row being changed: `update()` and `save()` on an instance.
+  it('a mutator that answers in place is part of a write in place', () => {
+    const attributes = { email: { type: 'string', fillable: true }, name: { type: 'string', fillable: true } }
+    const Trimmed = createModel({ name: 'SyTrimmed', table: 'sy_users', primaryKey: 'id', attributes, set: { name: (a: Record<string, unknown>) => String(a.name).trim() } } as any) as any
+    const ada = Trimmed.find(1)
+    const updated = ada.update({ name: '  Ada L.  ' })
+    expect(isThenable(updated)).toBe(false)
+    expect(db.query('SELECT name FROM sy_users WHERE id = 1').get()).toEqual({ name: 'Ada L.' })
+  })
+
+  it('a mutator that answers with a promise is waited for, on update and save alike', async () => {
+    const attributes = { email: { type: 'string', fillable: true }, name: { type: 'string', fillable: true } }
+    // Not declared `async`: nothing but the value it returns says it is.
+    const Hashed = createModel({ name: 'SyHashed', table: 'sy_users', primaryKey: 'id', attributes, set: { name: (a: Record<string, unknown>) => Promise.resolve(`hashed:${String(a.name)}`) } } as any) as any
+    const stored = (): unknown => db.query('SELECT name FROM sy_users WHERE id = 1').get()
+    const ada = Hashed.find(1)
+
+    // The promise itself used to be bound as the column's value here.
+    const updating = ada.update({ name: 'two' })
+    expect(isThenable(updating)).toBe(true)
+    await updating
+    expect(stored()).toEqual({ name: 'hashed:two' })
+
+    ada.set('name', 'three')
+    const saving = ada.save()
+    expect(isThenable(saving)).toBe(true)
+    await saving
+    expect(stored()).toEqual({ name: 'hashed:three' })
+
+    // Nothing the mutator has to run on: the write is in place again.
+    ada.set('email', 'ada@elsewhere.org')
+    expect(isThenable(ada.save())).toBe(false)
+    expect(stored()).toEqual({ name: 'hashed:three' })
+  })
+
   it('chunk waits only for a callback that asks it to', async () => {
     const seen: number[] = []
     const inPlace = User.query().orderBy('id').chunk(2, (rows: any[]) => {
