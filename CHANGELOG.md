@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.5.2...v0.6.0)
+
+## ✨ Features
+
+- wait for a statement on the calling thread where the runtime can ([8cd04bc](https://github.com/stacksjs/bun-query-builder/commit/8cd04bc)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.6.0 ([76761e0](https://github.com/stacksjs/bun-query-builder/commit/76761e0)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.5.1...v0.5.2)
 
 ## 🐛 Bug Fixes
