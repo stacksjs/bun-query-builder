@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.4.2...v0.5.0)
+
+## ✨ Features
+
+- the query builder returns its value where it is written ([1fc1ad1](https://github.com/stacksjs/bun-query-builder/commit/1fc1ad1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.5.0 ([00ecd25](https://github.com/stacksjs/bun-query-builder/commit/00ecd25)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.4.1...v0.4.2)
 
 ## 🐛 Bug Fixes
