@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.5.0...v0.5.1)
+
+## 🐛 Bug Fixes
+
+- **orm**: a wait for a statement ends even when the program has stopped its clock ([aa15e1e](https://github.com/stacksjs/bun-query-builder/commit/aa15e1e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.5.1 ([46f8673](https://github.com/stacksjs/bun-query-builder/commit/46f8673)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.4.2...v0.5.0)
 
 ## ✨ Features
