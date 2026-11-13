@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.5.1...v0.5.2)
+
+## 🐛 Bug Fixes
+
+- **orm**: inside an async transaction a statement waits for any lock as a promise ([a4eebf3](https://github.com/stacksjs/bun-query-builder/commit/a4eebf3)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.5.2 ([924c8ba](https://github.com/stacksjs/bun-query-builder/commit/924c8ba)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.5.0...v0.5.1)
 
 ## 🐛 Bug Fixes
