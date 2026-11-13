@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
@@ -123,7 +123,7 @@ jobs:
       POSTGRES_DB: test_db
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
@@ -218,7 +218,7 @@ jobs:
       NATIVE_BUN_RELEASE: bun-v1.4.4-stacks.1
 
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.2.0
@@ -266,7 +266,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
