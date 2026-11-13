@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import * as published from '../src'
 import { isThenable, settle, wait, waitAll } from '../src/settle'
 
 const later = <T>(value: T): Promise<T> => new Promise(resolve => setTimeout(() => resolve(value), 1))
@@ -120,5 +121,14 @@ describe('isThenable', () => {
     expect(isThenable(null)).toBe(false)
     expect(isThenable(undefined)).toBe(false)
     expect(isThenable('then')).toBe(false)
+  })
+})
+
+describe('the published entry', () => {
+  it('exports the runner, for code built on the model layer that wants the same property', () => {
+    expect(published.settle).toBe(settle)
+    expect(published.wait).toBe(wait)
+    expect(published.waitAll).toBe(waitAll)
+    expect(published.isThenable).toBe(isThenable)
   })
 })
