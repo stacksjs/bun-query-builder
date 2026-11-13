@@ -23,7 +23,10 @@
  * runtime.
  */
 
-import { MessageChannel, receiveMessageOnPort, Worker } from 'node:worker_threads'
+import type { receiveMessageOnPort, Worker } from 'node:worker_threads'
+import { createRequire } from 'node:module'
+
+const requireHostModule = createRequire(import.meta.url)
 
 /**
  * A statement's answer in the shape Bun's driver gives it: the rows, as an
@@ -181,6 +184,7 @@ function rebuildError(described: NonNullable<WorkerReply['error']>): Error {
  */
 export class SyncDriver {
   private readonly worker: Worker
+  private readonly takeMessage: typeof receiveMessageOnPort
   private readonly flag: Int32Array
   private readonly port: MessagePort
   private closed = false
@@ -190,6 +194,11 @@ export class SyncDriver {
   private taken = 0
 
   constructor(readonly url: string, readonly options: Record<string, unknown> = {}) {
+    // SQLite and ordinary package imports do not need the network worker.
+    // Resolve the real host capability only when this driver is requested;
+    // an unavailable worker API still throws here, before allocating a channel.
+    const { MessageChannel, receiveMessageOnPort, Worker } = requireHostModule('node:worker_threads') as typeof import('node:worker_threads')
+    this.takeMessage = receiveMessageOnPort
     const signal = new SharedArrayBuffer(4)
     this.flag = new Int32Array(signal)
     const channel = new MessageChannel()
@@ -222,7 +231,7 @@ export class SyncDriver {
   private receive(id: number, timeoutMs: number): WorkerReply | undefined {
     const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined
     for (;;) {
-      const message = receiveMessageOnPort(this.port as unknown as Parameters<typeof receiveMessageOnPort>[0])
+      const message = this.takeMessage(this.port as unknown as Parameters<typeof receiveMessageOnPort>[0])
       if (message) {
         this.taken++
         const reply = message.message as WorkerReply
