@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.4.1...v0.4.2)
+
+## 🐛 Bug Fixes
+
+- **orm**: a mutator that answers with a promise is waited for ([61cfc83](https://github.com/stacksjs/bun-query-builder/commit/61cfc83)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **orm**: load worker capabilities when the network driver opens ([27d7530](https://github.com/stacksjs/bun-query-builder/commit/27d7530)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.4.2 ([15a7abe](https://github.com/stacksjs/bun-query-builder/commit/15a7abe)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.4.0...v0.4.1)
 
 ## 🐛 Bug Fixes
