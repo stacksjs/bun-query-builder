@@ -438,6 +438,17 @@ export interface ModelsConfig {
    * @default 'sync'
    */
   execution?: 'sync' | 'async'
+  /**
+   * How long a MySQL or Postgres model query may take, in milliseconds,
+   * before the call stops waiting and throws. The calling thread does nothing
+   * else while it waits, so a query that can never finish (one that needs a
+   * lock held by an open transaction on the same thread) would otherwise stop
+   * the process. `0` waits for as long as the query takes. SQLite has its own
+   * `busy_timeout` and is not affected.
+   *
+   * @default 30000
+   */
+  timeoutMs?: number
 }
 
 export interface QueryBuilderConfig {

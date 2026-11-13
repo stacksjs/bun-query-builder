@@ -65,6 +65,25 @@ MySQL and Postgres model calls then return promises, other work proceeds while
 a query is in flight, and every model call has to be awaited. SQLite is
 synchronous either way.
 
+### A query that cannot finish
+
+Because the calling thread waits, a query that can never finish would stop the
+process. The way to write one is a model call inside a `db.transaction()` that
+needs a row the transaction has locked: the transaction's connection is on the
+calling thread, the model's is on the worker, and the transaction cannot commit
+while its thread is waiting for the model. So a MySQL or Postgres model query
+has a limit, 30 seconds by default, after which the call throws a
+`StatementTimeoutError` (`code: 'ERR_QB_MODEL_STATEMENT_TIMEOUT'`):
+
+```ts
+setConfig({ models: { timeoutMs: 5000 } }) // 0 waits for as long as it takes
+```
+
+Postgres cancels the abandoned statement. MySQL's protocol has no cancel, so
+an abandoned MySQL statement may still be applied once it is able to run.
+Inside a transaction, write through the transaction (`tx.updateTable(...)`),
+not through a model.
+
 ## When a call does return a promise
 
 A method returns a promise only when something it touched could not answer in

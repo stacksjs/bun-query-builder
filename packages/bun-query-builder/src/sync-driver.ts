@@ -38,6 +38,8 @@ export type SyncQueryResult = Record<string, unknown>[] & {
 }
 
 interface WorkerReply {
+  /** The request this answers. 0 is the worker announcing it has opened. */
+  id: number
   ok: boolean
   rows?: Record<string, unknown>[]
   count?: number | null
@@ -53,11 +55,15 @@ import { parentPort, workerData } from 'node:worker_threads'
 
 const { signal, port, url, options } = workerData
 const flag = new Int32Array(signal)
+// One count per reply. The caller sleeps while the count is the one it last
+// saw, so a reply that lands before it sleeps is never missed.
 const reply = (message) => {
   port.postMessage(message)
-  Atomics.store(flag, 0, 1)
+  Atomics.add(flag, 0, 1)
   Atomics.notify(flag, 0)
 }
+// Statements in flight, by id, so one the caller stopped waiting for can be cancelled.
+const running = new Map()
 const describe = (error) => {
   const fields = {}
   if (error && typeof error === 'object') {
@@ -78,22 +84,31 @@ const describe = (error) => {
 let sql
 try {
   sql = new SQL(url, options)
-  reply({ ok: true })
+  reply({ id: 0, ok: true })
 }
 catch (error) {
-  reply({ ok: false, error: describe(error) })
+  reply({ id: 0, ok: false, error: describe(error) })
 }
 
 parentPort.on('message', async (job) => {
+  if (job.op === 'cancel') {
+    // Nobody is waiting for this statement any more. Its reply, if one still
+    // comes, carries an id the caller has moved past.
+    try { running.get(job.id)?.cancel?.() } catch {}
+    return
+  }
   try {
     if (job.op === 'close') {
       await sql?.close?.()
-      reply({ ok: true })
+      reply({ id: job.id, ok: true })
       return
     }
-    const result = await sql.unsafe(job.sql, job.params)
+    const query = sql.unsafe(job.sql, job.params)
+    running.set(job.id, query)
+    const result = await query
     const rows = Array.isArray(result) ? Array.from(result) : []
     reply({
+      id: job.id,
       ok: true,
       rows,
       count: result?.count ?? null,
@@ -103,13 +118,48 @@ parentPort.on('message', async (job) => {
     })
   }
   catch (error) {
-    reply({ ok: false, error: describe(error) })
+    reply({ id: job.id, ok: false, error: describe(error) })
+  }
+  finally {
+    running.delete(job.id)
   }
 })
 `
 
 /** How long a worker may take to open before it is declared broken. A query has no limit here: the driver's own timeouts apply. */
 const STARTUP_TIMEOUT_MS = 30_000
+
+/**
+ * How long a statement may take before the caller stops waiting for it.
+ *
+ * The caller's thread does nothing else while it waits, so a statement that
+ * can never finish would stop the whole process, silently. The usual way to
+ * write one: a model call inside a `db.transaction()` that needs a row the
+ * transaction has locked. The transaction's connection lives on the calling
+ * thread, the model's on the worker, and the transaction cannot commit while
+ * its thread is waiting for the model. A limit turns that into an error that
+ * says so.
+ */
+export const DEFAULT_STATEMENT_TIMEOUT_MS = 30_000
+
+/**
+ * Thrown when a statement outlives its limit. Postgres cancels the statement.
+ * MySQL's protocol has no cancel (it takes a `KILL QUERY` from a second
+ * connection), so an abandoned MySQL statement may still complete later.
+ */
+export class StatementTimeoutError extends Error {
+  readonly code = 'ERR_QB_MODEL_STATEMENT_TIMEOUT'
+  constructor(readonly timeoutMs: number, readonly sql: string) {
+    super(
+      `[bun-query-builder] A model query did not answer within ${timeoutMs / 1000}s and was abandoned. `
+      + 'A model call waits for its query on the calling thread, so a query that needs a lock held by an open '
+      + 'transaction on this same thread can never finish: commit first, or run the statement on the transaction. '
+      + 'Postgres cancels the abandoned statement; MySQL cannot, so there it may still be applied once it can run. '
+      + 'Raise the limit with `models: { timeoutMs }` (0 for none).',
+    )
+    this.name = 'StatementTimeoutError'
+  }
+}
 
 function rebuildError(described: NonNullable<WorkerReply['error']>): Error {
   const error = new Error(described.message)
@@ -124,14 +174,20 @@ function rebuildError(described: NonNullable<WorkerReply['error']>): Error {
 
 /**
  * One worker, one connection pool, any number of statements, one at a time.
- * The caller is blocked for the length of each, so there is never a second
- * statement to keep apart from the first.
+ * The caller is blocked for the length of each, so only one is ever being
+ * waited for. Each still carries an id: a statement the caller gave up on
+ * (see `DEFAULT_STATEMENT_TIMEOUT_MS`) may answer later, and its reply must
+ * not be taken for the next one's.
  */
 export class SyncDriver {
   private readonly worker: Worker
   private readonly flag: Int32Array
   private readonly port: MessagePort
   private closed = false
+  /** The id of the last request sent. */
+  private sequence = 0
+  /** How many replies this side has taken. The worker's count runs ahead of it while one is waiting. */
+  private taken = 0
 
   constructor(readonly url: string, readonly options: Record<string, unknown> = {}) {
     const signal = new SharedArrayBuffer(4)
@@ -145,7 +201,12 @@ export class SyncDriver {
     } as ConstructorParameters<typeof Worker>[1])
     // The worker must not keep a finished program alive.
     this.worker.unref()
-    const opened = this.receive(STARTUP_TIMEOUT_MS)
+    const opened = this.receive(0, STARTUP_TIMEOUT_MS)
+    if (!opened) {
+      this.closed = true
+      void this.worker.terminate()
+      throw new Error(`[bun-query-builder] The database worker did not start within ${STARTUP_TIMEOUT_MS / 1000}s.`)
+    }
     if (!opened.ok) {
       this.closed = true
       void this.worker.terminate()
@@ -153,29 +214,46 @@ export class SyncDriver {
     }
   }
 
-  /** Wait for the worker's next reply and take it. */
-  private receive(timeoutMs?: number): WorkerReply {
-    const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
+  /**
+   * Wait for the reply to request `id` and take it. Undefined when
+   * `timeoutMs` passes first. A reply to an earlier request, one this side
+   * had already stopped waiting for, is dropped on the way.
+   */
+  private receive(id: number, timeoutMs: number): WorkerReply | undefined {
+    const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined
     for (;;) {
-      const waited = Atomics.wait(this.flag, 0, 0, deadline === undefined ? undefined : Math.max(0, deadline - Date.now()))
       const message = receiveMessageOnPort(this.port as unknown as Parameters<typeof receiveMessageOnPort>[0])
       if (message) {
-        Atomics.store(this.flag, 0, 0)
-        return message.message as WorkerReply
+        this.taken++
+        const reply = message.message as WorkerReply
+        if (reply.id === id)
+          return reply
+        continue
       }
-      if (waited === 'timed-out')
-        return { ok: false, error: { name: 'Error', message: `[bun-query-builder] The database worker did not start within ${STARTUP_TIMEOUT_MS / 1000}s.`, fields: {} } }
-      // Woken with nothing to read: the notification outran the message. Wait again.
+      const remaining = deadline === undefined ? undefined : deadline - Date.now()
+      if (remaining !== undefined && remaining <= 0)
+        return undefined
+      // Sleeps only while the worker has announced nothing this side has not
+      // taken. A reply announced but not yet readable comes straight back here.
+      Atomics.wait(this.flag, 0, this.taken, remaining)
     }
   }
 
-  /** Run one statement and return its rows, or throw what the driver threw. Named for the driver method it stands in for. */
-  unsafe(sql: string, params: readonly unknown[] = []): SyncQueryResult {
+  /**
+   * Run one statement and return its rows, or throw what the driver threw.
+   * Named for the driver method it stands in for. `timeoutMs` of 0 waits for
+   * as long as the statement takes.
+   */
+  unsafe(sql: string, params: readonly unknown[] = [], timeoutMs: number = DEFAULT_STATEMENT_TIMEOUT_MS): SyncQueryResult {
     if (this.closed)
       throw new Error('[bun-query-builder] This database connection was closed.')
-    Atomics.store(this.flag, 0, 0)
-    this.worker.postMessage({ op: 'query', sql, params })
-    const reply = this.receive()
+    const id = ++this.sequence
+    this.worker.postMessage({ op: 'query', id, sql, params })
+    const reply = this.receive(id, timeoutMs)
+    if (!reply) {
+      this.worker.postMessage({ op: 'cancel', id })
+      throw new StatementTimeoutError(timeoutMs, sql)
+    }
     if (!reply.ok)
       throw rebuildError(reply.error!)
     return Object.assign(reply.rows ?? [], {
@@ -192,9 +270,9 @@ export class SyncDriver {
       return
     this.closed = true
     try {
-      Atomics.store(this.flag, 0, 0)
-      this.worker.postMessage({ op: 'close' })
-      this.receive(5000)
+      const id = ++this.sequence
+      this.worker.postMessage({ op: 'close', id })
+      this.receive(id, 5000)
     }
     finally {
       void this.worker.terminate()

@@ -35,7 +35,7 @@ import { config, isMysqlLike } from './config'
 import { serializeBindings } from './bindings'
 import { connectionSignature, getOrCreateBunSql, hasInjectedSqlInstance, networkConnectionTarget, resolveLibSQLTarget } from './db'
 import { settle, wait, waitAll } from './settle'
-import { closeSyncDriver, syncDriverFor } from './sync-driver'
+import { closeSyncDriver, DEFAULT_STATEMENT_TIMEOUT_MS, syncDriverFor } from './sync-driver'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
 import { createFakerCompatLayer } from './faker-compat'
 import { normalizeRelationEntry, normalizeRelationList } from './relation-utils'
@@ -842,9 +842,9 @@ class DriverExecutor implements OrmExecutor {
       // Postgres (bindings.ts). The worker's is a bare driver, so the same
       // serialization happens here, before the parameters cross over. MySQL
       // keeps its native Date binding, exactly as on the wrapped connection.
-      return this.dialect === 'postgres'
-        ? { unsafe: (sql, params) => driver.unsafe(sql, serializeBindings(params)) }
-        : driver
+      const timeoutMs = config.models?.timeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS
+      const postgres = this.dialect === 'postgres'
+      return { unsafe: (sql, params) => driver.unsafe(sql, postgres ? serializeBindings(params) : params, timeoutMs) }
     }
     return getOrCreateBunSql() as unknown as StatementRunner
   }

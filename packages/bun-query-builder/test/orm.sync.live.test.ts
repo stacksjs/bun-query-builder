@@ -99,6 +99,35 @@ let total = 0
 for (let i = 0; i < 200; i++) total += User.where('id', '<=', (i % 3) + 1).count()
 check('200 statements in order', total, 67 * 1 + 67 * 2 + 66 * 3)
 
+// A statement that cannot finish is abandoned, not waited on forever. Here
+// another connection holds the row inside an open transaction, which is what a
+// model call inside this thread's own db.transaction() amounts to.
+const holder = await raw.reserve()
+await holder.unsafe('BEGIN')
+await holder.unsafe("UPDATE _qb_sync_users SET name = 'held' WHERE id = 1")
+setConfig({ models: { timeoutMs: 400 } })
+let timedOut
+const waitedFrom = performance.now()
+try { User.where('id', 1).update({ name: 'blocked' }) } catch (error) { timedOut = error }
+const waited = performance.now() - waitedFrom
+check('a blocked statement throws', timedOut?.code, 'ERR_QB_MODEL_STATEMENT_TIMEOUT')
+check('and names the limit', timedOut?.timeoutMs, 400)
+if (waited < 350 || waited > 5000) failures.push('the blocked statement was waited on for ' + Math.round(waited) + 'ms, not about 400')
+check('reads on other rows still answer while it is held', User.find(2)?.get('name'), 'Grace')
+await holder.unsafe('ROLLBACK')
+holder.release()
+setConfig({ models: { timeoutMs: 30000 } })
+// The abandoned statement's reply, if it comes, is not taken for this one's.
+check('the next statement gets its own answer', User.count(), 3)
+await Bun.sleep(300)
+// Postgres cancels the abandoned statement. MySQL has no cancel on the wire
+// (it takes a KILL QUERY from another connection), so there the statement may
+// still be applied once the lock is gone: the error says so.
+if (${JSON.stringify(dialect)} === 'postgres')
+  check('the abandoned write was cancelled, not applied late', User.find(1)?.get('name'), 'Ada')
+else
+  check('the abandoned write is either cancelled or applied whole', ['Ada', 'blocked'].includes(User.find(1)?.get('name')), true)
+
 // models.execution: 'async' asks for promises on purpose.
 setConfig({ models: { execution: 'async' } })
 const asked = User.count()

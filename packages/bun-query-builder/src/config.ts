@@ -32,6 +32,7 @@ export const defaultConfig: QueryBuilderConfig = {
   },
   models: {
     execution: 'sync',
+    timeoutMs: 30_000,
   },
   timestamps: {
     createdAt: 'created_at',
