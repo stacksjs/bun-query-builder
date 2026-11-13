@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.4.0...v0.4.1)
+
+## 🐛 Bug Fixes
+
+- **orm**: a model query that cannot finish throws instead of stopping the process ([06b7014](https://github.com/stacksjs/bun-query-builder/commit/06b7014)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.4.1 ([935a7dd](https://github.com/stacksjs/bun-query-builder/commit/935a7dd)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.44...v0.4.0)
 
 ## 💥 Breaking Changes
