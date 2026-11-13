@@ -574,9 +574,14 @@ export class SyncDriver {
    * The next reply nobody else is waiting for, or undefined when `waitMs`
    * passes first (`undefined` waits for as long as it takes). A reply to a
    * statement that had to wait is handed to its promise on the way.
+   *
+   * The wait is measured by the wait itself, not by reading a clock before and
+   * after: a program may have stopped its clock (a test that freezes time
+   * does), and a limit measured against a clock that never moves is never
+   * reached.
    */
   private next(waitMs: number | undefined): WorkerReply | undefined {
-    const deadline = waitMs === undefined ? undefined : Date.now() + waitMs
+    let remaining = waitMs
     for (;;) {
       const message = this.takeMessage(this.port as unknown as Parameters<typeof receiveMessageOnPort>[0])
       if (message) {
@@ -586,12 +591,14 @@ export class SyncDriver {
           continue
         return reply
       }
-      const remaining = deadline === undefined ? undefined : deadline - Date.now()
       if (remaining !== undefined && remaining <= 0)
         return undefined
       // Sleeps only while the worker has announced nothing this side has not
       // taken. A reply announced but not yet readable comes straight back here.
-      Atomics.wait(this.flag, 0, this.taken, remaining)
+      const before = performance.now()
+      const outcome = Atomics.wait(this.flag, 0, this.taken, remaining)
+      if (remaining !== undefined)
+        remaining = outcome === 'timed-out' ? 0 : remaining - Math.max(0, performance.now() - before)
     }
   }
 
@@ -601,13 +608,17 @@ export class SyncDriver {
    * had already stopped waiting for, is dropped on the way.
    */
   private receive(id: number, timeoutMs: number): WorkerReply | undefined {
-    const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined
+    let remaining = timeoutMs > 0 ? timeoutMs : undefined
     for (;;) {
-      const reply = this.next(deadline === undefined ? undefined : Math.max(0, deadline - Date.now()))
+      const before = performance.now()
+      const reply = this.next(remaining)
       if (!reply)
         return undefined
       if (reply.id === id && !reply.note)
         return reply
+      // Somebody else's reply: what is left of the limit is what is left.
+      if (remaining !== undefined)
+        remaining = Math.max(0, remaining - Math.max(0, performance.now() - before))
     }
   }
 
@@ -643,17 +654,21 @@ export class SyncDriver {
     }
   }
 
-  /** The promise of a statement that is already running and has to wait for this thread's own code. */
-  private defer(id: number, deadline: number | undefined, timeoutMs: number, describe: string): Promise<WorkerReply> {
+  /**
+   * The promise of a statement that is already running and has to wait for
+   * this thread's own code. `leftMs` is what remains of its limit (undefined
+   * for none).
+   */
+  private defer(id: number, leftMs: number | undefined, timeoutMs: number, describe: string): Promise<WorkerReply> {
     return new Promise<WorkerReply>((resolve, reject) => {
       const waiting: Later = { resolve, reject }
-      if (deadline !== undefined) {
+      if (leftMs !== undefined) {
         waiting.timer = setTimeout(() => {
           this.later.delete(id)
           this.worker.postMessage({ op: 'cancel', id })
           reject(new StatementTimeoutError(timeoutMs, describe))
           this.listen()
-        }, Math.max(0, deadline - Date.now()))
+        }, Math.max(0, leftMs))
       }
       this.later.set(id, waiting)
       this.listen()
@@ -683,8 +698,9 @@ export class SyncDriver {
   private requestWatched(job: Record<string, unknown>, timeoutMs: number, describe: string): Answer<WorkerReply> {
     const id = ++this.sequence
     this.worker.postMessage({ ...job, id, watch: true })
-    const started = Date.now()
-    const deadline = timeoutMs > 0 ? started + timeoutMs : undefined
+    /** How long it has been waited for, counted in waits that ran out (see `next`). */
+    let waited = 0
+    const left = (): number | undefined => timeoutMs > 0 ? timeoutMs - waited : undefined
     /** The statement's connection: undefined until the worker names it, null where it has no name. */
     let backend: number | null | undefined
     /** The question in flight, if one is. */
@@ -695,7 +711,7 @@ export class SyncDriver {
       const reply = this.next(look)
       if (reply?.id === id) {
         if (reply.note === 'queued')
-          return this.defer(id, deadline, timeoutMs, describe)
+          return this.defer(id, left(), timeoutMs, describe)
         if (reply.note === 'backend') {
           backend = reply.backend ?? null
           continue
@@ -707,7 +723,7 @@ export class SyncDriver {
       if (reply && reply.id === asking) {
         asking = undefined
         if (reply.blocked === true)
-          return this.defer(id, deadline, timeoutMs, describe)
+          return this.defer(id, left(), timeoutMs, describe)
         if (reply.blocked === null || reply.blocked === undefined)
           unseen = true
         look = Math.min(look * 2, LONGEST_LOOK_MS)
@@ -716,23 +732,21 @@ export class SyncDriver {
       if (reply)
         continue
 
-      const now = Date.now()
-      if (deadline !== undefined && now >= deadline) {
+      waited += look
+      if (timeoutMs > 0 && waited >= timeoutMs) {
         this.worker.postMessage({ op: 'cancel', id })
         throw new StatementTimeoutError(timeoutMs, describe)
       }
       if (asking !== undefined)
         continue
       const holders = [...this.held.values()].filter((value): value is number => value !== null)
-      // Nothing to ask with, or nobody to ask: wait a little, then assume.
-      if (backend === null || unseen || holders.length < this.held.size) {
-        if (now - started >= UNSEEN_WAIT_MS)
-          return this.defer(id, deadline, timeoutMs, describe)
+      // Nothing to ask with, or nobody to ask, or no word yet of a connection
+      // for it: wait a little, then take it that the held transaction is why.
+      if (backend === undefined || backend === null || unseen || holders.length < this.held.size) {
+        if (waited >= UNSEEN_WAIT_MS)
+          return this.defer(id, left(), timeoutMs, describe)
         continue
       }
-      // Not on a connection yet: it is being opened, which takes as long as it takes.
-      if (backend === undefined)
-        continue
       asking = ++this.sequence
       this.worker.postMessage({ op: 'probe', id: asking, waiting: backend, holders })
     }

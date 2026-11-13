@@ -202,6 +202,27 @@ check('more transactions than connections all finish', crowded, Array(14).fill(3
 await raw.unsafe("UPDATE _qb_sync_orders SET total = 100 WHERE customer = 'ada'")
 await raw.unsafe("UPDATE _qb_sync_orders SET total = 250 WHERE customer = 'grace'")
 
+// A program may stop its clock (a test that freezes time does). The wait for a
+// statement is measured by the wait, not by the clock, so it still ends.
+const RealDate = Date
+const frozen = RealDate.now()
+globalThis.Date = class extends RealDate {
+  constructor(...args) { super(...(args.length ? args : [frozen])) }
+  static now() { return frozen }
+}
+try {
+  await Promise.all(Array.from({ length: 4 }, () => db.transaction(async (tx) => {
+    const [row] = await tx.unsafe("SELECT total FROM _qb_sync_orders WHERE customer = 'linus' FOR UPDATE").execute()
+    await Bun.sleep(2)
+    await tx.updateTable('_qb_sync_orders').set({ total: Number(row.total) + 1 }).where({ customer: 'linus' }).execute()
+  })))
+}
+finally {
+  globalThis.Date = RealDate
+}
+check('contending transactions finish with the clock stopped', orders().where({ customer: 'linus' }).value('total'), 79)
+await raw.unsafe("UPDATE _qb_sync_orders SET total = 75 WHERE customer = 'linus'")
+
 // Many transactions in a row: each connection goes back to the pool.
 let total = 0
 for (let i = 0; i < 60; i++) total += db.transaction(tx => tx.selectFrom('_qb_sync_orders').count())
