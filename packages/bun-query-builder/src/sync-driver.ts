@@ -37,6 +37,14 @@
  * pool is held. Everything else still answers where it is called, and a
  * program that keeps its transactions synchronous never has a held one.
  *
+ * A statement issued inside a held transaction is a little different, because
+ * the code around it is `async` and awaits it: it answers with a promise when
+ * it has to wait for any lock, whoever has it. That is what lets such a
+ * transaction wait on a row another connection of the same program holds,
+ * while that program's own code goes on to release it. A statement anywhere
+ * else waits in place for a lock some other client holds, as any synchronous
+ * program does, up to its limit.
+ *
  * The worker's source is a string, not a file, so it survives being bundled,
  * minified and compiled into a binary: there is no second file to find at
  * runtime.
@@ -98,6 +106,8 @@ interface WorkerReply {
   backend?: number | null
   /** Whether the connection asked about is waiting on one of the held ones. Null where the database cannot say. */
   blocked?: boolean | null
+  /** Whether it is waiting on a lock at all, whoever has it. Null where the database cannot say. */
+  waiting?: boolean | null
   rows?: Record<string, unknown>[]
   count?: number | null
   affectedRows?: number | null
@@ -171,7 +181,10 @@ const backendOf = async (connection) => {
     return backends.get(connection)
   let backend = null
   try {
-    const rows = await connection.unsafe(dialect === 'postgres' ? 'SELECT pg_backend_pid() AS backend' : 'SELECT CONNECTION_ID() AS backend')
+    // Started here, not when it is awaited: the driver sends a statement when
+    // it is asked for its rows, and this one has to go out ahead of whatever
+    // the caller does next on the connection.
+    const rows = await connection.unsafe(dialect === 'postgres' ? 'SELECT pg_backend_pid() AS backend' : 'SELECT CONNECTION_ID() AS backend').execute()
     backend = Number(rows[0]?.backend) || null
   }
   catch {}
@@ -190,9 +203,13 @@ const backendOfSession = async (session) => {
 let watcher
 let cannotSay = false
 const integers = values => values.filter(value => Number.isInteger(value)).join(', ')
-const blockedBy = async (waiting, holders) => {
-  if (cannotSay || !dialect || !Number.isInteger(waiting) || holders.length === 0)
-    return null
+// Two questions about one connection: is it waiting on a lock at all, and is
+// it waiting on one a held connection has (directly, or through others)?
+const UNKNOWN = { waiting: null, blocked: null }
+const lockState = async (waiting, holders) => {
+  if (cannotSay || !dialect || !Number.isInteger(waiting))
+    return UNKNOWN
+  const held = integers(holders) || 'NULL'
   try {
     watcher ??= new SQL(url, { ...options, max: 1 })
     if (dialect === 'postgres') {
@@ -203,22 +220,35 @@ const blockedBy = async (waiting, holders) => {
         + ' SELECT blocker, 1 FROM unnest(pg_blocking_pids(' + waiting + ')) AS blocker'
         + ' UNION'
         + ' SELECT blocker, chain.depth + 1 FROM chain, unnest(pg_blocking_pids(chain.pid)) AS blocker WHERE chain.depth < 6'
-        + ') SELECT EXISTS (SELECT 1 FROM chain WHERE pid IN (' + integers(holders) + ')) AS blocked',
+        + ') SELECT EXISTS (SELECT 1 FROM chain) AS waiting,'
+        + ' EXISTS (SELECT 1 FROM chain WHERE pid IN (' + held + ')) AS blocked',
       )
-      return rows[0]?.blocked === true
+      return { waiting: rows[0]?.waiting === true, blocked: rows[0]?.blocked === true }
     }
+    // Row locks are in data_lock_waits. Table locks and GET_LOCK() names are
+    // metadata locks; a thread waiting for one also says so in its state,
+    // which is read as a last resort where those are not instrumented.
+    const thread = 'performance_schema.threads'
     const rows = await watcher.unsafe(
-      'SELECT 1 AS blocked FROM performance_schema.data_lock_waits w'
-      + ' JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID'
-      + ' JOIN performance_schema.threads b ON b.THREAD_ID = w.BLOCKING_THREAD_ID'
-      + ' WHERE r.PROCESSLIST_ID = ' + waiting + ' AND b.PROCESSLIST_ID IN (' + integers(holders) + ') LIMIT 1',
+      'SELECT ('
+      + ' EXISTS (SELECT 1 FROM performance_schema.data_lock_waits w JOIN ' + thread + ' r ON r.THREAD_ID = w.REQUESTING_THREAD_ID WHERE r.PROCESSLIST_ID = ' + waiting + ')'
+      + ' OR EXISTS (SELECT 1 FROM performance_schema.metadata_locks m JOIN ' + thread + ' t ON t.THREAD_ID = m.OWNER_THREAD_ID WHERE t.PROCESSLIST_ID = ' + waiting + " AND m.LOCK_STATUS = 'PENDING')"
+      + ' OR EXISTS (SELECT 1 FROM ' + thread + ' t WHERE t.PROCESSLIST_ID = ' + waiting + " AND (t.PROCESSLIST_STATE = 'User lock' OR t.PROCESSLIST_STATE LIKE 'Waiting for %lock%'))"
+      + ') AS waiting, ('
+      + ' EXISTS (SELECT 1 FROM performance_schema.data_lock_waits w JOIN ' + thread + ' r ON r.THREAD_ID = w.REQUESTING_THREAD_ID JOIN ' + thread + ' b ON b.THREAD_ID = w.BLOCKING_THREAD_ID'
+      + ' WHERE r.PROCESSLIST_ID = ' + waiting + ' AND b.PROCESSLIST_ID IN (' + held + '))'
+      + ' OR EXISTS (SELECT 1 FROM performance_schema.metadata_locks p JOIN ' + thread + ' pt ON pt.THREAD_ID = p.OWNER_THREAD_ID'
+      + ' JOIN performance_schema.metadata_locks g ON g.OBJECT_TYPE = p.OBJECT_TYPE AND g.OBJECT_SCHEMA <=> p.OBJECT_SCHEMA AND g.OBJECT_NAME <=> p.OBJECT_NAME'
+      + " AND g.LOCK_STATUS = 'GRANTED' JOIN " + thread + ' gt ON gt.THREAD_ID = g.OWNER_THREAD_ID'
+      + ' WHERE pt.PROCESSLIST_ID = ' + waiting + " AND p.LOCK_STATUS = 'PENDING' AND gt.PROCESSLIST_ID IN (" + held + '))'
+      + ') AS blocked',
     )
-    return rows.length > 0
+    return { waiting: Number(rows[0]?.waiting) === 1, blocked: Number(rows[0]?.blocked) === 1 }
   }
   catch {
     // No such table, or no right to read it: this database cannot say.
     cannotSay = true
-    return null
+    return UNKNOWN
   }
 }
 
@@ -277,8 +307,10 @@ const open = (job) => {
   }
   let announced = false
   const session = { kind: job.kind, connection: null, finish: null, done: null, parent: above, takes }
-  const hold = (connection) => {
+  const hold = async (connection) => {
     session.connection = connection
+    if (session.asked)
+      session.backend = await session.asked
     sessions.set(job.session, session)
     if (takes)
       inUse++
@@ -288,19 +320,42 @@ const open = (job) => {
   }
   const args = job.kind === 'distributed' ? [job.name, hold] : job.options ? [job.options, hold] : [hold]
   const method = job.kind === 'savepoint' ? 'savepoint' : job.kind === 'distributed' ? 'beginDistributed' : 'begin'
-  try {
-    session.done = parent[method](...args)
+  const begin = (on) => {
+    try {
+      session.done = on[method](...args)
+    }
+    catch (error) {
+      session.release?.()
+      reply({ id: job.id, ok: false, error: describe(error) })
+      return
+    }
+    // Failing to open is this request's answer. Failing later is the answer to
+    // whoever ends the session, and is read there.
+    session.done.then(() => {}, (error) => {
+      if (!announced) {
+        session.release?.()
+        reply({ id: job.id, ok: false, error: describe(error) })
+      }
+    })
   }
-  catch (error) {
-    reply({ id: job.id, ok: false, error: describe(error) })
+  // A transaction that will be watched, or held open across an await, is
+  // begun on a connection taken for it, so that the connection's id can be
+  // asked for before BEGIN. Asked inside the transaction it would be the
+  // transaction's first statement, and Postgres takes SET TRANSACTION
+  // ISOLATION LEVEL only as the first.
+  if (takes && !above && (job.watch || job.held) && dialect) {
+    parent.reserve().then((connection) => {
+      if (typeof connection[method] !== 'function') {
+        connection.release?.()
+        return begin(parent)
+      }
+      session.asked = backendOf(connection)
+      session.release = () => { try { connection.release?.() } catch {} }
+      begin(connection)
+    }, error => reply({ id: job.id, ok: false, error: describe(error) }))
     return
   }
-  // Failing to open is this request's answer. Failing later is the answer to
-  // whoever ends the session, and is read there.
-  session.done.then(() => {}, (error) => {
-    if (!announced)
-      reply({ id: job.id, ok: false, error: describe(error) })
-  })
+  begin(parent)
 }
 
 const end = async (job) => {
@@ -333,6 +388,7 @@ const end = async (job) => {
     }
   }
   finally {
+    session.release?.()
     if (session.takes)
       inUse--
   }
@@ -390,7 +446,7 @@ parentPort.on('message', async (job) => {
     if (job.op === 'backend')
       return reply({ id: job.id, ok: true, backend: await backendOfSession(sessionFor(job.session)) })
     if (job.op === 'probe')
-      return reply({ id: job.id, ok: true, blocked: await blockedBy(job.waiting, job.holders) })
+      return reply({ id: job.id, ok: true, ...(await lockState(job.waiting, job.holders)) })
     if (job.op === 'call') {
       // A pool-level command with no rows to speak of (two-phase commit).
       await sql[job.method](...job.args)
@@ -533,6 +589,8 @@ export class SyncDriver {
    * read). While there are any, statements are watched.
    */
   private readonly held = new Map<string, number | null>()
+  /** A savepoint's session, by the session it is inside. */
+  private readonly inside = new Map<string, string>()
   /** Statements that had to wait, by request id. */
   private readonly later = new Map<number, Later>()
   private readonly deliver = (reply: WorkerReply): void => {
@@ -698,6 +756,11 @@ export class SyncDriver {
   private requestWatched(job: Record<string, unknown>, timeoutMs: number, describe: string): Answer<WorkerReply> {
     const id = ++this.sequence
     this.worker.postMessage({ ...job, id, watch: true })
+    // A statement issued inside a held transaction is in code that awaits: it
+    // may answer with a promise whenever it has to wait for a lock, whoever
+    // has it. Any other statement may be in code that does not, so it gives up
+    // the thread only to a lock this thread's own code has to release.
+    const awaited = this.isHeld(job.session as string | undefined)
     /** How long it has been waited for, counted in waits that ran out (see `next`). */
     let waited = 0
     const left = (): number | undefined => timeoutMs > 0 ? timeoutMs - waited : undefined
@@ -722,7 +785,7 @@ export class SyncDriver {
       }
       if (reply && reply.id === asking) {
         asking = undefined
-        if (reply.blocked === true)
+        if (reply.blocked === true || (awaited && reply.waiting === true))
           return this.defer(id, left(), timeoutMs, describe)
         if (reply.blocked === null || reply.blocked === undefined)
           unseen = true
@@ -797,14 +860,25 @@ export class SyncDriver {
    * return the name statements use to run on it (`options.session`). It stays
    * open until {@link end}. Waiting here means waiting for a free connection.
    */
-  open(spec: { kind: 'begin' | 'savepoint' | 'reserve' | 'distributed', parent?: string, options?: string, name?: string }, timeoutMs: number = DEFAULT_STATEMENT_TIMEOUT_MS): Answer<string> {
+  open(spec: {
+    kind: 'begin' | 'savepoint' | 'reserve' | 'distributed'
+    parent?: string
+    options?: string
+    name?: string
+    /** The caller already knows it will {@link hold} this one: its callback is `async`. */
+    held?: boolean
+  }, timeoutMs: number = DEFAULT_STATEMENT_TIMEOUT_MS): Answer<string> {
     const session = `s${++this.sessions}`
+    if (spec.parent)
+      this.inside.set(session, spec.parent)
     return SyncDriver.answer(this.request({ op: 'open', session, ...spec }, timeoutMs, `${spec.kind} (waiting for a connection)`), () => session)
   }
 
   /** Commit or roll back a transaction or savepoint, or release a reserved connection. Throws what COMMIT threw. */
   end(session: string, commit: boolean, timeoutMs: number = DEFAULT_STATEMENT_TIMEOUT_MS): Answer<void> {
-    return SyncDriver.answer(this.request({ op: 'end', session, commit }, timeoutMs, commit ? 'COMMIT' : 'ROLLBACK'), () => undefined)
+    const answer = this.request({ op: 'end', session, commit }, timeoutMs, commit ? 'COMMIT' : 'ROLLBACK')
+    this.inside.delete(session)
+    return SyncDriver.answer(answer, () => undefined)
   }
 
   /** A pool-level command with no rows: `commitDistributed(name)`, `rollbackDistributed(name)`. */
@@ -836,6 +910,15 @@ export class SyncDriver {
     this.held.delete(session)
   }
 
+  /** Whether a session, or one it is inside, is held open across an `await`. */
+  private isHeld(session: string | undefined): boolean {
+    for (let at = session; at !== undefined; at = this.inside.get(at)) {
+      if (this.held.has(at))
+        return true
+    }
+    return false
+  }
+
   /** Close the pool and stop the worker. Safe to call twice. */
   close(): void {
     if (this.closed)
@@ -853,6 +936,7 @@ export class SyncDriver {
       }
       this.later.clear()
       this.held.clear()
+      this.inside.clear()
       this.listen()
       void this.worker.terminate()
     }

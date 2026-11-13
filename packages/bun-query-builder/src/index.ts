@@ -19,7 +19,7 @@ export * from './pivot'
 export * from './orm'
 // The runner the model layer is written with, for code built on top of it that
 // wants the same property: synchronous when everything it touches is.
-export { isThenable, settle, wait, waitAll } from './settle'
+export { ASYNC_CALLBACK, declaredAsync, isThenable, settle, standingFor, wait, waitAll } from './settle'
 export { StatementTimeoutError } from './sync-driver'
 export * from './schema'
 export * from './seeder'

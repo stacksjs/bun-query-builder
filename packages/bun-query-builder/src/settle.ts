@@ -87,3 +87,29 @@ export function settle<R>(body: () => Generator<unknown, R, unknown>): R {
 export function waitAll<T>(values: T[]): Awaited<T>[] | Promise<Awaited<T>[]> {
   return values.some(isThenable) ? Promise.all(values) : values as Awaited<T>[]
 }
+
+/**
+ * Marks a function that stands in for an `async` callback: a wrapper a library
+ * puts around the caller's own. {@link declaredAsync} then says of the wrapper
+ * what it would say of the callback.
+ */
+export const ASYNC_CALLBACK: unique symbol = Symbol.for('bun-query-builder.asyncCallback')
+
+/**
+ * Whether a callback was written `async` (or wraps one that was): known before
+ * it is called, which is when a transaction has to know that it will be held
+ * open across an `await`.
+ */
+export function declaredAsync(fn: unknown): boolean {
+  if (typeof fn !== 'function')
+    return false
+  return (fn as { [ASYNC_CALLBACK]?: unknown })[ASYNC_CALLBACK] === true || fn.constructor?.name === 'AsyncFunction'
+}
+
+/** `wrapper`, marked as standing in for `callback` (see {@link ASYNC_CALLBACK}). */
+export function standingFor<T extends Function>(wrapper: T, callback: unknown): T {
+  if (declaredAsync(callback))
+    Object.defineProperty(wrapper, ASYNC_CALLBACK, { value: true, configurable: true })
+  return wrapper
+}
+

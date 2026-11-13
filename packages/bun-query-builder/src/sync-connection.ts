@@ -25,7 +25,7 @@ import type { StatementOptions, SyncDriver, SyncTemplate } from './sync-driver'
 import { bindingValue, serializeBindings, serializeCallArgs } from './bindings'
 import { config } from './config'
 import { connectionSignature, hasInjectedSqlInstance, networkConnectionTarget, resolveLibSQLTarget } from './db'
-import { isThenable, settle, wait } from './settle'
+import { declaredAsync, isThenable, settle, wait } from './settle'
 import { closeSyncDriver, DEFAULT_STATEMENT_TIMEOUT_MS, syncDriverFor } from './sync-driver'
 
 /** What a statement is made of, kept on its query object so it can be nested in another or run. */
@@ -186,9 +186,14 @@ function createConnection(scope: Scope): DriverConnection {
     const label = args.find(arg => typeof arg === 'string') as string | undefined
     return settle(function* (): Generator<unknown, unknown, unknown> {
       const driver = scope.driver()
+      // A callback written `async` will keep the transaction open across an
+      // `await`, and says so before it is called: its first statement is
+      // already one whose author awaits it (sync-driver.ts).
+      const willHold = declaredAsync(fn)
       const session = (yield* wait(driver.open({
         kind,
         parent: scope.session,
+        held: willHold,
         ...(kind === 'distributed' ? { name: label } : label ? { options: label } : {}),
       }, statementTimeout()))) as string
       const waiting = new Set<PromiseLike<unknown>>()
@@ -196,11 +201,14 @@ function createConnection(scope: Scope): DriverConnection {
       try {
         let result: unknown
         try {
+          if (willHold) {
+            driver.hold(session)
+            held = true
+          }
           const answer = fn(createConnection({ driver: () => driver, session, waiting }))
-          // The callback has to wait, so the transaction stays open while
-          // other code runs: from here on, a statement that needs what it
-          // holds is not waited for on this thread (sync-driver.ts).
-          if (isThenable(answer)) {
+          // Not written `async`, but it has to wait all the same: from here
+          // on the transaction is open while other code runs.
+          if (!held && isThenable(answer)) {
             driver.hold(session)
             held = true
           }

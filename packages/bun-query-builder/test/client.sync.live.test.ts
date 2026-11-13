@@ -202,6 +202,35 @@ check('more transactions than connections all finish', crowded, Array(14).fill(3
 await raw.unsafe("UPDATE _qb_sync_orders SET total = 100 WHERE customer = 'ada'")
 await raw.unsafe("UPDATE _qb_sync_orders SET total = 250 WHERE customer = 'grace'")
 
+// A held transaction's connection is identified before BEGIN, not by a query
+// inside it: Postgres takes SET TRANSACTION ISOLATION LEVEL only as the first
+// statement of a transaction.
+if (DIALECT === 'postgres') {
+  check('an isolation level on a transaction with an async callback', await db.transaction(async (tx) => {
+    await Bun.sleep(1)
+    return tx.selectFrom('_qb_sync_orders').count()
+  }, { isolation: 'serializable' }), 3)
+  const open = db.transaction(async () => { await Bun.sleep(15) })
+  check('and on one begun while another is held', db.transaction(tx => tx.selectFrom('_qb_sync_orders').count(), { isolation: 'repeatable read' }), 3)
+  await open
+}
+
+// Inside a transaction with an async callback the code awaits its statements,
+// so one that has to wait for a lock answers with a promise whoever holds the
+// lock. Here it is another connection of this same program, which only this
+// thread can release.
+const stranger = await raw.reserve()
+await stranger.unsafe('BEGIN')
+await stranger.unsafe("UPDATE _qb_sync_orders SET total = total WHERE customer = 'linus'")
+const behind = db.transaction(async tx => tx.updateTable('_qb_sync_orders').set({ total: 76 }).where({ customer: 'linus' }).execute())
+check('a transaction waiting on a lock this program holds elsewhere is a promise', isThenable(behind), true)
+await Bun.sleep(30)
+check('and has not gone ahead', (await raw.unsafe("SELECT total FROM _qb_sync_orders WHERE customer = 'ada'"))[0].total, 100)
+await stranger.unsafe('COMMIT')
+stranger.release()
+check('it finishes once the lock is released', await behind, 1)
+await raw.unsafe("UPDATE _qb_sync_orders SET total = 75 WHERE customer = 'linus'")
+
 // A program may stop its clock (a test that freezes time does). The wait for a
 // statement is measured by the wait, not by the clock, so it still ends.
 const RealDate = Date

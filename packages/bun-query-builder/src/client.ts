@@ -12,7 +12,7 @@ import type { DriverConnection, DriverQuery } from './db'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { serializeBindings, withDateBindings } from './bindings'
 import { bunSql, getOrCreateBunSql, resetConnection, resolveLibSQLTarget } from './db'
-import { isThenable, settle, wait as waitFor } from './settle'
+import { isThenable, settle, standingFor, wait as waitFor } from './settle'
 import { answersInPlace, isTemplateStatement, syncConnection } from './sync-connection'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
@@ -9135,7 +9135,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             opts.logger?.({ type: 'start', attempt })
             const start = Date.now()
             const beginOptions = !nested && opts.sqliteMode ? [opts.sqliteMode.toUpperCase()] : []
-            return (yield* wait((txConn as any)[txMethod](...beginOptions, (tx: any) => {
+            return (yield* wait((txConn as any)[txMethod](...beginOptions, standingFor((tx: any) => {
               return settle(function* () {
                 const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks, inTransaction: true })
 
@@ -9198,7 +9198,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
                 opts.logger?.({ type: 'commit', attempt, durationMs })
                 return res
               })
-            })))
+            }, fn))))
           })
         }
         const retries = Math.max(0, opts?.retries ?? 0)
@@ -9261,25 +9261,25 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const s: any = _sql
         if (!s || typeof s.savepoint !== 'function')
           throw new Error('savepoint() is not supported by the active connection')
-        return (yield* wait(s.savepoint((sp: any) => {
+        return (yield* wait(s.savepoint(standingFor((sp: any) => {
           return settle(function* () {
             // Carry the flag: a savepoint body is still inside a transaction, so a
             // nested savepoint()/transaction() from here must nest, not begin.
             const qb = createQueryBuilder<DB>({ sql: sp, meta, schema, hooks: state?.hooks, inTransaction: true })
             return (yield* wait(fn(qb)))
           })
-        })))
+        }, fn))))
       })
     },
     beginDistributed(name, fn) {
       return settle(function* () {
         const txConn: any = state?.sql ?? builderConnection()
-        const res = (yield* wait((txConn as any).beginDistributed(name, (tx: any) => {
+        const res = (yield* wait((txConn as any).beginDistributed(name, standingFor((tx: any) => {
           return settle(function* () {
             const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks })
             return (yield* wait(fn(qb)))
           })
-        })))
+        }, fn))))
         return res as any
       })
     },

@@ -78,6 +78,9 @@ of waiting. It is the one case where a value cannot exist yet. Everything else
 still answers in place, and a program whose transaction callbacks are not
 `async` never has one open across an `await`.
 
+A statement issued inside such a transaction is in code that awaits it, so it
+answers with a promise whenever it has to wait for a lock, whoever holds it.
+
 A lock held by another process is a different matter: the query waits for it,
 as it would in any synchronous program. So a MySQL or Postgres statement, from
 a model or from the query builder, has a limit, 30 seconds by default, after
