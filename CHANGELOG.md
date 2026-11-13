@@ -1,3 +1,21 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.44...v0.4.0)
+
+## 💥 Breaking Changes
+
+- **orm**: a model call returns its value where it is written ([db09c09](https://github.com/stacksjs/bun-query-builder/commit/db09c09)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ✨ Features
+
+- **orm**: export the runner the model layer is written with ([441f17d](https://github.com/stacksjs/bun-query-builder/commit/441f17d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.4.0 ([5c64af1](https://github.com/stacksjs/bun-query-builder/commit/5c64af1)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.3.43...v0.3.44)
 
 ## 🐛 Bug Fixes
