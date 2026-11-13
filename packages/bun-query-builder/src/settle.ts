@@ -89,6 +89,26 @@ export function waitAll<T>(values: T[]): Awaited<T>[] | Promise<Awaited<T>[]> {
 }
 
 /**
+ * Whether a query object answers in place by this library's contract: it has
+ * an `executeSync()` and is not itself a promise.
+ *
+ * The connections this library makes (the `bun:sqlite` wrapper, the
+ * synchronous network connection) hand out plain objects. A driver's own
+ * query is a promise: Bun's `Query` extends `Promise`. Where the runtime gives
+ * that one an `executeSync()` of its own (stacksjs/bun), it is a different
+ * thing and is not taken for this one: nothing watches it for a transaction
+ * held open in this process, it has no limit, and it is what a caller holds
+ * exactly when it asked for promises (`models.execution: 'async'`, a
+ * connection it supplied). Such a query is awaited, as it always was.
+ */
+export function answersHere(query: unknown): boolean {
+  return query !== null
+    && typeof query === 'object'
+    && typeof (query as { executeSync?: unknown }).executeSync === 'function'
+    && !(query instanceof Promise)
+}
+
+/**
  * Marks a function that stands in for an `async` callback: a wrapper a library
  * puts around the caller's own. {@link declaredAsync} then says of the wrapper
  * what it would say of the callback.

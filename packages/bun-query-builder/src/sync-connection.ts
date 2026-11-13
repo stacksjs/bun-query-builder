@@ -21,12 +21,13 @@
  */
 
 import type { AwaitableDriverQuery, DriverConnection } from './db'
-import type { StatementOptions, SyncDriver, SyncTemplate } from './sync-driver'
+import type { StatementOptions, SyncDatabase, SyncTemplate } from './sync-driver'
 import { bindingValue, serializeBindings, serializeCallArgs } from './bindings'
 import { config } from './config'
 import { connectionSignature, hasInjectedSqlInstance, networkConnectionTarget, resolveLibSQLTarget } from './db'
 import { declaredAsync, isThenable, settle, wait } from './settle'
-import { closeSyncDriver, DEFAULT_STATEMENT_TIMEOUT_MS, syncDriverFor } from './sync-driver'
+import { DEFAULT_STATEMENT_TIMEOUT_MS } from './sync-driver'
+import { closeSyncDriver, syncDriverFor } from './sync-transport'
 
 /** What a statement is made of, kept on its query object so it can be nested in another or run. */
 const STATEMENT = Symbol('bun-query-builder.statement')
@@ -46,7 +47,7 @@ interface HelperCall {
 
 interface Scope {
   /** The driver statements go to. A transaction keeps the one it began on. */
-  driver: () => SyncDriver
+  driver: () => SyncDatabase
   /** The transaction, savepoint or reserved connection every statement runs on. */
   session?: string
   /**

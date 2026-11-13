@@ -116,11 +116,58 @@ interface WorkerReply {
   error?: { name: string, message: string, stack?: string, fields: Record<string, unknown> }
 }
 
+/**
+ * What a database is asked about one of its connections: is it waiting on a
+ * lock at all (`waiting`), and is it waiting on one that a held connection has
+ * (`blocked`), directly or through others? `{waiting}` is the connection's id
+ * and `{held}` the ids of the held ones, as a list.
+ *
+ * Text, not code, so that the worker (whose source is a string) and the
+ * driver that runs on the calling thread ask the same question.
+ */
+export const LOCK_QUESTIONS: Readonly<Record<'postgres' | 'mysql', string>> = {
+  // Followed through other connections too: waiting on one that waits on a
+  // held one is waiting on the held one.
+  postgres: 'WITH RECURSIVE chain(pid, depth) AS ('
+    + ' SELECT blocker, 1 FROM unnest(pg_blocking_pids({waiting})) AS blocker'
+    + ' UNION'
+    + ' SELECT blocker, chain.depth + 1 FROM chain, unnest(pg_blocking_pids(chain.pid)) AS blocker WHERE chain.depth < 6'
+    + ') SELECT EXISTS (SELECT 1 FROM chain) AS waiting,'
+    + ' EXISTS (SELECT 1 FROM chain WHERE pid IN ({held})) AS blocked',
+  // Row locks are in data_lock_waits. Table locks and GET_LOCK() names are
+  // metadata locks; a thread waiting for one also says so in its state,
+  // which is read as a last resort where those are not instrumented.
+  mysql: 'SELECT ('
+    + ' EXISTS (SELECT 1 FROM performance_schema.data_lock_waits w JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID WHERE r.PROCESSLIST_ID = {waiting})'
+    + ' OR EXISTS (SELECT 1 FROM performance_schema.metadata_locks m JOIN performance_schema.threads t ON t.THREAD_ID = m.OWNER_THREAD_ID WHERE t.PROCESSLIST_ID = {waiting} AND m.LOCK_STATUS = \'PENDING\')'
+    + ' OR EXISTS (SELECT 1 FROM performance_schema.threads t WHERE t.PROCESSLIST_ID = {waiting} AND (t.PROCESSLIST_STATE = \'User lock\' OR t.PROCESSLIST_STATE LIKE \'Waiting for %lock%\'))'
+    + ') AS waiting, ('
+    + ' EXISTS (SELECT 1 FROM performance_schema.data_lock_waits w JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID JOIN performance_schema.threads b ON b.THREAD_ID = w.BLOCKING_THREAD_ID'
+    + ' WHERE r.PROCESSLIST_ID = {waiting} AND b.PROCESSLIST_ID IN ({held}))'
+    + ' OR EXISTS (SELECT 1 FROM performance_schema.metadata_locks p JOIN performance_schema.threads pt ON pt.THREAD_ID = p.OWNER_THREAD_ID'
+    + ' JOIN performance_schema.metadata_locks g ON g.OBJECT_TYPE = p.OBJECT_TYPE AND g.OBJECT_SCHEMA <=> p.OBJECT_SCHEMA AND g.OBJECT_NAME <=> p.OBJECT_NAME'
+    + ' AND g.LOCK_STATUS = \'GRANTED\' JOIN performance_schema.threads gt ON gt.THREAD_ID = g.OWNER_THREAD_ID'
+    + ' WHERE pt.PROCESSLIST_ID = {waiting} AND p.LOCK_STATUS = \'PENDING\' AND gt.PROCESSLIST_ID IN ({held}))'
+    + ') AS blocked',
+}
+
+/** The question for one connection: `waiting` is its id, `holders` the ids of the held ones. */
+export function lockQuestion(dialect: 'postgres' | 'mysql', waiting: number, holders: readonly number[]): string {
+  const held = holders.filter(value => Number.isInteger(value)).join(', ') || 'NULL'
+  return LOCK_QUESTIONS[dialect].replaceAll('{waiting}', String(Math.trunc(waiting))).replaceAll('{held}', held)
+}
+
+/** What the database answered, read the same way for both dialects (Postgres says true, MySQL says 1). */
+export function lockAnswer(row: Record<string, unknown> | undefined): { waiting: boolean, blocked: boolean } {
+  const yes = (value: unknown): boolean => value === true || Number(value) === 1
+  return { waiting: yes(row?.waiting), blocked: yes(row?.blocked) }
+}
+
 const WORKER_SOURCE = /* js */ `
 import { SQL } from 'bun'
 import { parentPort, workerData } from 'node:worker_threads'
 
-const { signal, port, url, options } = workerData
+const { signal, port, url, options, lockQuestions } = workerData
 const flag = new Int32Array(signal)
 // One count per reply. The caller sleeps while the count is the one it last
 // saw, so a reply that lands before it sleeps is never missed.
@@ -212,38 +259,11 @@ const lockState = async (waiting, holders) => {
   const held = integers(holders) || 'NULL'
   try {
     watcher ??= new SQL(url, { ...options, max: 1 })
-    if (dialect === 'postgres') {
-      // Followed through other connections too: waiting on one that waits on a
-      // held one is waiting on the held one.
-      const rows = await watcher.unsafe(
-        'WITH RECURSIVE chain(pid, depth) AS ('
-        + ' SELECT blocker, 1 FROM unnest(pg_blocking_pids(' + waiting + ')) AS blocker'
-        + ' UNION'
-        + ' SELECT blocker, chain.depth + 1 FROM chain, unnest(pg_blocking_pids(chain.pid)) AS blocker WHERE chain.depth < 6'
-        + ') SELECT EXISTS (SELECT 1 FROM chain) AS waiting,'
-        + ' EXISTS (SELECT 1 FROM chain WHERE pid IN (' + held + ')) AS blocked',
-      )
-      return { waiting: rows[0]?.waiting === true, blocked: rows[0]?.blocked === true }
-    }
-    // Row locks are in data_lock_waits. Table locks and GET_LOCK() names are
-    // metadata locks; a thread waiting for one also says so in its state,
-    // which is read as a last resort where those are not instrumented.
-    const thread = 'performance_schema.threads'
-    const rows = await watcher.unsafe(
-      'SELECT ('
-      + ' EXISTS (SELECT 1 FROM performance_schema.data_lock_waits w JOIN ' + thread + ' r ON r.THREAD_ID = w.REQUESTING_THREAD_ID WHERE r.PROCESSLIST_ID = ' + waiting + ')'
-      + ' OR EXISTS (SELECT 1 FROM performance_schema.metadata_locks m JOIN ' + thread + ' t ON t.THREAD_ID = m.OWNER_THREAD_ID WHERE t.PROCESSLIST_ID = ' + waiting + " AND m.LOCK_STATUS = 'PENDING')"
-      + ' OR EXISTS (SELECT 1 FROM ' + thread + ' t WHERE t.PROCESSLIST_ID = ' + waiting + " AND (t.PROCESSLIST_STATE = 'User lock' OR t.PROCESSLIST_STATE LIKE 'Waiting for %lock%'))"
-      + ') AS waiting, ('
-      + ' EXISTS (SELECT 1 FROM performance_schema.data_lock_waits w JOIN ' + thread + ' r ON r.THREAD_ID = w.REQUESTING_THREAD_ID JOIN ' + thread + ' b ON b.THREAD_ID = w.BLOCKING_THREAD_ID'
-      + ' WHERE r.PROCESSLIST_ID = ' + waiting + ' AND b.PROCESSLIST_ID IN (' + held + '))'
-      + ' OR EXISTS (SELECT 1 FROM performance_schema.metadata_locks p JOIN ' + thread + ' pt ON pt.THREAD_ID = p.OWNER_THREAD_ID'
-      + ' JOIN performance_schema.metadata_locks g ON g.OBJECT_TYPE = p.OBJECT_TYPE AND g.OBJECT_SCHEMA <=> p.OBJECT_SCHEMA AND g.OBJECT_NAME <=> p.OBJECT_NAME'
-      + " AND g.LOCK_STATUS = 'GRANTED' JOIN " + thread + ' gt ON gt.THREAD_ID = g.OWNER_THREAD_ID'
-      + ' WHERE pt.PROCESSLIST_ID = ' + waiting + " AND p.LOCK_STATUS = 'PENDING' AND gt.PROCESSLIST_ID IN (" + held + '))'
-      + ') AS blocked',
-    )
-    return { waiting: Number(rows[0]?.waiting) === 1, blocked: Number(rows[0]?.blocked) === 1 }
+    // The question is the caller's text (LOCK_QUESTIONS), so that this and the
+    // driver on the calling thread ask the same one.
+    const rows = await watcher.unsafe(lockQuestions[dialect].replaceAll('{waiting}', String(waiting)).replaceAll('{held}', held))
+    const yes = value => value === true || Number(value) === 1
+    return { waiting: yes(rows[0]?.waiting), blocked: yes(rows[0]?.blocked) }
   }
   catch {
     // No such table, or no right to read it: this database cannot say.
@@ -506,11 +526,11 @@ export const DEFAULT_STATEMENT_TIMEOUT_MS = 30_000
  * has none). Past this it answers with a promise, on the assumption that the
  * transaction held open in this process is what it needs.
  */
-const UNSEEN_WAIT_MS = 50
+export const UNSEEN_WAIT_MS = 50
 
 /** The first wait for a watched statement before the database is asked about it, and the longest between askings. */
-const FIRST_LOOK_MS = 1
-const LONGEST_LOOK_MS = 40
+export const FIRST_LOOK_MS = 1
+export const LONGEST_LOOK_MS = 40
 
 /**
  * Thrown when a statement outlives its limit. Postgres cancels the statement.
@@ -562,6 +582,39 @@ interface ReplyPort {
 }
 
 /**
+ * A network database that answers where it is asked: what the model layer and
+ * the query builder's connection (sync-connection.ts) are written against.
+ * Two things are one: the worker-held pool below, and the pool on the calling
+ * thread in native-sync-driver.ts, for a runtime whose driver can wait for a
+ * statement itself. sync-transport.ts opens whichever the runtime allows.
+ */
+export interface SyncDatabase {
+  /** Run one statement and return its rows, or throw what the driver threw. `timeoutMs` of 0 waits for as long as it takes. */
+  unsafe: (sql: string, params?: readonly unknown[], timeoutMs?: number, options?: StatementOptions) => Answer<SyncQueryResult>
+  /** Run a statement the caller wrote as a template literal, rebuilt on the connection that runs it. */
+  template: (template: SyncTemplate, timeoutMs?: number, options?: StatementOptions) => Answer<SyncQueryResult>
+  /** Run the statements in a file. */
+  file: (path: string, params?: readonly unknown[], timeoutMs?: number, options?: StatementOptions) => Answer<SyncQueryResult>
+  /** Open a transaction, a savepoint inside one, or a reserved connection, and return the name statements use to run on it. */
+  open: (spec: {
+    kind: 'begin' | 'savepoint' | 'reserve' | 'distributed'
+    parent?: string
+    options?: string
+    name?: string
+    held?: boolean
+  }, timeoutMs?: number) => Answer<string>
+  /** Commit or roll back a transaction or savepoint, or release a reserved connection. */
+  end: (session: string, commit: boolean, timeoutMs?: number) => Answer<void>
+  /** A pool-level command with no rows: `commitDistributed(name)`, `rollbackDistributed(name)`. */
+  call: (method: 'commitDistributed' | 'rollbackDistributed', args: readonly unknown[], timeoutMs?: number) => Answer<void>
+  /** Say that a session is being held open across an `await`. Until {@link unhold}, statements are watched for waiting on it. */
+  hold: (session: string) => void
+  unhold: (session: string) => void
+  /** Close the pool. Safe to call twice. */
+  close: () => void
+}
+
+/**
  * One worker, one connection pool, any number of statements.
  *
  * The caller is blocked for the length of a statement, so in the ordinary
@@ -571,7 +624,7 @@ interface ReplyPort {
  * statement that had to wait for this thread's own code is answered through a
  * promise, and its reply is delivered whenever it comes.
  */
-export class SyncDriver {
+export class SyncDriver implements SyncDatabase {
   private readonly worker: Worker
   private readonly takeMessage: typeof receiveMessageOnPort
   private readonly flag: Int32Array
@@ -610,7 +663,7 @@ export class SyncDriver {
     this.port = channel.port1 as unknown as MessagePort
     this.worker = new Worker(WORKER_SOURCE, {
       eval: true,
-      workerData: { signal, port: channel.port2, url, options },
+      workerData: { signal, port: channel.port2, url, options, lockQuestions: LOCK_QUESTIONS },
       transferList: [channel.port2 as unknown as Transferable],
     } as ConstructorParameters<typeof Worker>[1])
     // The worker must not keep a finished program alive.
@@ -941,26 +994,4 @@ export class SyncDriver {
       void this.worker.terminate()
     }
   }
-}
-
-let current: { key: string, driver: SyncDriver } | null = null
-
-/**
- * The driver for a connection, opened on first use and kept until the
- * connection it describes changes. `key` is the caller's identity for it.
- */
-export function syncDriverFor(key: string, target: () => { url: string, options: Record<string, unknown> }): SyncDriver {
-  if (current?.key === key)
-    return current.driver
-  closeSyncDriver()
-  const { url, options } = target()
-  current = { key, driver: new SyncDriver(url, options) }
-  return current.driver
-}
-
-/** Close the model layer's synchronous connection, if one is open. */
-export function closeSyncDriver(): void {
-  const open = current
-  current = null
-  open?.driver.close()
 }

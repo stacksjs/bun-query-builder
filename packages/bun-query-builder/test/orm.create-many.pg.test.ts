@@ -28,7 +28,7 @@ describe.skipIf(!pgAvailable)('createMany() against live Postgres', () => {
 import { SQL } from 'bun'
 import { setConfig, resetConnection, defineModel, clearModelRegistry } from ${JSON.stringify(srcEntry)}
 import { connectionSignature, networkConnectionTarget } from ${JSON.stringify(resolve(import.meta.dir, '../src/db.ts'))}
-import { syncDriverFor } from ${JSON.stringify(resolve(import.meta.dir, '../src/sync-driver.ts'))}
+import { syncDriverFor } from ${JSON.stringify(resolve(import.meta.dir, '../src/sync-transport.ts'))}
 
 const URL = ${JSON.stringify(PG_URL)}
 const failures = []

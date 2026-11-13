@@ -12,7 +12,7 @@ import type { DriverConnection, DriverQuery } from './db'
 import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { serializeBindings, withDateBindings } from './bindings'
 import { bunSql, getOrCreateBunSql, resetConnection, resolveLibSQLTarget } from './db'
-import { isThenable, settle, standingFor, wait as waitFor } from './settle'
+import { answersHere, isThenable, settle, standingFor, wait as waitFor } from './settle'
 import { answersInPlace, isTemplateStatement, syncConnection } from './sync-connection'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
@@ -3446,7 +3446,7 @@ function builderPool(): DriverConnection {
  * connection answers in place, as the driver's promise where it does not.
  */
 function executeQuery(query: any): any {
-  return typeof query.executeSync === 'function' ? query.executeSync() : query.execute()
+  return answersHere(query) ? query.executeSync() : query.execute()
 }
 
 /**
@@ -3459,7 +3459,7 @@ function executeQuery(query: any): any {
  * that made it.
  */
 function rawStatement(query: any): any {
-  if (query === null || typeof query !== 'object' || typeof query.executeSync !== 'function')
+  if (!answersHere(query))
     return query
   return Object.assign(Object.create(query), { execute: () => query.executeSync() })
 }
@@ -3474,7 +3474,7 @@ function rawStatement(query: any): any {
 function* wait<T>(value: T): Generator<unknown, Awaited<T>, unknown> {
   // `executeSync` hands back the rows, or a promise of them in the one case a
   // network statement cannot answer in place (sync-driver.ts). Either is waited for.
-  if (value !== null && typeof value === 'object' && typeof (value as { executeSync?: unknown }).executeSync === 'function')
+  if (answersHere(value))
     return (yield* waitFor((value as unknown as { executeSync: () => unknown }).executeSync())) as Awaited<T>
   return yield* waitFor(value)
 }
@@ -3918,7 +3918,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
 
     // Fast path: no hooks, no timeout, no signal - direct execute
     if (!hasHooks && !hasTimeoutOrSignal) {
-      return typeof q.executeSync === 'function' ? q.executeSync() : (q as any).execute()
+      return answersHere(q) ? (q as any).executeSync() : (q as any).execute()
     }
 
     const text = computeSqlText(q)
@@ -3961,7 +3961,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       catch {}
     }
 
-    if (typeof q.executeSync === 'function') {
+    if (answersHere(q)) {
       let rows: any
       let error: unknown
       let failed = false

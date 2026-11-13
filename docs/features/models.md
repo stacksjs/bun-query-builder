@@ -65,6 +65,27 @@ MySQL and Postgres model calls then return promises, other work proceeds while
 a query is in flight, and every model call has to be awaited. SQLite is
 synchronous either way.
 
+### Without the worker
+
+The worker thread is there because stock Bun's MySQL and Postgres drivers only
+answer through the event loop. A Bun whose drivers can wait for a statement
+where it is issued does not need it:
+[stacksjs/bun](https://github.com/stacksjs/bun) is Bun with `query.wait()`,
+`query.executeSync()` and `sql.reserveSync()` added, rebuilt for every official
+release. On that runtime the connection stays on the calling thread, which
+blocks on the socket of the one connection that has the answer. There is no
+second thread and no copy of the rows between two, and the rows are the
+driver's own.
+
+Nothing has to be configured. The model layer and the query builder look at
+the runtime when they open their connection and use what it has. The two paths
+follow the same rules, including the one below about a transaction held open
+across an `await`. To keep the worker on a runtime that could do without it:
+
+```ts
+setConfig({ models: { transport: 'worker' } })
+```
+
 ### A query that cannot finish
 
 Waiting on the calling thread is safe unless what the query needs can only be

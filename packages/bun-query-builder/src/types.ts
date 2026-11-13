@@ -452,6 +452,16 @@ export interface ModelsConfig {
    * @default 30000
    */
   timeoutMs?: number
+  /**
+   * How a MySQL or Postgres query is waited for. `'auto'` waits on the calling
+   * thread where the runtime's driver can (a Bun that has `query.wait()`, see
+   * stacksjs/bun) and otherwise keeps the connection on a worker thread, which
+   * every Bun allows. `'worker'` always uses the worker. The two behave the
+   * same; the first has no second thread and no copy of the rows between two.
+   *
+   * @default 'auto'
+   */
+  transport?: 'auto' | 'worker'
 }
 
 export interface QueryBuilderConfig {

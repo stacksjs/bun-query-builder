@@ -4,7 +4,7 @@ import type { DeferredInsert } from './sqlite-deferred-inserts'
 import { SQL } from 'bun'
 import { serializeBindings, withDateBindings } from './bindings'
 import { settle, wait } from './settle'
-import { closeSyncDriver } from './sync-driver'
+import { closeSyncDriver } from './sync-transport'
 
 /**
  * The query object returned by `connection.unsafe(...)` / a tagged template.
