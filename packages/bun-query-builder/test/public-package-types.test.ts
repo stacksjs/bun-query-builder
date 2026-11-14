@@ -257,6 +257,8 @@ describe('the normally packed public declaration surface', () => {
     for (const entry of ['index.ts', 'runtime.ts', 'browser.ts', 'dynamodb/index.ts'])
       await writeFile(join(fixture, 'src', entry), 'export const current = 42\n')
     await writeFile(join(fixture, 'bin/cli.ts'), "console.log('current fixture')\n")
+    // Not an entrypoint: the build copies it, since nothing imports an augmentation.
+    await writeFile(join(fixture, 'src/bun-sync.d.ts'), "declare module 'bun' {}\nexport {}\n")
     const obsolete = join(fixture, 'dist/obsolete-previous-build.js')
     await writeFile(obsolete, "export const obsolete = 'must not ship'\n")
     expect(await Bun.file(obsolete).exists()).toBe(true)
@@ -274,6 +276,7 @@ describe('the normally packed public declaration surface', () => {
     for (const target of [
       'src/index.js', 'src/runtime.js', 'src/browser.js', 'src/dynamodb/index.js', 'bin/cli.js',
       'index.d.ts', 'runtime.d.ts', 'browser.d.ts', 'dynamodb/index.d.ts',
+      'bun-sync.d.ts', 'src/bun-sync.js',
     ])
       expect(entries.has(`package/dist/${target}`), target).toBe(true)
   })
