@@ -35,6 +35,16 @@ if (!result.success) {
   process.exit(1)
 }
 
+// The types of the calls stacksjs/bun adds to Bun's SQL drivers. It augments
+// the `bun` module, so it is written by hand and nothing imports it: neither
+// the bundler nor dtsx would carry it into dist. The empty module beside it is
+// for a project that writes `import 'bun-query-builder/bun-sync'` instead of a
+// reference: that line must not fail when the program runs.
+// eslint-disable-next-line ts/no-top-level-await -- build script, not shipped
+await Bun.write('./dist/bun-sync.d.ts', Bun.file('./src/bun-sync.d.ts'))
+// eslint-disable-next-line ts/no-top-level-await -- build script, not shipped
+await Bun.write('./dist/src/bun-sync.js', 'export {}\n')
+
 /**
  * Refuse to ship an entry that cannot be compiled into a binary.
  *

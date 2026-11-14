@@ -36,6 +36,10 @@
       "types": "./dist/dynamodb/index.d.ts",
       "import": "./dist/src/dynamodb/index.js"
     },
+    "./bun-sync": {
+      "types": "./dist/bun-sync.d.ts",
+      "import": "./dist/src/bun-sync.js"
+    },
     "./*": {
       "import": "./dist/*"
     }

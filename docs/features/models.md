@@ -86,6 +86,33 @@ across an `await`. To keep the worker on a runtime that could do without it:
 setConfig({ models: { transport: 'worker' } })
 ```
 
+With [pantry](https://github.com/pantry-pm/pantry) that runtime is
+`stacksjs.com/bun`, in place of `bun.com`. Its version is the official one plus
+the number of the build: `^1.4.4` takes the newest build of 1.4.4.
+
+```yaml
+# deps.yaml
+dependencies:
+  stacksjs.com/bun: ^1.4.4
+```
+
+Code that calls the driver itself on that runtime needs its types, which
+`bun-types` does not have, since it describes official Bun. They ship here and
+are opt-in, one line in any file of the project:
+
+```ts
+/// <reference types="bun-query-builder/bun-sync" />
+import { SQL } from 'bun'
+
+const sql = new SQL(process.env.DATABASE_URL!)
+const users = sql<{ id: number }[]>`select id from users`.executeSync() // { id: number }[]
+const connection = sql.reserveSync() // ReservedSQL | undefined
+```
+
+On official Bun those methods are `undefined` whatever the types say, so code
+that runs on both asks first (`typeof query.wait === 'function'`). Models and
+the query builder need none of this.
+
 ### A query that cannot finish
 
 Waiting on the calling thread is safe unless what the query needs can only be
