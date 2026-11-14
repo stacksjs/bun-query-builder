@@ -1,3 +1,25 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.6.0...v0.6.1)
+
+## ✨ Features
+
+- **types**: bun-query-builder/bun-sync declares the calls stacksjs/bun adds ([464e836](https://github.com/stacksjs/bun-query-builder/commit/464e836)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ✅ Tests
+
+- **types**: the build fixture has the bun-sync declarations the build copies ([e826f52](https://github.com/stacksjs/bun-query-builder/commit/e826f52)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 💚 Continuous Integration
+
+- run the suite on a Bun that waits on the calling thread ([8f35ecf](https://github.com/stacksjs/bun-query-builder/commit/8f35ecf)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.6.1 ([a1d44d0](https://github.com/stacksjs/bun-query-builder/commit/a1d44d0)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.5.2...v0.6.0)
 
 ## ✨ Features
