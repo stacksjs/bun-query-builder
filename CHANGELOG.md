@@ -1,3 +1,18 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.6.1...v0.6.2)
+
+## 🐛 Bug Fixes
+
+- **client**: run a transaction callback in its caller's async context ([4fef0ad](https://github.com/stacksjs/bun-query-builder/commit/4fef0ad)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1212](https://github.com/stacksjs/bun-query-builder/issues/1212), [#3269](https://github.com/stacksjs/bun-query-builder/issues/3269))
+- **orm**: a model write inside db.transaction() is part of the transaction ([046f837](https://github.com/stacksjs/bun-query-builder/commit/046f837)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#1212](https://github.com/stacksjs/bun-query-builder/issues/1212), [#3269](https://github.com/stacksjs/bun-query-builder/issues/3269))
+
+## 🔧 Chores
+
+- release v0.6.2 ([e2b0ea5](https://github.com/stacksjs/bun-query-builder/commit/e2b0ea5)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.6.0...v0.6.1)
 
 ## ✨ Features
