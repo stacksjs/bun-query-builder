@@ -1,3 +1,14 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.6.2...v0.6.3)
+
+## 🔧 Chores
+
+- release v0.6.3 ([8a04a0e](https://github.com/stacksjs/bun-query-builder/commit/8a04a0e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+- **orm**: state the Bun floor, and drop a flag `held` makes moot ([a79fbc4](https://github.com/stacksjs/bun-query-builder/commit/a79fbc4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.6.1...v0.6.2)
 
 ## 🐛 Bug Fixes
