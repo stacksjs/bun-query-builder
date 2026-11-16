@@ -14,7 +14,7 @@ import { serializeBindings, withDateBindings } from './bindings'
 import { bunSql, getOrCreateBunSql, resetConnection, resolveLibSQLTarget } from './db'
 import { answersHere, isThenable, settle, standingFor, wait as waitFor } from './settle'
 import { answersInPlace, isTemplateStatement, syncConnection } from './sync-connection'
-import { openModelTransaction } from './model-transaction'
+import { callerContext, openModelTransaction } from './model-transaction'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
 import type { WhereTerm } from './sql-fragments'
@@ -9116,6 +9116,11 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       })
     },
     transaction(fn, options) {
+      // The callback runs in the async context this call was made from. A
+      // pooled driver can start it from another one, the context of whichever
+      // caller released a connection, and then what the caller had set (its
+      // request, its open scopes) would be gone inside its own transaction.
+      const inCaller = callerContext()
       return settle(function* () {
         const defaults = state?.txDefaults
         const opts: TransactionOptions = { ...defaults, ...options }
@@ -9208,7 +9213,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
                 }
                 const models = bindsModels ? openModelTransaction(tx) : undefined
                 try {
-                  const res = (yield* wait(models ? models.run(() => fn(qb)) : fn(qb)))
+                  const res = (yield* wait(inCaller(() => models ? models.run(() => fn(qb)) : fn(qb))))
                   const durationMs = Date.now() - start
                   opts.logger?.({ type: 'commit', attempt, durationMs })
                   return res
@@ -9267,6 +9272,8 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
       })
     },
     savepoint(fn) {
+      // In the caller's async context, as `transaction()`.
+      const inCaller = callerContext()
       return settle(function* () {
         // The guard is `inTransaction` — the flag `transaction()` sets on the
         // builder it hands to its callback — NOT the mere presence of a
@@ -9287,7 +9294,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const qb = createQueryBuilder<DB>({ sql: sp, meta, schema, hooks: state?.hooks, inTransaction: true, bindsModels: state?.bindsModels })
             const models = state?.bindsModels === true ? openModelTransaction(sp) : undefined
             try {
-              return (yield* wait(models ? models.run(() => fn(qb)) : fn(qb)))
+              return (yield* wait(inCaller(() => models ? models.run(() => fn(qb)) : fn(qb))))
             }
             finally {
               models?.close()

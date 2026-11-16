@@ -37,6 +37,19 @@ const scope = new AsyncLocalStorage<ModelTransaction>()
  */
 let opened = 0
 
+/**
+ * Run later in the async context this is called from.
+ *
+ * `transaction()` takes it when it is called and runs the callback in it, so
+ * the callback sees what its caller set however the driver came to start it.
+ * A callback the caller bound to another context itself
+ * (`AsyncLocalStorage.bind`) runs in that context instead, and leaves this
+ * scope behind with the rest: the transaction already does the binding.
+ */
+export function callerContext(): <T>(fn: () => T) => T {
+  return AsyncLocalStorage.snapshot()
+}
+
 /** The open transaction this call is part of, if there is one. */
 export function currentModelTransaction(): ModelTransaction | undefined {
   if (opened === 0)

@@ -177,6 +177,7 @@ Some calls stay outside the transaction:
 - **A builder on its own connection.** A transaction on `createQueryBuilder({ sql })` leaves models alone, because that connection may be a different database.
 - **Work the callback started but did not wait for.** If it runs after the callback has returned, it is an ordinary write.
 - **Calls from another request** served while the transaction is open.
+- **A callback bound to another async context** with `AsyncLocalStorage.bind`. It runs in that context, outside the transaction's. There is no need to bind one: `transaction()` already runs its callback in the context it was called from, even when a pooled driver starts it from another.
 
 ## Error Handling
 
