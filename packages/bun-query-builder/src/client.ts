@@ -14,6 +14,7 @@ import { serializeBindings, withDateBindings } from './bindings'
 import { bunSql, getOrCreateBunSql, resetConnection, resolveLibSQLTarget } from './db'
 import { answersHere, isThenable, settle, standingFor, wait as waitFor } from './settle'
 import { answersInPlace, isTemplateStatement, syncConnection } from './sync-connection'
+import { openModelTransaction } from './model-transaction'
 import { resolvePivot } from './pivot'
 import { singularizerFor } from './inflect'
 import type { WhereTerm } from './sql-fragments'
@@ -3376,6 +3377,12 @@ interface InternalState {
    * call begin inside a transaction" otherwise.
    */
   inTransaction?: boolean
+  /**
+   * Set on the builder handed to a `transaction()` callback when model calls
+   * made from that callback run on its connection (model-transaction.ts). A
+   * nested `transaction()` or `savepoint()` carries it to the savepoint.
+   */
+  bindsModels?: boolean
 }
 
 // applyCondition and applyWhere moved inside createQueryBuilder to use the correct SQL instance
@@ -9130,6 +9137,12 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // with `inTransaction`, so a nested call dispatches to `savepoint`.
         const nested = state?.inTransaction === true
         const txMethod = nested && typeof txConn?.savepoint === 'function' ? 'savepoint' : 'begin'
+        // Model calls from the callback join the transaction when this builder
+        // is on the default connection, the one the model layer shares, or is
+        // itself a transaction's that bound them. A builder on a connection the
+        // caller handed in may be another database entirely, so its
+        // transactions leave the model layer where it was.
+        const bindsModels = nested ? state?.bindsModels === true : state?.sql === undefined
         const runWith = (attempt: number): any => {
           return settle(function* (): Generator<unknown, any, unknown> {
             opts.logger?.({ type: 'start', attempt })
@@ -9137,7 +9150,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
             const beginOptions = !nested && opts.sqliteMode ? [opts.sqliteMode.toUpperCase()] : []
             return (yield* wait((txConn as any)[txMethod](...beginOptions, standingFor((tx: any) => {
               return settle(function* () {
-                const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks, inTransaction: true })
+                const qb = createQueryBuilder<DB>({ sql: tx, meta, schema, hooks: state?.hooks, inTransaction: true, bindsModels })
 
                 // Transaction isolation + read-only mode — dialect-specific
                 // SQL, with a clear "not supported" path for SQLite. The
@@ -9193,10 +9206,16 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
                     throw new Error('[query-builder] transaction({ readOnly: true }) not supported on SQLite. Use a Postgres or MySQL deployment.')
                   }
                 }
-                const res = (yield* wait(fn(qb)))
-                const durationMs = Date.now() - start
-                opts.logger?.({ type: 'commit', attempt, durationMs })
-                return res
+                const models = bindsModels ? openModelTransaction(tx) : undefined
+                try {
+                  const res = (yield* wait(models ? models.run(() => fn(qb)) : fn(qb)))
+                  const durationMs = Date.now() - start
+                  opts.logger?.({ type: 'commit', attempt, durationMs })
+                  return res
+                }
+                finally {
+                  models?.close()
+                }
               })
             }, fn))))
           })
@@ -9265,8 +9284,14 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
           return settle(function* () {
             // Carry the flag: a savepoint body is still inside a transaction, so a
             // nested savepoint()/transaction() from here must nest, not begin.
-            const qb = createQueryBuilder<DB>({ sql: sp, meta, schema, hooks: state?.hooks, inTransaction: true })
-            return (yield* wait(fn(qb)))
+            const qb = createQueryBuilder<DB>({ sql: sp, meta, schema, hooks: state?.hooks, inTransaction: true, bindsModels: state?.bindsModels })
+            const models = state?.bindsModels === true ? openModelTransaction(sp) : undefined
+            try {
+              return (yield* wait(models ? models.run(() => fn(qb)) : fn(qb)))
+            }
+            finally {
+              models?.close()
+            }
           })
         }, fn))))
       })

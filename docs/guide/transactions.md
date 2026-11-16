@@ -156,6 +156,28 @@ await transaction(async (trx) => {
 })
 ```
 
+## Models inside a transaction
+
+A model call made from a transaction's callback is part of the transaction, however many `await`s later it runs. It rolls back with the transaction, and the model and `tx` each see what the other has written but not yet committed.
+
+```ts
+await db.transaction(async (tx) => {
+  const order = await Order.create({ customer_id: 7, total: 0 })
+  await OrderLine.create({ order_id: order.get('id'), sku: 'A-1', quantity: 2 })
+  await tx.updateTable('inventory').set({ reserved: 2 }).where('sku', '=', 'A-1').execute()
+})
+// A throw anywhere in the callback takes back the order, its line and the inventory change.
+```
+
+A savepoint (`tx.transaction(...)` or `tx.savepoint(...)`) takes back only the model writes made inside it.
+
+Some calls stay outside the transaction:
+
+- **A model on another database.** On SQLite the model layer joins the transaction only when it writes to the same file. A model layer pinned elsewhere with `configureOrm()` keeps writing there.
+- **A builder on its own connection.** A transaction on `createQueryBuilder({ sql })` leaves models alone, because that connection may be a different database.
+- **Work the callback started but did not wait for.** If it runs after the callback has returned, it is an ordinary write.
+- **Calls from another request** served while the transaction is open.
+
 ## Error Handling
 
 ```typescript

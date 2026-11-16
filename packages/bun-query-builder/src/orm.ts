@@ -24,6 +24,8 @@
  * ```
  */
 
+import { realpathSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
 import { Database, type SQLQueryBindings } from 'bun:sqlite'
 import type { FactoryFaker } from './faker-compat'
 import type { PaginateOptions } from './client'
@@ -32,9 +34,10 @@ import type { InferRelationNames, RelationCardinality } from './type-inference'
 export type { InferRelationNames } from './type-inference'
 import { isNumericPlanType, normalizeAttributeType, sqliteAffinityFor } from './column-types'
 import { config, isMysqlLike } from './config'
-import { serializeBindings } from './bindings'
+import { serializeBindings, withDateBindings } from './bindings'
 import { connectionSignature, getOrCreateBunSql, hasInjectedSqlInstance, networkConnectionTarget, resolveLibSQLTarget } from './db'
-import { settle, wait, waitAll } from './settle'
+import { answersHere, settle, wait, waitAll } from './settle'
+import { currentModelTransaction } from './model-transaction'
 import { DEFAULT_STATEMENT_TIMEOUT_MS } from './sync-driver'
 import { closeSyncDriver, syncDriverFor } from './sync-transport'
 import { applySqliteBootstrapPragmas } from './sqlite-pragmas'
@@ -819,17 +822,26 @@ export function extractInsertId(res: WriteResultLike | null | undefined): number
 
 class SqliteExecutor implements OrmExecutor {
   readonly dialect = 'sqlite' as const
-  constructor(public readonly sqliteDb: Database) {}
+  /**
+   * `beforeStatement` runs ahead of each statement. On a transaction's handle
+   * it writes out the inserts the builder deferred on that connection, the
+   * barrier the builder's own statements pass (db.ts), so a model read sees
+   * them.
+   */
+  constructor(public readonly sqliteDb: Database, private readonly beforeStatement?: () => void) {}
 
   all(sql: string, params: unknown[]): Record<string, unknown>[] {
+    this.beforeStatement?.()
     return this.sqliteDb.query(sql).all(...(serializeBindings(params) as Bindings)) as Record<string, unknown>[]
   }
 
   get(sql: string, params: unknown[]): Record<string, unknown> | undefined {
+    this.beforeStatement?.()
     return (this.sqliteDb.query(sql).get(...(serializeBindings(params) as Bindings)) as Record<string, unknown> | null) ?? undefined
   }
 
   run(sql: string, params: unknown[]): RunResult {
+    this.beforeStatement?.()
     const r = this.sqliteDb.run(sql, serializeBindings(params) as Bindings)
     return { changes: r.changes, lastInsertId: r.lastInsertRowid }
   }
@@ -850,11 +862,15 @@ class DriverExecutor implements OrmExecutor {
    * `synchronous` runs each statement on the worker-held connection and
    * returns its rows in place (sync-driver.ts). Without it the statement goes
    * to the shared connection on this thread, which answers with a promise.
+   * `held` is a transaction's connection: every statement goes to it, and
+   * answers as it does (model-transaction.ts).
    */
-  constructor(public readonly dialect: SupportedDialect, private readonly synchronous = false) {}
+  constructor(public readonly dialect: SupportedDialect, private readonly synchronous = false, private readonly held?: StatementRunner) {}
 
   /** The live dialect-aware connection (handles its own reset/config-change). */
   private conn(): StatementRunner {
+    if (this.held)
+      return this.held
     if (this.synchronous) {
       const driver = syncDriverFor(connectionSignature(), networkConnectionTarget)
       // The async connection is wrapped so a Date binds as ISO text on
@@ -1018,6 +1034,87 @@ export function releaseOrm(): void {
 let _warnedImplicitMemory = false
 
 function getExecutor(): OrmExecutor {
+  const transaction = currentModelTransaction()
+  if (transaction) {
+    const held = transactionExecutor(transaction.connection)
+    if (held)
+      return held
+  }
+  return configuredExecutor()
+}
+
+/**
+ * The executor for the transaction holding `connection`, or null when that
+ * connection is not the model layer's database (stacksjs/stacks#3269).
+ *
+ * Kept per connection, and remade when the model layer is configured again:
+ * SQLite's builder connection is one object that every transaction reuses.
+ */
+const transactionExecutors = new WeakMap<object, { configured: OrmExecutor, held: OrmExecutor | null }>()
+
+function transactionExecutor(connection: object): OrmExecutor | null {
+  const configured = configuredExecutor()
+  const known = transactionExecutors.get(connection)
+  if (known?.configured === configured)
+    return known.held
+  const held = executorOn(connection, configured)
+  transactionExecutors.set(connection, { configured, held })
+  return held
+}
+
+/**
+ * Model calls on a transaction's connection, if it is the database the model
+ * layer writes to.
+ *
+ * On SQLite the builder and the model layer each open their own handle, so a
+ * transaction is the model's only when both handles are on one file. Two
+ * in-memory databases are two databases, and a model layer pinned elsewhere
+ * by `configureOrm()` stays there. On MySQL and Postgres the model layer and
+ * the builder share one connection configuration, so the transaction's
+ * connection is the model's database.
+ */
+function executorOn(connection: object, configured: OrmExecutor): OrmExecutor | null {
+  const handle = connection as { _wrapper?: { database?: unknown }, flushDeferredInserts?: () => void }
+  const sqlite = handle._wrapper?.database
+  if (configured.sqliteDb) {
+    if (!(sqlite instanceof Database))
+      return null
+    if (sqlite === configured.sqliteDb)
+      return configured
+    if (!sameSqliteFile(sqlite, configured.sqliteDb))
+      return null
+    return new SqliteExecutor(sqlite, () => handle.flushDeferredInserts?.())
+  }
+  if (sqlite !== undefined)
+    return null
+  const statements = withDateBindings(connection) as unknown as StatementRunner
+  return new DriverExecutor(configured.dialect, false, {
+    // A connection that answers in place is asked to (sync-connection.ts);
+    // the driver's own answers with its promise.
+    unsafe: (sql, params) => {
+      const query = statements.unsafe(sql, params) as { executeSync: () => unknown }
+      return answersHere(query) ? query.executeSync() : query
+    },
+  })
+}
+
+function sameSqliteFile(left: Database, right: Database): boolean {
+  const file = (db: Database): string | null => {
+    const name = db.filename
+    if (!name || name === ':memory:' || name.startsWith('file::memory:'))
+      return null
+    try {
+      return realpathSync(name)
+    }
+    catch {
+      return resolvePath(name)
+    }
+  }
+  const a = file(left)
+  return a !== null && a === file(right)
+}
+
+function configuredExecutor(): OrmExecutor {
   if (globalDb) {
     if (!_executor || _executorForDb !== globalDb) {
       _executor = new SqliteExecutor(globalDb)
