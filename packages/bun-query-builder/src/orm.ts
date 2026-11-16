@@ -864,14 +864,18 @@ class DriverExecutor implements OrmExecutor {
    * to the shared connection on this thread, which answers with a promise.
    * `held` is a transaction's connection: every statement goes to it, and
    * answers as it does (model-transaction.ts).
+   *
+   * One object rather than two positional flags, because `held` outranks
+   * `synchronous` - it is returned before that flag is ever read - so a caller
+   * passing `held` had to pass a `synchronous` that meant nothing.
    */
-  constructor(public readonly dialect: SupportedDialect, private readonly synchronous = false, private readonly held?: StatementRunner) {}
+  constructor(public readonly dialect: SupportedDialect, private readonly runs: { synchronous?: boolean, held?: StatementRunner } = {}) {}
 
   /** The live dialect-aware connection (handles its own reset/config-change). */
   private conn(): StatementRunner {
-    if (this.held)
-      return this.held
-    if (this.synchronous) {
+    if (this.runs.held)
+      return this.runs.held
+    if (this.runs.synchronous) {
       const driver = syncDriverFor(connectionSignature(), networkConnectionTarget)
       // The async connection is wrapped so a Date binds as ISO text on
       // Postgres (bindings.ts). The worker's is a bare driver, so the same
@@ -1079,6 +1083,12 @@ function executorOn(connection: object, configured: OrmExecutor): OrmExecutor | 
   if (configured.sqliteDb) {
     if (!(sqlite instanceof Database))
       return null
+    // One `Database`, so the configured executor already writes where the
+    // transaction holds, and it needs no flush barrier: the deferred inserts
+    // live on the builder's wrapper, and `SqliteWrapper` always opens its own
+    // `Database` from a filename rather than adopting a caller's handle, so
+    // nothing can queue inserts against this one behind our back. The
+    // same-file branch below is the reachable case, and it does flush.
     if (sqlite === configured.sqliteDb)
       return configured
     if (!sameSqliteFile(sqlite, configured.sqliteDb))
@@ -1088,12 +1098,14 @@ function executorOn(connection: object, configured: OrmExecutor): OrmExecutor | 
   if (sqlite !== undefined)
     return null
   const statements = withDateBindings(connection) as unknown as StatementRunner
-  return new DriverExecutor(configured.dialect, false, {
-    // A connection that answers in place is asked to (sync-connection.ts);
-    // the driver's own answers with its promise.
-    unsafe: (sql, params) => {
-      const query = statements.unsafe(sql, params) as { executeSync: () => unknown }
-      return answersHere(query) ? query.executeSync() : query
+  return new DriverExecutor(configured.dialect, {
+    held: {
+      // A connection that answers in place is asked to (sync-connection.ts);
+      // the driver's own answers with its promise.
+      unsafe: (sql, params) => {
+        const query = statements.unsafe(sql, params) as { executeSync: () => unknown }
+        return answersHere(query) ? query.executeSync() : query
+      },
     },
   })
 }
@@ -1170,7 +1182,7 @@ function configuredExecutor(): OrmExecutor {
     _executor = new SqliteExecutor(db)
   }
   else {
-    _executor = new DriverExecutor(dialect, synchronous)
+    _executor = new DriverExecutor(dialect, { synchronous })
   }
 
   return _executor
