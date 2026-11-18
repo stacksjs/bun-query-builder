@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.6.3...v0.6.4)
+
+## 🐛 Bug Fixes
+
+- **client**: insertOrIgnore and upsert return the rows they wrote ([16f0c5a](https://github.com/stacksjs/bun-query-builder/commit/16f0c5a)) _(by Chris <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.6.4 ([4dead0a](https://github.com/stacksjs/bun-query-builder/commit/4dead0a)) _(by Chris <chris@stacksjs.com>)_
+
+## Contributors
+
+- _Chris <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/bun-query-builder/compare/v0.6.2...v0.6.3)
 
 ## 🔧 Chores
