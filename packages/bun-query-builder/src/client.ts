@@ -9338,15 +9338,19 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // Built with explicit columns + placeholders rather than Bun's
         // `${sql(table)} ${sql(values)}` helper, which is broken on every dialect
         // (#1052). MySQL uses `INSERT IGNORE`; Postgres/SQLite `ON CONFLICT DO NOTHING`.
+        // Returns the rows actually inserted, which is what the declared `number`
+        // promises and the one way a caller can tell how many were ignored. It
+        // used to hand back the driver's raw result (`{ changes }` on SQLite),
+        // so `inserted += db.insertOrIgnore(...)` concatenated objects.
         const rows = (Array.isArray(values) ? values : [values]) as Record<string, any>[]
         if (!rows.length)
-          return undefined as any
+          return 0
         const { colsSql, valuesSql, params } = buildInsertClause(rows)
         const tbl = quoteInsertIdent(String(table))
         const sqlText = isMysqlLike(config.dialect)
           ? `INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
           : `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql} ON CONFLICT DO NOTHING`
-        return executeQuery((prepareQuery(sqlText, params) as any))
+        return mutationCount(yield* wait(executeQuery((prepareQuery(sqlText, params) as any))))
       })
     },
     insertGetId(table, values, idColumn = 'id' as any) {
@@ -9401,7 +9405,7 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         const setCols = (mergeColumns ?? []).map(c => String(c))
         const list = rows as Record<string, any>[]
         if (!list.length)
-          return undefined as any
+          return 0
         const { colsSql, valuesSql, params } = buildInsertClause(list)
         const tbl = quoteInsertIdent(String(table))
         const insert = `INSERT INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`
@@ -9411,16 +9415,17 @@ export function createQueryBuilder<DB extends AnyDatabaseSchema>(state?: Partial
         // "do nothing" form (an empty SET is a syntax error). See #1035, #1052.
         if (isMysqlLike(config.dialect)) {
           if (setCols.length === 0)
-            return executeQuery((prepareQuery(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any))
+            return mutationCount(yield* wait(executeQuery((prepareQuery(`INSERT IGNORE INTO ${tbl} (${colsSql}) VALUES ${valuesSql}`, params) as any))))
           const updateList = setCols.map(c => `${quoteInsertIdent(c)} = VALUES(${quoteInsertIdent(c)})`).join(', ')
-          return executeQuery((prepareQuery(`${insert} ON DUPLICATE KEY UPDATE ${updateList}`, params) as any))
+          return mutationCount(yield* wait(executeQuery((prepareQuery(`${insert} ON DUPLICATE KEY UPDATE ${updateList}`, params) as any))))
         }
 
         const targets = targetCols.map(quoteInsertIdent).join(', ')
         if (setCols.length === 0)
-          return executeQuery((prepareQuery(`${insert} ON CONFLICT (${targets}) DO NOTHING`, params) as any))
+          return mutationCount(yield* wait(executeQuery((prepareQuery(`${insert} ON CONFLICT (${targets}) DO NOTHING`, params) as any))))
         const updateList = setCols.map(c => `${quoteInsertIdent(c)} = EXCLUDED.${quoteInsertIdent(c)}`).join(', ')
-        return executeQuery((prepareQuery(`${insert} ON CONFLICT (${targets}) DO UPDATE SET ${updateList}`, params) as any))
+        // Rows inserted or updated, as the declared `number` says (see insertOrIgnore).
+        return mutationCount(yield* wait(executeQuery((prepareQuery(`${insert} ON CONFLICT (${targets}) DO UPDATE SET ${updateList}`, params) as any))))
       })
     },
     save(table, values) {

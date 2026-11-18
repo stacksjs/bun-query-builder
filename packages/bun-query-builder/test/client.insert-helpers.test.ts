@@ -47,6 +47,15 @@ describe('insert/upsert helper execution (#1052)', () => {
     expect(rows[0].v).toBe('1')
   })
 
+  it('insertOrIgnore and upsert return how many rows they wrote', async () => {
+    expect(await db.insertOrIgnore('kv', [{ k: 'a', v: '1' }, { k: 'b', v: '1' }])).toBe(2)
+    expect(await db.insertOrIgnore('kv', [{ k: 'a', v: '2' }, { k: 'c', v: '2' }])).toBe(1)
+    expect(await db.insertOrIgnore('kv', [])).toBe(0)
+    expect(await db.upsert('kv', [{ k: 'a', v: '3' }, { k: 'd', v: '3' }], ['k'], ['v'])).toBe(2)
+    expect(await db.upsert('kv', [{ k: 'a', v: '4' }], ['k'])).toBe(0)
+    expect(await db.upsert('kv', [], ['k'])).toBe(0)
+  })
+
   it('upsert merges on conflict, and DO NOTHING with no merge columns', async () => {
     await db.insertGetId('kv', { k: 'a', v: '1' })
     await db.upsert('kv', [{ k: 'a', v: '2' }], ['k'], ['v']) // merge -> v = 2
