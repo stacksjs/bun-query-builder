@@ -364,7 +364,12 @@ function executeMigrationWithReport(
 - `string` columns render as `varchar(n)` from the validator's `max(n)`; a
   changed bound is an `ALTER COLUMN ... TYPE` on every dialect.
 - `decimal` columns take `precision` / `scale` on the attribute (or
-  `type: 'decimal(12,4)'`); unset is `decimal(10,2)`.
+  `type: 'decimal(12,4)'`); unset is `decimal(10,2)`. An explicit
+  `type: 'number'` (or `'numeric'`) is a decimal and wins over the validator, so
+  `type: 'number'` with `schema.float()` is `decimal(10,2)` and rounds every
+  value to two places. Generating warns about it (`-- qb: ...`, and in the
+  result's `warnings`). Declare the digits you need, or `type: 'double'` for a
+  floating-point column (example below).
 - Adding values to a Postgres enum emits `ALTER TYPE ... ADD VALUE IF NOT EXISTS`
   in a migration of its own; removing values rebuilds the type.
 - A partial index's `where` is part of its identity: changing it drops and
@@ -372,6 +377,17 @@ function executeMigrationWithReport(
 - A `NOT NULL` column without a default added to an existing table is emitted
   as nullable with a `-- qb:` comment and an operation `warning`. Backfill it,
   then add a default or regenerate with `fromDb` to apply `NOT NULL`.
+
+A probability keeps six places with:
+
+```ts
+probability: {
+  type: 'number',
+  precision: 8, // decimal(8,6): 0.623412
+  scale: 6,
+  validation: { rule: schema.float().min(0).max(1) },
+},
+```
 
 ## Related
 
