@@ -259,7 +259,13 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
 
   // Load current models from source directory and build migration plan
   const models = await loadModels({ modelsDir: dir })
-  const plan = buildMigrationPlan(models, { dialect, vitessSharded: opts.vitessSharded })
+  // Inference warnings (a float attribute rounded by the decimal(10,2)
+  // default, say) are returned on every run and printed on a writing one, so a
+  // caller that previews before it generates does not print them twice.
+  const warnings: string[] = []
+  const plan = buildMigrationPlan(models, { dialect, vitessSharded: opts.vitessSharded, onWarning: w => warnings.push(w) })
+  if (!opts.dryRun)
+    warnings.forEach(w => console.warn(`-- qb: ${w}`))
 
   let previous: MigrationPlan | undefined
   // True when `previous` is the live schema rather than a model snapshot.
@@ -410,7 +416,7 @@ export async function generateMigration(dir?: string, opts: MigrateOptions = {})
   if (!opts.dryRun)
     savePlanSnapshot(workspaceRoot, dialect, plan)
 
-  return { sql, sqlStatements, hasChanges, plan, operations, files: diff.files }
+  return { sql, sqlStatements, hasChanges, plan, operations, files: diff.files, ...(warnings.length > 0 ? { warnings } : {}) }
 }
 
 /** The full-schema migration for `opts.full`, shaped like a diff result. */

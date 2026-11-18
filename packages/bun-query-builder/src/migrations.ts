@@ -736,6 +736,32 @@ function normalizeAttributeType(value: unknown): NormalizedColumnType | undefine
 export interface InferenceOptions {
   dialect: SupportedDialect
   vitessSharded?: boolean
+  /**
+   * Receives a message for each attribute whose column will not keep what its
+   * model says it holds, such as a float-validated attribute that gets the
+   * two-place `decimal(10,2)` default. The plan is unchanged either way; this
+   * only makes the inference visible. Unset is silent, which is what runtime
+   * callers that rebuild a plan on every boot want.
+   */
+  onWarning?: (message: string) => void
+}
+
+/**
+ * The warning for a float-validated attribute that lands on an undeclared
+ * `decimal`, which renders as `decimal(10,2)` and rounds every value to two
+ * places. Usually reached through `type: 'number'`, which an explicit type
+ * makes win over the validator: a probability of 0.6234 is stored as 0.62.
+ *
+ * Changing the default instead would emit a column change on every existing
+ * app's next generate, and no single default suits both a 0-1 probability and
+ * a large measurement, so the model is asked to say which it means.
+ */
+export function implicitDecimalWarning(table: string, column: string, attrName: string, ruleType: 'float' | 'double'): string {
+  const { precision, scale } = decimalPrecision({})
+  return `${table}.${column}: attribute "${attrName}" is validated as a ${ruleType} but declares no precision or scale, `
+    + `so it is created as decimal(${precision},${scale}) and every value is rounded to ${scale} decimal places. `
+    + `Declare \`precision\` and \`scale\` on the attribute (precision: 8, scale: 6 keeps a 0-1 probability to six places), `
+    + `or \`type: 'double'\` for a floating-point column.`
 }
 
 export function buildMigrationPlan(models: ModelRecord, options: InferenceOptions): MigrationPlan {
@@ -895,6 +921,14 @@ export function buildMigrationPlan(models: ModelRecord, options: InferenceOption
           col.precision = decimal.precision
         if (decimal.scale !== undefined)
           col.scale = decimal.scale
+      }
+      // An undeclared decimal is money-shaped by default: two places. A float
+      // or double validator says the value is not, so say so rather than round
+      // it silently (see `implicitDecimalWarning`).
+      if (inferred === 'decimal' && !declaresDecimal && options.onWarning) {
+        const ruleType = detectTypeFromValidationRule(attr.validation?.rule)
+        if (ruleType === 'float' || ruleType === 'double')
+          options.onWarning(implicitDecimalWarning(table, columnName, attrName, ruleType))
       }
 
       // Foreign key inference for *_id columns

@@ -706,6 +706,13 @@ export interface GenerateMigrationResult {
    * might use the new value.
    */
   files?: import('./migrations').GeneratedMigrationFile[]
+  /**
+   * What model inference could not express faithfully, one message per
+   * attribute: a float-validated attribute stored as the two-place
+   * `decimal(10,2)` default, for instance. Printed on a writing run; present
+   * on a dry run too, so a caller that previews can surface them itself.
+   */
+  warnings?: string[]
 }
 
 export interface UnsafeOptions {
